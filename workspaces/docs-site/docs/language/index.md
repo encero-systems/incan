@@ -36,6 +36,7 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 | [Comparison](reference/derives/comparison.md)                       | `Eq`, `Ord`, `Hash`         |
 | [Copying & Default](reference/derives/copying_default.md)           | `Clone`, `Copy`, `Default`  |
 | [Serialization](reference/derives/serialization.md)                 | `Serialize`, `Deserialize`  |
+| [Validation](reference/derives/validation.md)                       | `Validate`                  |
 | [Custom Behavior](reference/derives/custom_behavior.md)             | Overriding derived behavior |
 
 ## Explanation (understand)
@@ -47,7 +48,7 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 - [Enums](explanation/enums.md)
 - [Error Handling](explanation/error_handling.md)
 - [Imports & Modules](explanation/imports_and_modules.md)
-- [Models & Classes](explanation/models_and_classes.md)
+- [Models & Classes](explanation/models_and_classes/index.md)
 - [Scopes & Name Resolution](explanation/scopes_and_name_resolution.md)
 
 ## See also

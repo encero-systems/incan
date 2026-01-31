@@ -201,10 +201,17 @@ pub struct ModelDecl {
     pub methods: Vec<Spanned<MethodDecl>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FieldMetadata {
+    pub alias: Option<String>,
+    pub description: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldDecl {
     pub visibility: Visibility,
     pub name: Ident,
+    pub metadata: FieldMetadata,
     pub ty: Spanned<Type>,
     pub default: Option<Spanned<Expr>>,
 }
@@ -682,6 +689,14 @@ pub enum CallArg {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum PatternArg {
+    /// Positional pattern: `Type(x)`
+    Positional(Spanned<Pattern>),
+    /// Named pattern: `Type(name=pat)`
+    Named(Ident, Spanned<Pattern>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: Spanned<Pattern>,
     pub guard: Option<Spanned<Expr>>, // `if condition` guard
@@ -704,8 +719,8 @@ pub enum Pattern {
     Binding(Ident),
     /// Literal: `42`, `"hello"`, `true`
     Literal(Literal),
-    /// Constructor: `Some(x)`, `Ok(value)`
-    Constructor(Ident, Vec<Spanned<Pattern>>),
+    /// Constructor: `Some(x)`, `Ok(value)`, `Type(name=pat)`
+    Constructor(Ident, Vec<PatternArg>),
     /// Tuple: `(a, b)`
     Tuple(Vec<Spanned<Pattern>>),
 }

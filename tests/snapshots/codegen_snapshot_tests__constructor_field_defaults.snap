@@ -24,6 +24,43 @@ fn Settings(theme: String, font_size: i64, auto_save: bool) -> Settings {
         auto_save,
     }
 }
+impl Settings {
+    /// Returns field metadata for this type.
+    pub fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("theme"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("theme"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                has_default: true,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("font_size"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("font_size"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                has_default: true,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("auto_save"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("auto_save"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("bool"),
+                has_default: true,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 fn main() {
     let a = Settings {
         theme: "dark".to_string(),

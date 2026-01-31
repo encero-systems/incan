@@ -511,6 +511,8 @@ pub struct VariantInfo {
 pub struct FieldInfo {
     pub ty: ResolvedType,
     pub has_default: bool,
+    pub alias: Option<String>,
+    pub description: Option<String>,
 }
 
 /// Method information

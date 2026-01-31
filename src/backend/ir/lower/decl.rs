@@ -218,6 +218,9 @@ impl AstLowering {
 
     /// Lower a model declaration to struct.
     pub(super) fn lower_model(&mut self, m: &ast::ModelDecl) -> Result<IrStruct, LoweringError> {
+        // RFC 021: Register field aliases for alias-aware resolution in expressions.
+        self.register_field_aliases(&m.name, &m.fields);
+
         let mut fields: Vec<StructField> = Vec::new();
         for f in &m.fields {
             let default = f
@@ -231,6 +234,8 @@ impl AstLowering {
                 ty: self.lower_type(&f.node.ty.node),
                 visibility: Self::map_visibility(f.node.visibility),
                 default,
+                alias: f.node.metadata.alias.clone(),
+                description: f.node.metadata.description.clone(),
             });
         }
 
@@ -285,6 +290,8 @@ impl AstLowering {
                 ty: self.lower_type(&f.node.ty.node),
                 visibility: Self::map_visibility(f.node.visibility),
                 default,
+                alias: f.node.metadata.alias.clone(),
+                description: f.node.metadata.description.clone(),
             });
         }
 
@@ -344,6 +351,8 @@ impl AstLowering {
                     ty: self.lower_type(&f.node.ty.node),
                     visibility: Self::map_visibility(f.node.visibility),
                     default,
+                    alias: f.node.metadata.alias.clone(),
+                    description: f.node.metadata.description.clone(),
                 });
             }
         }
@@ -384,6 +393,8 @@ impl AstLowering {
             ty: underlying_ty.clone(),
             visibility: Visibility::Private,
             default: None,
+            alias: None,
+            description: None,
         }];
         // Newtypes auto-derive Debug, Clone
         // Only add Copy if underlying type is Copy (int, float, bool)

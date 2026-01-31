@@ -26,37 +26,42 @@ impl TypeChecker {
         args: &[CallArg],
         call_span: Span,
     ) {
-        // Typecheck argument expressions regardless, so type errors in expressions still show up.
-        self.check_call_args(args);
-
         // v0.1: only named args for model/class constructors (stable field ordering not guaranteed).
         if args.iter().any(|a| matches!(a, CallArg::Positional(_))) {
+            // Typecheck argument expressions regardless, so type errors in expressions still show up.
+            self.check_call_args(args);
             self.errors
                 .push(errors::positional_constructor_args_not_supported(type_name, call_span));
             return;
         }
 
         // Track provided fields and validate existence/duplicates/type compatibility.
-        let mut provided: std::collections::HashMap<&str, Span> = std::collections::HashMap::new();
+        let mut provided: std::collections::HashMap<String, Span> = std::collections::HashMap::new();
         for arg in args {
             let CallArg::Named(field_name, expr) = arg else {
                 continue;
             };
 
-            if provided.contains_key(field_name.as_str()) {
-                self.errors
-                    .push(errors::duplicate_constructor_field(type_name, field_name, expr.span));
-                continue;
-            }
-            provided.insert(field_name.as_str(), expr.span);
+            // Always typecheck the expression exactly once, even if the key is invalid/duplicate.
+            // This avoids double-reporting while still surfacing expression errors.
+            let value_ty = self.check_expr(expr);
 
-            let Some(field_info) = fields.get(field_name) else {
+            let Some((canonical_name, field_info)) = self.resolve_field_info(fields, field_name, true, true) else {
                 self.errors
                     .push(errors::missing_field(type_name, field_name, expr.span));
                 continue;
             };
 
-            let value_ty = self.check_expr(expr);
+            if provided.contains_key(&canonical_name) {
+                self.errors.push(errors::duplicate_field_in_call(
+                    type_name,
+                    canonical_name.as_str(),
+                    expr.span,
+                ));
+                continue;
+            }
+            provided.insert(canonical_name.clone(), expr.span);
+
             if !self.types_compatible(&value_ty, &field_info.ty) {
                 self.errors.push(errors::field_type_mismatch(
                     field_name,
@@ -69,7 +74,7 @@ impl TypeChecker {
 
         // Enforce required fields (those without defaults) are present.
         for (field_name, info) in fields {
-            if !info.has_default && !provided.contains_key(field_name.as_str()) {
+            if !info.has_default && !provided.contains_key(field_name) {
                 self.errors.push(errors::missing_required_constructor_field(
                     type_name, field_name, call_span,
                 ));

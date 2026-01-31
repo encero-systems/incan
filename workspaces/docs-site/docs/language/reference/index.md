@@ -26,4 +26,5 @@ For step-by-step learning and patterns, see [Tutorials](../tutorials/book/index.
     - [Comparison](derives/comparison.md): `Eq`, `Ord`, `Hash`
     - [Copying/default](derives/copying_default.md): `Clone`, `Copy`, `Default`
     - [Serialization](derives/serialization.md): `Serialize`, `Deserialize`
+    - [Validation](derives/validation.md): `Validate`
     - [Custom behavior](derives/custom_behavior.md): overriding derived behavior

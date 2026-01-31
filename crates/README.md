@@ -60,7 +60,7 @@ This is the standard Rust pattern. Examples from the ecosystem:
 
 **Contains**:
 
-- `FieldInfo` trait - Reflection (field names/types)
+- `HasFieldInfo` trait - Reflection (field names/types)
 - `ToJson`/`FromJson` traits - JSON helpers
 - The `prelude` module for convenient imports
 
@@ -78,8 +78,8 @@ use incan_stdlib::prelude::*;
 
 **Contains**:
 
-- `#[derive(FieldInfo)]` - Implements the `FieldInfo` trait
-- `#[derive(IncanClass)]` - Generates `__class__()` and `__fields__()` methods
+- `#[derive(FieldInfo)]` - Implements the `HasFieldInfo` trait
+- `#[derive(IncanClass)]` - Generates `__class__()` and `__class_name__()` methods
 - `#[derive(IncanJson)]` - Generates JSON helper methods
 
 **Used by**: All generated Incan programs with models/classes
@@ -104,7 +104,7 @@ model User:
 The compiler generates this Rust code:
 
 ```rust
-use incan_stdlib::prelude::*;  // Get the FieldInfo trait
+use incan_stdlib::prelude::*;  // Get the HasFieldInfo trait + FieldInfo record
 use incan_derive::FieldInfo;    // Get the derive macro
 
 #[derive(Debug, Clone, FieldInfo)]
@@ -113,7 +113,7 @@ pub struct User {
     pub age: i64,
 }
 
-// Now `User` implements `FieldInfo`:
+// Now `User` implements `HasFieldInfo`:
 // User::field_names() => ["name", "age"]
 // User::field_types() => ["String", "i64"]
 ```

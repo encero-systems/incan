@@ -2,7 +2,7 @@
 
 ## Status
 
-**Status:** Planned  
+**Status:** Implemented  
 **Author(s):** Danny Meijer (@danny-meijer)  
 **Issue:** `https://github.com/dannys-code-corner/incan/issues/94`  
 **Related:** RFC 005 (Rust interop), RFC 017 (constrained types)
@@ -403,6 +403,11 @@ field-level `alias` is the source of truth for the wire name.
 `FieldInfo` is a frozen `class` in the **language core** (not a `model`) that describes a single model field.
 
 Implementation notes (Rust):
+
+**Things that were changed while implementing**: the generated Rust `__fields__()` returns a `FrozenList[FieldInfo]` backed
+by static data, the runtime `FieldInfo` value type uses frozen containers (`FrozenStr`, `FrozenDict`) for zero-allocation
+backing, and the reflection trait was renamed to `HasFieldInfo` to avoid a name collision with the value type.
+These implementation details were captured in docs and PRs.
 
 - Today, generated Rust uses a reflection trait named `incan_stdlib::reflection::FieldInfo` and derives it via
   `incan_derive::FieldInfo`.

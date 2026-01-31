@@ -1,0 +1,26 @@
+model Account:
+    # keyword clashing fields some with alias + description
+    type_ [alias="type", description="Account type"]: str
+    class_ [alias="class", description="Customer segment"]: str
+    from_ [description="Source system"] as "from": str
+    # default value + description
+    balance [description="Balance in cents"]: int = 0
+    # alias only
+    owner_id [alias="ownerId"]: int
+    # alias + description + default
+    status_ [alias="status", description="Lifecycle status"]: str = "active"
+    # alias with different casing
+    created_at [alias="createdAt", description="Creation timestamp (RFC3339)"]: str
+    is_active [alias="isActive"]: bool = true
+    # just description
+    tags [description="Account tags"]: list[str] = []
+    # optional field with alias
+    nick [alias="nickname"]: Option[str] = None
+    # dict type with alias + description
+    prefs [alias="preferences", description="Account preferences"]: dict[str, str] = {"currency": "USD"}
+    # using as sugar
+    external_id as "externalId": str
+    # non-identifier alias
+    one [alias="1", description="Numeric key example"]: int
+    # whitespace in alias
+    two [alias="t w o", description="whitespace key example"]: int

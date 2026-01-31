@@ -29,6 +29,7 @@ pub mod decorators;
 pub mod derives;
 pub mod enum_helpers;
 pub mod errors;
+pub mod field_metadata;
 pub mod http;
 pub mod keywords;
 pub mod magic_methods;

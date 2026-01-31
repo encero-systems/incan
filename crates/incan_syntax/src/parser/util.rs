@@ -56,6 +56,26 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse an identifier, allowing any keyword token (RFC 021 limited contexts).
+    fn identifier_or_any_keyword(&mut self) -> Result<Ident, CompileError> {
+        match &self.peek().kind {
+            TokenKind::Ident(name) => {
+                let name = name.clone();
+                self.advance();
+                Ok(name)
+            }
+            TokenKind::Keyword(kw) => {
+                let name = incan_core::lang::keywords::as_str(*kw).to_string();
+                self.advance();
+                Ok(name)
+            }
+            _ => Err(CompileError::syntax(
+                format!("Expected identifier, found {:?}", self.peek().kind),
+                self.current_span(),
+            )),
+        }
+    }
+
     fn identifier_list(&mut self) -> Result<Vec<Ident>, CompileError> {
         let mut idents = vec![self.identifier()?];
         while self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {

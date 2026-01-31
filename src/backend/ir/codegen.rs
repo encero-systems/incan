@@ -41,6 +41,38 @@ use super::scanners::{
 };
 use super::{AstLowering, EmitError, EmitService, IrEmitter, LoweringErrors};
 
+fn collect_model_field_aliases(main: &Program, deps: &[(&str, &Program)]) -> HashMap<String, HashMap<String, String>> {
+    use crate::frontend::ast::Declaration;
+
+    let mut out: HashMap<String, HashMap<String, String>> = HashMap::new();
+
+    let mut visit = |p: &Program| {
+        for decl in &p.declarations {
+            let Declaration::Model(m) = &decl.node else {
+                continue;
+            };
+
+            let mut map: HashMap<String, String> = HashMap::new();
+            for f in &m.fields {
+                if let Some(alias) = &f.node.metadata.alias {
+                    map.insert(alias.clone(), f.node.name.clone());
+                }
+            }
+
+            if !map.is_empty() {
+                out.entry(m.name.clone()).or_default().extend(map);
+            }
+        }
+    };
+
+    visit(main);
+    for (_, dep) in deps {
+        visit(dep);
+    }
+
+    out
+}
+
 /// Error during Rust code generation.
 ///
 /// This error type wraps all possible errors that can occur during code generation,
@@ -380,17 +412,22 @@ impl<'a> IrCodegen<'a> {
         program: &Program,
         internal_module_roots: &HashSet<String>,
     ) -> Result<String, GenerationError> {
+        let deps: Vec<(&str, &Program)> = self
+            .dependency_modules
+            .iter()
+            .map(|(name, ast)| (*name, *ast))
+            .collect();
+
+        // RFC 021: Make alias-aware lowering work across module boundaries by seeding alias maps
+        // for models declared in dependency modules as well.
+        let global_aliases = collect_model_field_aliases(program, &deps);
+
         // Typecheck to obtain reusable type information for lowering.
         //
         // Strict policy: if typechecking fails, do NOT proceed to lowering/codegen.
         let type_info_opt = {
             use crate::frontend::typechecker::TypeChecker;
             let mut tc = TypeChecker::new();
-            let deps: Vec<(&str, &Program)> = self
-                .dependency_modules
-                .iter()
-                .map(|(name, ast)| (*name, *ast))
-                .collect();
             match tc.check_with_imports(program, &deps) {
                 Ok(()) => tc.type_info().clone(),
                 Err(errs) => return Err(GenerationError::TypeCheck(errs)),
@@ -399,6 +436,7 @@ impl<'a> IrCodegen<'a> {
 
         // Lower AST to IR using typechecker output when available
         let mut lowering = AstLowering::new_with_type_info(type_info_opt);
+        lowering.seed_struct_field_aliases(global_aliases.clone());
         let ir_program = lowering.lower_program(program)?;
 
         // Build unified function registry including imported module functions
@@ -407,6 +445,7 @@ impl<'a> IrCodegen<'a> {
             // For dependencies, use best-effort lowering without type info to
             // preserve prior behavior and avoid redundant typechecking.
             let mut dep_lowering = AstLowering::new();
+            dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let dep_ir = dep_lowering.lower_program(dep_ast)?;
             unified_registry.merge(&dep_ir.function_registry);
         }
@@ -548,11 +587,19 @@ impl<'a> IrCodegen<'a> {
         // Generate main file
         let main_code = self.try_generate_via_ir(program, &internal_roots)?;
 
+        let deps: Vec<(&str, &Program)> = self
+            .dependency_modules
+            .iter()
+            .map(|(name, ast)| (*name, *ast))
+            .collect();
+        let global_aliases = collect_model_field_aliases(program, &deps);
+
         // Generate module files
         let mut modules = HashMap::new();
         for (name, ast) in &self.dependency_modules {
             if module_names.contains(name) {
                 let mut lowering = AstLowering::new();
+                lowering.seed_struct_field_aliases(global_aliases.clone());
                 let ir = lowering.lower_program(ast)?;
                 let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
                 let module_code = if use_emit_service {
@@ -629,6 +676,13 @@ impl<'a> IrCodegen<'a> {
         // Generate main file
         let main_code = self.try_generate_via_ir(program, &internal_roots)?;
 
+        let deps: Vec<(&str, &Program)> = self
+            .dependency_modules
+            .iter()
+            .map(|(name, ast)| (*name, *ast))
+            .collect();
+        let global_aliases = collect_model_field_aliases(program, &deps);
+
         // Generate module files by path
         let mut modules = HashMap::new();
         for (name, ast) in &self.dependency_modules {
@@ -638,6 +692,7 @@ impl<'a> IrCodegen<'a> {
                 let path_name = path.join("_");
                 if path_name == *name {
                     let mut lowering = AstLowering::new();
+                    lowering.seed_struct_field_aliases(global_aliases.clone());
                     let ir = lowering.lower_program(ast)?;
                     let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
                     let module_code = if use_emit_service {
@@ -894,6 +949,132 @@ from db.schema import Database
         );
         assert!(store_code.contains("use crate::db::schema::Database;"));
         assert!(!store_code.contains("use db::schema::Database;"));
+    }
+
+    #[test]
+    fn test_multi_file_model_aliases_work_across_modules() {
+        // DB module defines a model with an alias. Store module should be able to use the alias
+        // in member access and constructor calls and still emit canonical Rust field names.
+        let db_module = parse_program(
+            r#"
+model Account:
+  type_ [alias="type"]: str
+"#,
+        );
+        let store_module = parse_program(
+            r#"
+from db.schema import Account
+
+def get_type(a: Account) -> str:
+  return a.type
+
+def make() -> Account:
+  return Account(type="x")
+"#,
+        );
+        let main_module = main_module_program();
+
+        let mut codegen = IrCodegen::new();
+        codegen.add_module("db_schema", &db_module);
+        codegen.add_module("store_json_store", &store_module);
+
+        let db_path = vec!["db".to_string(), "schema".to_string()];
+        let store_path = vec!["store".to_string(), "json_store".to_string()];
+        let (_main_code, rust_modules) = codegen
+            .try_generate_multi_file_nested(&main_module, &[db_path.clone(), store_path.clone()])
+            .unwrap();
+        let store_code = rust_modules.get(&store_path).unwrap().to_string();
+
+        assert!(
+            store_code.contains(".type_"),
+            "expected canonical field access; got:\n{store_code}"
+        );
+        assert!(
+            store_code.contains("Account { type_:"),
+            "expected canonical struct field init; got:\n{store_code}"
+        );
+        assert!(
+            !store_code.contains(".type;"),
+            "should not emit Rust keyword field access"
+        );
+        assert!(
+            !store_code.contains("Account { type:"),
+            "should not emit Rust keyword field init"
+        );
+    }
+
+    #[test]
+    fn test_multi_file_model_aliases_work_with_import_alias() {
+        let db_module = parse_program(
+            r#"
+model Account:
+  type_ [alias="type"]: str
+"#,
+        );
+        let store_module = parse_program(
+            r#"
+from db.schema import Account as A
+
+def get_type(a: A) -> str:
+  return a.type
+
+def make() -> A:
+  return A(type="x")
+"#,
+        );
+        let main_module = main_module_program();
+
+        let mut codegen = IrCodegen::new();
+        codegen.add_module("db_schema", &db_module);
+        codegen.add_module("store_json_store", &store_module);
+
+        let db_path = vec!["db".to_string(), "schema".to_string()];
+        let store_path = vec!["store".to_string(), "json_store".to_string()];
+        let (_main_code, rust_modules) = codegen
+            .try_generate_multi_file_nested(&main_module, &[db_path.clone(), store_path.clone()])
+            .unwrap();
+        let store_code = rust_modules.get(&store_path).unwrap().to_string();
+
+        assert!(
+            store_code.contains(".type_"),
+            "expected canonical field access; got:\n{store_code}"
+        );
+        assert!(
+            store_code.contains("A { type_:"),
+            "expected canonical struct field init; got:\n{store_code}"
+        );
+    }
+
+    #[test]
+    fn test_multi_file_self_alias_resolution_in_dependency_module() {
+        let db_module = parse_program(
+            r#"
+model Account:
+  type_ [alias="type"]: str
+
+  def get_type(self) -> str:
+    return self.type
+"#,
+        );
+        let main_module = main_module_program();
+
+        let mut codegen = IrCodegen::new();
+        codegen.add_module("db_schema", &db_module);
+
+        let db_path = vec!["db".to_string(), "schema".to_string()];
+        let (_main_code, rust_modules) = codegen
+            .try_generate_multi_file_nested(&main_module, std::slice::from_ref(&db_path))
+            .unwrap();
+        let db_code = rust_modules.get(&db_path).unwrap().to_string();
+
+        assert!(
+            db_code.contains("self.type_"),
+            "expected canonical field access in dependency module; got:\n{db_code}"
+        );
+        assert!(
+            !db_code.contains("self.type;"),
+            "should not emit Rust keyword field access"
+        );
     }
 
     #[test]

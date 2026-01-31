@@ -72,7 +72,19 @@ impl TypeChecker {
                         ConstructorId::Ok => {
                             if let ResolvedType::Generic(type_name, args) = expected_ty {
                                 if type_name == collections::as_str(CollectionTypeId::Result) && !args.is_empty() {
-                                    if let Some(pat) = sub_patterns.first() {
+                                    let mut positional = None;
+                                    for arg in sub_patterns {
+                                        match arg {
+                                            PatternArg::Positional(pat) => {
+                                                positional = Some(pat);
+                                                break;
+                                            }
+                                            PatternArg::Named(_, pat) => {
+                                                self.errors.push(errors::named_pattern_not_supported(name, pat.span));
+                                            }
+                                        }
+                                    }
+                                    if let Some(pat) = positional {
                                         self.check_pattern(pat, &args[0]);
                                     }
                                     return;
@@ -82,7 +94,19 @@ impl TypeChecker {
                         ConstructorId::Err => {
                             if let ResolvedType::Generic(type_name, args) = expected_ty {
                                 if type_name == collections::as_str(CollectionTypeId::Result) && args.len() >= 2 {
-                                    if let Some(pat) = sub_patterns.first() {
+                                    let mut positional = None;
+                                    for arg in sub_patterns {
+                                        match arg {
+                                            PatternArg::Positional(pat) => {
+                                                positional = Some(pat);
+                                                break;
+                                            }
+                                            PatternArg::Named(_, pat) => {
+                                                self.errors.push(errors::named_pattern_not_supported(name, pat.span));
+                                            }
+                                        }
+                                    }
+                                    if let Some(pat) = positional {
                                         self.check_pattern(pat, &args[1]);
                                     }
                                     return;
@@ -92,7 +116,19 @@ impl TypeChecker {
                         ConstructorId::Some => {
                             if let ResolvedType::Generic(type_name, args) = expected_ty {
                                 if type_name == collections::as_str(CollectionTypeId::Option) && !args.is_empty() {
-                                    if let Some(pat) = sub_patterns.first() {
+                                    let mut positional = None;
+                                    for arg in sub_patterns {
+                                        match arg {
+                                            PatternArg::Positional(pat) => {
+                                                positional = Some(pat);
+                                                break;
+                                            }
+                                            PatternArg::Named(_, pat) => {
+                                                self.errors.push(errors::named_pattern_not_supported(name, pat.span));
+                                            }
+                                        }
+                                    }
+                                    if let Some(pat) = positional {
                                         self.check_pattern(pat, &args[0]);
                                     }
                                     return;
@@ -105,11 +141,56 @@ impl TypeChecker {
                     }
                 }
 
-                let variant_name = if name.contains("::") {
+                let ctor_name = if name.contains("::") {
                     name.split("::").last().unwrap_or(name)
                 } else {
                     name.as_str()
                 };
+
+                let model_or_class_fields = match expected_ty {
+                    ResolvedType::Named(type_name) if ctor_name == type_name => self
+                        .lookup_type_info(type_name)
+                        .and_then(|type_info| match type_info {
+                            TypeInfo::Model(model_info) => Some(model_info.fields.clone()),
+                            TypeInfo::Class(class_info) => Some(class_info.fields.clone()),
+                            _ => None,
+                        })
+                        .map(|fields| (type_name, fields)),
+                    _ => None,
+                };
+
+                if let Some((type_name, fields)) = model_or_class_fields {
+                    let mut provided = HashSet::new();
+                    for arg in sub_patterns {
+                        match arg {
+                            PatternArg::Positional(pat) => {
+                                self.errors
+                                    .push(errors::positional_pattern_not_supported(type_name, pat.span));
+                            }
+                            PatternArg::Named(field_name, pat) => {
+                                let Some((canonical_name, info)) =
+                                    self.resolve_field_info(&fields, field_name, true, true)
+                                else {
+                                    self.errors.push(errors::missing_field(type_name, field_name, pat.span));
+                                    continue;
+                                };
+
+                                if !provided.insert(canonical_name.clone()) {
+                                    self.errors.push(errors::duplicate_pattern_field(
+                                        type_name,
+                                        canonical_name.as_str(),
+                                        pat.span,
+                                    ));
+                                    continue;
+                                }
+                                self.check_pattern(pat, &info.ty);
+                            }
+                        }
+                    }
+                    return;
+                }
+
+                let variant_name = ctor_name;
 
                 let field_types: Option<Vec<ResolvedType>> = self
                     .symbols
@@ -124,8 +205,19 @@ impl TypeChecker {
                     });
 
                 if let Some(fields) = field_types {
-                    for (pat, field_ty) in sub_patterns.iter().zip(fields.iter()) {
-                        self.check_pattern(pat, field_ty);
+                    let mut idx = 0usize;
+                    for arg in sub_patterns {
+                        match arg {
+                            PatternArg::Positional(pat) => {
+                                if let Some(field_ty) = fields.get(idx) {
+                                    self.check_pattern(pat, field_ty);
+                                }
+                                idx += 1;
+                            }
+                            PatternArg::Named(_, pat) => {
+                                self.errors.push(errors::named_pattern_not_supported(name, pat.span));
+                            }
+                        }
                     }
                 }
             }

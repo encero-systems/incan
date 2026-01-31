@@ -11,6 +11,7 @@
 //!   comparisons, membership, concat, shared error messages), and canonical language vocabulary.
 
 pub mod errors;
+pub mod indexing;
 pub mod lang;
 pub mod strings;
 

@@ -116,6 +116,48 @@ impl IrType {
         matches!(self, IrType::Ref(_) | IrType::RefMut(_))
     }
 
+    /// Get the Incan-style type name (for reflection/display to users).
+    ///
+    /// RFC 021: This is used for `FieldInfo.type_name` to show the Incan type, not the Rust representation.
+    pub fn incan_name(&self) -> String {
+        match self {
+            IrType::Unit => incan_core::lang::surface::constructors::as_str(
+                incan_core::lang::surface::constructors::ConstructorId::None,
+            )
+            .to_string(),
+            IrType::Bool => "bool".to_string(),
+            IrType::Int => "int".to_string(),
+            IrType::Float => "float".to_string(),
+            IrType::String => "str".to_string(),
+            IrType::StaticStr | IrType::StrRef | IrType::FrozenStr => "str".to_string(),
+            IrType::StaticBytes | IrType::FrozenBytes => "bytes".to_string(),
+            IrType::List(elem) => format!("list[{}]", elem.incan_name()),
+            IrType::Dict(k, v) => format!("dict[{}, {}]", k.incan_name(), v.incan_name()),
+            IrType::Set(elem) => format!("set[{}]", elem.incan_name()),
+            IrType::Tuple(elems) => {
+                let inner: Vec<_> = elems.iter().map(|e| e.incan_name()).collect();
+                format!("({})", inner.join(", "))
+            }
+            IrType::Option(inner) => format!("Option[{}]", inner.incan_name()),
+            IrType::Result(ok, err) => format!("Result[{}, {}]", ok.incan_name(), err.incan_name()),
+            IrType::Struct(name) => name.clone(),
+            IrType::Enum(name) => name.clone(),
+            IrType::Trait(name) => name.clone(),
+            IrType::NamedGeneric(name, args) => {
+                let inner: Vec<_> = args.iter().map(|a| a.incan_name()).collect();
+                format!("{}[{}]", name, inner.join(", "))
+            }
+            IrType::Function { params, ret } => {
+                let params: Vec<_> = params.iter().map(|p| p.incan_name()).collect();
+                format!("({}) -> {}", params.join(", "), ret.incan_name())
+            }
+            IrType::Generic(name) => name.clone(),
+            IrType::SelfType => "Self".to_string(),
+            IrType::Ref(inner) | IrType::RefMut(inner) => inner.incan_name(),
+            IrType::Unknown => "_".to_string(),
+        }
+    }
+
     /// Get the Rust type name
     pub fn rust_name(&self) -> String {
         match self {

@@ -46,6 +46,224 @@ model User:
     }
 
     #[test]
+    fn test_parse_class_docstring() {
+        let source = r#"
+class FieldInfo:
+  """
+  Compiler-provided field metadata returned by __fields__().
+  Instances are immutable and read-only.
+  """
+  name: str
+"#;
+        let program = parse_str(source).unwrap();
+        assert_eq!(program.declarations.len(), 1);
+        match &program.declarations[0].node {
+            Declaration::Class(c) => {
+                assert_eq!(c.name, "FieldInfo");
+                assert_eq!(c.fields.len(), 1);
+                assert_eq!(c.fields[0].node.name, "name");
+            }
+            _ => panic!("Expected class"),
+        }
+    }
+
+    #[test]
+    fn test_parse_model_field_metadata() {
+        let source = r#"
+model Account:
+  type_ [alias="type", description="Account tier"]: str
+  balance [description="Balance in cents"]: int
+"#;
+        let program = parse_str(source).unwrap();
+        let model = match &program.declarations[0].node {
+            Declaration::Model(m) => m,
+            _ => panic!("Expected model"),
+        };
+        let type_field = &model.fields[0].node;
+        assert_eq!(type_field.metadata.alias.as_deref(), Some("type"));
+        assert_eq!(
+            type_field.metadata.description.as_deref(),
+            Some("Account tier")
+        );
+        let balance_field = &model.fields[1].node;
+        assert_eq!(balance_field.metadata.alias, None);
+        assert_eq!(
+            balance_field.metadata.description.as_deref(),
+            Some("Balance in cents")
+        );
+    }
+
+    #[test]
+    fn test_parse_model_field_alias_sugar() {
+        let source = r#"
+model Account:
+  type_ as "type": str
+"#;
+        let program = parse_str(source).unwrap();
+        let model = match &program.declarations[0].node {
+            Declaration::Model(m) => m,
+            _ => panic!("Expected model"),
+        };
+        let field = &model.fields[0].node;
+        assert_eq!(field.metadata.alias.as_deref(), Some("type"));
+        assert_eq!(field.metadata.description, None);
+    }
+
+    #[test]
+    fn test_parse_model_field_alias_and_as_error() {
+        let source = r#"
+model Account:
+  type_ [alias="type"] as "type": str
+"#;
+        let err = parse_str(source).expect_err("Expected alias + as sugar to be rejected");
+        assert!(
+            err[0]
+                .message
+                .contains("Cannot combine 'alias=\"...\"' with 'as \"...\"'"),
+            "Unexpected error: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
+    fn test_parse_keyword_named_args_and_member_access() {
+        let source = r#"
+def f(a: Foo) -> int:
+  let x = Foo(type=1, class=2)
+  return a.type
+"#;
+        let program = parse_str(source).unwrap();
+        let func = match &program.declarations[0].node {
+            Declaration::Function(func) => func,
+            _ => panic!("Expected function"),
+        };
+        let call_expr = match &func.body[0].node {
+            Statement::Assignment(stmt) => match &stmt.value.node {
+                Expr::Call(_, args) => args,
+                _ => panic!("Expected call expression"),
+            },
+            _ => panic!("Expected assignment statement"),
+        };
+        assert!(matches!(call_expr[0], CallArg::Named(ref name, _) if name == "type"));
+        assert!(matches!(call_expr[1], CallArg::Named(ref name, _) if name == "class"));
+        let return_expr = match &func.body[1].node {
+            Statement::Return(Some(expr)) => expr,
+            _ => panic!("Expected return"),
+        };
+        assert!(matches!(&return_expr.node, Expr::Field(_, name) if name == "type"));
+    }
+
+    #[test]
+    fn test_parse_pattern_named_key_keyword() {
+        let source = r#"
+def f(a: Foo) -> int:
+  match a:
+    Foo(type=x) => return x
+"#;
+        let program = parse_str(source).unwrap();
+        let func = match &program.declarations[0].node {
+            Declaration::Function(func) => func,
+            _ => panic!("Expected function"),
+        };
+        let match_expr = match &func.body[0].node {
+            Statement::Expr(expr) => expr,
+            _ => panic!("Expected match expression statement"),
+        };
+        let arms = match &match_expr.node {
+            Expr::Match(_, arms) => arms,
+            _ => panic!("Expected match expression"),
+        };
+        let arm = &arms[0].node;
+        match &arm.pattern.node {
+            Pattern::Constructor(name, args) => {
+                assert_eq!(name, "Foo");
+                assert!(matches!(
+                    &args[0],
+                    PatternArg::Named(field, pat)
+                        if field == "type" && matches!(&pat.node, Pattern::Binding(b) if b == "x")
+                ));
+            }
+            _ => panic!("Expected constructor pattern"),
+        }
+    }
+
+    #[test]
+    fn test_parse_non_identifier_alias() {
+        let source = r#"
+model Weird:
+  one_ [alias="1"]: int
+"#;
+        let program = parse_str(source).unwrap();
+        let model = match &program.declarations[0].node {
+            Declaration::Model(m) => m,
+            _ => panic!("Expected model"),
+        };
+        let field = &model.fields[0].node;
+        assert_eq!(field.metadata.alias.as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn test_parse_duplicate_metadata_key_error() {
+        // RFC 021: Duplicate metadata keys are compile-time errors
+        let source = r#"
+model Account:
+  type_ [alias="a", alias="b"]: str
+"#;
+        let err = parse_str(source).expect_err("Expected duplicate alias key error");
+        assert!(
+            err[0].message.contains("Duplicate 'alias'"),
+            "Unexpected error: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
+    fn test_parse_duplicate_description_key_error() {
+        // RFC 021: Duplicate metadata keys are compile-time errors
+        let source = r#"
+model Account:
+  type_ [description="a", description="b"]: str
+"#;
+        let err = parse_str(source).expect_err("Expected duplicate description key error");
+        assert!(
+            err[0].message.contains("Duplicate 'description'"),
+            "Unexpected error: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
+    fn test_parse_unknown_metadata_key_error() {
+        // RFC 021: Any other keys are compile-time errors
+        let source = r#"
+model Account:
+  type_ [unknown="value"]: str
+"#;
+        let err = parse_str(source).expect_err("Expected unknown metadata key error");
+        assert!(
+            err[0].message.contains("Unknown field metadata key"),
+            "Unexpected error: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
+    fn test_parse_non_string_metadata_value_error() {
+        // RFC 021: Values must be string literals
+        let source = r#"
+model Account:
+  type_ [alias=123]: str
+"#;
+        let err = parse_str(source).expect_err("Expected non-string metadata value error");
+        // Parser should fail because it expects a string literal
+        assert!(
+            err[0].message.contains("string") || err[0].message.contains("Expected"),
+            "Unexpected error: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
     fn test_parse_model_with_traits() {
         let source = r#"
 trait Describable:

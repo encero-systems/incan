@@ -242,6 +242,18 @@ impl<'a, T: 'static> IntoIterator for &'a FrozenList<T> {
     }
 }
 
+/// Iterate over a frozen list by value.
+///
+/// Yields references because the backing storage is `'static`.
+impl<T: 'static> IntoIterator for FrozenList<T> {
+    type Item = &'static T;
+    type IntoIter = core::slice::Iter<'static, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.data.iter()
+    }
+}
+
 /// Represent an immutable set backed by a baked `'static` slice.
 ///
 /// ## Notes

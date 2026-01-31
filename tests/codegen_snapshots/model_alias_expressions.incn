@@ -1,0 +1,32 @@
+"""RFC 021: Test alias-aware expression lowering end-to-end"""
+
+@derive(Serialize, Deserialize)
+model Account:
+    type_ [alias="type", description="Account type"]: str
+    class_ [alias="class"]: str
+    name: str
+
+# Test 1: Constructor using alias names
+def create_account() -> Account:
+    return Account(type="premium", class="gold", name="Test")
+
+# Test 2: Field access using alias names
+def get_type(a: Account) -> str:
+    return a.type
+
+def get_class(a: Account) -> str:
+    return a.class
+
+# Test 3: Pattern matching using alias names
+def describe_account(a: Account) -> str:
+    match a:
+        Account(type="premium") => return "Premium account"
+        Account(type="basic") => return "Basic account"
+        _ => return "Unknown"
+
+# Test 4: Mix of alias and canonical names
+def mixed_access(a: Account) -> str:
+    # Both should work
+    let t = a.type   # alias
+    let n = a.name   # canonical (no alias)
+    return f"{t}: {n}"

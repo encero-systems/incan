@@ -1,4 +1,4 @@
-//! Emit Rust source code from typed IR.
+//! IR (Intermediate Representation) → Rust code emission.
 //!
 //! This module defines [`IrEmitter`] and wires together the focused submodules that implement IR → Rust emission.
 //! The heavy lifting lives in those submodules; `mod.rs` is intentionally thin.
@@ -70,6 +70,10 @@ pub struct IrEmitter<'a> {
     struct_field_types: std::collections::HashMap<(String, String), IrType>,
     /// Struct field name order (as declared): StructName -> [FieldName...]
     struct_field_names: std::collections::HashMap<String, Vec<String>>,
+    /// Struct field alias lookup: (StructName, FieldName) -> alias
+    struct_field_aliases: std::collections::HashMap<(String, String), Option<String>>,
+    /// Struct field description lookup: (StructName, FieldName) -> description
+    struct_field_descriptions: std::collections::HashMap<(String, String), Option<String>>,
     /// Struct field default expressions: (StructName, FieldName) -> default expr
     struct_field_defaults: std::collections::HashMap<(String, String), super::IrExpr>,
     /// Whether we're currently emitting a return expression (allows moves instead of clones)
@@ -103,6 +107,8 @@ impl<'a> IrEmitter<'a> {
             enum_variant_fields: std::collections::HashMap::new(),
             struct_field_types: std::collections::HashMap::new(),
             struct_field_names: std::collections::HashMap::new(),
+            struct_field_aliases: std::collections::HashMap::new(),
+            struct_field_descriptions: std::collections::HashMap::new(),
             struct_field_defaults: std::collections::HashMap::new(),
             in_return_context: RefCell::new(false),
             const_string_literals: std::collections::HashMap::new(),
@@ -182,8 +188,8 @@ impl<'a> IrEmitter<'a> {
 
     /// Set collected routes for web emission.
     ///
-    /// This should be called by codegen before emitting the program so the router
-    /// wrapper and `App::run` wiring are generated when web routes exist.
+    /// This should be called by codegen before emitting the program so the router wrapper and `App::run` wiring are
+    /// generated when web routes exist.
     pub fn set_routes(&mut self, routes: Vec<RouteSpec>) {
         self.routes = routes;
     }

@@ -31,10 +31,10 @@ This crate provides those macros.
 
 ### `#[derive(FieldInfo)]`
 
-Implements the `incan_stdlib::FieldInfo` trait, enabling compile-time reflection:
+Implements the `incan_stdlib::HasFieldInfo` trait, enabling compile-time reflection:
 
 ```rust
-use incan_stdlib::FieldInfo;
+use incan_stdlib::HasFieldInfo;
 use incan_derive::FieldInfo;
 
 #[derive(FieldInfo)]
@@ -52,7 +52,7 @@ assert_eq!(Person::field_types(), vec!["String", "i64"]);
 
 ### `#[derive(IncanClass)]`
 
-Generates Python-style dunder methods for reflection:
+Generates Python-style dunder methods for class name reflection:
 
 ```rust
 #[derive(IncanClass)]
@@ -63,7 +63,6 @@ struct Config {
 
 let config = Config { host: "localhost".into(), port: 8080 };
 assert_eq!(config.__class__(), "Config");
-assert_eq!(config.__fields__(), vec!["host", "port"]);
 ```
 
 **Incan equivalent**: Automatic for all classes with methods

@@ -16,6 +16,7 @@
 use crate::ast::*;
 use crate::diagnostics::CompileError;
 use crate::lexer::{FStringPart as LexFStringPart, Token, TokenKind};
+use incan_core::lang::field_metadata::{self, FieldMetadataKey};
 use incan_core::lang::keywords::KeywordId;
 use incan_core::lang::operators::OperatorId;
 use incan_core::lang::punctuation::PunctuationId;

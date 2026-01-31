@@ -6,9 +6,70 @@ use crate::frontend::symbols::*;
 
 use super::TypeChecker;
 use incan_core::lang::derives::{self, DeriveId};
-use std::collections::HashMap;
+use incan_core::lang::magic_methods;
+use std::collections::{HashMap, HashSet};
 
 impl TypeChecker {
+    fn collect_trait_method_names(&self, traits: &[Spanned<Ident>]) -> HashSet<String> {
+        let mut names = HashSet::new();
+        for trait_ref in traits {
+            if let Some(id) = self.symbols.lookup(trait_ref.node.as_str()) {
+                if let Some(sym) = self.symbols.get(id) {
+                    if let SymbolKind::Trait(trait_info) = &sym.kind {
+                        names.extend(trait_info.methods.keys().cloned());
+                    }
+                }
+            }
+        }
+        names
+    }
+
+    fn validate_field_metadata(
+        &mut self,
+        type_name: &str,
+        fields: &[Spanned<FieldDecl>],
+        method_names: &HashSet<String>,
+    ) {
+        let canonical_names: HashSet<String> = fields.iter().map(|f| f.node.name.clone()).collect();
+        let mut builtin_member_names: HashSet<&'static str> = HashSet::new();
+        for info in magic_methods::MAGIC_METHODS {
+            builtin_member_names.insert(info.canonical);
+            builtin_member_names.extend(info.aliases);
+        }
+        let mut seen_aliases: HashMap<String, Span> = HashMap::new();
+
+        for field in fields {
+            let Some(alias) = field.node.metadata.alias.as_ref() else {
+                continue;
+            };
+
+            if alias.trim().is_empty() {
+                self.errors.push(errors::empty_alias(field.span));
+                continue;
+            }
+
+            if canonical_names.contains(alias) {
+                self.errors
+                    .push(errors::alias_collides_with_canonical(type_name, alias, field.span));
+            }
+
+            if method_names.contains(alias) {
+                self.errors
+                    .push(errors::alias_collides_with_method(type_name, alias, field.span));
+            }
+            if builtin_member_names.contains(alias.as_str()) {
+                self.errors
+                    .push(errors::alias_collides_with_builtin(type_name, alias, field.span));
+            }
+
+            if let Some(prev_span) = seen_aliases.get(alias) {
+                self.errors
+                    .push(errors::duplicate_alias(type_name, alias, *prev_span, field.span));
+            } else {
+                seen_aliases.insert(alias.clone(), field.span);
+            }
+        }
+    }
     fn method_sig_string_named(&self, method_name: &str, m: &MethodInfo) -> String {
         let recv = match m.receiver {
             Some(Receiver::Mutable) => "mut self",
@@ -111,6 +172,13 @@ impl TypeChecker {
             }
         }
 
+        let mut method_names = HashSet::new();
+        if let Some(TypeInfo::Model(info)) = self.lookup_type_info(&model.name) {
+            method_names.extend(info.methods.keys().cloned());
+        }
+        method_names.extend(self.collect_trait_method_names(&model.traits));
+        self.validate_field_metadata(&model.name, &model.fields, &method_names);
+
         // Define fields in scope
         for field in &model.fields {
             let ty = resolve_type(&field.node.ty.node, &self.symbols);
@@ -119,6 +187,8 @@ impl TypeChecker {
                 kind: SymbolKind::Field(FieldInfo {
                     ty,
                     has_default: field.node.default.is_some(),
+                    alias: field.node.metadata.alias.clone(),
+                    description: field.node.metadata.description.clone(),
                 }),
                 span: field.span,
                 scope: 0,
@@ -308,6 +378,25 @@ impl TypeChecker {
             }
         }
 
+        // RFC 021: Field aliases are NOT supported on class declarations.
+        // Reject any field metadata on class fields.
+        for field in &class.fields {
+            if field.node.metadata.alias.is_some() {
+                self.errors.push(errors::alias_not_supported_on_class(
+                    &class.name,
+                    &field.node.name,
+                    field.span,
+                ));
+            }
+            if field.node.metadata.description.is_some() {
+                self.errors.push(errors::description_not_supported_on_class(
+                    &class.name,
+                    &field.node.name,
+                    field.span,
+                ));
+            }
+        }
+
         // Define fields
         for field in &class.fields {
             let ty = resolve_type(&field.node.ty.node, &self.symbols);
@@ -316,6 +405,8 @@ impl TypeChecker {
                 kind: SymbolKind::Field(FieldInfo {
                     ty,
                     has_default: field.node.default.is_some(),
+                    alias: field.node.metadata.alias.clone(),
+                    description: field.node.metadata.description.clone(),
                 }),
                 span: field.span,
                 scope: 0,

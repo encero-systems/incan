@@ -23,6 +23,10 @@ fn compile_source(source: &str) -> Result<(), Vec<String>> {
     Ok(())
 }
 
+fn is_incan_fixture(path: &Path) -> bool {
+    matches!(path.extension().and_then(|e| e.to_str()), Some("incn") | Some("incan"))
+}
+
 /// Make a temporary test directory to be able to run the CLI tests.
 fn make_temp_test_dir() -> std::path::PathBuf {
     let mut dir = std::env::temp_dir();
@@ -58,10 +62,12 @@ fn test_valid_fixtures() {
         return; // Skip if fixtures not present
     }
 
+    let mut matched = 0usize;
     for entry in fs::read_dir(fixtures_dir).unwrap() {
         let entry = entry.unwrap();
         let path = entry.path();
-        if path.extension().map(|e| e == "incan").unwrap_or(false) {
+        if is_incan_fixture(&path) {
+            matched += 1;
             let result = compile_file(&path);
             assert!(
                 result.is_ok(),
@@ -71,6 +77,7 @@ fn test_valid_fixtures() {
             );
         }
     }
+    assert!(matched > 0, "No .incn fixtures found in {}", fixtures_dir.display());
 }
 
 /// Test that invalid fixtures produce errors
@@ -81,10 +88,12 @@ fn test_invalid_fixtures() {
         return; // Skip if fixtures not present
     }
 
+    let mut matched = 0usize;
     for entry in fs::read_dir(fixtures_dir).unwrap() {
         let entry = entry.unwrap();
         let path = entry.path();
-        if path.extension().map(|e| e == "incan").unwrap_or(false) {
+        if is_incan_fixture(&path) {
+            matched += 1;
             let result = compile_file(&path);
             assert!(
                 result.is_err(),
@@ -93,6 +102,7 @@ fn test_invalid_fixtures() {
             );
         }
     }
+    assert!(matched > 0, "No .incn fixtures found in {}", fixtures_dir.display());
 }
 
 #[test]
@@ -393,6 +403,53 @@ mod codegen_tests {
         assert!(
             stdout.contains("[Ada] hello"),
             "expected repro output; got:\n{}",
+            stdout
+        );
+    }
+
+    /// RFC 021: Runtime verification that __fields__() returns correct FieldInfo values
+    #[test]
+    fn test_run_field_info_reflection() {
+        let output = Command::new("target/debug/incan")
+            .args(["run", "tests/fixtures/field_info_reflection.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+            .expect("failed to run incan");
+
+        assert!(
+            output.status.success(),
+            "incan run field_info_reflection failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Verify __class_name__
+        assert!(
+            stdout.contains("Account"),
+            "expected __class_name__ to return 'Account'; got:\n{}",
+            stdout
+        );
+
+        // Verify field info for type_ (has alias)
+        assert!(
+            stdout.contains("field:type_|wire:type|type:str|default:false"),
+            "expected type_ field info with alias='type'; got:\n{}",
+            stdout
+        );
+
+        // Verify field info for balance (has default)
+        assert!(
+            stdout.contains("field:balance|wire:balance|type:int|default:true"),
+            "expected balance field info with default=true; got:\n{}",
+            stdout
+        );
+
+        // Verify field info for name (no alias, no default)
+        assert!(
+            stdout.contains("field:name|wire:name|type:str|default:false"),
+            "expected name field info; got:\n{}",
             stdout
         );
     }

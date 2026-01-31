@@ -46,6 +46,9 @@ pub const RFC_008: RfcId = "RFC 008";
 /// RFC 009 — sized integers & builtin type registry (builtin type methods; frozen containers).
 pub const RFC_009: RfcId = "RFC 009";
 
+/// RFC 021 — model field metadata and aliases.
+pub const RFC_021: RfcId = "RFC 021";
+
 /// Namespace-style access to RFC ids.
 ///
 /// This exists purely for ergonomics at call sites so individual registries don’t need to import
@@ -69,6 +72,8 @@ impl RFC {
     pub const _008: RfcId = RFC_008;
     /// RFC 009 — sized integers & builtin type registry (builtin type methods; frozen containers).
     pub const _009: RfcId = RFC_009;
+    /// RFC 021 — model field metadata and aliases.
+    pub const _021: RfcId = RFC_021;
 }
 
 /// Identify the language/compiler version a vocabulary item is available since.
