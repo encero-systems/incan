@@ -238,6 +238,23 @@ For practical recipes (state machines, commands, error types, expression trees),
 
 ---
 
+## Derives and docstrings
+
+Enums support `@derive(...)` decorators and docstrings:
+
+```incan
+@derive(Serialize, Deserialize)
+enum Status:
+    """Represents the current state of a task."""
+    Pending
+    Active
+    Completed
+```
+
+For serialization details, see [Derives: Serialization](../reference/derives/serialization.md).
+
+---
+
 ## Enums vs models vs classes
 
 | Use Case                               | Enum | Model | Class |
@@ -246,7 +263,7 @@ For practical recipes (state machines, commands, error types, expression trees),
 | Data that can be one of several shapes | ✓    |       |       |
 | Exhaustive handling required           | ✓    |       |       |
 | Simple data container (DTO, config)    |      | ✓     |       |
-| Serialization focus (`@derive`)        |      | ✓     |       |
+| Serialization (`@derive`)              | ✓    | ✓     |       |
 | Validation and defaults                |      | ✓     |       |
 | Inheritance/polymorphism needed        |      |       | ✓     |
 | Mutable state with methods             |      |       | ✓     |

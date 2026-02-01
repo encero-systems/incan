@@ -1,0 +1,28 @@
+"""Web route wrapper generation coverage."""
+
+from web import route, Json, Query, Response, POST
+
+@derive(Deserialize)
+model SearchParams:
+    q: str
+    limit: int = 10
+
+@derive(Deserialize)
+model CreateUser:
+    name: str
+
+@route("/posts/{year}/{month}")
+async def get_posts(year: int, month: int) -> Response:
+    return Response.ok()
+
+@route("/search")
+async def search(params: Query[SearchParams]) -> Response:
+    return Response.ok()
+
+@route("/users/{user_id}/posts/{post_id}")
+async def get_user_posts(user_id: int, post_id: int, params: Query[SearchParams]) -> Response:
+    return Response.ok()
+
+@route("/users", methods=[POST])
+async def create_user(body: Json[CreateUser]) -> Response:
+    return Response.created()

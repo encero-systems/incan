@@ -13,6 +13,7 @@ use crate::frontend::typechecker::helpers::{
 use incan_core::lang::conventions;
 use incan_core::lang::magic_methods;
 use incan_core::lang::surface::types as surface_types;
+use incan_core::lang::surface::types::SurfaceTypeId;
 use incan_core::lang::surface::{
     dict_methods, float_methods, frozen_bytes_methods, frozen_dict_methods, frozen_list_methods, frozen_set_methods,
     list_methods, set_methods,
@@ -76,6 +77,76 @@ impl TypeChecker {
                     ));
                 }
             }
+        }
+    }
+
+    /// Check if a type is copyable.
+    fn is_copy_type(&self, ty: &ResolvedType) -> bool {
+        matches!(
+            ty,
+            ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool | ResolvedType::Unit | ResolvedType::Ref(_)
+        )
+    }
+
+    /// Check if a type is cloneable.
+    fn is_clone_type(&self, ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::Bytes
+            | ResolvedType::FrozenStr
+            | ResolvedType::FrozenBytes
+            | ResolvedType::Unit => true,
+            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => self.is_clone_type(inner),
+            ResolvedType::FrozenDict(k, v) => self.is_clone_type(k) && self.is_clone_type(v),
+            ResolvedType::Tuple(items) => items.iter().all(|t| self.is_clone_type(t)),
+            ResolvedType::Generic(name, args) => {
+                if let Some(id) = surface_types::from_str(name.as_str()) {
+                    return match id {
+                        SurfaceTypeId::Vec => args.first().is_none_or(|t| self.is_clone_type(t)),
+                        SurfaceTypeId::HashMap => {
+                            let key_ok = args.first().is_none_or(|t| self.is_clone_type(t));
+                            let val_ok = args.get(1).is_none_or(|t| self.is_clone_type(t));
+                            key_ok && val_ok
+                        }
+                        _ => false,
+                    };
+                }
+                match collection_type_id(name.as_str()) {
+                    Some(CollectionTypeId::List) | Some(CollectionTypeId::Set) | Some(CollectionTypeId::Option) => {
+                        args.first().is_none_or(|t| self.is_clone_type(t))
+                    }
+                    Some(CollectionTypeId::Dict) => {
+                        let key_ok = args.first().is_none_or(|t| self.is_clone_type(t));
+                        let val_ok = args.get(1).is_none_or(|t| self.is_clone_type(t));
+                        key_ok && val_ok
+                    }
+                    Some(CollectionTypeId::Result) => {
+                        let ok_ok = args.first().is_none_or(|t| self.is_clone_type(t));
+                        let err_ok = args.get(1).is_none_or(|t| self.is_clone_type(t));
+                        ok_ok && err_ok
+                    }
+                    _ => args.iter().all(|t| self.is_clone_type(t)),
+                }
+            }
+            ResolvedType::Named(name) => {
+                if let Some(id) = surface_types::from_str(name.as_str()) {
+                    return matches!(id, SurfaceTypeId::Html);
+                }
+                matches!(
+                    self.lookup_type_info(name),
+                    Some(TypeInfo::Builtin)
+                        | Some(TypeInfo::Class(_))
+                        | Some(TypeInfo::Model(_))
+                        | Some(TypeInfo::Newtype(_))
+                        | Some(TypeInfo::Enum(_))
+                )
+            }
+            ResolvedType::Ref(_) | ResolvedType::Function(_, _) | ResolvedType::SelfType => true,
+            ResolvedType::TypeVar(_) => false,
+            ResolvedType::Unknown => true,
         }
     }
 
@@ -272,67 +343,83 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
 
-        match &base_ty {
-            // Trait default methods typecheck against `Self`, but field access must be declared via
-            // `@requires(...)` on the trait.
-            ResolvedType::SelfType => self
-                .trait_required_field_type(field, span)
-                .unwrap_or(ResolvedType::Unknown),
-            ResolvedType::Tuple(elements) => {
-                if let Ok(idx) = field.parse::<usize>() {
-                    if idx < elements.len() {
-                        return elements[idx].clone();
+        let resolve_on = |checker: &mut Self, ty: &ResolvedType| -> ResolvedType {
+            match ty {
+                ResolvedType::Unknown => ResolvedType::Unknown,
+                // Trait default methods typecheck against `Self`, but field access must be declared via
+                // `@requires(...)` on the trait.
+                ResolvedType::SelfType => checker
+                    .trait_required_field_type(field, span)
+                    .unwrap_or(ResolvedType::Unknown),
+                ResolvedType::Tuple(elements) => {
+                    if let Ok(idx) = field.parse::<usize>() {
+                        if idx < elements.len() {
+                            return elements[idx].clone();
+                        }
                     }
+                    checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
+                    ResolvedType::Unknown
                 }
-                self.errors
-                    .push(errors::missing_field(&base_ty.to_string(), field, span));
-                ResolvedType::Unknown
-            }
-            ResolvedType::Named(type_name) => {
-                if let Some(type_info) = self.lookup_type_info(type_name) {
-                    match type_info {
-                        TypeInfo::Model(model) => {
-                            // `.0`, `.1`, ... is tuple-index syntax in the language surface.
-                            // RFC 021: Non-identifier aliases like `alias="1"` are valid as wire names,
-                            // but are not usable via member access / named-arg / pattern syntax.
-                            //
-                            // Therefore numeric field spellings do NOT participate in alias lookup on models.
-                            if field.parse::<usize>().is_ok() {
-                                self.errors.push(errors::missing_field(type_name, field, span));
-                                return ResolvedType::Unknown;
+                ResolvedType::Named(type_name) => {
+                    if let Some(type_info) = checker.lookup_type_info(type_name) {
+                        match type_info {
+                            TypeInfo::Model(model) => {
+                                // `.0`, `.1`, ... is tuple-index syntax in the language surface.
+                                // RFC 021: Non-identifier aliases like `alias="1"` are valid as wire names,
+                                // but are not usable via member access / named-arg / pattern syntax.
+                                //
+                                // Therefore numeric field spellings do NOT participate in alias lookup on models.
+                                if field.parse::<usize>().is_ok() {
+                                    checker.errors.push(errors::missing_field(type_name, field, span));
+                                    return ResolvedType::Unknown;
+                                }
+                                if let Some((_, info)) = checker.resolve_field_info(&model.fields, field, true, false) {
+                                    return info.ty.clone();
+                                }
                             }
-                            if let Some((_, info)) = self.resolve_field_info(&model.fields, field, true, false) {
-                                return info.ty.clone();
+                            TypeInfo::Class(class) => {
+                                // RFC 021: No alias-aware resolution for classes (models only)
+                                if let Some((_, info)) = checker.resolve_field_info(&class.fields, field, false, true) {
+                                    return info.ty.clone();
+                                }
                             }
+                            TypeInfo::Enum(enum_info) => {
+                                if enum_info.variants.contains(&field.to_string()) {
+                                    return ResolvedType::Named(type_name.clone());
+                                }
+                            }
+                            TypeInfo::Newtype(nt) => {
+                                if field == conventions::NEWTYPE_TUPLE_FIELD {
+                                    return nt.underlying.clone();
+                                }
+                            }
+                            _ => {}
                         }
-                        TypeInfo::Class(class) => {
-                            // RFC 021: No alias-aware resolution for classes (models only)
-                            if let Some((_, info)) = self.resolve_field_info(&class.fields, field, false, true) {
-                                return info.ty.clone();
-                            }
-                        }
-                        TypeInfo::Enum(enum_info) => {
-                            if enum_info.variants.contains(&field.to_string()) {
-                                return ResolvedType::Named(type_name.clone());
-                            }
-                        }
-                        TypeInfo::Newtype(nt) => {
-                            if field == conventions::NEWTYPE_TUPLE_FIELD {
-                                return nt.underlying.clone();
-                            }
-                        }
-                        _ => {}
                     }
+                    checker.errors.push(errors::missing_field(type_name, field, span));
+                    ResolvedType::Unknown
                 }
-                self.errors.push(errors::missing_field(type_name, field, span));
-                ResolvedType::Unknown
+                _ => {
+                    checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
+                    ResolvedType::Unknown
+                }
             }
-            _ => {
-                self.errors
-                    .push(errors::missing_field(&base_ty.to_string(), field, span));
-                ResolvedType::Unknown
+        };
+
+        if let ResolvedType::Generic(name, args) = &base_ty {
+            if matches!(
+                surface_types::from_str(name.as_str()),
+                Some(SurfaceTypeId::Json | SurfaceTypeId::Query)
+            ) && args.len() == 1
+            {
+                if field == "value" {
+                    return args[0].clone();
+                }
+                return resolve_on(self, &args[0]);
             }
         }
+
+        resolve_on(self, &base_ty)
     }
 
     /// Type-check a method call (`base.method(args...)`) and return the method's return type.
@@ -486,11 +573,16 @@ impl TypeChecker {
                     use list_methods::ListMethodId as M;
                     match id {
                         M::Append => {
+                            let clone_ty = arg_types.first().unwrap_or(&elem);
                             if let Some(arg0) = arg_types.first() {
                                 if !self.types_compatible(arg0, &elem) {
                                     self.errors
                                         .push(errors::type_mismatch(&elem.to_string(), &arg0.to_string(), span));
                                 }
+                            }
+                            if !self.is_copy_type(clone_ty) && !self.is_clone_type(clone_ty) {
+                                self.errors
+                                    .push(errors::list_append_requires_clone(&clone_ty.to_string(), span));
                             }
                             return ResolvedType::Unit;
                         }

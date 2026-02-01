@@ -1,0 +1,6 @@
+model Person:
+  name: str
+
+def main() -> None:
+  mut User: Person = Person(name="Ada")
+  println(User.name)

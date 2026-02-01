@@ -452,6 +452,39 @@ mod codegen_tests {
             "expected name field info; got:\n{}",
             stdout
         );
+
+        // Empty models should produce no FieldInfo entries
+        assert!(
+            stdout.contains("empty_fields:0"),
+            "expected empty model to return 0 fields; got:\n{}",
+            stdout
+        );
+
+        // Nested generics should use Incan type formatting
+        assert!(
+            stdout.contains("settings_field:complex|type:list[dict[str, int]]"),
+            "expected nested generic type name; got:\n{}",
+            stdout
+        );
+
+        // User-defined field types should use their Incan type name
+        assert!(
+            stdout.contains("user_field:address|type:Address"),
+            "expected user-defined field type name; got:\n{}",
+            stdout
+        );
+
+        // Inherited class fields should appear in __fields__()
+        assert!(
+            stdout.contains("child_field:base_id|type:int"),
+            "expected inherited base field in __fields__; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("child_field:name|type:str"),
+            "expected child field in __fields__; got:\n{}",
+            stdout
+        );
     }
 
     #[test]

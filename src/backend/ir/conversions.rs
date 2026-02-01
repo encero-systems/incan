@@ -257,7 +257,11 @@ pub enum BinOpEmitKind {
     /// Emit as infix tokens, e.g., `+`, `-`, `*`, `==`
     Infix { token: TokenStream },
     /// Emit a stdlib helper call, e.g., `incan_stdlib::num::py_mod`
-    StdlibCall { path: TokenStream },
+    StdlibCall {
+        path: TokenStream,
+        /// If true, emit as `path(&lhs, &rhs)` to avoid moves and to support &str-based helpers.
+        borrow_args: bool,
+    },
     /// Emit power; choose powf vs pow based on kind
     Pow { result_is_int: bool },
 }
@@ -311,6 +315,7 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
             result_ty: IrType::String,
             emit: BinOpEmitKind::StdlibCall {
                 path: quote! { incan_stdlib::strings::str_concat },
+                borrow_args: true,
             },
         };
     }
@@ -334,7 +339,10 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
             lhs_conv: NumericConversion::None,
             rhs_conv: NumericConversion::None,
             result_ty: IrType::Bool,
-            emit: BinOpEmitKind::StdlibCall { path },
+            emit: BinOpEmitKind::StdlibCall {
+                path,
+                borrow_args: true,
+            },
         };
     }
 
@@ -395,7 +403,10 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
                 IrType::Float => quote! { incan_stdlib::num::py_mod_f64 },
                 _ => quote! { incan_stdlib::num::py_mod },
             };
-            BinOpEmitKind::StdlibCall { path }
+            BinOpEmitKind::StdlibCall {
+                path,
+                borrow_args: false,
+            }
         }
         NumericOp::FloorDiv => {
             let path = match result_ty {
@@ -403,10 +414,14 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
                 IrType::Float => quote! { incan_stdlib::num::py_floor_div_f64 },
                 _ => quote! { incan_stdlib::num::py_floor_div },
             };
-            BinOpEmitKind::StdlibCall { path }
+            BinOpEmitKind::StdlibCall {
+                path,
+                borrow_args: false,
+            }
         }
         NumericOp::Div => BinOpEmitKind::StdlibCall {
             path: quote! { incan_stdlib::num::py_div },
+            borrow_args: false,
         },
         NumericOp::Add
         | NumericOp::Sub

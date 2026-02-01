@@ -622,6 +622,21 @@ def main() -> None:
     assert!(check_str(source).is_ok());
 }
 
+#[test]
+fn test_list_append_requires_clone_for_external_type() {
+    let source = r#"
+from rust::std::sync import Mutex
+
+def add(mut xs: List[Mutex], value: Mutex) -> None:
+  xs.append(value)
+"#;
+    let errs = check_str(source).expect_err("expected type errors");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("List.append requires element type 'Mutex'"))
+    );
+}
+
 // ========================================
 // Models implementing traits (Issue #42)
 // ========================================
@@ -1518,4 +1533,64 @@ def foo() -> int:
     assert!(result.is_err());
     let errs = result.err().unwrap();
     assert!(errs.iter().any(|e| e.message.contains("has no method")));
+}
+
+// ========================================
+// Web wrappers
+// ========================================
+
+#[test]
+fn test_web_wrapper_value_and_deref_access() {
+    let source = r#"
+from web import Json, Query
+
+@derive(Deserialize)
+model SearchParams:
+  q: str
+
+@derive(Deserialize)
+model CreateUser:
+  name: str
+
+def use_query(params: Query[SearchParams]) -> str:
+  let a = params.q
+  let b = params.value.q
+  return b
+
+def use_body(body: Json[CreateUser]) -> str:
+  let a = body.name
+  let b = body.value.name
+  return b
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_web_wrapper_invalid_constructor_args() {
+    let source = r#"
+from web import Json, Query
+
+@derive(Serialize)
+model User:
+  name: str
+
+@derive(Deserialize)
+model SearchParams:
+  q: str
+
+def bad_json() -> None:
+  let a = Json(User(name="a"), User(name="b"))
+
+def bad_query() -> None:
+  let b = Query(value=SearchParams(q="x"), other=SearchParams(q="y"))
+"#;
+    let errs = check_str(source).expect_err("expected type errors");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Json() expects exactly one argument"))
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Query() expects exactly one argument"))
+    );
 }

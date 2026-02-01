@@ -5,6 +5,8 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
+use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
+
 use super::super::super::conversions::{ConversionContext, determine_conversion};
 use super::super::super::expr::TypedExpr;
 use super::super::{EmitError, IrEmitter};
@@ -26,6 +28,23 @@ impl<'a> IrEmitter<'a> {
 
         if !all_named && !fields.is_empty() {
             // Positional (tuple-style) construction
+            if matches!(
+                surface_types::from_str(name),
+                Some(SurfaceTypeId::Json | SurfaceTypeId::Query)
+            ) {
+                if fields.len() != 1 {
+                    return Err(EmitError::Unsupported(format!(
+                        "{} expects exactly one positional argument",
+                        name
+                    )));
+                }
+                let (_, fval) = &fields[0];
+                let emitted = self.emit_expr(fval)?;
+                let conversion = determine_conversion(fval, None, ConversionContext::IncanFunctionArg);
+                let value = conversion.apply(emitted);
+                return Ok(quote! { #n { value: #value } });
+            }
+
             let value_tokens: Vec<TokenStream> = fields
                 .iter()
                 .map(|(_, fval)| {

@@ -10,6 +10,7 @@ use super::super::decl::Visibility;
 use super::super::expr::{IrExprKind, Pattern};
 use super::super::types::IrType;
 use super::IrEmitter;
+use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
 
 impl<'a> IrEmitter<'a> {
     /// Emit a type as Rust tokens.
@@ -53,6 +54,9 @@ impl<'a> IrEmitter<'a> {
                 quote! { Result<#o, #e> }
             }
             IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => {
+                if name == surface_types::as_str(SurfaceTypeId::FieldInfo) {
+                    return quote! { incan_stdlib::reflection::FieldInfo };
+                }
                 let n = format_ident!("{}", Self::escape_keyword(name));
                 quote! { #n }
             }

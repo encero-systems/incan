@@ -60,6 +60,13 @@ fn test_model_struct_codegen() {
 }
 
 #[test]
+fn test_uppercase_var_field_access_codegen() {
+    let source = load_test_file("uppercase_var_field_access");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("uppercase_var_field_access", rust_code);
+}
+
+#[test]
 fn test_model_with_alias_codegen() {
     let source = load_test_file("model_with_alias");
     let rust_code = generate_rust(&source);
@@ -87,6 +94,87 @@ fn test_model_alias_self_access_codegen() {
     let source = load_test_file("model_alias_self_access");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("model_alias_self_access", rust_code);
+}
+
+#[test]
+fn test_web_route_extractors_codegen() {
+    let source = load_test_file("web_route_extractors");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("web_route_extractors", rust_code);
+}
+
+#[test]
+fn test_web_route_extractors_nested_module_codegen() {
+    let main_source = r#"
+from web import App
+import api::routes
+
+def main() -> None:
+  app = App()
+  app.run(port=8080)
+"#;
+    let routes_source = r#"
+from web import route, Response, Json, Query, POST
+
+@derive(Deserialize)
+model CreateThingRequest:
+  name: str
+
+@derive(Deserialize)
+model SearchParams:
+  q: str
+
+@route("/things", methods=[POST])
+async def create(req: Json[list[CreateThingRequest]]) -> Response:
+  return Response.ok()
+
+@route("/search")
+async def search(params: Query[SearchParams]) -> Response:
+  return Response.ok()
+"#;
+
+    let main_tokens = lexer::lex(main_source).expect("lexer failed");
+    let main_ast = parser::parse(&main_tokens).expect("parser failed");
+    let routes_tokens = lexer::lex(routes_source).expect("lexer failed");
+    let routes_ast = parser::parse(&routes_tokens).expect("parser failed");
+
+    let mut codegen = IrCodegen::new();
+    codegen.add_module_with_path_segments("api_routes", &routes_ast, vec!["api".to_string(), "routes".to_string()]);
+    let (main_code, _modules) = codegen
+        .try_generate_multi_file_nested(&main_ast, &[vec!["api".to_string(), "routes".to_string()]])
+        .expect("codegen must succeed");
+    let rust_code = normalize_codegen_output(&main_code);
+    insta::assert_snapshot!("web_route_extractors_nested_module", rust_code);
+}
+
+#[test]
+fn test_web_route_path_param_duplicate_errors() {
+    let source = r#"
+from web import route, Response
+
+@route("/users/{id}/{id}")
+def get(id: int) -> Response:
+  return Response.ok()
+"#;
+    let tokens = lexer::lex(source).expect("lexer failed");
+    let ast = parser::parse(&tokens).expect("parser failed");
+    let err = IrCodegen::new().try_generate(&ast).expect_err("expected codegen error");
+    assert!(err.to_string().contains("duplicate web route param 'id'"));
+}
+
+#[test]
+fn test_web_route_path_param_unterminated_errors() {
+    let source = r#"
+from web import route, Response
+
+@route("/users/{id")
+def get(id: int) -> Response:
+  return Response.ok()
+"#;
+    let tokens = lexer::lex(source).expect("lexer failed");
+    let ast = parser::parse(&tokens).expect("parser failed");
+    let err = IrCodegen::new().try_generate(&ast).expect_err("expected codegen error");
+    assert!(err.to_string().contains("unterminated web route param"));
 }
 
 // ============================================================================

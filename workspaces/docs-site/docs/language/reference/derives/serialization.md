@@ -60,6 +60,57 @@ When `Serialize`/`Deserialize` is derived, the alias is used as the JSON key (`"
 
 `class` does not support field metadata/aliases, so class JSON keys always match the canonical field names.
 
+## Enums
+
+Enums support `Serialize` and `Deserialize` just like models:
+
+```incan
+@derive(Serialize, Deserialize)
+enum Status:
+    Pending
+    Active
+    Completed
+
+@derive(Serialize, Deserialize)
+enum ApiResponse:
+    Success(str)
+    Error(int, str)
+```
+
+When a model references an enum in its fields, the compiler automatically propagates `Serialize`/`Deserialize` derives
+to the enum:
+
+```incan
+@derive(Serialize, Deserialize)
+enum Priority:
+    Low
+    Medium
+    High
+
+@derive(Serialize, Deserialize)
+model Task:
+    name: str
+    priority: Priority  # Priority automatically gets serde derives
+```
+
+---
+
+## Newtypes
+
+Newtypes also support `Serialize` and `Deserialize`:
+
+```incan
+@derive(Serialize, Deserialize)
+newtype UserId(int)
+
+@derive(Serialize, Deserialize)
+newtype Email(str)
+```
+
+Newtypes serialize to/from their underlying type's JSON representation.
+
+---
+
 ## Type mappings (Incan → JSON)
 
 | Incan             | JSON             |
@@ -72,3 +123,5 @@ When `Serialize`/`Deserialize` is derived, the alias is used as the JSON key (`"
 | `Dict[str, T]`    | object           |
 | `Option[T]`       | value or `null`  |
 | `model` / `class` | object           |
+| `enum`            | variant encoding |
+| `newtype`         | underlying type  |

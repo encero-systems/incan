@@ -29,6 +29,13 @@ pub enum SurfaceTypeId {
     Vec,
     HashMap,
 
+    // Web
+    App,
+    Response,
+    Html,
+    Json,
+    Query,
+
     // Reflection
     FieldInfo,
 }
@@ -165,6 +172,52 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         SurfaceTypeKind::Generic,
         "Rust interop `HashMap<K, V>`.",
         RFC::_005,
+        Since(0, 1),
+    ),
+    // Web
+    info(
+        SurfaceTypeId::App,
+        "App",
+        &[],
+        SurfaceTypeKind::Named,
+        "Web application handle for running an HTTP server.",
+        RFC::_000,
+        Since(0, 1),
+    ),
+    info(
+        SurfaceTypeId::Response,
+        "Response",
+        &[],
+        SurfaceTypeKind::Named,
+        "HTTP response builder for web handlers.",
+        RFC::_000,
+        Since(0, 1),
+    ),
+    info(
+        SurfaceTypeId::Html,
+        "Html",
+        &[],
+        SurfaceTypeKind::Named,
+        "HTML response wrapper for web handlers.",
+        RFC::_000,
+        Since(0, 1),
+    ),
+    info(
+        SurfaceTypeId::Json,
+        "Json",
+        &[],
+        SurfaceTypeKind::Generic,
+        "JSON response/extractor wrapper for web handlers.",
+        RFC::_000,
+        Since(0, 1),
+    ),
+    info(
+        SurfaceTypeId::Query,
+        "Query",
+        &[],
+        SurfaceTypeKind::Generic,
+        "Query-string extractor wrapper for web handlers.",
+        RFC::_000,
         Since(0, 1),
     ),
     info(

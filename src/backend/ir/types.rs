@@ -210,7 +210,7 @@ mod tests {
     use super::*;
 
     // ============================================================================
-    // CATEGORY 1: Simple Types (6 tests)
+    // CATEGORY 1: Simple Types
     // ============================================================================
 
     #[test]
@@ -249,7 +249,7 @@ mod tests {
     }
 
     // ============================================================================
-    // CATEGORY 2: Generic Types (8 tests)
+    // CATEGORY 2: Generic Types
     // ============================================================================
 
     #[test]
@@ -308,7 +308,7 @@ mod tests {
     }
 
     // ============================================================================
-    // CATEGORY 3: Tuple Types (5 tests)
+    // CATEGORY 3: Tuple Types
     // ============================================================================
 
     #[test]
@@ -349,7 +349,7 @@ mod tests {
     }
 
     // ============================================================================
-    // CATEGORY 4: Type Helper Methods (10 tests)
+    // CATEGORY 4: Type Helper Methods
     // ============================================================================
 
     #[test]
@@ -403,7 +403,7 @@ mod tests {
     }
 
     // ============================================================================
-    // CATEGORY 5: Reference Types (3 tests)
+    // CATEGORY 5: Reference Types
     // ============================================================================
 
     #[test]
@@ -423,7 +423,7 @@ mod tests {
     }
 
     // ============================================================================
-    // CATEGORY 6: Edge Cases - Complex Nested Types (5 tests)
+    // CATEGORY 6: Edge Cases - Complex Nested Types
     // ============================================================================
 
     #[test]
@@ -462,5 +462,50 @@ mod tests {
         let option = IrType::Option(Box::new(IrType::String));
         let result = IrType::Result(Box::new(option), Box::new(IrType::String));
         assert_eq!(result.rust_name(), "Result<Option<String>, String>");
+    }
+
+    // ============================================================================
+    // CATEGORY 7: Incan Type Names
+    // ============================================================================
+
+    #[test]
+    fn test_incan_name_list_int() {
+        assert_eq!(IrType::List(Box::new(IrType::Int)).incan_name(), "list[int]");
+    }
+
+    #[test]
+    fn test_incan_name_dict_string_int() {
+        assert_eq!(
+            IrType::Dict(Box::new(IrType::String), Box::new(IrType::Int)).incan_name(),
+            "dict[str, int]"
+        );
+    }
+
+    #[test]
+    fn test_incan_name_option_list() {
+        let inner = IrType::List(Box::new(IrType::String));
+        let opt = IrType::Option(Box::new(inner));
+        assert_eq!(opt.incan_name(), "Option[list[str]]");
+    }
+
+    #[test]
+    fn test_incan_name_tuple() {
+        let tuple = IrType::Tuple(vec![IrType::Int, IrType::String, IrType::Bool]);
+        assert_eq!(tuple.incan_name(), "(int, str, bool)");
+    }
+
+    #[test]
+    fn test_incan_name_function() {
+        let func = IrType::Function {
+            params: vec![IrType::Int, IrType::String],
+            ret: Box::new(IrType::Bool),
+        };
+        assert_eq!(func.incan_name(), "(int, str) -> bool");
+    }
+
+    #[test]
+    fn test_incan_name_named_generic() {
+        let ty = IrType::NamedGeneric("Json".to_string(), vec![IrType::Struct("User".to_string())]);
+        assert_eq!(ty.incan_name(), "Json[User]");
     }
 }

@@ -96,6 +96,67 @@ impl TypeChecker {
         }
     }
 
+    /// Type-check a JSON/Query constructor call (`Json(...)` / `Query(...)`).
+    ///
+    /// NOTE: This method is called from multiple dispatch points in the typechecker because
+    /// calls can be classified differently by the parser (bare identifier call, constructor call,
+    /// builtin call, or model/class constructor). Each dispatch point returns early after handling,
+    /// preventing double-checking. See: `check_builtin_call` (surface type dispatch),
+    /// `check_call` (fallback paths), and `check_constructor`.
+    fn check_json_query_constructor_call(
+        &mut self,
+        tid: SurfaceTypeId,
+        args: &[CallArg],
+        call_span: Span,
+    ) -> ResolvedType {
+        let mut inner = ResolvedType::Unknown;
+        let mut has_inner = false;
+        let mut positional_count = 0;
+        let mut named_value_count = 0;
+        let mut has_invalid_named = false;
+
+        for arg in args {
+            match arg {
+                CallArg::Positional(e) => {
+                    positional_count += 1;
+                    if !has_inner {
+                        inner = self.check_expr(e);
+                        has_inner = true;
+                    } else {
+                        self.check_expr(e);
+                    }
+                }
+                CallArg::Named(name, e) if name == "value" => {
+                    named_value_count += 1;
+                    if !has_inner {
+                        inner = self.check_expr(e);
+                        has_inner = true;
+                    } else {
+                        self.check_expr(e);
+                    }
+                }
+                CallArg::Named(_, e) => {
+                    has_invalid_named = true;
+                    self.check_expr(e);
+                }
+            }
+        }
+
+        let total_allowed = positional_count + named_value_count;
+        if has_invalid_named || total_allowed != 1 || (positional_count > 0 && named_value_count > 0) {
+            let name = surface_types::as_str(tid);
+            self.errors.push(CompileError::type_error(
+                format!(
+                    "{name}() expects exactly one argument (positional or named `value`), got {}",
+                    args.len()
+                ),
+                call_span,
+            ));
+        }
+
+        ResolvedType::Generic(surface_types::as_str(tid).to_string(), vec![inner])
+    }
+
     /// Type-check all call arguments and collect their resolved types.
     fn check_call_arg_types(&mut self, args: &[CallArg]) -> Vec<ResolvedType> {
         args.iter()
@@ -481,6 +542,9 @@ impl TypeChecker {
         // Surface types that behave like constructors and whose result type depends on args.
         if let Some(tid) = surface_types::from_str(name) {
             return match tid {
+                SurfaceTypeId::Json | SurfaceTypeId::Query => {
+                    Some(self.check_json_query_constructor_call(tid, args, call_span))
+                }
                 SurfaceTypeId::Mutex => {
                     let inner = if let Some(arg) = args.first() {
                         self.check_expr(Self::call_arg_expr(arg))
@@ -647,6 +711,15 @@ impl TypeChecker {
                 return result;
             }
 
+            if let Some(tid) = surface_types::from_str(name) {
+                if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
+                    return self.check_json_query_constructor_call(tid, args, span);
+                }
+                if matches!(tid, SurfaceTypeId::Html) {
+                    return ResolvedType::Named(surface_types::as_str(tid).to_string());
+                }
+            }
+
             // Strict validated construction: `@derive(Validate)` models must be constructed via `TypeName.new(...)`.
             if let Some(TypeInfo::Model(m)) = self.lookup_type_info(name) {
                 if m.derives
@@ -672,6 +745,14 @@ impl TypeChecker {
                 });
             if let Some(fields) = ctor_fields {
                 self.check_model_or_class_constructor_call(name, &fields, args, span);
+                if let Some(tid) = surface_types::from_str(name) {
+                    if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
+                        return self.check_json_query_constructor_call(tid, args, span);
+                    }
+                    if matches!(tid, SurfaceTypeId::Html) {
+                        return ResolvedType::Named(surface_types::as_str(tid).to_string());
+                    }
+                }
                 return ResolvedType::Named(name.to_string());
             }
         }
@@ -708,6 +789,15 @@ impl TypeChecker {
         span: Span,
     ) -> ResolvedType {
         self.check_call_args(args);
+
+        if let Some(tid) = surface_types::from_str(name) {
+            if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
+                return self.check_json_query_constructor_call(tid, args, span);
+            }
+            if matches!(tid, SurfaceTypeId::Html) {
+                return ResolvedType::Named(surface_types::as_str(tid).to_string());
+            }
+        }
 
         if let Some(id) = self.symbols.lookup(name) {
             if let Some(sym) = self.symbols.get(id) {

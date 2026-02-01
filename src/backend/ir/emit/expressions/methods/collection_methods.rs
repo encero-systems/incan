@@ -57,7 +57,12 @@ pub(super) fn emit_collection_method(
                     Ok(v) => v,
                     Err(e) => return Some(Err(e)),
                 };
-                return Some(Ok(quote! { #r.push(#a) }));
+                // Incan has value-like semantics: appending an item should not necessarily invalidate the local
+                // variable binding. In Rust, `Vec::push` moves non-Copy values, so we conservatively clone here.
+                if arg.ty.is_copy() {
+                    return Some(Ok(quote! { #r.push(#a) }));
+                }
+                return Some(Ok(quote! { #r.push(#a.clone()) }));
             }
             Some(Ok(quote! { () }))
         }

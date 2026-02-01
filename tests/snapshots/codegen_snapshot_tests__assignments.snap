@@ -30,7 +30,7 @@ fn test_augmented_assignments() {
     let mut xf = 24f64;
     xf = incan_stdlib::num::py_div(xf, (4) as f64);
     let mut s = "hello".to_string();
-    s = incan_stdlib::strings::str_concat(s, " world");
+    s = incan_stdlib::strings::str_concat(&s, &" world");
 }
 fn test_collection_assignments() {
     let mut numbers = vec![1, 2, 3, 4];

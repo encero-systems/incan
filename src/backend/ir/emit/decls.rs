@@ -572,13 +572,20 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
-    fn emit_fields_method(&self, struct_name: &str) -> Option<TokenStream> {
-        let field_names = self.struct_field_names.get(struct_name)?;
+    fn emit_fields_method(&self, struct_name: &str) -> Result<Option<TokenStream>, EmitError> {
+        let Some(field_names) = self.struct_field_names.get(struct_name) else {
+            return Ok(None);
+        };
         let mut field_infos = Vec::new();
 
         for field_name in field_names {
             let key = (struct_name.to_string(), field_name.clone());
-            let ty = self.struct_field_types.get(&key)?;
+            let ty = self.struct_field_types.get(&key).ok_or_else(|| {
+                EmitError::Unsupported(format!(
+                    "missing field type metadata for '{}.{}'",
+                    struct_name, field_name
+                ))
+            })?;
             let alias = self.struct_field_aliases.get(&key).and_then(|v| v.clone());
             let description = self.struct_field_descriptions.get(&key).and_then(|v| v.clone());
             let has_default = self.struct_field_defaults.contains_key(&key);
@@ -609,13 +616,13 @@ impl<'a> IrEmitter<'a> {
         }
 
         let field_count = Literal::usize_unsuffixed(field_infos.len());
-        Some(quote! {
+        Ok(Some(quote! {
             /// Returns field metadata for this type.
             pub fn __fields__(&self) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
                 static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; #field_count] = [#(#field_infos),*];
                 incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
             }
-        })
+        }))
     }
 
     fn emit_impl(&self, impl_block: &super::super::decl::IrImpl) -> Result<TokenStream, EmitError> {
@@ -659,7 +666,7 @@ impl<'a> IrEmitter<'a> {
 
         let has_fields_method = impl_block.methods.iter().any(|m| m.name == "__fields__");
         if impl_block.trait_name.is_none() && !has_fields_method {
-            if let Some(fields_method) = self.emit_fields_method(&impl_block.target_type) {
+            if let Some(fields_method) = self.emit_fields_method(&impl_block.target_type)? {
                 regular_methods.push(fields_method);
             }
         }

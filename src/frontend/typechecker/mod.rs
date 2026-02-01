@@ -60,6 +60,8 @@ use crate::frontend::diagnostics::{CompileError, errors};
 use crate::frontend::module::{ExportedSymbol, exported_symbols};
 use crate::frontend::symbols::*;
 use helpers::{collection_type_id, stringlike_type_id};
+use incan_core::lang::surface::types as surface_types;
+use incan_core::lang::surface::types::SurfaceTypeKind;
 use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::lang::types::stringlike::StringLikeId;
 
@@ -304,6 +306,16 @@ impl TypeChecker {
         }
     }
 
+    /// Import all symbols from another module's AST into the symbol table.
+    ///
+    /// This is used for internal compiler passes that need type information across modules
+    /// without enforcing `pub` visibility (e.g. codegen-only validation for dependencies).
+    pub fn import_module_all(&mut self, module_ast: &Program, _module_name: &str) {
+        for decl in &module_ast.declarations {
+            self.collect_declaration(decl);
+        }
+    }
+
     /// Check a program that may have dependencies on other modules.
     ///
     /// Convenience wrapper that calls [`import_module`](Self::import_module) for each dependency,
@@ -338,6 +350,23 @@ impl TypeChecker {
         self.check_program(program)
     }
 
+    /// Check a program with dependencies, but allow importing private items.
+    ///
+    /// This is intended for internal compiler stages (like IR codegen) where we need
+    /// type information across modules without enforcing visibility restrictions.
+    pub fn check_with_imports_allow_private(
+        &mut self,
+        program: &Program,
+        dependencies: &[(&str, &Program)],
+    ) -> Result<(), Vec<CompileError>> {
+        // Skip populating dependency exports so visibility checks are bypassed.
+        self.dependency_exports.clear();
+        for (name, dep_ast) in dependencies {
+            self.import_module_all(dep_ast, name);
+        }
+        self.check_program(program)
+    }
+
     // ========================================================================
     // Type compatibility (shared helper)
     // ========================================================================
@@ -356,6 +385,21 @@ impl TypeChecker {
         match (actual, expected) {
             (ResolvedType::Unknown, _) | (_, ResolvedType::Unknown) => true,
             (ResolvedType::TypeVar(_), _) | (_, ResolvedType::TypeVar(_)) => true,
+            // Allow bare surface generic types (e.g. `Json`) to match `Json[T]` when used without args.
+            (ResolvedType::Named(name), ResolvedType::Generic(generic_name, _))
+                if name == generic_name
+                    && surface_types::from_str(name.as_str())
+                        .is_some_and(|id| surface_types::info_for(id).kind == SurfaceTypeKind::Generic) =>
+            {
+                true
+            }
+            (ResolvedType::Generic(generic_name, _), ResolvedType::Named(name))
+                if name == generic_name
+                    && surface_types::from_str(name.as_str())
+                        .is_some_and(|id| surface_types::info_for(id).kind == SurfaceTypeKind::Generic) =>
+            {
+                true
+            }
             // Internal references: allow exact ref compatibility and allow `&FrozenStr` where `&str` is expected.
             (ResolvedType::Ref(a), ResolvedType::Ref(b)) => self.types_compatible(a, b),
             (ResolvedType::FrozenStr, ResolvedType::Str | ResolvedType::FrozenStr) => true,

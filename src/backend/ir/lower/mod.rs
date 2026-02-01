@@ -467,11 +467,157 @@ impl AstLowering {
                 }
             }
         }
+        // Propagate Serialize/Deserialize derives from structs to their field types (enums).
+        // This allows users to only annotate the top-level model with @derive(Serialize, Deserialize)
+        // and have it automatically apply to nested user-defined enums.
+        Self::propagate_serde_derives(&mut ir_program);
+
         if errors.is_empty() {
             Ok(ir_program)
         } else {
             // Return all collected errors
             Err(LoweringErrors(errors))
+        }
+    }
+
+    /// Propagate Serialize/Deserialize derives from structs to enum/newtype field types.
+    ///
+    /// When a struct has Serialize or Deserialize derives and contains fields of enum types,
+    /// those enums also need the same derives for the generated Rust code to compile.
+    /// This function automatically adds those derives to avoid requiring users to manually
+    /// annotate every nested enum.
+    fn propagate_serde_derives(ir_program: &mut IrProgram) {
+        use super::decl::IrDeclKind;
+        use incan_core::lang::derives::{self, DeriveId};
+
+        let serialize = derives::as_str(DeriveId::Serialize);
+        let deserialize = derives::as_str(DeriveId::Deserialize);
+
+        // Collect enum/newtype names that need Serialize/Deserialize
+        let mut enums_need_serialize: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut enums_need_deserialize: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut structs_need_serialize: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut structs_need_deserialize: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        let mut newtype_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut enum_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for decl in &ir_program.declarations {
+            if let IrDeclKind::Struct(s) = &decl.kind {
+                if s.fields.len() == 1 && s.fields[0].name == "0" {
+                    newtype_names.insert(s.name.clone());
+                }
+            }
+            if let IrDeclKind::Enum(e) = &decl.kind {
+                enum_names.insert(e.name.clone());
+            }
+        }
+
+        // First pass: find all structs with Serialize/Deserialize and collect their enum/newtype field types
+        for decl in &ir_program.declarations {
+            if let IrDeclKind::Struct(s) = &decl.kind {
+                let has_serialize = s.derives.iter().any(|d| d == serialize);
+                let has_deserialize = s.derives.iter().any(|d| d == deserialize);
+
+                if has_serialize {
+                    for field in &s.fields {
+                        Self::collect_enum_and_struct_types_from_ir_type(
+                            &field.ty,
+                            &mut enums_need_serialize,
+                            &mut structs_need_serialize,
+                        );
+                    }
+                }
+                if has_deserialize {
+                    for field in &s.fields {
+                        Self::collect_enum_and_struct_types_from_ir_type(
+                            &field.ty,
+                            &mut enums_need_deserialize,
+                            &mut structs_need_deserialize,
+                        );
+                    }
+                }
+            }
+        }
+
+        for name in structs_need_serialize.iter() {
+            if enum_names.contains(name) {
+                enums_need_serialize.insert(name.clone());
+            }
+        }
+        for name in structs_need_deserialize.iter() {
+            if enum_names.contains(name) {
+                enums_need_deserialize.insert(name.clone());
+            }
+        }
+
+        // Second pass: add Serialize/Deserialize to enums/newtypes that need them
+        for decl in &mut ir_program.declarations {
+            if let IrDeclKind::Enum(e) = &mut decl.kind {
+                if enums_need_serialize.contains(&e.name) && !e.derives.iter().any(|d| d == serialize) {
+                    e.derives.push(serialize.to_string());
+                }
+                if enums_need_deserialize.contains(&e.name) && !e.derives.iter().any(|d| d == deserialize) {
+                    e.derives.push(deserialize.to_string());
+                }
+            }
+            if let IrDeclKind::Struct(s) = &mut decl.kind {
+                if newtype_names.contains(&s.name) {
+                    if structs_need_serialize.contains(&s.name) && !s.derives.iter().any(|d| d == serialize) {
+                        s.derives.push(serialize.to_string());
+                    }
+                    if structs_need_deserialize.contains(&s.name) && !s.derives.iter().any(|d| d == deserialize) {
+                        s.derives.push(deserialize.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    /// Recursively collect enum and struct type names from an IR type.
+    fn collect_enum_and_struct_types_from_ir_type(
+        ty: &IrType,
+        enums: &mut std::collections::HashSet<String>,
+        structs: &mut std::collections::HashSet<String>,
+    ) {
+        match ty {
+            IrType::Enum(name) => {
+                enums.insert(name.clone());
+            }
+            IrType::Struct(name) => {
+                structs.insert(name.clone());
+            }
+            IrType::Option(inner) => {
+                Self::collect_enum_and_struct_types_from_ir_type(inner, enums, structs);
+            }
+            IrType::List(inner) => {
+                Self::collect_enum_and_struct_types_from_ir_type(inner, enums, structs);
+            }
+            IrType::Dict(k, v) => {
+                Self::collect_enum_and_struct_types_from_ir_type(k, enums, structs);
+                Self::collect_enum_and_struct_types_from_ir_type(v, enums, structs);
+            }
+            IrType::Set(inner) => {
+                Self::collect_enum_and_struct_types_from_ir_type(inner, enums, structs);
+            }
+            IrType::Result(ok, err) => {
+                Self::collect_enum_and_struct_types_from_ir_type(ok, enums, structs);
+                Self::collect_enum_and_struct_types_from_ir_type(err, enums, structs);
+            }
+            IrType::Tuple(elems) => {
+                for elem in elems {
+                    Self::collect_enum_and_struct_types_from_ir_type(elem, enums, structs);
+                }
+            }
+            IrType::NamedGeneric(_, args) => {
+                for arg in args {
+                    Self::collect_enum_and_struct_types_from_ir_type(arg, enums, structs);
+                }
+            }
+            IrType::Ref(inner) | IrType::RefMut(inner) => {
+                Self::collect_enum_and_struct_types_from_ir_type(inner, enums, structs);
+            }
+            // Primitive types and other types don't contain enums
+            _ => {}
         }
     }
 }
@@ -487,6 +633,7 @@ impl Default for AstLowering {
 mod tests {
     use super::*;
     use crate::frontend::{lexer, parser};
+    use incan_core::lang::derives::{self, DeriveId};
 
     fn lower_source(source: &str) -> Result<IrProgram, LoweringErrors> {
         let tokens = lexer::lex(source).unwrap_or_else(|errs| {
@@ -666,5 +813,50 @@ def test() -> int:
             errors.0[0].message.contains("immutable"),
             "Error should mention immutable"
         );
+    }
+
+    #[test]
+    fn test_serde_propagation_respects_derives_and_containers() {
+        let ir = lower_source(
+            r#"
+@derive(Serialize)
+model Payload:
+  tags: set[Tag]
+  id: UserId
+
+enum Tag:
+  A
+  B
+
+type UserId = newtype int
+"#,
+        )
+        .unwrap();
+
+        let serialize = derives::as_str(DeriveId::Serialize).to_string();
+        let deserialize = derives::as_str(DeriveId::Deserialize).to_string();
+
+        let mut tag_derives: Option<Vec<String>> = None;
+        let mut user_id_derives: Option<Vec<String>> = None;
+        for decl in &ir.declarations {
+            match &decl.kind {
+                IrDeclKind::Enum(e) if e.name == "Tag" => tag_derives = Some(e.derives.clone()),
+                IrDeclKind::Struct(s) if s.name == "UserId" => user_id_derives = Some(s.derives.clone()),
+                _ => {}
+            }
+        }
+
+        let tag_derives = match tag_derives {
+            Some(derives) => derives,
+            None => panic!("Tag enum not found"),
+        };
+        let user_id_derives = match user_id_derives {
+            Some(derives) => derives,
+            None => panic!("UserId newtype not found"),
+        };
+        assert!(tag_derives.contains(&serialize));
+        assert!(!tag_derives.contains(&deserialize));
+        assert!(user_id_derives.contains(&serialize));
+        assert!(!user_id_derives.contains(&deserialize));
     }
 }

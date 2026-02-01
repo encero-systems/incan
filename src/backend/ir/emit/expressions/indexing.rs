@@ -13,7 +13,7 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use super::super::super::expr::{IrExprKind, TypedExpr, UnaryOp};
+use super::super::super::expr::{IrExprKind, TypedExpr, UnaryOp, VarRefKind};
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 
@@ -151,9 +151,14 @@ impl<'a> IrEmitter<'a> {
         let o = self.emit_expr(object)?;
 
         // Check if this is an enum variant access using the actual enum registry, not capitalization heuristics
-        if let IrExprKind::Var { name, .. } = &object.kind {
+        if let IrExprKind::Var { name, ref_kind, .. } = &object.kind {
             let key = (name.to_string(), field.to_string());
             if self.enum_variant_fields.contains_key(&key) {
+                let type_ident = format_ident!("{}", name);
+                let f = format_ident!("{}", field);
+                return Ok(quote! { #type_ident::#f });
+            }
+            if matches!(ref_kind, VarRefKind::TypeName | VarRefKind::ExternalName) {
                 let type_ident = format_ident!("{}", name);
                 let f = format_ident!("{}", field);
                 return Ok(quote! { #type_ident::#f });

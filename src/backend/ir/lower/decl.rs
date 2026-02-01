@@ -391,7 +391,7 @@ impl AstLowering {
         let fields = vec![StructField {
             name: "0".to_string(),
             ty: underlying_ty.clone(),
-            visibility: Visibility::Private,
+            visibility: Visibility::Public,
             default: None,
             alias: None,
             description: None,
@@ -400,10 +400,18 @@ impl AstLowering {
         // Only add Copy if underlying type is Copy (int, float, bool)
         let debug = derives::as_str(DeriveId::Debug).to_string();
         let clone = derives::as_str(DeriveId::Clone).to_string();
-        let mut derives = vec![debug, clone];
+        let partial_eq = derives::as_str(DeriveId::PartialEq).to_string();
+        let eq = derives::as_str(DeriveId::Eq).to_string();
+        let mut derives = vec![debug, clone, partial_eq];
+        if !matches!(underlying_ty, IrType::Float) {
+            derives.push(eq);
+        }
         if underlying_ty.is_copy() {
             derives.push(derives::as_str(DeriveId::Copy).to_string());
         }
+        // Note: Serialize/Deserialize derives for newtypes are added post-lowering by
+        // `add_serde_to_newtypes` in codegen.rs, which selectively adds only the derives
+        // that are actually needed (Serialize, Deserialize, or both).
         Ok(IrStruct {
             name: n.name.clone(),
             fields,
@@ -738,12 +746,22 @@ impl AstLowering {
             })
             .collect();
 
-        // Enums always get Debug, Clone, PartialEq by default
-        let derives = vec![
-            derives::as_str(DeriveId::Debug).to_string(),
-            derives::as_str(DeriveId::Clone).to_string(),
-            derives::as_str(DeriveId::PartialEq).to_string(),
-        ];
+        // Extract user-specified derives from decorators
+        let mut derives = self.extract_derives(&e.decorators);
+
+        // Enums always get Debug, Clone, PartialEq by default (if not already specified)
+        let debug = derives::as_str(DeriveId::Debug);
+        let clone = derives::as_str(DeriveId::Clone);
+        let partial_eq = derives::as_str(DeriveId::PartialEq);
+        if !derives.iter().any(|d| d == debug) {
+            derives.push(debug.to_string());
+        }
+        if !derives.iter().any(|d| d == clone) {
+            derives.push(clone.to_string());
+        }
+        if !derives.iter().any(|d| d == partial_eq) {
+            derives.push(partial_eq.to_string());
+        }
 
         Ok(IrEnum {
             name: e.name.clone(),

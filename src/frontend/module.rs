@@ -377,6 +377,7 @@ mod tests {
     fn test_exported_symbols_enum_with_variants() {
         let enum_decl = EnumDecl {
             visibility: Visibility::Public,
+            decorators: vec![],
             name: "Color".to_string(),
             type_params: vec![],
             variants: vec![

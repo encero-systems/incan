@@ -28,7 +28,7 @@ mod types;
 pub use errors::EmitError;
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::FunctionRegistry;
 use super::decl::VariantFields;
@@ -82,6 +82,10 @@ pub struct IrEmitter<'a> {
     const_string_literals: std::collections::HashMap<String, String>,
     /// Collected routes for web emission
     routes: Vec<RouteSpec>,
+    /// Map of type name -> module path segments for dependency modules.
+    type_module_paths: HashMap<String, Vec<String>>,
+    /// Type names that are declared in multiple modules (ambiguous).
+    ambiguous_type_names: HashSet<String>,
     /// Known internal module roots for this compilation unit (e.g. {"db", "store"}).
     ///
     /// Used to disambiguate crate-internal module imports vs external crate imports when emitting `use` paths.
@@ -113,6 +117,8 @@ impl<'a> IrEmitter<'a> {
             in_return_context: RefCell::new(false),
             const_string_literals: std::collections::HashMap::new(),
             routes: Vec::new(),
+            type_module_paths: HashMap::new(),
+            ambiguous_type_names: HashSet::new(),
             internal_module_roots: HashSet::new(),
         }
     }
@@ -193,6 +199,12 @@ impl<'a> IrEmitter<'a> {
     pub fn set_routes(&mut self, routes: Vec<RouteSpec>) {
         self.routes = routes;
     }
+
+    /// Set type-to-module path mappings for qualifying route wrapper types.
+    pub fn set_type_module_paths(&mut self, paths: HashMap<String, Vec<String>>, ambiguous: HashSet<String>) {
+        self.type_module_paths = paths;
+        self.ambiguous_type_names = ambiguous;
+    }
 }
 
 /// Web route info collected during codegen for web emission.
@@ -210,4 +222,11 @@ pub struct RouteSpec {
     pub unknown_methods: Vec<String>,
     /// Whether the handler is async.
     pub is_async: bool,
+    /// Module path segments for nested multi-file projects.
+    ///
+    /// Example: `Some(vec!["api", "routes"])` means the handler lives in `crate::api::routes`.
+    /// `None` means the handler is in the crate root (main module).
+    ///
+    /// This is carried structurally (segments) to avoid brittle string parsing.
+    pub module_path_segments: Option<Vec<String>>,
 }

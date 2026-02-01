@@ -158,7 +158,13 @@ impl<'a> IrEmitter<'a> {
         let r = plan.rhs_conv.apply(r_raw);
 
         match plan.emit {
-            BinOpEmitKind::StdlibCall { path } => Ok(quote! { #path(#l, #r) }),
+            BinOpEmitKind::StdlibCall { path, borrow_args } => {
+                if borrow_args {
+                    Ok(quote! { #path(&#l, &#r) })
+                } else {
+                    Ok(quote! { #path(#l, #r) })
+                }
+            }
             BinOpEmitKind::Pow { result_is_int } => {
                 if result_is_int {
                     Ok(quote! { #l.pow(#r as u32) })

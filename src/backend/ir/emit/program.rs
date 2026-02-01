@@ -133,7 +133,18 @@ impl ImportTracker {
                     self.scan_expr(&arg.expr);
                 }
             }
+            IrExprKind::BuiltinCall { args, .. } => {
+                for arg in args {
+                    self.scan_expr(arg);
+                }
+            }
             IrExprKind::MethodCall { receiver, args, .. } => {
+                self.scan_expr(receiver);
+                for arg in args {
+                    self.scan_expr(&arg.expr);
+                }
+            }
+            IrExprKind::KnownMethodCall { receiver, args, .. } => {
                 self.scan_expr(receiver);
                 for arg in args {
                     self.scan_expr(&arg.expr);
@@ -287,8 +298,7 @@ impl<'a> IrEmitter<'a> {
             items.push(quote! {
                 use axum::{
                     Router,
-                    routing::{get, post, put, delete, patch},
-                    extract::{Path, Query, State}
+                    routing::{get, post, put, delete, patch}
                 };
             });
         }
@@ -314,37 +324,258 @@ impl<'a> IrEmitter<'a> {
             let wrapper_name = format_ident!("__incan_web_{}", r.handler_name);
             let handler_ident = format_ident!("{}", Self::escape_keyword(&r.handler_name));
 
-            let sig_opt = self.function_registry.get(&r.handler_name);
-            let params = sig_opt.map(|s| &s.params[..]).unwrap_or(&[]);
-
-            // For now: support 0 or 1 path params (enough for hello_web).
-            let args_pat = if params.is_empty() {
-                quote! {}
-            } else if params.len() == 1 {
-                let p = &params[0];
-                let pname = format_ident!("{}", Self::escape_keyword(&p.name));
-                let pty = self.emit_type(&p.ty);
-                quote! { axum::extract::Path(#pname): axum::extract::Path<#pty> }
+            // Build fully qualified handler path if in a nested module.
+            let handler_call_path: TokenStream = if let Some(mod_segs) = &r.module_path_segments {
+                // Build `crate::a::b::handler` without string parsing.
+                let mut segs: Vec<syn::PathSegment> = Vec::with_capacity(mod_segs.len() + 2);
+                segs.push(syn::PathSegment::from(syn::Ident::new(
+                    "crate",
+                    proc_macro2::Span::call_site(),
+                )));
+                for s in mod_segs {
+                    let seg = Self::escape_keyword(s);
+                    segs.push(syn::PathSegment::from(syn::Ident::new(
+                        &seg,
+                        proc_macro2::Span::call_site(),
+                    )));
+                }
+                segs.push(syn::PathSegment::from(handler_ident.clone()));
+                let full_path = syn::Path {
+                    leading_colon: None,
+                    segments: segs.into_iter().collect(),
+                };
+                quote! { #full_path }
             } else {
-                return Err(EmitError::Unsupported(
-                    "web routes with multiple path params not yet supported".to_string(),
-                ));
+                quote! { #handler_ident }
             };
 
-            let call = if params.is_empty() {
-                quote! { #handler_ident().await }
+            let sig_opt = self.function_registry.get(&r.handler_name);
+            let params = sig_opt.map(|s| &s.params[..]).unwrap_or(&[]);
+            let qualify_types = r.module_path_segments.is_some();
+
+            let path_params = Self::path_params(&r.path)?;
+            let mut params_by_name: HashMap<&str, &super::super::decl::FunctionParam> = HashMap::new();
+            for p in params {
+                params_by_name.insert(p.name.as_str(), p);
+            }
+
+            let mut path_param_idents = Vec::new();
+            let mut path_param_types = Vec::new();
+            for name in &path_params {
+                let Some(param) = params_by_name.get(name.as_str()) else {
+                    return Err(EmitError::Unsupported(format!(
+                        "web route param '{}' has no matching handler parameter",
+                        name
+                    )));
+                };
+                if Self::named_generic_arg(&param.ty, "Json").is_some()
+                    || Self::named_generic_arg(&param.ty, "Query").is_some()
+                {
+                    return Err(EmitError::Unsupported(format!(
+                        "web route param '{}' cannot use Json/Query extractor types",
+                        name
+                    )));
+                }
+                path_param_idents.push(format_ident!("{}", Self::escape_keyword(name)));
+                let ty = self.emit_type_qualified_for_module(&param.ty, qualify_types)?;
+                path_param_types.push(ty);
+            }
+
+            let mut args_parts: Vec<TokenStream> = Vec::new();
+            if !path_param_idents.is_empty() {
+                let path_arg = if path_param_idents.len() == 1 {
+                    let pname = &path_param_idents[0];
+                    let pty = &path_param_types[0];
+                    quote! { axum::extract::Path(#pname): axum::extract::Path<#pty> }
+                } else {
+                    quote! {
+                        axum::extract::Path((#(#path_param_idents),*)): axum::extract::Path<(#(#path_param_types),*)>
+                    }
+                };
+                args_parts.push(path_arg);
+            }
+
+            let path_param_set: HashSet<&str> = path_params.iter().map(|s| s.as_str()).collect();
+            for p in params {
+                if path_param_set.contains(p.name.as_str()) {
+                    continue;
+                }
+                if let Some(inner) = Self::named_generic_arg(&p.ty, "Json") {
+                    let pname = format_ident!("{}", Self::escape_keyword(&p.name));
+                    let pty = self.emit_type_qualified_for_module(inner, qualify_types)?;
+                    args_parts.push(quote! { axum::extract::Json(#pname): axum::extract::Json<#pty> });
+                } else if let Some(inner) = Self::named_generic_arg(&p.ty, "Query") {
+                    let pname = format_ident!("{}", Self::escape_keyword(&p.name));
+                    let pty = self.emit_type_qualified_for_module(inner, qualify_types)?;
+                    args_parts.push(quote! { axum::extract::Query(#pname): axum::extract::Query<#pty> });
+                } else {
+                    return Err(EmitError::Unsupported(format!(
+                        "unsupported web handler param '{}': only path params, Json[T], and Query[T] are supported",
+                        p.name
+                    )));
+                }
+            }
+
+            let call_args: Vec<TokenStream> = params
+                .iter()
+                .map(|p| {
+                    let pname = format_ident!("{}", Self::escape_keyword(&p.name));
+                    if path_param_set.contains(p.name.as_str()) {
+                        quote! { #pname }
+                    } else if Self::named_generic_arg(&p.ty, "Json").is_some() {
+                        quote! { incan_stdlib::web::Json::new(#pname) }
+                    } else if Self::named_generic_arg(&p.ty, "Query").is_some() {
+                        quote! { incan_stdlib::web::Query::new(#pname) }
+                    } else {
+                        // Unreachable: the args_parts loop above returns Err for unsupported
+                        // param types, so we never reach this branch during successful emission.
+                        unreachable!(
+                            "unsupported param '{}' should have been rejected by args_parts validation",
+                            p.name
+                        )
+                    }
+                })
+                .collect();
+
+            let call = if call_args.is_empty() {
+                quote! { #handler_call_path().await }
             } else {
-                let pname = format_ident!("{}", Self::escape_keyword(&params[0].name));
-                quote! { #handler_ident(#pname).await }
+                quote! { #handler_call_path(#(#call_args),*).await }
             };
 
             out.push(quote! {
-                async fn #wrapper_name(#args_pat) -> impl axum::response::IntoResponse {
+                async fn #wrapper_name(#(#args_parts),*) -> impl axum::response::IntoResponse {
                     #call
                 }
             });
         }
         Ok(out)
+    }
+
+    /// Emit a type, qualifying user-defined types based on their declaration module.
+    ///
+    /// This is used for route wrapper parameters where the type may be declared in a dependency module.
+    fn emit_type_qualified_for_module(&self, ty: &IrType, qualify_named: bool) -> Result<TokenStream, EmitError> {
+        match ty {
+            IrType::Unit
+            | IrType::Bool
+            | IrType::Int
+            | IrType::Float
+            | IrType::String
+            | IrType::StaticStr
+            | IrType::StaticBytes
+            | IrType::FrozenStr
+            | IrType::FrozenBytes
+            | IrType::StrRef
+            | IrType::Unknown
+            | IrType::Generic(_)
+            | IrType::SelfType => Ok(self.emit_type(ty)),
+            IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => {
+                if qualify_named {
+                    self.emit_qualified_named_type(name)
+                } else {
+                    Ok(self.emit_type(ty))
+                }
+            }
+            IrType::NamedGeneric(name, args) => {
+                let base = if qualify_named {
+                    self.emit_qualified_named_type(name)?
+                } else {
+                    let ident = format_ident!("{}", Self::escape_keyword(name));
+                    quote! { #ident }
+                };
+                let inner: Vec<TokenStream> = args
+                    .iter()
+                    .map(|t| self.emit_type_qualified_for_module(t, qualify_named))
+                    .collect::<Result<_, _>>()?;
+                Ok(quote! { #base < #(#inner),* > })
+            }
+            IrType::List(elem) => {
+                let e = self.emit_type_qualified_for_module(elem, qualify_named)?;
+                Ok(quote! { Vec<#e> })
+            }
+            IrType::Dict(k, v) => {
+                let kk = self.emit_type_qualified_for_module(k, qualify_named)?;
+                let vv = self.emit_type_qualified_for_module(v, qualify_named)?;
+                Ok(quote! { std::collections::HashMap<#kk, #vv> })
+            }
+            IrType::Set(elem) => {
+                let e = self.emit_type_qualified_for_module(elem, qualify_named)?;
+                Ok(quote! { std::collections::HashSet<#e> })
+            }
+            IrType::Tuple(types) => {
+                let ts: Vec<_> = types
+                    .iter()
+                    .map(|t| self.emit_type_qualified_for_module(t, qualify_named))
+                    .collect::<Result<_, _>>()?;
+                Ok(quote! { (#(#ts),*) })
+            }
+            IrType::Option(inner) => {
+                let i = self.emit_type_qualified_for_module(inner, qualify_named)?;
+                Ok(quote! { Option<#i> })
+            }
+            IrType::Result(ok, err) => {
+                let o = self.emit_type_qualified_for_module(ok, qualify_named)?;
+                let e = self.emit_type_qualified_for_module(err, qualify_named)?;
+                Ok(quote! { Result<#o, #e> })
+            }
+            IrType::Function { params, ret } => {
+                let ps: Vec<_> = params
+                    .iter()
+                    .map(|p| self.emit_type_qualified_for_module(p, qualify_named))
+                    .collect::<Result<_, _>>()?;
+                let r = self.emit_type_qualified_for_module(ret, qualify_named)?;
+                Ok(quote! { fn(#(#ps),*) -> #r })
+            }
+            IrType::Ref(inner) => {
+                let i = self.emit_type_qualified_for_module(inner, qualify_named)?;
+                Ok(quote! { &#i })
+            }
+            IrType::RefMut(inner) => {
+                let i = self.emit_type_qualified_for_module(inner, qualify_named)?;
+                Ok(quote! { &mut #i })
+            }
+        }
+    }
+
+    fn emit_qualified_named_type(&self, name: &str) -> Result<TokenStream, EmitError> {
+        use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
+
+        if name == surface_types::as_str(SurfaceTypeId::FieldInfo) {
+            return Ok(quote! { incan_stdlib::reflection::FieldInfo });
+        }
+        if self.ambiguous_type_names.contains(name) {
+            return Err(EmitError::Unsupported(format!(
+                "type '{}' is declared in multiple modules; cannot qualify route wrapper type",
+                name
+            )));
+        }
+        if let Some(segs) = self.type_module_paths.get(name) {
+            let mut path_segs: Vec<syn::PathSegment> = Vec::with_capacity(segs.len() + 2);
+            path_segs.push(syn::PathSegment::from(syn::Ident::new(
+                "crate",
+                proc_macro2::Span::call_site(),
+            )));
+            for s in segs {
+                let seg = Self::escape_keyword(s);
+                path_segs.push(syn::PathSegment::from(syn::Ident::new(
+                    &seg,
+                    proc_macro2::Span::call_site(),
+                )));
+            }
+            let name = Self::escape_keyword(name);
+            path_segs.push(syn::PathSegment::from(syn::Ident::new(
+                &name,
+                proc_macro2::Span::call_site(),
+            )));
+            let full_path = syn::Path {
+                leading_colon: None,
+                segments: path_segs.into_iter().collect(),
+            };
+            return Ok(quote! { #full_path });
+        }
+        let ident = format_ident!("{}", Self::escape_keyword(name));
+        Ok(quote! { #ident })
     }
 
     /// Emit the axum router builder for collected `@route` handlers.
@@ -355,7 +586,7 @@ impl<'a> IrEmitter<'a> {
             if let Some(bad) = r.unknown_methods.first() {
                 return Err(EmitError::Unsupported(format!("unsupported web method '{}'", bad)));
             }
-            let path = Self::to_axum_path(&r.path);
+            let path = Self::to_axum_path(&r.path)?;
             let path_lit = proc_macro2::Literal::string(&path);
             let wrapper_name = format_ident!("__incan_web_{}", r.handler_name);
 
@@ -380,25 +611,87 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Convert `{param}` placeholders to axum `:param` path segments.
-    fn to_axum_path(path: &str) -> String {
-        // Convert `/api/{name}` → `/api/:name` (axum path params)
+    fn to_axum_path(path: &str) -> Result<String, EmitError> {
+        Ok(Self::parse_route_path(path)?.0)
+    }
+
+    /// Collect path parameter names in order of appearance.
+    fn path_params(path: &str) -> Result<Vec<String>, EmitError> {
+        Ok(Self::parse_route_path(path)?.1)
+    }
+
+    fn parse_route_path(path: &str) -> Result<(String, Vec<String>), EmitError> {
+        let mut params = Vec::new();
+        let mut seen = HashSet::new();
         let mut out = String::new();
         let mut chars = path.chars().peekable();
         while let Some(ch) = chars.next() {
-            if ch == '{' {
-                let mut name = String::new();
-                for c in chars.by_ref() {
-                    if c == '}' {
-                        break;
+            match ch {
+                '{' => {
+                    let mut name = String::new();
+                    let mut closed = false;
+                    for c in chars.by_ref() {
+                        if c == '}' {
+                            closed = true;
+                            break;
+                        }
+                        name.push(c);
                     }
-                    name.push(c);
+                    if !closed {
+                        return Err(EmitError::Unsupported(format!(
+                            "unterminated web route param in path '{}'",
+                            path
+                        )));
+                    }
+                    if name.is_empty() {
+                        return Err(EmitError::Unsupported(format!(
+                            "web route param name cannot be empty in path '{}'",
+                            path
+                        )));
+                    }
+                    if !Self::is_valid_param_name(&name) {
+                        return Err(EmitError::Unsupported(format!(
+                            "web route param '{}' is not a valid identifier in path '{}'",
+                            name, path
+                        )));
+                    }
+                    if !seen.insert(name.clone()) {
+                        return Err(EmitError::Unsupported(format!(
+                            "duplicate web route param '{}' in path '{}'",
+                            name, path
+                        )));
+                    }
+                    out.push(':');
+                    out.push_str(&name);
+                    params.push(name);
                 }
-                out.push(':');
-                out.push_str(&name);
-            } else {
-                out.push(ch);
+                '}' => {
+                    return Err(EmitError::Unsupported(format!(
+                        "unmatched '}}' in web route path '{}'",
+                        path
+                    )));
+                }
+                _ => out.push(ch),
             }
         }
-        out
+        Ok((out, params))
+    }
+
+    fn is_valid_param_name(name: &str) -> bool {
+        let mut chars = name.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if !(first.is_ascii_alphabetic() || first == '_') {
+            return false;
+        }
+        chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
+    fn named_generic_arg<'b>(ty: &'b IrType, name: &str) -> Option<&'b IrType> {
+        match ty {
+            IrType::NamedGeneric(type_name, args) if type_name == name && args.len() == 1 => Some(&args[0]),
+            _ => None,
+        }
     }
 }

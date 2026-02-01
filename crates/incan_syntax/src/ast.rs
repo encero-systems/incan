@@ -264,6 +264,7 @@ pub struct NewtypeDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDecl {
     pub visibility: Visibility,
+    pub decorators: Vec<Spanned<Decorator>>,
     pub name: Ident,
     pub type_params: Vec<Ident>,
     pub variants: Vec<Spanned<VariantDecl>>,

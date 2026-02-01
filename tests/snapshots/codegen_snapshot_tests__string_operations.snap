@@ -50,8 +50,8 @@ fn test_string_join() {
 }
 fn test_string_concatenation() {
     let mut result = "hello".to_string();
-    result = incan_stdlib::strings::str_concat(result, " ");
-    result = incan_stdlib::strings::str_concat(result, "world");
+    result = incan_stdlib::strings::str_concat(&result, &" ");
+    result = incan_stdlib::strings::str_concat(&result, &"world");
     println!("{}", result);
 }
 fn main() {

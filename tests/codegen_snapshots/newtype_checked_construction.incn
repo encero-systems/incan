@@ -1,5 +1,7 @@
 type UserId = newtype int
 
+type Ratio = newtype float
+
 type Attempts = newtype int:
     def from_underlying(n: int) -> Result[Attempts, str]:
         if n <= 0:
@@ -16,8 +18,9 @@ type Email = newtype str:
 def main() -> None:
     # No validation hook: should remain a raw wrap in v0.1.
     uid = UserId(42)
+    ratio = Ratio(0.5)
 
     # With validation hook: should be lowered as checked construction in v0.1.
     attempts = Attempts(5)
     email = Email("alice@example.com")
-    println(f"{uid.0} {attempts.0} {email.0}")
+    println(f"{uid.0} {ratio.0} {attempts.0} {email.0}")

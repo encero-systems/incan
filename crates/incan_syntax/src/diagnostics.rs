@@ -598,6 +598,15 @@ pub mod errors {
         ))
     }
 
+    pub fn list_append_requires_clone(elem_type: &str, span: Span) -> CompileError {
+        CompileError::type_error(
+            format!("List.append requires element type '{}' to be Clone", elem_type),
+            span,
+        )
+        .with_note("List.append clones non-Copy values before pushing")
+        .with_hint("Add @derive(Clone) to the element type or append a Copy type")
+    }
+
     pub fn mutable_tuple(span: Span) -> CompileError {
         CompileError::type_error(
             "Tuples are immutable and cannot be declared with 'mut'".to_string(),

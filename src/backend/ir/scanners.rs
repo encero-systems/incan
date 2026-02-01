@@ -451,11 +451,21 @@ fn expr_uses_list_helpers(expr: &Expr) -> bool {
     }
 }
 
-/// Collected route metadata: (handler, path, methods, unknown_methods, is_async).
-pub type RouteScan = (String, String, Vec<http::HttpMethodId>, Vec<String>, bool);
+/// Collected route metadata: (handler, path, methods, unknown_methods, is_async, module_path_segments).
+pub type RouteScan = (
+    String,
+    String,
+    Vec<http::HttpMethodId>,
+    Vec<String>,
+    bool,
+    Option<Vec<String>>,
+);
 
-/// Collect routes from `@route` decorators
-pub fn collect_routes(program: &Program) -> Vec<RouteScan> {
+/// Collect routes from `@route` decorators.
+///
+/// The `module_path_segments` parameter should be `None` for the main module, or `Some(&["api", "routes"])`
+/// for nested submodules.
+pub fn collect_routes(program: &Program, module_path_segments: Option<&[String]>) -> Vec<RouteScan> {
     let mut routes = Vec::new();
     for decl in &program.declarations {
         if let Declaration::Function(func) = &decl.node {
@@ -479,12 +489,18 @@ pub fn collect_routes(program: &Program) -> Vec<RouteScan> {
                                         if let Expr::List(items) = &expr.node {
                                             let mut method_strings = Vec::new();
                                             for item in items {
-                                                if let Expr::Literal(Literal::String(s)) = &item.node {
-                                                    method_strings.push(s.clone());
+                                                match &item.node {
+                                                    Expr::Literal(Literal::String(s)) => {
+                                                        method_strings.push(s.clone());
+                                                    }
+                                                    Expr::Ident(name) => {
+                                                        method_strings.push(name.clone());
+                                                    }
+                                                    _ => {}
                                                 }
                                             }
                                             if !method_strings.is_empty() {
-                                                // TODO: support multiple HTTP methods per route.
+                                                // Note: only the first recognized method is used today.
                                                 let mut selected: Option<http::HttpMethodId> = None;
                                                 for method in method_strings {
                                                     if let Some(id) = http::from_str(method.as_str()) {
@@ -504,7 +520,14 @@ pub fn collect_routes(program: &Program) -> Vec<RouteScan> {
                         }
                     }
                     if !path.is_empty() {
-                        routes.push((func.name.clone(), path, methods, unknown_methods, func.is_async));
+                        routes.push((
+                            func.name.clone(),
+                            path,
+                            methods,
+                            unknown_methods,
+                            func.is_async,
+                            module_path_segments.map(|segs| segs.to_vec()),
+                        ));
                     }
                 }
             }

@@ -10,10 +10,12 @@ expression: rust_code
 
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
-#[derive(Debug, Clone, Copy)]
-struct UserId(i64);
-#[derive(Debug, Clone, Copy)]
-struct Attempts(i64);
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+struct UserId(pub i64);
+#[derive(Debug, Clone, PartialEq, Copy)]
+struct Ratio(pub f64);
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+struct Attempts(pub i64);
 impl Attempts {
     fn from_underlying(n: i64) -> Result<Attempts, String> {
         if n <= 0 {
@@ -39,8 +41,8 @@ impl Attempts {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-#[derive(Debug, Clone)]
-struct Email(String);
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Email(pub String);
 impl Email {
     fn from_str(v: String) -> Result<Email, String> {
         if !incan_stdlib::strings::str_contains(&v, &"@") {
@@ -68,13 +70,15 @@ impl Email {
 }
 fn main() {
     let uid = UserId(42);
+    let ratio = Ratio(0.5f64);
     let attempts = Attempts::from_underlying(5)
         .expect("validated newtype construction failed: Attempts::from_underlying");
     let email = Email::from_str("alice@example.com".to_string())
         .expect("validated newtype construction failed: Email::from_str");
     println!(
-        "{}", { let __parts : [& str; 4usize] = ["", " ", " ", ""]; let __args : Vec <
-        String > = vec![format!("{}", uid.0), format!("{}", attempts.0), format!("{}",
-        email.0)]; incan_stdlib::strings::fstring(& __parts, & __args) }
+        "{}", { let __parts : [& str; 5usize] = ["", " ", " ", " ", ""]; let __args : Vec
+        < String > = vec![format!("{}", uid.0), format!("{}", ratio.0), format!("{}",
+        attempts.0), format!("{}", email.0)]; incan_stdlib::strings::fstring(& __parts, &
+        __args) }
     );
 }

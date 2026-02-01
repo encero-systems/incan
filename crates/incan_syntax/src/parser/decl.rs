@@ -52,7 +52,7 @@ impl<'a> Parser<'a> {
         } else if self.check_keyword(KeywordId::Type) || self.check_keyword(KeywordId::Newtype) {
             Declaration::Newtype(self.newtype_decl(visibility)?)
         } else if self.check_keyword(KeywordId::Enum) {
-            Declaration::Enum(self.enum_decl(visibility)?)
+            Declaration::Enum(self.enum_decl(decorators, visibility)?)
         } else if self.check_keyword(KeywordId::Def) || self.check_keyword(KeywordId::Async) {
             Declaration::Function(self.function_decl(decorators, visibility)?)
         } else {
@@ -479,7 +479,11 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse an enum declaration.
-    fn enum_decl(&mut self, visibility: Visibility) -> Result<EnumDecl, CompileError> {
+    fn enum_decl(
+        &mut self,
+        decorators: Vec<Spanned<Decorator>>,
+        visibility: Visibility,
+    ) -> Result<EnumDecl, CompileError> {
         self.expect_keyword(KeywordId::Enum, "Expected 'enum'")?;
         let name = self.identifier()?;
         let type_params = self.type_params()?;
@@ -487,8 +491,15 @@ impl<'a> Parser<'a> {
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
         self.expect(&TokenKind::Indent, "Expected indented block")?;
 
-        let mut variants = Vec::new();
+        // Skip optional docstring at the start of the enum body
         self.skip_newlines();
+        if let TokenKind::String(_) = &self.peek().kind {
+            // Consume the docstring (we don't store it for now, but allow it syntactically)
+            self.advance();
+            self.skip_newlines();
+        }
+
+        let mut variants = Vec::new();
         while !self.check(&TokenKind::Dedent) && !self.is_at_end() {
             variants.push(self.variant_decl()?);
             self.skip_newlines();
@@ -498,6 +509,7 @@ impl<'a> Parser<'a> {
 
         Ok(EnumDecl {
             visibility,
+            decorators,
             name,
             type_params,
             variants,

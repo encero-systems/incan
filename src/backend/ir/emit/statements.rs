@@ -192,6 +192,10 @@ impl<'a> IrEmitter<'a> {
                 // This handles the common case where a collection is used multiple times
                 // For primitive element types, use .iter().copied() to get values instead of references
                 let needs_mut_items = for_body_needs_mut_iteration(pattern, body);
+                let iterable_is_borrowable_lvalue = matches!(
+                    &iterable.kind,
+                    IrExprKind::Var { .. } | IrExprKind::Field { .. } | IrExprKind::Index { .. }
+                );
                 let iter_expr = match &iterable.ty {
                     // If the iterable is a mutable reference to a collection, use .iter_mut() for non-Copy types
                     IrType::RefMut(inner) => {
@@ -226,8 +230,8 @@ impl<'a> IrEmitter<'a> {
                         _ => quote! { #iter },
                     },
                     IrType::List(elem_ty) => {
-                        // If it's a variable, borrow it; otherwise use as-is
-                        if let IrExprKind::Var { .. } = &iterable.kind {
+                        // If it's a borrowable lvalue (var/field/index), iterate by reference to avoid moving.
+                        if iterable_is_borrowable_lvalue {
                             // For primitive types, use .iter().copied() to avoid reference issues
                             match elem_ty.as_ref() {
                                 IrType::Int | IrType::Float | IrType::Bool => {
@@ -247,7 +251,7 @@ impl<'a> IrEmitter<'a> {
                         }
                     }
                     IrType::Set(_) | IrType::Dict(_, _) => {
-                        if let IrExprKind::Var { .. } = &iterable.kind {
+                        if iterable_is_borrowable_lvalue {
                             quote! { &#iter }
                         } else {
                             quote! { #iter }

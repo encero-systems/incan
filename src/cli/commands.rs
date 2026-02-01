@@ -30,6 +30,8 @@ struct PreparedProject {
     generator: ProjectGenerator,
     /// Output directory path
     out_dir: String,
+    /// Project root directory (used as working dir when running)
+    project_root: PathBuf,
 }
 
 /// Prepare an Incan project for building or running.
@@ -63,6 +65,17 @@ fn prepare_project(file_path: &str, output_dir: Option<&str>) -> CliResult<Prepa
     // Derive project name from file path
     let path = Path::new(file_path);
     let project_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("incan_project");
+    let project_root = path
+        .parent()
+        .and_then(|p| {
+            if p.file_name().is_some_and(|name| name == "src") {
+                p.parent()
+            } else {
+                Some(p)
+            }
+        })
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
 
     let out_dir = output_dir
         .map(|s| s.to_string())
@@ -74,17 +87,30 @@ fn prepare_project(file_path: &str, output_dir: Option<&str>) -> CliResult<Prepa
     // Setup codegen
     let mut codegen = IrCodegen::new();
     for module in dep_modules {
-        codegen.add_module(&module.name, &module.ast);
+        codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
     codegen.scan_for_serde(&main_module.ast);
     codegen.scan_for_async(&main_module.ast);
     codegen.scan_for_web(&main_module.ast);
     codegen.scan_for_list_helpers(&main_module.ast);
+    for module in dep_modules {
+        codegen.scan_for_serde(&module.ast);
+        codegen.scan_for_async(&module.ast);
+        codegen.scan_for_web(&module.ast);
+        codegen.scan_for_list_helpers(&module.ast);
+    }
 
     let needs_serde = codegen.needs_serde();
     let needs_tokio = codegen.needs_tokio();
     let needs_axum = codegen.needs_axum();
-    let rust_crates = collect_rust_crates(&main_module.ast);
+    let mut rust_crates = collect_rust_crates(&main_module.ast);
+    for module in dep_modules {
+        for crate_name in collect_rust_crates(&module.ast) {
+            if !rust_crates.contains(&crate_name) {
+                rust_crates.push(crate_name);
+            }
+        }
+    }
 
     // Setup project generator
     let mut generator = ProjectGenerator::new(&out_dir, project_name, true);
@@ -116,7 +142,11 @@ fn prepare_project(file_path: &str, output_dir: Option<&str>) -> CliResult<Prepa
             .map_err(|e| CliError::failure(format!("Error generating project: {}", e)))?;
     }
 
-    Ok(PreparedProject { generator, out_dir })
+    Ok(PreparedProject {
+        generator,
+        out_dir,
+        project_root,
+    })
 }
 
 /// Maximum source file size (100 MB)
@@ -402,7 +432,6 @@ pub fn check_file(file_path: &str) -> CliResult<ExitCode> {
 }
 
 /// Emit generated Rust code.
-/// Emit generated Rust code.
 ///
 /// If `strict` is true, the output uses stricter clippy attributes to produce
 /// warning-clean code suitable for direct use in Rust projects.
@@ -416,7 +445,7 @@ pub fn emit_rust(file_path: &str, strict: bool) -> CliResult<ExitCode> {
     let mut codegen = IrCodegen::new();
 
     for module in &modules[..modules.len() - 1] {
-        codegen.add_module(&module.name, &module.ast);
+        codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
 
     let rust_code = codegen
@@ -462,7 +491,7 @@ pub fn build_file(file_path: &str, output_dir: Option<&String>) -> CliResult<Exi
 pub fn run_file(file_path: &str) -> CliResult<ExitCode> {
     let prepared = prepare_project(file_path, None)?;
 
-    match prepared.generator.run() {
+    match prepared.generator.run_with_cwd(&prepared.project_root) {
         Ok(result) => {
             if !result.stdout.is_empty() {
                 print!("{}", result.stdout);

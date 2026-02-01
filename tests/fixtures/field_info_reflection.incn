@@ -5,6 +5,27 @@ model Account:
     balance [description="Balance in cents"]: int = 0
     name: str
 
+model Empty:
+    """Empty model for __fields__() coverage"""
+
+model Settings:
+    complex: list[dict[str, int]]
+
+model Address:
+    street: str
+
+model User:
+    address: Address
+
+class Base:
+    base_id: int
+
+class Child extends Base:
+    name: str
+
+    def label(self) -> int:
+        return self.base_id
+
 def main() -> None:
     a = Account(type="premium", name="Test")
     
@@ -15,3 +36,26 @@ def main() -> None:
     for info in a.__fields__():
         # Print field info in a structured format
         println(f"field:{info.name}|wire:{info.wire_name}|type:{info.type_name}|default:{info.has_default}")
+
+    # Empty models still expose __fields__()
+    empty = Empty()
+    mut empty_count = 0
+    for _ in empty.__fields__():
+        empty_count += 1
+    println(f"empty_fields:{empty_count}")
+
+    # Nested generics are rendered in Incan type format
+    settings = Settings(complex=[])
+    for info in settings.__fields__():
+        println(f"settings_field:{info.name}|type:{info.type_name}")
+
+    # User-defined types show their Incan name
+    address = Address(street="Main St")
+    user = User(address=address)
+    for info in user.__fields__():
+        println(f"user_field:{info.name}|type:{info.type_name}")
+
+    # Inherited class fields appear in __fields__()
+    child = Child(base_id=1, name="Kid")
+    for info in child.__fields__():
+        println(f"child_field:{info.name}|type:{info.type_name}")

@@ -30,8 +30,10 @@
 use std::collections::{HashMap, HashSet};
 use std::env;
 
-use crate::frontend::ast::Program;
+use crate::frontend::ast::{Declaration, Program};
 use crate::frontend::diagnostics::CompileError;
+use incan_core::lang::decorators::{self, DecoratorId};
+use incan_core::lang::derives::{self, DeriveId};
 
 use super::emit::RouteSpec;
 use super::scanners::{
@@ -71,6 +73,121 @@ fn collect_model_field_aliases(main: &Program, deps: &[(&str, &Program)]) -> Has
     }
 
     out
+}
+
+fn collect_type_module_paths(
+    deps: &[(&str, &Program, Option<Vec<String>>)],
+) -> (HashMap<String, Vec<String>>, HashSet<String>) {
+    let mut paths: HashMap<String, Vec<String>> = HashMap::new();
+    let mut ambiguous: HashSet<String> = HashSet::new();
+
+    for (_name, program, path_segments) in deps {
+        let Some(segs) = path_segments.as_ref() else {
+            continue;
+        };
+        for decl in &program.declarations {
+            let type_name = match &decl.node {
+                Declaration::Model(m) => Some(&m.name),
+                Declaration::Class(c) => Some(&c.name),
+                Declaration::Enum(e) => Some(&e.name),
+                Declaration::Newtype(n) => Some(&n.name),
+                _ => None,
+            };
+            if let Some(name) = type_name {
+                if let Some(existing) = paths.get(name) {
+                    if existing != segs {
+                        ambiguous.insert(name.clone());
+                    }
+                } else {
+                    paths.insert(name.clone(), segs.clone());
+                }
+            }
+        }
+    }
+
+    for name in &ambiguous {
+        paths.remove(name);
+    }
+
+    (paths, ambiguous)
+}
+
+fn collect_serde_derives(main: &Program, deps: &[(&str, &Program)]) -> (bool, bool) {
+    let mut has_serialize = false;
+    let mut has_deserialize = false;
+
+    let mut visit = |program: &Program| {
+        for decl in &program.declarations {
+            let decorators = match &decl.node {
+                Declaration::Model(m) => Some(&m.decorators),
+                Declaration::Class(c) => Some(&c.decorators),
+                Declaration::Enum(e) => Some(&e.decorators),
+                _ => None,
+            };
+            let Some(decorators) = decorators else {
+                continue;
+            };
+            for dec in decorators {
+                if decorators::from_str(dec.node.name.as_str()) != Some(DecoratorId::Derive) {
+                    continue;
+                }
+                for arg in &dec.node.args {
+                    let crate::frontend::ast::DecoratorArg::Positional(expr) = arg else {
+                        continue;
+                    };
+                    let crate::frontend::ast::Expr::Ident(name) = &expr.node else {
+                        continue;
+                    };
+                    match derives::from_str(name.as_str()) {
+                        Some(DeriveId::Serialize) => has_serialize = true,
+                        Some(DeriveId::Deserialize) => has_deserialize = true,
+                        _ => {}
+                    }
+                }
+            }
+        }
+    };
+
+    visit(main);
+    for (_, dep) in deps {
+        visit(dep);
+    }
+
+    // Fallback: if no explicit @derive(Serialize/Deserialize) was found but serde usage is
+    // detected (e.g. `json_stringify()` builtin), we conservatively enable Serialize only.
+    // Deserialize is NOT enabled here because implicit serde usage (like `json_stringify`)
+    // only needs serialization, not deserialization.
+    if !has_serialize && !has_deserialize {
+        let serde_used = super::scanners::detect_serde_usage(main)
+            || deps
+                .iter()
+                .any(|(_, program)| super::scanners::detect_serde_usage(program));
+        if serde_used {
+            has_serialize = true;
+        }
+    }
+
+    (has_serialize, has_deserialize)
+}
+
+fn add_serde_to_newtypes(ir_program: &mut super::IrProgram, add_serialize: bool, add_deserialize: bool) {
+    use super::decl::IrDeclKind;
+
+    let serialize = derives::as_str(DeriveId::Serialize);
+    let deserialize = derives::as_str(DeriveId::Deserialize);
+
+    for decl in &mut ir_program.declarations {
+        if let IrDeclKind::Struct(s) = &mut decl.kind {
+            if s.fields.len() == 1 && s.fields[0].name == "0" {
+                if add_serialize && !s.derives.iter().any(|d| d == serialize) {
+                    s.derives.push(serialize.to_string());
+                }
+                if add_deserialize && !s.derives.iter().any(|d| d == deserialize) {
+                    s.derives.push(deserialize.to_string());
+                }
+            }
+        }
+    }
 }
 
 /// Error during Rust code generation.
@@ -149,8 +266,11 @@ impl From<EmitError> for GenerationError {
 pub struct IrCodegen<'a> {
     /// The current program being generated
     current_program: Option<&'a Program>,
-    /// Dependency modules to include before main
-    dependency_modules: Vec<(&'a str, &'a Program)>,
+    /// Dependency modules to include before main.
+    ///
+    /// Stores both the flat module name (used for build graph identity) and the nested module path
+    /// segments (used for correct Rust qualification in codegen).
+    dependency_modules: Vec<(&'a str, &'a Program, Option<Vec<String>>)>,
     /// Whether serde is needed (for Serialize/Deserialize derives)
     needs_serde: bool,
     /// Whether tokio is needed (for async runtime)
@@ -232,7 +352,38 @@ impl<'a> IrCodegen<'a> {
 
     /// Add a dependency module (for multi-file compilation)
     pub fn add_module(&mut self, module_name: &'a str, module_ast: &'a Program) {
-        self.dependency_modules.push((module_name, module_ast));
+        self.dependency_modules.push((module_name, module_ast, None));
+    }
+
+    /// Add a dependency module with its nested module path segments.
+    ///
+    /// This is used by the CLI multi-file nested mode where a module like `api.routes` is emitted as
+    /// `crate::api::routes` in Rust (even though we may use a flattened name like `api_routes` for internal identity).
+    pub fn add_module_with_path_segments(
+        &mut self,
+        module_name: &'a str,
+        module_ast: &'a Program,
+        path_segments: Vec<String>,
+    ) {
+        self.dependency_modules
+            .push((module_name, module_ast, Some(path_segments)));
+    }
+
+    /// Backfill nested module path segments for a dependency module by name.
+    ///
+    /// This is primarily used by tests or older call sites that only registered a flat
+    /// module name via `add_module()`. If a matching module entry exists and has no
+    /// path segments yet, this sets them.
+    pub fn set_module_path_segments(&mut self, module_name: &str, path_segments: Vec<String>) {
+        if let Some((_name, _ast, segs)) = self
+            .dependency_modules
+            .iter_mut()
+            .find(|(name, _, _)| *name == module_name)
+        {
+            if segs.is_none() {
+                *segs = Some(path_segments);
+            }
+        }
     }
 
     // =========================================================================
@@ -300,16 +451,21 @@ impl<'a> IrCodegen<'a> {
 
     // (helper methods removed in favor of centralized scanners)
 
-    /// Collect routes from @route decorators
-    fn collect_routes(&mut self, program: &Program) {
-        let collected = scan_collect_routes(program);
-        for (handler_name, path, methods, unknown_methods, is_async) in collected {
+    /// Collect routes from @route decorators.
+    ///
+    /// `module_path_segments` should be `None` for the main module, or `Some(&["api", "routes"])`
+    /// for nested submodules. This is used to generate fully qualified paths in route wrappers
+    /// without brittle string parsing.
+    fn collect_routes(&mut self, program: &Program, module_path_segments: Option<&[String]>) {
+        let collected = scan_collect_routes(program, module_path_segments);
+        for (handler_name, path, methods, unknown_methods, is_async, mod_path_segments) in collected {
             self.routes.push(RouteSpec {
                 handler_name,
                 path,
                 methods,
                 unknown_methods,
                 is_async,
+                module_path_segments: mod_path_segments,
             });
         }
     }
@@ -387,18 +543,18 @@ impl<'a> IrCodegen<'a> {
         self.scan_for_async(program);
         self.scan_for_web(program);
         self.scan_for_list_helpers(program);
-        self.collect_routes(program);
+        self.collect_routes(program, None);
         self.collect_rust_crates(program);
         self.check_for_this_import(program);
         self.collect_external_rust_functions(program);
 
         // Scan dependencies
-        for (_, dep_ast) in &self.dependency_modules.clone() {
+        for (_mod_name, dep_ast, mod_path_segments) in &self.dependency_modules.clone() {
             self.scan_for_serde(dep_ast);
             self.scan_for_async(dep_ast);
             self.scan_for_web(dep_ast);
             self.scan_for_list_helpers(dep_ast);
-            self.collect_routes(dep_ast);
+            self.collect_routes(dep_ast, mod_path_segments.as_deref());
             self.collect_rust_crates(dep_ast);
         }
 
@@ -415,12 +571,14 @@ impl<'a> IrCodegen<'a> {
         let deps: Vec<(&str, &Program)> = self
             .dependency_modules
             .iter()
-            .map(|(name, ast)| (*name, *ast))
+            .map(|(name, ast, _)| (*name, *ast))
             .collect();
 
         // RFC 021: Make alias-aware lowering work across module boundaries by seeding alias maps
         // for models declared in dependency modules as well.
         let global_aliases = collect_model_field_aliases(program, &deps);
+        let (type_module_paths, ambiguous_type_names) = collect_type_module_paths(&self.dependency_modules);
+        let (needs_serialize, needs_deserialize) = collect_serde_derives(program, &deps);
 
         // Typecheck to obtain reusable type information for lowering.
         //
@@ -437,11 +595,14 @@ impl<'a> IrCodegen<'a> {
         // Lower AST to IR using typechecker output when available
         let mut lowering = AstLowering::new_with_type_info(type_info_opt);
         lowering.seed_struct_field_aliases(global_aliases.clone());
-        let ir_program = lowering.lower_program(program)?;
+        let mut ir_program = lowering.lower_program(program)?;
+        if self.needs_serde {
+            add_serde_to_newtypes(&mut ir_program, needs_serialize, needs_deserialize);
+        }
 
         // Build unified function registry including imported module functions
         let mut unified_registry = ir_program.function_registry.clone();
-        for (_, dep_ast) in &self.dependency_modules {
+        for (_, dep_ast, _) in &self.dependency_modules {
             // For dependencies, use best-effort lowering without type info to
             // preserve prior behavior and avoid redundant typechecking.
             let mut dep_lowering = AstLowering::new();
@@ -461,6 +622,7 @@ impl<'a> IrCodegen<'a> {
                 inner.set_emit_zen(true);
             }
             inner.set_routes(self.routes.clone());
+            inner.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
             inner.set_needs_serde(self.needs_serde);
             inner.set_needs_tokio(self.needs_tokio);
             inner.set_needs_axum(self.needs_axum);
@@ -473,6 +635,7 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_emit_zen(true);
             }
             emitter.set_routes(self.routes.clone());
+            emitter.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
             emitter.set_needs_serde(self.needs_serde);
             emitter.set_needs_tokio(self.needs_tokio);
             emitter.set_needs_axum(self.needs_axum);
@@ -508,7 +671,7 @@ impl<'a> IrCodegen<'a> {
         let internal_roots: HashSet<String> = self
             .dependency_modules
             .iter()
-            .map(|(name, _)| (*name).to_string())
+            .map(|(name, _, _)| (*name).to_string())
             .collect();
 
         let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
@@ -570,15 +733,15 @@ impl<'a> IrCodegen<'a> {
         self.scan_for_async(program);
         self.scan_for_web(program);
         self.scan_for_list_helpers(program);
-        self.collect_routes(program);
+        self.collect_routes(program, None);
         self.collect_rust_crates(program);
 
-        for (_, dep_ast) in &self.dependency_modules.clone() {
+        for (_mod_name, dep_ast, mod_path_segments) in &self.dependency_modules.clone() {
             self.scan_for_serde(dep_ast);
             self.scan_for_async(dep_ast);
             self.scan_for_web(dep_ast);
             self.scan_for_list_helpers(dep_ast);
-            self.collect_routes(dep_ast);
+            self.collect_routes(dep_ast, mod_path_segments.as_deref());
             self.collect_rust_crates(dep_ast);
         }
 
@@ -590,25 +753,41 @@ impl<'a> IrCodegen<'a> {
         let deps: Vec<(&str, &Program)> = self
             .dependency_modules
             .iter()
-            .map(|(name, ast)| (*name, *ast))
+            .map(|(name, ast, _)| (*name, *ast))
             .collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
+        let (type_module_paths, ambiguous_type_names) = collect_type_module_paths(&self.dependency_modules);
+        let (needs_serialize, needs_deserialize) = collect_serde_derives(program, &deps);
 
         // Generate module files
         let mut modules = HashMap::new();
-        for (name, ast) in &self.dependency_modules {
+        for (name, ast, _) in &self.dependency_modules {
             if module_names.contains(name) {
-                let mut lowering = AstLowering::new();
+                let module_type_info = {
+                    use crate::frontend::typechecker::TypeChecker;
+                    let mut tc = TypeChecker::new();
+                    match tc.check_with_imports_allow_private(ast, &deps) {
+                        Ok(()) => tc.type_info().clone(),
+                        Err(errs) => return Err(GenerationError::TypeCheck(errs)),
+                    }
+                };
+                let mut lowering = AstLowering::new_with_type_info(module_type_info);
                 lowering.seed_struct_field_aliases(global_aliases.clone());
-                let ir = lowering.lower_program(ast)?;
+                let mut ir = lowering.lower_program(ast)?;
+                if self.needs_serde {
+                    add_serde_to_newtypes(&mut ir, needs_serialize, needs_deserialize);
+                }
                 let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
                 let module_code = if use_emit_service {
                     let mut svc = EmitService::new_from_program(&ir);
-                    svc.inner_mut().set_internal_module_roots(internal_roots.clone());
+                    let inner = svc.inner_mut();
+                    inner.set_internal_module_roots(internal_roots.clone());
+                    inner.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
                     svc.emit_program(&ir)?
                 } else {
                     let mut emitter = IrEmitter::new(&ir.function_registry);
                     emitter.set_internal_module_roots(internal_roots.clone());
+                    emitter.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
                     emitter.emit_program(&ir)?
                 };
                 modules.insert(name.to_string(), module_code);
@@ -654,20 +833,38 @@ impl<'a> IrCodegen<'a> {
     ) -> Result<(String, HashMap<Vec<String>, String>), GenerationError> {
         self.current_program = Some(program);
 
+        // Backfill nested module path segments for dependency modules when they were registered
+        // via the legacy `add_module()` API (flat names only).
+        //
+        // The CLI typically registers both: a flat name like "api_routes" and the nested path
+        // segments ["api", "routes"]. Tests may register only the flat name.
+        for path in module_paths {
+            let flat = path.join("_");
+            if let Some((_name, _ast, segs)) = self
+                .dependency_modules
+                .iter_mut()
+                .find(|(name, _, _)| *name == flat.as_str())
+            {
+                if segs.is_none() {
+                    *segs = Some(path.clone());
+                }
+            }
+        }
+
         // Scan all modules for features
         self.scan_for_serde(program);
         self.scan_for_async(program);
         self.scan_for_web(program);
         self.scan_for_list_helpers(program);
-        self.collect_routes(program);
+        self.collect_routes(program, None);
         self.collect_rust_crates(program);
 
-        for (_, dep_ast) in &self.dependency_modules.clone() {
+        for (_mod_name, dep_ast, mod_path_segments) in &self.dependency_modules.clone() {
             self.scan_for_serde(dep_ast);
             self.scan_for_async(dep_ast);
             self.scan_for_web(dep_ast);
             self.scan_for_list_helpers(dep_ast);
-            self.collect_routes(dep_ast);
+            self.collect_routes(dep_ast, mod_path_segments.as_deref());
             self.collect_rust_crates(dep_ast);
         }
 
@@ -679,29 +876,45 @@ impl<'a> IrCodegen<'a> {
         let deps: Vec<(&str, &Program)> = self
             .dependency_modules
             .iter()
-            .map(|(name, ast)| (*name, *ast))
+            .map(|(name, ast, _)| (*name, *ast))
             .collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
+        let (type_module_paths, ambiguous_type_names) = collect_type_module_paths(&self.dependency_modules);
+        let (needs_serialize, needs_deserialize) = collect_serde_derives(program, &deps);
 
         // Generate module files by path
         let mut modules = HashMap::new();
-        for (name, ast) in &self.dependency_modules {
+        for (name, ast, _) in &self.dependency_modules {
             // Find matching path by comparing joined segments with module name
             // Module name is path segments joined with "_" (e.g., "db_models")
             for path in module_paths {
                 let path_name = path.join("_");
                 if path_name == *name {
-                    let mut lowering = AstLowering::new();
+                    let module_type_info = {
+                        use crate::frontend::typechecker::TypeChecker;
+                        let mut tc = TypeChecker::new();
+                        match tc.check_with_imports_allow_private(ast, &deps) {
+                            Ok(()) => tc.type_info().clone(),
+                            Err(errs) => return Err(GenerationError::TypeCheck(errs)),
+                        }
+                    };
+                    let mut lowering = AstLowering::new_with_type_info(module_type_info);
                     lowering.seed_struct_field_aliases(global_aliases.clone());
-                    let ir = lowering.lower_program(ast)?;
+                    let mut ir = lowering.lower_program(ast)?;
+                    if self.needs_serde {
+                        add_serde_to_newtypes(&mut ir, needs_serialize, needs_deserialize);
+                    }
                     let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
                     let module_code = if use_emit_service {
                         let mut svc = EmitService::new_from_program(&ir);
-                        svc.inner_mut().set_internal_module_roots(internal_roots.clone());
+                        let inner = svc.inner_mut();
+                        inner.set_internal_module_roots(internal_roots.clone());
+                        inner.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
                         svc.emit_program(&ir)?
                     } else {
                         let mut emitter = IrEmitter::new(&ir.function_registry);
                         emitter.set_internal_module_roots(internal_roots.clone());
+                        emitter.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
                         emitter.emit_program(&ir)?
                     };
                     modules.insert(path.clone(), module_code);

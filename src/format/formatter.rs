@@ -342,6 +342,11 @@ impl Formatter {
     }
 
     fn format_enum(&mut self, en: &EnumDecl) {
+        // Decorators
+        for dec in &en.decorators {
+            self.format_decorator(&dec.node);
+        }
+
         // enum Name[T]:
         self.write_visibility(en.visibility);
         self.writer.write("enum ");

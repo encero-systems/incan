@@ -700,8 +700,18 @@ edition = "2021"
     /// Note: This is only used by `incan run` during development.
     /// Production deployments run the generated binary directly.
     pub fn run(&self) -> io::Result<RunResult> {
-        let mut child = Command::new("cargo")
-            .arg("run")
+        self.run_with_cwd(&self.output_dir)
+    }
+
+    /// Run the project with a custom working directory.
+    ///
+    /// This builds the generated Rust project, then runs the resulting binary with
+    /// `cwd` as the working directory. This keeps runtime-relative paths anchored
+    /// to the original project root rather than the generated `target/incan/...` directory.
+    pub fn run_with_cwd(&self, cwd: &Path) -> io::Result<RunResult> {
+        // Build first so we can run the binary directly with a custom cwd.
+        let build_output = Command::new("cargo")
+            .arg("build")
             .arg("--release")
             // Ensure we don't inherit a broken CA bundle path from the parent env.
             .env_remove("SSL_CERT_FILE")
@@ -710,6 +720,25 @@ edition = "2021"
             .env_remove("REQUESTS_CA_BUNDLE")
             .env_remove("CARGO_HTTP_CAINFO")
             .current_dir(&self.output_dir)
+            .output()?;
+        if !build_output.status.success() {
+            return Ok(RunResult {
+                success: false,
+                stdout: String::from_utf8_lossy(&build_output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&build_output.stderr).to_string(),
+                exit_code: build_output.status.code(),
+            });
+        }
+
+        let binary_path = self.binary_path();
+        let binary_path = if binary_path.is_absolute() {
+            binary_path
+        } else {
+            std::env::current_dir()?.join(binary_path)
+        };
+
+        let mut child = Command::new(binary_path)
+            .current_dir(cwd)
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .spawn()?;
