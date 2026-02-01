@@ -661,7 +661,7 @@ dependencies = [
 
 [[package]]
 name = "incan"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "clap",
  "incan_core",
@@ -684,11 +684,11 @@ dependencies = [
 
 [[package]]
 name = "incan_core"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 
 [[package]]
 name = "incan_derive"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -697,7 +697,7 @@ dependencies = [
 
 [[package]]
 name = "incan_stdlib"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "axum",
  "incan_core",
@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "incan_syntax"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "incan_core",
  "insta",
