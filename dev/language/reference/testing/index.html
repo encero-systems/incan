@@ -11,6 +11,10 @@
       
       
       
+        <link rel="prev" href="../strings/">
+      
+      
+        <link rel="next" href="../reflection/">
       
       
       <link rel="icon" href="../../../assets/images/favicon.png">
@@ -18,7 +22,7 @@
     
     
       
-        <title>Testing (reference) - Incan Documentation</title>
+        <title>Testing - Incan Documentation</title>
       
     
     
@@ -112,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Testing (reference)
+              Testing
             
           </span>
         </div>
@@ -437,6 +441,8 @@
       
   
   
+    
+  
   
   
     
@@ -462,11 +468,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
           
@@ -488,7 +494,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             Language
@@ -553,6 +559,8 @@
       
         
           
+        
+      
         
       
         
@@ -862,6 +870,27 @@
   
   <span class="md-ellipsis">
     12. Newtypes (stronger types)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/book/13_unit_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    13. Unit tests
   </span>
   
 
@@ -1233,6 +1262,8 @@
                 
   
   
+    
+  
   
   
     
@@ -1260,16 +1291,20 @@
       
         
       
+        
+      
+        
+      
     
     
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" checked>
         
           
           
@@ -1291,7 +1326,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_4">
             <span class="md-nav__icon md-icon"></span>
             Reference
@@ -1430,6 +1465,217 @@
                 
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#importing-the-testing-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      Importing the testing API
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#assertion-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Assertion functions
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Assertion functions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#assertcondition-bool-none" class="md-nav__link">
+    <span class="md-ellipsis">
+      assert(condition: bool) -&gt; None
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assert_truecondition-bool-none" class="md-nav__link">
+    <span class="md-ellipsis">
+      assert_true(condition: bool) -&gt; None
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assert_falsecondition-bool-none" class="md-nav__link">
+    <span class="md-ellipsis">
+      assert_false(condition: bool) -&gt; None
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assert_eqtleft-t-right-t-none" class="md-nav__link">
+    <span class="md-ellipsis">
+      assert_eq[T](left: T, right: T) -&gt; None
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assert_netleft-t-right-t-none" class="md-nav__link">
+    <span class="md-ellipsis">
+      assert_ne[T](left: T, right: T) -&gt; None
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#failmsg-str-none" class="md-nav__link">
+    <span class="md-ellipsis">
+      fail(msg: str) -&gt; None
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-markers-decorators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Test markers (decorators)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Test markers (decorators)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#skipreason-str" class="md-nav__link">
+    <span class="md-ellipsis">
+      @skip(reason: str = "")
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#xfailreason-str" class="md-nav__link">
+    <span class="md-ellipsis">
+      @xfail(reason: str = "")
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slow" class="md-nav__link">
+    <span class="md-ellipsis">
+      @slow
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixtures-and-parametrization" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fixtures and parametrization
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
   
   
     <li class="md-nav__item">
@@ -1481,7 +1727,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_11" >
         
           
           
@@ -1497,14 +1743,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_9" id="__nav_3_4_9_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_11" id="__nav_3_4_11_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_9">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_11">
             <span class="md-nav__icon md-icon"></span>
             Stdlib traits
           </label>
@@ -1665,6 +1911,8 @@
       
         
       
+        
+      
     
     
       
@@ -1674,10 +1922,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_10" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_12" >
         
           
-          <label class="md-nav__link" for="__nav_3_4_10" id="__nav_3_4_10_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4_12" id="__nav_3_4_12_label" tabindex="0">
             
   
   <span class="md-ellipsis">
@@ -1688,8 +1936,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_10_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_10">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_12">
             <span class="md-nav__icon md-icon"></span>
             Derives
           </label>
@@ -1770,6 +2018,27 @@
   
   <span class="md-ellipsis">
     Serialization
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../derives/validation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Validation
   </span>
   
 
@@ -2120,16 +2389,102 @@
   
   
   
-    <li class="md-nav__item">
-      <a href="../../explanation/models_and_classes/" class="md-nav__link">
+    
+    
+      
         
+          
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_12" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../explanation/models_and_classes/" class="md-nav__link ">
+              
   
   <span class="md-ellipsis">
     Models and classes
   </span>
   
 
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_5_12" id="__nav_3_5_12_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_12">
+            <span class="md-nav__icon md-icon"></span>
+            Models and classes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/models_and_classes/models/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Models
+  </span>
+  
+
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/models_and_classes/classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -3780,7 +4135,7 @@
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
       <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
