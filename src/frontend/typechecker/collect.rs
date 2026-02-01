@@ -77,6 +77,8 @@ fn collect_fields(fields: &[Spanned<FieldDecl>], symbols: &SymbolTable) -> HashM
                 FieldInfo {
                     ty: resolve_type(&f.node.ty.node, symbols),
                     has_default: f.node.default.is_some(),
+                    alias: f.node.metadata.alias.clone(),
+                    description: f.node.metadata.description.clone(),
                 },
             )
         })
@@ -291,6 +293,27 @@ impl TypeChecker {
                 // For each item in `from module import item1, item2, ...`
                 // create a symbol as if it were `import module::item`
                 for item in items {
+                    let aliased_type = item.alias.as_ref().and_then(|alias| {
+                        if self.symbols.lookup(alias).is_some() {
+                            return None;
+                        }
+                        let id = self.symbols.lookup(&item.name)?;
+                        let sym = self.symbols.get(id)?;
+                        let SymbolKind::Type(info) = &sym.kind else {
+                            return None;
+                        };
+                        Some((alias.clone(), info.clone()))
+                    });
+
+                    if let Some((alias, info)) = aliased_type {
+                        self.symbols.define(Symbol {
+                            name: alias,
+                            kind: SymbolKind::Type(info),
+                            span,
+                            scope: 0,
+                        });
+                        continue;
+                    }
                     let name = item.alias.clone().unwrap_or_else(|| item.name.clone());
                     let mut path = module.segments.clone();
                     path.push(item.name.clone());

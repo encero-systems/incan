@@ -512,6 +512,34 @@ impl Formatter {
     fn format_field(&mut self, field: &FieldDecl) {
         self.write_visibility(field.visibility);
         self.writer.write(&field.name);
+        let alias = field.metadata.alias.as_deref();
+        let description = field.metadata.description.as_deref();
+        let use_as_sugar = alias.is_some() && description.is_none();
+
+        if !use_as_sugar && (alias.is_some() || description.is_some()) {
+            self.writer.write(" [");
+            let mut wrote = false;
+            if let Some(alias) = alias {
+                self.writer.write("alias=\"");
+                self.writer.write(alias);
+                self.writer.write("\"");
+                wrote = true;
+            }
+            if let Some(description) = description {
+                if wrote {
+                    self.writer.write(", ");
+                }
+                self.writer.write("description=\"");
+                self.writer.write(description);
+                self.writer.write("\"");
+            }
+            self.writer.write("]");
+        }
+        if use_as_sugar {
+            self.writer.write(" as \"");
+            self.writer.write(alias.unwrap_or_default());
+            self.writer.write("\"");
+        }
         self.writer.write(": ");
         self.format_type(&field.ty.node);
         if let Some(default) = &field.default {
@@ -1101,7 +1129,16 @@ impl Formatter {
                         if i > 0 {
                             self.writer.write(", ");
                         }
-                        self.format_pattern(&p.node);
+                        match p {
+                            PatternArg::Positional(pat) => {
+                                self.format_pattern(&pat.node);
+                            }
+                            PatternArg::Named(name, pat) => {
+                                self.writer.write(name);
+                                self.writer.write("=");
+                                self.format_pattern(&pat.node);
+                            }
+                        }
                     }
                     self.writer.write(")");
                 }

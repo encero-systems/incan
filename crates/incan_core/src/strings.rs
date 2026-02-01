@@ -13,6 +13,7 @@ use core::fmt;
 use std::cmp::Ordering;
 
 use crate::errors::IncanError;
+use crate::indexing::normalize_slice_bounds;
 
 /// Represent string access errors produced by semantic-core helpers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,28 +162,7 @@ pub fn str_slice(
     let chars: Vec<char> = s.chars().collect();
     let len = chars.len() as i64;
 
-    let default_start = if step > 0 { 0 } else { len - 1 };
-    let default_end = if step > 0 { len } else { -1 };
-
-    let mut start_idx = start.unwrap_or(default_start);
-    let mut end_idx = end.unwrap_or(default_end);
-
-    if start_idx < 0 {
-        start_idx += len;
-    }
-    // Important: for negative steps, `end = None` uses the sentinel `-1` (not `len-1`).
-    // Python's slice normalization keeps this sentinel as-is.
-    if end.is_some() && end_idx < 0 {
-        end_idx += len;
-    }
-
-    if step > 0 {
-        start_idx = start_idx.clamp(0, len);
-        end_idx = end_idx.clamp(0, len);
-    } else {
-        start_idx = start_idx.clamp(-1, len - 1);
-        end_idx = end_idx.clamp(-1, len - 1);
-    }
+    let (start_idx, end_idx) = normalize_slice_bounds(len, start, end, step);
 
     let mut out = String::new();
     let mut i = start_idx;

@@ -453,6 +453,25 @@ fn format_type(ty: &Type) -> String {
     }
 }
 
+fn push_completion(
+    items: &mut Vec<CompletionItem>,
+    seen: &mut HashSet<String>,
+    label: &str,
+    kind: CompletionItemKind,
+    detail: Option<String>,
+    sort_text: Option<String>,
+) {
+    if seen.insert(label.to_string()) {
+        items.push(CompletionItem {
+            label: label.to_string(),
+            kind: Some(kind),
+            detail,
+            sort_text,
+            ..Default::default()
+        });
+    }
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for IncanLanguageServer {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
@@ -600,37 +619,55 @@ impl LanguageServer for IncanLanguageServer {
         let mut items: Vec<CompletionItem> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
 
-        let mut push_vocab = |label: &str, kind: CompletionItemKind| {
-            if seen.insert(label.to_string()) {
-                items.push(CompletionItem {
-                    label: label.to_string(),
-                    kind: Some(kind),
-                    ..Default::default()
-                });
-            }
-        };
-
         // Add keywords from the registry (canonical + aliases).
         for info in keywords::KEYWORDS {
-            push_vocab(info.canonical, CompletionItemKind::KEYWORD);
+            push_completion(
+                &mut items,
+                &mut seen,
+                info.canonical,
+                CompletionItemKind::KEYWORD,
+                None,
+                None,
+            );
             for &alias in info.aliases {
-                push_vocab(alias, CompletionItemKind::KEYWORD);
+                push_completion(&mut items, &mut seen, alias, CompletionItemKind::KEYWORD, None, None);
             }
         }
 
         // Add surface constructors (`Ok`, `Err`, `Some`, `None`).
         for info in constructors::CONSTRUCTORS {
-            push_vocab(info.canonical, CompletionItemKind::CONSTRUCTOR);
+            push_completion(
+                &mut items,
+                &mut seen,
+                info.canonical,
+                CompletionItemKind::CONSTRUCTOR,
+                None,
+                None,
+            );
             for &alias in info.aliases {
-                push_vocab(alias, CompletionItemKind::CONSTRUCTOR);
+                push_completion(
+                    &mut items,
+                    &mut seen,
+                    alias,
+                    CompletionItemKind::CONSTRUCTOR,
+                    None,
+                    None,
+                );
             }
         }
 
         // Add core collection/generic type names (`Option`, `Result`, frozen variants, etc.).
         for info in collections::COLLECTION_TYPES {
-            push_vocab(info.canonical, CompletionItemKind::CLASS);
+            push_completion(
+                &mut items,
+                &mut seen,
+                info.canonical,
+                CompletionItemKind::CLASS,
+                None,
+                None,
+            );
             for &alias in info.aliases {
-                push_vocab(alias, CompletionItemKind::CLASS);
+                push_completion(&mut items, &mut seen, alias, CompletionItemKind::CLASS, None, None);
             }
         }
 
@@ -639,68 +676,116 @@ impl LanguageServer for IncanLanguageServer {
             for decl in &ast.declarations {
                 match &decl.node {
                     Declaration::Const(konst) => {
-                        if seen.insert(konst.name.clone()) {
-                            items.push(CompletionItem {
-                                label: konst.name.clone(),
-                                kind: Some(CompletionItemKind::CONSTANT),
-                                detail: Some(if let Some(ty) = &konst.ty {
-                                    format!("const {}: {}", konst.name, format_type(&ty.node))
-                                } else {
-                                    format!("const {}", konst.name)
-                                }),
-                                ..Default::default()
-                            });
-                        }
+                        push_completion(
+                            &mut items,
+                            &mut seen,
+                            &konst.name,
+                            CompletionItemKind::CONSTANT,
+                            Some(if let Some(ty) = &konst.ty {
+                                format!("const {}: {}", konst.name, format_type(&ty.node))
+                            } else {
+                                format!("const {}", konst.name)
+                            }),
+                            None,
+                        );
                     }
                     Declaration::Function(func) => {
-                        if seen.insert(func.name.clone()) {
-                            items.push(CompletionItem {
-                                label: func.name.clone(),
-                                kind: Some(CompletionItemKind::FUNCTION),
-                                detail: Some(format_function_signature(func)),
-                                ..Default::default()
-                            });
-                        }
+                        push_completion(
+                            &mut items,
+                            &mut seen,
+                            &func.name,
+                            CompletionItemKind::FUNCTION,
+                            Some(format_function_signature(func)),
+                            None,
+                        );
                     }
                     Declaration::Model(model) => {
-                        if seen.insert(model.name.clone()) {
-                            items.push(CompletionItem {
-                                label: model.name.clone(),
-                                kind: Some(CompletionItemKind::STRUCT),
-                                detail: Some(format!("model {}", model.name)),
-                                ..Default::default()
-                            });
+                        push_completion(
+                            &mut items,
+                            &mut seen,
+                            &model.name,
+                            CompletionItemKind::STRUCT,
+                            Some(format!("model {}", model.name)),
+                            None,
+                        );
+                        for field in &model.fields {
+                            let canonical = field.node.name.as_str();
+                            push_completion(
+                                &mut items,
+                                &mut seen,
+                                canonical,
+                                CompletionItemKind::FIELD,
+                                Some(format!("field on model {}", model.name)),
+                                Some(format!("1_{}", canonical)),
+                            );
+                            if let Some(alias) = field.node.metadata.alias.as_deref() {
+                                if alias != canonical {
+                                    // RFC 021: show mapping detail (e.g. `type → type_`)
+                                    push_completion(
+                                        &mut items,
+                                        &mut seen,
+                                        alias,
+                                        CompletionItemKind::FIELD,
+                                        Some(format!("{} → {} ({})", alias, canonical, model.name)),
+                                        Some(format!("0_{}", alias)),
+                                    );
+                                }
+                            }
                         }
                     }
                     Declaration::Class(class) => {
-                        if seen.insert(class.name.clone()) {
-                            items.push(CompletionItem {
-                                label: class.name.clone(),
-                                kind: Some(CompletionItemKind::CLASS),
-                                detail: Some(format!("class {}", class.name)),
-                                ..Default::default()
-                            });
+                        push_completion(
+                            &mut items,
+                            &mut seen,
+                            &class.name,
+                            CompletionItemKind::CLASS,
+                            Some(format!("class {}", class.name)),
+                            None,
+                        );
+                        for field in &class.fields {
+                            let canonical = field.node.name.as_str();
+                            push_completion(
+                                &mut items,
+                                &mut seen,
+                                canonical,
+                                CompletionItemKind::FIELD,
+                                Some(format!("field on class {}", class.name)),
+                                Some(format!("1_{}", canonical)),
+                            );
+                            if let Some(alias) = field.node.metadata.alias.as_deref() {
+                                if alias != canonical {
+                                    // RFC 021: show mapping detail (e.g. `type → type_`)
+                                    push_completion(
+                                        &mut items,
+                                        &mut seen,
+                                        alias,
+                                        CompletionItemKind::FIELD,
+                                        Some(format!("{} → {} ({})", alias, canonical, class.name)),
+                                        Some(format!("0_{}", alias)),
+                                    );
+                                }
+                            }
                         }
                     }
                     Declaration::Trait(tr) => {
-                        if seen.insert(tr.name.clone()) {
-                            items.push(CompletionItem {
-                                label: tr.name.clone(),
-                                kind: Some(CompletionItemKind::INTERFACE),
-                                detail: Some(format!("trait {}", tr.name)),
-                                ..Default::default()
-                            });
-                        }
+                        push_completion(
+                            &mut items,
+                            &mut seen,
+                            &tr.name,
+                            CompletionItemKind::INTERFACE,
+                            Some(format!("trait {}", tr.name)),
+                            None,
+                        );
                     }
                     Declaration::Enum(en) => {
-                        if seen.insert(en.name.clone()) {
-                            items.push(CompletionItem {
-                                label: en.name.clone(),
-                                kind: Some(CompletionItemKind::ENUM),
-                                detail: Some(format!("enum {}", en.name)),
-                                ..Default::default()
-                            });
-                        }
+                        push_completion(
+                            &mut items,
+                            &mut seen,
+                            &en.name,
+                            CompletionItemKind::ENUM,
+                            Some(format!("enum {}", en.name)),
+                            None,
+                        );
                     }
                     _ => {}
                 }

@@ -272,7 +272,7 @@ class PaymentProcessor:
         ...
 ```
 
-See also: [Models and Classes Guide](./models_and_classes.md)
+See also: [Models and Classes Guide](./models_and_classes/index.md)
 
 ---
 
@@ -339,7 +339,7 @@ The compiler guarantees you handle all cases, eliminating a whole class of bugs 
 ## See Also
 
 - [Error Handling](./error_handling.md) — Using `Result` and `Option`
-- [Pattern Matching RFC][RFC 000] — Match expression grammar
-- [Models and Classes](./models_and_classes.md) — When to use class vs enum
+- Match expressions: see the language docs and examples in this section
+- [Models and Classes](./models_and_classes/index.md) — When to use class vs enum
 
 --8<-- "_snippets/rfcs_refs.md"

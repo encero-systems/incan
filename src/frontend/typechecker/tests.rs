@@ -199,6 +199,349 @@ def foo() -> bool:
 }
 
 // ========================================
+// RFC 021: field metadata + aliases
+// ========================================
+
+#[test]
+fn test_alias_resolution_member_and_constructor() {
+    let source = r#"
+model Account:
+  type_ [alias="type"]: str
+
+def f(a: Account) -> str:
+  let x = Account(type="premium")
+  return a.type
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_canonical_wins_over_alias_resolution() {
+    // RFC 021: When typechecking a field key, canonical name is checked first, then alias.
+    // This test verifies that accessing by canonical name works even when the same model
+    // has aliases, and that the type is correctly resolved from the canonical field.
+    let source = r#"
+model Data:
+    foo [alias="wire_foo"]: str
+    bar: int
+
+def test_canonical_access(d: Data) -> str:
+    # Accessing by canonical name should work and return the correct type
+    return d.foo
+
+def test_alias_access(d: Data) -> str:
+    # Accessing by alias should also work
+    return d.wire_foo
+
+def test_constructor_canonical(name: str) -> Data:
+    # Constructor with canonical name
+    return Data(foo=name, bar=42)
+
+def test_constructor_alias(name: str) -> Data:
+    # Constructor with alias
+    return Data(wire_foo=name, bar=42)
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_canonical_takes_precedence_in_mixed_access() {
+    // RFC 021: Canonical name takes precedence. If a field has both canonical name
+    // and alias, both should work independently with correct type resolution.
+    let source = r#"
+model Account:
+    name: str
+    type_ [alias="type"]: str
+    balance: int
+
+def access_all(a: Account) -> str:
+    # Access fields by canonical name
+    let n = a.name       # canonical, no alias
+    let t = a.type_      # canonical (has alias "type")
+    let b = a.balance    # canonical, no alias
+    
+    # Access field by alias
+    let t2 = a.type      # alias for type_
+    
+    # Both t and t2 should have type str
+    return f"{n} {t} {t2} {b}"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_alias_resolution_in_pattern() {
+    let source = r#"
+model Account:
+  type_ [alias="type"]: str
+
+def f(a: Account) -> str:
+  match a:
+    Account(type="premium") => return "premium"
+    Account(type="basic") => return "basic"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_duplicate_alias_error() {
+    let source = r#"
+model Account:
+  a [alias="wire"]: str
+  b [alias="wire"]: int
+"#;
+    let err = check_str(source).expect_err("Expected duplicate alias error");
+    assert!(err.iter().any(|e| e.message.contains("Duplicate alias")));
+}
+
+#[test]
+fn test_alias_collides_with_canonical_error() {
+    let source = r#"
+model Account:
+  type_: str
+  kind [alias="type_"]: str
+"#;
+    let err = check_str(source).expect_err("Expected alias collision error");
+    assert!(
+        err.iter()
+            .any(|e| e.message.contains("collides with a canonical field name"))
+    );
+}
+
+#[test]
+fn test_alias_collides_with_method_error() {
+    let source = r#"
+model Account:
+  type_ [alias="describe"]: str
+
+  def describe(self) -> str:
+    return self.type_
+"#;
+    let err = check_str(source).expect_err("Expected alias/method collision error");
+    assert!(err.iter().any(|e| e.message.contains("collides with a method name")));
+}
+
+#[test]
+fn test_empty_alias_error() {
+    let source = r#"
+model Account:
+  type_ [alias=""]: str
+"#;
+    let err = check_str(source).expect_err("Expected empty alias error");
+    assert!(err.iter().any(|e| e.message.contains("non-empty")));
+}
+
+#[test]
+fn test_whitespace_alias_error() {
+    let source = r#"
+model Account:
+  type_ [alias="   "]: str
+"#;
+    let err = check_str(source).expect_err("Expected whitespace alias error");
+    assert!(err.iter().any(|e| e.message.contains("non-empty")));
+}
+
+#[test]
+fn test_alias_and_canonical_in_constructor_error() {
+    let source = r#"
+model Account:
+  type_ [alias="type"]: str
+
+def f() -> Account:
+  return Account(type="x", type_="y")
+"#;
+    let err = check_str(source).expect_err("Expected duplicate field error");
+    assert!(err.iter().any(|e| e.message.contains("Duplicate constructor argument")));
+}
+
+#[test]
+fn test_non_identifier_alias_allowed() {
+    let source = r#"
+model Weird:
+  one_ [alias="1"]: int
+
+def f(w: Weird) -> int:
+  return w.one_
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_alias_not_supported_on_class() {
+    // RFC 021: Field aliases are only supported on `model`, not `class`
+    let source = r#"
+class Account:
+  type_ [alias="type"]: str
+"#;
+    let err = check_str(source).expect_err("Expected class alias error");
+    assert!(err.iter().any(|e| e.message.contains("not supported on class")));
+}
+
+#[test]
+fn test_numeric_alias_member_access_error() {
+    let source = r#"
+model Weird:
+  one_ [alias="1"]: int
+
+def f(w: Weird) -> int:
+  return w.1
+"#;
+    let err = check_str(source).expect_err("Expected error for numeric access");
+    assert!(err.iter().any(|e| e.message.contains("no field '1'")));
+}
+
+#[test]
+fn test_alias_collides_with_builtin_error() {
+    let source = r#"
+model Account:
+  fields_ [alias="__fields__"]: str
+"#;
+    let err = check_str(source).expect_err("Expected builtin collision error");
+    assert!(err.iter().any(|e| e.message.contains("builtin member")));
+}
+
+#[test]
+fn test_alias_and_canonical_in_pattern_error() {
+    let source = r#"
+model Account:
+  type_ [alias="type"]: str
+
+def f(a: Account) -> str:
+  match a:
+    Account(type="x", type_="y") => return "x"
+"#;
+    let err = check_str(source).expect_err("Expected duplicate pattern field error");
+    assert!(err.iter().any(|e| e.message.contains("Duplicate pattern field")));
+}
+
+#[test]
+fn test_unicode_alias_allowed() {
+    let source = r#"
+model Intl:
+  name_ [alias="名前"]: str
+
+def f(i: Intl) -> str:
+  return i.name_
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_alias_self_keyword() {
+    let source = r#"
+model Data:
+  self_ [alias="self"]: str
+
+def f(d: Data) -> str:
+  return d.self
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_alias_super_keyword_member_access() {
+    let source = r#"
+model Data:
+  super_ [alias="super"]: str
+
+def f(d: Data) -> str:
+  return d.super
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_alias_super_keyword_constructor_key() {
+    let source = r#"
+model Data:
+  super_ [alias="super"]: str
+
+def f() -> Data:
+  return Data(super="x")
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_alias_super_keyword_pattern_key() {
+    let source = r#"
+model Data:
+  super_ [alias="super"]: str
+
+def f(d: Data) -> str:
+  match d:
+    Data(super=x) => return x
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_alias_underscore_member_access() {
+    let source = r#"
+model Data:
+  under_ [alias="_"]: str
+
+def f(d: Data) -> str:
+  return d._
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_alias_underscore_constructor_key() {
+    let source = r#"
+model Data:
+  under_ [alias="_"]: str
+
+def f() -> Data:
+  return Data(_="x")
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_alias_underscore_pattern_key() {
+    let source = r#"
+model Data:
+  under_ [alias="_"]: str
+
+def f(d: Data) -> str:
+  match d:
+    Data(_=x) => return x
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_alias_unicode_normalization_variants_treated_as_distinct() {
+    // RFC 021: alias matching uses exact string equality; no Unicode normalization is performed.
+    // Example: NFC "é" vs NFD "e\u{301}" must be treated as distinct aliases.
+    let source = r#"
+model Data:
+  nfc_ [alias="é"]: str
+  nfd_ [alias="e\u{301}"]: str
+
+def f(d: Data) -> str:
+  return d.nfc_
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_alias_case_variants_treated_as_distinct() {
+    // RFC 021: no case-folding is performed for alias matching.
+    let source = r#"
+model Data:
+  lower_ [alias="type"]: str
+  upper_ [alias="Type"]: str
+
+def f(d: Data) -> str:
+  return d.lower_
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+// ========================================
 // Logical operations
 // ========================================
 

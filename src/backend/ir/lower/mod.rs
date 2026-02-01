@@ -85,6 +85,13 @@ pub struct AstLowering {
     /// When lowering methods inside an impl block, this tracks the current target type name.
     /// Used to avoid rewriting `T(x)` inside `impl T` bodies (e.g. inside `T.from_underlying`).
     pub(super) current_impl_type: Option<String>,
+    /// RFC 021: Map from (struct_name, alias) -> canonical_field_name for alias-aware resolution.
+    ///
+    /// Populated during model/class lowering; used to translate alias field names in:
+    /// - Constructor args: `Account(type="x")` → `Account { type_: "x" }`
+    /// - Field access: `a.type` → `a.type_`
+    /// - Pattern fields: `Account(type=x)` → `Account { type_: x }`
+    pub(super) struct_field_aliases: HashMap<String, HashMap<String, String>>,
 }
 
 impl AstLowering {
@@ -174,6 +181,7 @@ impl AstLowering {
             type_info: None,
             newtype_checked_ctor: HashMap::new(),
             current_impl_type: None,
+            struct_field_aliases: HashMap::new(),
         }
     }
 
@@ -182,6 +190,75 @@ impl AstLowering {
         let mut s = Self::new();
         s.type_info = Some(type_info);
         s
+    }
+
+    /// Seed alias maps for types that may be referenced from other modules.
+    ///
+    /// This is used by multi-file codegen so alias-aware lowering works when a module
+    /// references a `model` defined in a different module (e.g. `a.type` or `Account(type="x")`).
+    pub fn seed_struct_field_aliases(&mut self, aliases: HashMap<String, HashMap<String, String>>) {
+        for (struct_name, map) in aliases {
+            self.struct_field_aliases.entry(struct_name).or_default().extend(map);
+        }
+    }
+
+    /// RFC 021: Resolve a field name through alias mapping.
+    ///
+    /// If `field_name` is an alias for a field on `struct_name`, returns the canonical field name.
+    /// Otherwise returns the original `field_name`.
+    ///
+    /// This is used to translate alias-based field references in:
+    /// - Constructor args: `Account(type="x")` → uses canonical `type_`
+    /// - Field access: `a.type` → accesses canonical `type_`
+    /// - Pattern fields: `Account(type=x)` → matches canonical `type_`
+    pub(super) fn resolve_field_alias(&self, struct_name: &str, field_name: &str) -> String {
+        self.struct_field_aliases
+            .get(struct_name)
+            .and_then(|aliases| aliases.get(field_name))
+            .cloned()
+            .unwrap_or_else(|| field_name.to_string())
+    }
+
+    /// RFC 021: Register field aliases for a struct/model/class.
+    ///
+    /// Called during model/class lowering to populate `struct_field_aliases`.
+    pub(super) fn register_field_aliases(&mut self, struct_name: &str, fields: &[ast::Spanned<ast::FieldDecl>]) {
+        let mut aliases = HashMap::new();
+        for field in fields {
+            if let Some(alias) = &field.node.metadata.alias {
+                aliases.insert(alias.clone(), field.node.name.clone());
+            }
+        }
+        if !aliases.is_empty() {
+            self.struct_field_aliases.insert(struct_name.to_string(), aliases);
+        }
+    }
+
+    /// RFC 021: Register imported struct aliases that map to known model names.
+    ///
+    /// This enables alias-aware lowering when a module imports a model under an alias:
+    /// `from db.schema import Account as A` should resolve `A(type=...)` and `a.type`.
+    pub(super) fn register_imported_struct_aliases(&mut self, program: &ast::Program) {
+        for decl in &program.declarations {
+            let ast::Declaration::Import(import) = &decl.node else {
+                continue;
+            };
+            let ast::ImportKind::From { items, .. } = &import.kind else {
+                continue;
+            };
+
+            for item in items {
+                let Some(alias) = &item.alias else {
+                    continue;
+                };
+                if self.struct_field_aliases.contains_key(alias) {
+                    continue;
+                }
+                if let Some(map) = self.struct_field_aliases.get(&item.name) {
+                    self.struct_field_aliases.insert(alias.clone(), map.clone());
+                }
+            }
+        }
     }
 
     /// Lower a complete AST program to IR.
@@ -208,6 +285,9 @@ impl AstLowering {
     pub fn lower_program(&mut self, program: &ast::Program) -> Result<IrProgram, LoweringErrors> {
         let mut ir_program = IrProgram::new();
         let mut errors: Vec<LoweringError> = Vec::new();
+
+        // Seed alias maps for imported model aliases before lowering expressions.
+        self.register_imported_struct_aliases(program);
 
         // First pass: collect class declarations, trait decls, and newtype ctor selection.
         for decl in &program.declarations {

@@ -8,7 +8,8 @@
 //! - [`super::TypeChecker`]: the main type checker entrypoint.
 
 use crate::frontend::ast::*;
-use crate::frontend::symbols::ResolvedType;
+use crate::frontend::symbols::{FieldInfo, ResolvedType};
+use std::collections::HashMap;
 
 use super::TypeChecker;
 
@@ -22,6 +23,31 @@ mod match_;
 mod ops;
 
 impl TypeChecker {
+    /// Resolve a field by canonical name or alias, returning the canonical name and FieldInfo.
+    ///
+    /// - `allow_alias`: whether alias lookup is allowed (models only).
+    /// - `allow_numeric_alias`: whether numeric spellings like `"1"` may match aliases.
+    fn resolve_field_info<'a>(
+        &self,
+        fields: &'a HashMap<String, FieldInfo>,
+        field_name: &str,
+        allow_alias: bool,
+        allow_numeric_alias: bool,
+    ) -> Option<(String, &'a FieldInfo)> {
+        if let Some(info) = fields.get(field_name) {
+            return Some((field_name.to_string(), info));
+        }
+        if !allow_alias {
+            return None;
+        }
+        if !allow_numeric_alias && field_name.parse::<usize>().is_ok() {
+            return None;
+        }
+        fields
+            .iter()
+            .find(|(_, info)| info.alias.as_deref() == Some(field_name))
+            .map(|(name, info)| (name.clone(), info))
+    }
     // ========================================================================
     // Expressions
     // ========================================================================

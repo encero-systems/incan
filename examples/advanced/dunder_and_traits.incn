@@ -65,4 +65,4 @@ def main() -> None:
     println(f"Config type: {config.__class_name__()}")
     println("Config fields:")
     for field in config.__fields__():
-        println(f"  - {field}")
+        println(f"  - {field.name}")

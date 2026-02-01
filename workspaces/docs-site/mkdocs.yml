@@ -43,6 +43,7 @@ theme:
     - navigation.sections
     - navigation.indexes
     - content.code.copy
+    - content.code.annotate
     - content.tabs.link
 
 plugins:
@@ -121,6 +122,7 @@ nav:
               - 10. Models vs classes: language/tutorials/book/10_models_vs_classes.md
               - 11. Traits and derives: language/tutorials/book/11_traits_and_derives.md
               - 12. Newtypes (stronger types): language/tutorials/book/12_newtypes.md
+              - 13. Unit tests: language/tutorials/book/13_unit_tests.md
           - Build your first API: language/tutorials/build_your_first_api.md
           - Web framework: language/tutorials/web_framework.md
       - How-to:
@@ -143,6 +145,8 @@ nav:
           - Imports and modules: language/reference/imports_and_modules.md
           - Numeric semantics: language/reference/numeric_semantics.md
           - Strings and Bytes: language/reference/strings.md
+          - Testing: language/reference/testing.md
+          - Reflection: language/reference/reflection.md
           - Derives & traits (reference): language/reference/derives_and_traits.md
           - Stdlib traits:
               - Overview: language/reference/stdlib_traits/index.md
@@ -157,6 +161,7 @@ nav:
               - Comparison: language/reference/derives/comparison.md
               - Copying/default: language/reference/derives/copying_default.md
               - Serialization: language/reference/derives/serialization.md
+              - Validation: language/reference/derives/validation.md
               - Custom behavior: language/reference/derives/custom_behavior.md
       - Explanation:
           - Why Incan?: language/explanation/why_incan.md
@@ -170,7 +175,10 @@ nav:
           - Enums: language/explanation/enums.md
           - Error handling: language/explanation/error_handling.md
           - Imports and modules: language/explanation/imports_and_modules.md
-          - Models and classes: language/explanation/models_and_classes.md
+          - Models and classes:
+              - Overview: language/explanation/models_and_classes/index.md
+              - Models: language/explanation/models_and_classes/models.md
+              - Classes: language/explanation/models_and_classes/classes.md
           - Traits as language hooks: language/explanation/traits_as_language_hooks.md
           - Scopes and name resolution: language/explanation/scopes_and_name_resolution.md
   - Tooling:

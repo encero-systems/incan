@@ -28,6 +28,9 @@ pub enum SurfaceTypeId {
     // Interop types
     Vec,
     HashMap,
+
+    // Reflection
+    FieldInfo,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -162,6 +165,15 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         SurfaceTypeKind::Generic,
         "Rust interop `HashMap<K, V>`.",
         RFC::_005,
+        Since(0, 1),
+    ),
+    info(
+        SurfaceTypeId::FieldInfo,
+        "FieldInfo",
+        &[],
+        SurfaceTypeKind::Named,
+        "Field metadata record returned by __fields__().",
+        RFC::_021,
         Since(0, 1),
     ),
 ];

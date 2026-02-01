@@ -22,6 +22,6 @@ This page is a routing guide for Python developers building apps/services.
 ## Mental model translations (high level)
 
 - **errors**: exceptions vs Result/Option (see: [Error Handling](../language/explanation/error_handling.md))
-- **models**: dataclasses/Pydantic vs models/derives (see: [Models & Classes](../language/explanation/models_and_classes.md))
+- **models**: dataclasses/Pydantic vs models/derives (see: [Models & Classes](../language/explanation/models_and_classes/index.md))
 - **interfaces**: Protocols/ABCs vs traits/derives (see: [Derives & Traits](../language/reference/derives_and_traits.md))
 - **async**: asyncio mental model mapping (see: [Async Programming](../language/how-to/async_programming.md))

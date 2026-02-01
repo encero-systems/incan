@@ -89,7 +89,7 @@ and otherwise falls back to type defaults.
 
 ## See also
 
-- [Models and classes](models_and_classes.md)
+- [Models and classes](models_and_classes/index.md)
 - [How derives work](how_derives_work.md)
 - [Strings and formatting (Book)](../tutorials/book/07_strings_and_formatting.md)
 - [Traits and derives (Book)](../tutorials/book/11_traits_and_derives.md)

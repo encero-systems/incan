@@ -54,6 +54,6 @@ The example demonstrates:
 Learn more:
 
 - Web framework guide: [Web Framework](web_framework.md)
-- Models: [Models & Classes](../explanation/models_and_classes.md)
+- Models: [Models & Classes](../explanation/models_and_classes/index.md)
 - Errors: [Error Handling](../explanation/error_handling.md)
 - Modules: [Imports and modules (how-to)](../how-to/imports_and_modules.md)

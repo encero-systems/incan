@@ -43,6 +43,23 @@ impl Circle {
     fn circumference(&self) -> f64 {
         return 2f64 * 3.14159f64 * self.radius;
     }
+    /// Returns field metadata for this type.
+    pub fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("radius"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("radius"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
 }
 #[derive(Debug, Clone, FieldInfo, IncanClass)]
 struct Counter {
@@ -64,6 +81,23 @@ impl Counter {
     }
     fn reset(&mut self) {
         self.count = 0;
+    }
+    /// Returns field metadata for this type.
+    pub fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("count"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("count"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 #[derive(Debug, Clone, FieldInfo, IncanClass)]
@@ -90,6 +124,23 @@ impl Stack {
     fn size(&self) -> i64 {
         return self.items.len() as i64;
     }
+    /// Returns field metadata for this type.
+    pub fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("items"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("items"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("list[int]"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
 }
 #[derive(Debug, Clone, FieldInfo, IncanClass)]
 struct Calculator {
@@ -109,6 +160,23 @@ impl Calculator {
     fn multiply(&self, a: i64, b: i64) -> i64 {
         return a * b;
     }
+    /// Returns field metadata for this type.
+    pub fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("name"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("name"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
 }
 #[derive(Debug, Clone, FieldInfo, IncanClass)]
 struct Person {
@@ -126,6 +194,32 @@ impl Person {
             let __args: Vec<String> = vec![format!("{}", self.name)];
             incan_stdlib::strings::fstring(&__parts, &__args)
         };
+    }
+    /// Returns field metadata for this type.
+    pub fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("name"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("name"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("age"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("age"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 #[derive(Debug, Clone, FieldInfo, IncanClass)]
@@ -147,6 +241,32 @@ impl Employee {
             ];
             incan_stdlib::strings::fstring(&__parts, &__args)
         };
+    }
+    /// Returns field metadata for this type.
+    pub fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("person"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("person"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("Person"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("employee_id"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("employee_id"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 fn main() {

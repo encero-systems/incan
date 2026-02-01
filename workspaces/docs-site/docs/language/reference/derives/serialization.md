@@ -44,17 +44,31 @@ def main() -> None:
 
 ---
 
+## Schema-safe field names (models only)
+
+If your JSON schema uses keys that are not valid Incan identifiers (or are keywords like `type`), represent them using a
+`model` field alias and choose a schema-safe canonical field name (e.g. `type_`).
+
+```incan
+@derive(Serialize, Deserialize)
+model Account:
+    type_ as "type": str
+```
+
+When `Serialize`/`Deserialize` is derived, the alias is used as the JSON key (`"type"`). The canonical identifier
+(`type_`) remains the stable field name in code. See [Models: Using aliases in code](../../explanation/models_and_classes/models.md#using-aliases-in-code).
+
+`class` does not support field metadata/aliases, so class JSON keys always match the canonical field names.
+
 ## Type mappings (Incan → JSON)
 
-| Incan | JSON |
-| --- | --- |
-| `str` | string |
-| `int` | number |
-| `float` | number |
-| `bool` | boolean |
-| `List[T]` | array |
-| `Dict[str, T]` | object |
-| `Option[T]` | value or `null` |
-| `model` / `class` | object |
-
-
+| Incan             | JSON             |
+| ----------------- | ---------------- |
+| `str`             | string           |
+| `int`             | number           |
+| `float`           | number           |
+| `bool`            | boolean          |
+| `List[T]`         | array            |
+| `Dict[str, T]`    | object           |
+| `Option[T]`       | value or `null`  |
+| `model` / `class` | object           |

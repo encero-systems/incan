@@ -156,6 +156,8 @@ pub struct StructField {
     pub visibility: Visibility,
     /// Optional default initializer expression for this field (used for construction when omitted).
     pub default: Option<super::IrExpr>,
+    pub alias: Option<String>,
+    pub description: Option<String>,
 }
 
 /// IR enum definition

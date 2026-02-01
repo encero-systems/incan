@@ -688,6 +688,13 @@ impl<'a> Parser<'a> {
 
         self.skip_newlines();
         while !self.check(&TokenKind::Dedent) && !self.is_at_end() {
+            if let TokenKind::String(_) = &self.peek().kind {
+                self.advance();
+                // Optional newline after docstring
+                self.match_token(&TokenKind::Newline);
+                self.skip_newlines();
+                continue;
+            }
             let decorators = self.decorators()?;
 
             // Check if it's a method (starts with def or async def)
@@ -709,6 +716,55 @@ impl<'a> Parser<'a> {
         Ok((fields, methods))
     }
 
+    fn field_metadata(&mut self) -> Result<FieldMetadata, CompileError> {
+        let mut metadata = FieldMetadata::default();
+
+        loop {
+            let key = self.identifier_spanned()?;
+            let key_span = key.span;
+            let key_raw = key.node;
+            self.expect(
+                &TokenKind::Operator(OperatorId::Eq),
+                "Expected '=' after field metadata key",
+            )?;
+            let value = self.string_literal()?;
+
+            let Some(key) = field_metadata::from_str(&key_raw) else {
+                return Err(CompileError::syntax(
+                    format!("Unknown field metadata key '{key_raw}'"),
+                    key_span,
+                ));
+            };
+
+            match key {
+                FieldMetadataKey::Alias => {
+                    if metadata.alias.is_some() {
+                        return Err(CompileError::syntax(
+                            format!("Duplicate '{}' metadata key", field_metadata::as_str(key)),
+                            key_span,
+                        ));
+                    }
+                    metadata.alias = Some(value);
+                }
+                FieldMetadataKey::Description => {
+                    if metadata.description.is_some() {
+                        return Err(CompileError::syntax(
+                            format!("Duplicate '{}' metadata key", field_metadata::as_str(key)),
+                            key_span,
+                        ));
+                    }
+                    metadata.description = Some(value);
+                }
+            }
+
+            if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                break;
+            }
+        }
+
+        Ok(metadata)
+    }
+
     /// Parse a field declaration.
     fn field_decl(&mut self) -> Result<Spanned<FieldDecl>, CompileError> {
         let start = self.current_span().start;
@@ -718,6 +774,24 @@ impl<'a> Parser<'a> {
             Visibility::Private
         };
         let name = self.identifier()?;
+        let mut metadata = FieldMetadata::default();
+        if self.match_token(&TokenKind::Punctuation(PunctuationId::LBracket)) {
+            metadata = self.field_metadata()?;
+            self.expect(
+                &TokenKind::Punctuation(PunctuationId::RBracket),
+                "Expected ']' after field metadata",
+            )?;
+        }
+        if self.match_keyword(KeywordId::As) {
+            if metadata.alias.is_some() {
+                return Err(CompileError::syntax(
+                    "Cannot combine 'alias=\"...\"' with 'as \"...\"'".to_string(),
+                    self.tokens[self.pos - 1].span,
+                ));
+            }
+            let alias = self.string_literal()?;
+            metadata.alias = Some(alias);
+        }
         self.expect(
             &TokenKind::Punctuation(PunctuationId::Colon),
             "Expected ':' after field name",
@@ -733,6 +807,7 @@ impl<'a> Parser<'a> {
             FieldDecl {
                 visibility,
                 name,
+                metadata,
                 ty,
                 default,
             },

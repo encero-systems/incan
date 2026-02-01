@@ -1,0 +1,16 @@
+"""
+Reflection helpers for models and classes.
+"""
+
+class FieldInfo:
+    """
+    Compiler-provided field metadata returned by __fields__().
+    Instances are immutable and read-only.
+    """
+    name: FrozenStr
+    alias: Option[FrozenStr]
+    description: Option[FrozenStr]
+    wire_name: FrozenStr
+    type_name: FrozenStr
+    has_default: bool
+    extra: FrozenDict[FrozenStr, FrozenStr]

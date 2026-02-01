@@ -200,7 +200,7 @@ impl<'a> Parser<'a> {
                     expr = Spanned::new(Expr::Field(Box::new(expr), idx.to_string()), span);
                 } else {
                     // Allow keywords like "None" as field/variant names
-                    let name = self.identifier_or_keyword()?;
+                    let name = self.identifier_or_any_keyword()?;
                     if self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)) {
                         let args = self.call_args()?;
                         self.expect(
@@ -654,11 +654,25 @@ impl<'a> Parser<'a> {
             }
 
             if self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)) {
-                // Constructor pattern: Some(x), Ok(value), Shape::Circle(r), etc.
+                // Constructor pattern: Some(x), Ok(value), Shape::Circle(r), Type(name=pat), etc.
                 let mut patterns = Vec::new();
                 if !self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
                     loop {
-                        patterns.push(self.pattern()?);
+                        if matches!(
+                            self.peek().kind,
+                            TokenKind::Ident(_) | TokenKind::Keyword(_)
+                        ) && self.peek_next().kind == TokenKind::Operator(OperatorId::Eq)
+                        {
+                            let name = self.identifier_or_any_keyword()?;
+                            self.expect(
+                                &TokenKind::Operator(OperatorId::Eq),
+                                "Expected '=' after pattern field name",
+                            )?;
+                            let pat = self.pattern()?;
+                            patterns.push(PatternArg::Named(name, pat));
+                        } else {
+                            patterns.push(PatternArg::Positional(self.pattern()?));
+                        }
                         if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
                             break;
                         }
@@ -678,7 +692,10 @@ impl<'a> Parser<'a> {
             // Check if this is a unit variant (qualified without parens): Type.Variant
             if name.contains("::") {
                 let end = self.tokens[self.pos - 1].span.end;
-                return Ok(Spanned::new(Pattern::Constructor(name, vec![]), Span::new(start, end)));
+                return Ok(Spanned::new(
+                    Pattern::Constructor(name, vec![]),
+                    Span::new(start, end),
+                ));
             }
 
             // Just a binding
@@ -1006,21 +1023,25 @@ impl<'a> Parser<'a> {
                     break;
                 }
 
-                // Check for named argument
-                if let TokenKind::Ident(name) = &self.peek().kind {
-                    let name = name.clone();
-                    if self.peek_next().kind == TokenKind::Operator(OperatorId::Eq) {
-                        self.advance(); // consume name
-                        self.advance(); // consume =
-                        self.skip_newlines();
-                        let value = self.expression()?;
-                        self.skip_newlines();
-                        args.push(CallArg::Named(name, value));
-                        if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
-                            break;
-                        }
-                        continue;
+                // Check for named argument (allow keywords)
+                if matches!(
+                    self.peek().kind,
+                    TokenKind::Ident(_) | TokenKind::Keyword(_)
+                ) && self.peek_next().kind == TokenKind::Operator(OperatorId::Eq)
+                {
+                    let name = self.identifier_or_any_keyword()?;
+                    self.expect(
+                        &TokenKind::Operator(OperatorId::Eq),
+                        "Expected '=' after named argument",
+                    )?;
+                    self.skip_newlines();
+                    let value = self.expression()?;
+                    self.skip_newlines();
+                    args.push(CallArg::Named(name, value));
+                    if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                        break;
                     }
+                    continue;
                 }
                 let expr = self.expression()?;
                 self.skip_newlines();

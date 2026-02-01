@@ -23,7 +23,7 @@ pub mod json;
 pub mod web;
 
 // Re-export commonly used items
-pub use reflection::FieldInfo;
+pub use reflection::{FieldInfo, HasFieldInfo};
 
 #[cfg(feature = "json")]
 pub use json::{FromJson, ToJson};

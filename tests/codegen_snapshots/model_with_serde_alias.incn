@@ -1,0 +1,5 @@
+@derive(Serialize, Deserialize)
+model Account:
+    type_ [alias="type"]: str
+    class_ as "class": str
+    name: str

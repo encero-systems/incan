@@ -194,6 +194,10 @@ impl<'a> IrEmitter<'a> {
                 for field in &s.fields {
                     self.struct_field_types
                         .insert((s.name.clone(), field.name.clone()), field.ty.clone());
+                    self.struct_field_aliases
+                        .insert((s.name.clone(), field.name.clone()), field.alias.clone());
+                    self.struct_field_descriptions
+                        .insert((s.name.clone(), field.name.clone()), field.description.clone());
                     if let Some(default) = &field.default {
                         self.struct_field_defaults
                             .insert((s.name.clone(), field.name.clone()), default.clone());

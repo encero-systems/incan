@@ -1,0 +1,17 @@
+"""RFC 021: Runtime test for __fields__() reflection"""
+
+model Account:
+    type_ [alias="type", description="Account tier"]: str
+    balance [description="Balance in cents"]: int = 0
+    name: str
+
+def main() -> None:
+    a = Account(type="premium", name="Test")
+    
+    # Test __class_name__
+    println(a.__class_name__())
+    
+    # Test __fields__() returns FieldInfo records
+    for info in a.__fields__():
+        # Print field info in a structured format
+        println(f"field:{info.name}|wire:{info.wire_name}|type:{info.type_name}|default:{info.has_default}")

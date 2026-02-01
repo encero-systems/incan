@@ -387,6 +387,76 @@ pub mod errors {
         CompileError::type_error(format!("Type '{}' has no field '{}'", type_name, field), span)
     }
 
+    pub fn duplicate_alias(type_name: &str, alias: &str, first_span: Span, second_span: Span) -> CompileError {
+        CompileError::type_error(
+            format!("Duplicate alias '{}' on type '{}'", alias, type_name),
+            second_span,
+        )
+        .with_note(format!(
+            "Alias '{}' is already used by another field on '{}'",
+            alias, type_name
+        ))
+        .with_note(format!("First alias occurrence at span: {:?}", first_span))
+    }
+
+    pub fn alias_collides_with_canonical(type_name: &str, alias: &str, span: Span) -> CompileError {
+        CompileError::type_error(
+            format!(
+                "Alias '{}' collides with a canonical field name on '{}'",
+                alias, type_name
+            ),
+            span,
+        )
+        .with_hint("Choose a distinct alias or rename the canonical field")
+    }
+
+    pub fn alias_collides_with_method(type_name: &str, alias: &str, span: Span) -> CompileError {
+        CompileError::type_error(
+            format!("Alias '{}' collides with a method name on '{}'", alias, type_name),
+            span,
+        )
+        .with_hint("Choose a distinct alias to avoid ambiguous member access")
+    }
+
+    pub fn alias_collides_with_builtin(type_name: &str, alias: &str, span: Span) -> CompileError {
+        CompileError::type_error(
+            format!("Alias '{}' collides with a builtin member on '{}'", alias, type_name),
+            span,
+        )
+        .with_hint("Choose a distinct alias to avoid builtin member collisions")
+    }
+
+    pub fn empty_alias(span: Span) -> CompileError {
+        CompileError::type_error(
+            "Alias must be a non-empty, non-whitespace string literal".to_string(),
+            span,
+        )
+    }
+
+    /// RFC 021: Field aliases are only supported on `model` declarations, not `class`.
+    pub fn alias_not_supported_on_class(class_name: &str, field_name: &str, span: Span) -> CompileError {
+        CompileError::type_error(
+            format!(
+                "Field alias not supported on class '{}' field '{}'",
+                class_name, field_name
+            ),
+            span,
+        )
+        .with_hint("Field aliases are only supported on `model` declarations (RFC 021)")
+    }
+
+    /// RFC 021: Field descriptions are only supported on `model` declarations, not `class`.
+    pub fn description_not_supported_on_class(class_name: &str, field_name: &str, span: Span) -> CompileError {
+        CompileError::type_error(
+            format!(
+                "Field description not supported on class '{}' field '{}'",
+                class_name, field_name
+            ),
+            span,
+        )
+        .with_hint("Field descriptions are only supported on `model` declarations (RFC 021)")
+    }
+
     pub fn duplicate_trait_requires_field(field: &str, span: Span) -> CompileError {
         CompileError::type_error(format!("Duplicate @requires entry for field '{}'", field), span).with_hint(format!(
             "Remove the duplicate or keep a single @requires({field}: Type) entry"
@@ -413,6 +483,17 @@ pub mod errors {
         .with_hint("Remove the duplicate argument so each field is provided at most once")
     }
 
+    pub fn duplicate_field_in_call(type_name: &str, field: &str, span: Span) -> CompileError {
+        CompileError::type_error(
+            format!(
+                "Duplicate constructor argument: field '{}' is provided more than once for type '{}'",
+                field, type_name
+            ),
+            span,
+        )
+        .with_hint("Provide each field at most once (canonical name or alias)")
+    }
+
     pub fn missing_required_constructor_field(type_name: &str, field: &str, span: Span) -> CompileError {
         CompileError::type_error(
             format!("Missing required field '{}' when constructing '{}'", field, type_name),
@@ -420,6 +501,33 @@ pub mod errors {
         )
         .with_hint(format!("Provide the field: {}(..., {}=..., ...)", type_name, field))
         .with_note("Fields without defaults must be provided during construction")
+    }
+
+    pub fn positional_pattern_not_supported(type_name: &str, span: Span) -> CompileError {
+        CompileError::type_error(
+            format!(
+                "Positional patterns are not supported for '{}' (use named field patterns)",
+                type_name
+            ),
+            span,
+        )
+        .with_hint(format!("Use named fields: {}(field=pattern, ...)", type_name))
+    }
+
+    pub fn named_pattern_not_supported(name: &str, span: Span) -> CompileError {
+        CompileError::type_error(format!("Named pattern fields are not supported for '{}'", name), span)
+            .with_hint("Use positional patterns for enum variants and builtins")
+    }
+
+    pub fn duplicate_pattern_field(type_name: &str, field: &str, span: Span) -> CompileError {
+        CompileError::type_error(
+            format!(
+                "Duplicate pattern field: '{}' is matched more than once for '{}'",
+                field, type_name
+            ),
+            span,
+        )
+        .with_hint("Remove the duplicate field from the pattern")
     }
 
     pub fn positional_constructor_args_not_supported(type_name: &str, span: Span) -> CompileError {

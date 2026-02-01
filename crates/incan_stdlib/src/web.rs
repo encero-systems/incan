@@ -33,6 +33,7 @@ pub fn set_router(router: Router) {
 }
 
 /// Minimal application handle for generated web programs.
+#[derive(Default)]
 pub struct App {}
 
 impl App {

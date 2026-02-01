@@ -572,6 +572,52 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    fn emit_fields_method(&self, struct_name: &str) -> Option<TokenStream> {
+        let field_names = self.struct_field_names.get(struct_name)?;
+        let mut field_infos = Vec::new();
+
+        for field_name in field_names {
+            let key = (struct_name.to_string(), field_name.clone());
+            let ty = self.struct_field_types.get(&key)?;
+            let alias = self.struct_field_aliases.get(&key).and_then(|v| v.clone());
+            let description = self.struct_field_descriptions.get(&key).and_then(|v| v.clone());
+            let has_default = self.struct_field_defaults.contains_key(&key);
+
+            let alias_token = alias
+                .as_ref()
+                .map(|a| quote! { Some(incan_stdlib::frozen::FrozenStr::new(#a)) })
+                .unwrap_or_else(|| quote! { None });
+            let description_token = description
+                .as_ref()
+                .map(|d| quote! { Some(incan_stdlib::frozen::FrozenStr::new(#d)) })
+                .unwrap_or_else(|| quote! { None });
+            let wire_name = alias.as_deref().unwrap_or(field_name);
+            // RFC 021: Use Incan-style type name, not Rust type name
+            let type_name = ty.incan_name();
+
+            field_infos.push(quote! {
+                incan_stdlib::reflection::FieldInfo {
+                    name: incan_stdlib::frozen::FrozenStr::new(#field_name),
+                    alias: #alias_token,
+                    description: #description_token,
+                    wire_name: incan_stdlib::frozen::FrozenStr::new(#wire_name),
+                    type_name: incan_stdlib::frozen::FrozenStr::new(#type_name),
+                    has_default: #has_default,
+                    extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                }
+            });
+        }
+
+        let field_count = Literal::usize_unsuffixed(field_infos.len());
+        Some(quote! {
+            /// Returns field metadata for this type.
+            pub fn __fields__(&self) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+                static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; #field_count] = [#(#field_infos),*];
+                incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+            }
+        })
+    }
+
     fn emit_impl(&self, impl_block: &super::super::decl::IrImpl) -> Result<TokenStream, EmitError> {
         let target_type = format_ident!("{}", &impl_block.target_type);
 
@@ -608,6 +654,13 @@ impl<'a> IrEmitter<'a> {
                     regular_methods.push(self.emit_method(method)?)
                 }
                 _ => regular_methods.push(self.emit_method(method)?),
+            }
+        }
+
+        let has_fields_method = impl_block.methods.iter().any(|m| m.name == "__fields__");
+        if impl_block.trait_name.is_none() && !has_fields_method {
+            if let Some(fields_method) = self.emit_fields_method(&impl_block.target_type) {
+                regular_methods.push(fields_method);
             }
         }
 
@@ -902,6 +955,13 @@ impl<'a> IrEmitter<'a> {
             quote! { #[derive(#(#derives),*)] }
         };
 
+        let has_serde = s.derives.iter().any(|d| {
+            matches!(
+                derives::from_str(d.as_str()),
+                Some(DeriveId::Serialize) | Some(DeriveId::Deserialize)
+            )
+        });
+
         let is_tuple_struct =
             !s.fields.is_empty() && s.fields.iter().all(|f| f.name.chars().all(|c| c.is_ascii_digit()));
 
@@ -927,7 +987,15 @@ impl<'a> IrEmitter<'a> {
                     let fname = format_ident!("{}", &f.name);
                     let fty = self.emit_type(&f.ty);
                     let fvis = self.emit_visibility(&f.visibility);
-                    quote! { #fvis #fname: #fty }
+                    let serde_attr = if has_serde {
+                        f.alias
+                            .as_ref()
+                            .map(|alias| quote! { #[serde(rename = #alias)] })
+                            .unwrap_or_else(|| quote! {})
+                    } else {
+                        quote! {}
+                    };
+                    quote! { #serde_attr #fvis #fname: #fty }
                 })
                 .collect();
 

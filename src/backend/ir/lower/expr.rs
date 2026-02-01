@@ -253,13 +253,17 @@ impl AstLowering {
                         }
 
                         // This is a constructor call - lower as struct instantiation
+                        // RFC 021: resolve field aliases to canonical names
+                        let struct_name = name.clone();
                         let fields: Vec<(String, TypedExpr)> = args
                             .iter()
                             .map(|arg| {
                                 match arg {
                                     ast::CallArg::Named(field_name, value) => {
                                         let lowered_value = self.lower_expr(&value.node)?;
-                                        Ok((field_name.clone(), lowered_value))
+                                        // RFC 021: map alias → canonical field name
+                                        let canonical = self.resolve_field_alias(&struct_name, field_name);
+                                        Ok((canonical, lowered_value))
                                     }
                                     ast::CallArg::Positional(value) => {
                                         // Positional args - use empty string for field name
@@ -355,11 +359,25 @@ impl AstLowering {
             }
 
             ast::Expr::Field(o, f) => {
-                let obj = self.lower_expr(&o.node)?;
+                // Prefer spanned lowering so typechecker output can drive the receiver type.
+                // This is important for RFC 021 alias-aware field access, especially for `self.<alias>`.
+                let obj = self.lower_expr_spanned(o)?;
+                // RFC 021: resolve field alias to canonical name if object is a known struct type
+                let struct_name = match &obj.ty {
+                    IrType::Struct(struct_name) => Some(struct_name.as_str()),
+                    _ => match &obj.kind {
+                        IrExprKind::Var { name, .. } if name == "self" => self.current_impl_type.as_deref(),
+                        _ => None,
+                    },
+                };
+                let field = match struct_name {
+                    Some(struct_name) => self.resolve_field_alias(struct_name, f),
+                    None => f.clone(),
+                };
                 (
                     IrExprKind::Field {
                         object: Box::new(obj),
-                        field: f.clone(),
+                        field,
                     },
                     IrType::Unknown,
                 )
@@ -708,11 +726,42 @@ impl AstLowering {
                     .map(Pattern::Literal)
                     .unwrap_or(Pattern::Wildcard)
             }
-            ast::Pattern::Constructor(name, args) => Pattern::Enum {
-                name: String::new(),
-                variant: name.clone(),
-                fields: args.iter().map(|a| self.lower_pattern(&a.node)).collect(),
-            },
+            ast::Pattern::Constructor(name, args) => {
+                let mut named_fields = Vec::new();
+                let mut positional_fields = Vec::new();
+                let mut has_named = false;
+
+                for arg in args {
+                    match arg {
+                        ast::PatternArg::Named(field, pat) => {
+                            has_named = true;
+                            // RFC 021: resolve field alias to canonical name for struct patterns
+                            let canonical = self.resolve_field_alias(name, field);
+                            named_fields.push((canonical, self.lower_pattern(&pat.node)));
+                        }
+                        ast::PatternArg::Positional(pat) => {
+                            positional_fields.push(self.lower_pattern(&pat.node));
+                        }
+                    }
+                }
+
+                if has_named {
+                    Pattern::Struct {
+                        name: name.clone(),
+                        fields: named_fields,
+                    }
+                } else {
+                    let mut fields = positional_fields;
+                    if has_named {
+                        fields.extend(named_fields.into_iter().map(|(_, pat)| pat));
+                    }
+                    Pattern::Enum {
+                        name: String::new(),
+                        variant: name.clone(),
+                        fields,
+                    }
+                }
+            }
             ast::Pattern::Tuple(items) => Pattern::Tuple(items.iter().map(|i| self.lower_pattern(&i.node)).collect()),
         }
     }

@@ -79,6 +79,48 @@ impl TypeChecker {
         }
     }
 
+    /// Resolve a method on a type's own methods or trait-adopted methods.
+    fn resolve_named_method(
+        &mut self,
+        methods: &std::collections::HashMap<String, MethodInfo>,
+        traits: Option<&[String]>,
+        method: &str,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+    ) -> Option<ResolvedType> {
+        if let Some(method_info) = methods.get(method) {
+            let params = method_info.params.clone();
+            let return_type = method_info.return_type.clone();
+            self.validate_method_call_args(&params, args, arg_types);
+            return Some(return_type);
+        }
+        if let Some(traits) = traits {
+            for trait_name in traits {
+                if let Some(method_info) = self.trait_method_info(trait_name, method) {
+                    let params = method_info.params.clone();
+                    let return_type = method_info.return_type.clone();
+                    self.validate_method_call_args(&params, args, arg_types);
+                    return Some(return_type);
+                }
+            }
+        }
+        None
+    }
+
+    /// Normalize a tuple index (supports negative indices) and emit bounds errors.
+    fn resolve_tuple_index(&mut self, raw_idx: i64, len: usize, span: Span) -> Option<usize> {
+        let len_i = len as i64;
+        let mut idx = raw_idx;
+        if idx < 0 {
+            idx += len_i;
+        }
+        if idx < 0 || idx >= len_i {
+            self.errors.push(errors::tuple_index_out_of_bounds(raw_idx, len, span));
+            return None;
+        }
+        Some(idx as usize)
+    }
+
     /// Type-check an indexing expression (`base[index]`) and return the element type.
     pub(in crate::frontend::typechecker::check_expr) fn check_index(
         &mut self,
@@ -116,17 +158,10 @@ impl TypeChecker {
                         self.errors.push(errors::tuple_index_requires_int_literal(index.span));
                         return ResolvedType::Unknown;
                     };
-                    let len = elems.len() as i64;
-                    let mut idx = *raw_idx;
-                    if idx < 0 {
-                        idx += len;
+                    if let Some(idx) = self.resolve_tuple_index(*raw_idx, elems.len(), span) {
+                        return elems.get(idx).cloned().unwrap_or(ResolvedType::Unknown);
                     }
-                    if idx < 0 || idx >= len {
-                        self.errors
-                            .push(errors::tuple_index_out_of_bounds(*raw_idx, elems.len(), span));
-                        return ResolvedType::Unknown;
-                    }
-                    elems.get(idx as usize).cloned().unwrap_or(ResolvedType::Unknown)
+                    ResolvedType::Unknown
                 }
                 _ => ResolvedType::Unknown,
             },
@@ -143,17 +178,10 @@ impl TypeChecker {
                     self.errors.push(errors::tuple_index_requires_int_literal(index.span));
                     return ResolvedType::Unknown;
                 };
-                let len = elems.len() as i64;
-                let mut idx = *raw_idx;
-                if idx < 0 {
-                    idx += len;
+                if let Some(idx) = self.resolve_tuple_index(*raw_idx, elems.len(), span) {
+                    return elems.get(idx).cloned().unwrap_or(ResolvedType::Unknown);
                 }
-                if idx < 0 || idx >= len {
-                    self.errors
-                        .push(errors::tuple_index_out_of_bounds(*raw_idx, elems.len(), span));
-                    return ResolvedType::Unknown;
-                }
-                elems.get(idx as usize).cloned().unwrap_or(ResolvedType::Unknown)
+                ResolvedType::Unknown
             }
             _ => ResolvedType::Unknown,
         }
@@ -264,13 +292,23 @@ impl TypeChecker {
                 if let Some(type_info) = self.lookup_type_info(type_name) {
                     match type_info {
                         TypeInfo::Model(model) => {
-                            if let Some(field_info) = model.fields.get(field) {
-                                return field_info.ty.clone();
+                            // `.0`, `.1`, ... is tuple-index syntax in the language surface.
+                            // RFC 021: Non-identifier aliases like `alias="1"` are valid as wire names,
+                            // but are not usable via member access / named-arg / pattern syntax.
+                            //
+                            // Therefore numeric field spellings do NOT participate in alias lookup on models.
+                            if field.parse::<usize>().is_ok() {
+                                self.errors.push(errors::missing_field(type_name, field, span));
+                                return ResolvedType::Unknown;
+                            }
+                            if let Some((_, info)) = self.resolve_field_info(&model.fields, field, true, false) {
+                                return info.ty.clone();
                             }
                         }
                         TypeInfo::Class(class) => {
-                            if let Some(field_info) = class.fields.get(field) {
-                                return field_info.ty.clone();
+                            // RFC 021: No alias-aware resolution for classes (models only)
+                            if let Some((_, info)) = self.resolve_field_info(&class.fields, field, false, true) {
+                                return info.ty.clone();
                             }
                         }
                         TypeInfo::Enum(enum_info) => {
@@ -490,42 +528,24 @@ impl TypeChecker {
         // If the symbol doesn't exist or isn't a type (e.g., Module/RustModule placeholder),
         // treat it as external and be permissive.
         if let ResolvedType::Named(type_name) = &base_ty {
-            match self.lookup_type_info(type_name) {
+            match self.lookup_type_info(type_name).cloned() {
                 None => {
                     // Symbol not found or not a Type - treat as external, be permissive.
                     return ResolvedType::Unknown;
                 }
                 Some(type_info) => match type_info {
                     TypeInfo::Model(model) => {
-                        if let Some(method_info) = model.methods.get(method) {
-                            let params = method_info.params.clone();
-                            let return_type = method_info.return_type.clone();
-                            self.validate_method_call_args(&params, args, &arg_types);
-                            return return_type;
-                        }
-                        for trait_name in &model.traits {
-                            if let Some(method_info) = self.trait_method_info(trait_name, method) {
-                                let params = method_info.params.clone();
-                                let return_type = method_info.return_type.clone();
-                                self.validate_method_call_args(&params, args, &arg_types);
-                                return return_type;
-                            }
+                        if let Some(ret) =
+                            self.resolve_named_method(&model.methods, Some(&model.traits), method, args, &arg_types)
+                        {
+                            return ret;
                         }
                     }
                     TypeInfo::Class(class) => {
-                        if let Some(method_info) = class.methods.get(method) {
-                            let params = method_info.params.clone();
-                            let return_type = method_info.return_type.clone();
-                            self.validate_method_call_args(&params, args, &arg_types);
-                            return return_type;
-                        }
-                        for trait_name in &class.traits {
-                            if let Some(method_info) = self.trait_method_info(trait_name, method) {
-                                let params = method_info.params.clone();
-                                let return_type = method_info.return_type.clone();
-                                self.validate_method_call_args(&params, args, &arg_types);
-                                return return_type;
-                            }
+                        if let Some(ret) =
+                            self.resolve_named_method(&class.methods, Some(&class.traits), method, args, &arg_types)
+                        {
+                            return ret;
                         }
                     }
                     TypeInfo::Enum(_enum_info) => {
@@ -535,11 +555,8 @@ impl TypeChecker {
                         }
                     }
                     TypeInfo::Newtype(nt) => {
-                        if let Some(method_info) = nt.methods.get(method) {
-                            let params = method_info.params.clone();
-                            let return_type = method_info.return_type.clone();
-                            self.validate_method_call_args(&params, args, &arg_types);
-                            return return_type;
+                        if let Some(ret) = self.resolve_named_method(&nt.methods, None, method, args, &arg_types) {
+                            return ret;
                         }
                     }
                     _ => {}

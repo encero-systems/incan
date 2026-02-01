@@ -1,6 +1,5 @@
 # Derives and Traits
 
-
 <!--
 Link index
 
@@ -22,6 +21,7 @@ So we can change the destination in one place if we move/rename sections.
 [derive-default]: #default
 [derive-serialize]: #serialize
 [derive-deserialize]: #deserialize
+[derive-validate]: #validate-models-only
 
 <!-- Related sections (anchors in this page) -->
 [auto-derives]: #automatic-derives
@@ -83,6 +83,7 @@ Only the items usable in `@derive(...)` are derives:
 | [Default][derive-default]         | `Type.default()`          | —          | Baseline constructor    |
 | [Serialize][derive-serialize]     | JSON stringify            | —          | `json_stringify(value)` |
 | [Deserialize][derive-deserialize] | JSON parse                | —          | `T.from_json(str)`      |
+| [Validate][derive-validate]       | Validated construction    | —          | Models only             |
 
 Detailed pages:
 
@@ -92,6 +93,7 @@ Detailed pages:
 - [Comparison](derives/comparison.md)
 - [Copying/default](derives/copying_default.md)
 - [Serialization](derives/serialization.md)
+- [Validation](derives/validation.md)
 - [Custom behavior](derives/custom_behavior.md)
 
 **Stdlib traits**:
@@ -395,6 +397,37 @@ def main() -> None:
 
 ---
 
+## Validate (Models only)
+
+**What it does**: enables validated construction for models.
+
+**API**:
+
+- `TypeName.new(...)` → `Result[TypeName, E]`
+
+Rule:
+
+- If a `model` derives `Validate`, you must construct it via `TypeName.new(...)`.
+  Raw construction via `TypeName(...)` is a compile-time error.
+
+```incan
+@derive(Validate)
+model EmailUser:
+    email: str
+
+    def validate(self) -> Result[EmailUser, str]:
+        if "@" not in self.email:
+            return Err("invalid email")
+        return Ok(self)
+
+def make_user(email: str) -> Result[EmailUser, str]:
+    return EmailUser.new(email=email)
+```
+
+See: [Derives: Validation](derives/validation.md)
+
+---
+
 ## Compiler errors (reference)
 
 ### Unknown derive (example)
@@ -430,8 +463,15 @@ type error: Cannot derive 'User' - it is a model, not a trait
 
 Models and classes provide:
 
-- `__fields__() -> List[str]`
+- `__fields__() -> FrozenList[FieldInfo]`
 - `__class_name__() -> str`
+
+Note:
+
+- Field metadata like `[alias="..."]` and `[description="..."]` is **model-only**. For `class`, `FieldInfo.alias`
+  and `FieldInfo.description` are always `None` and `FieldInfo.wire_name == FieldInfo.name`.
+
+See [Reflection (Reference)](reflection.md) for `FieldInfo` structure details.
 
 ```incan
 model User:
@@ -440,5 +480,5 @@ model User:
 def main() -> None:
     u = User(name="Alice")
     println(u.__class_name__())
-    println(u.__fields__())
+    println([f.name for f in u.__fields__()])
 ```

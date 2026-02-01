@@ -59,6 +59,36 @@ fn test_model_struct_codegen() {
     insta::assert_snapshot!("model_struct", rust_code);
 }
 
+#[test]
+fn test_model_with_alias_codegen() {
+    let source = load_test_file("model_with_alias");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("model_with_alias", rust_code);
+}
+
+#[test]
+fn test_model_with_serde_alias_codegen() {
+    let source = load_test_file("model_with_serde_alias");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("model_with_serde_alias", rust_code);
+}
+
+#[test]
+fn test_model_alias_expressions_codegen() {
+    // RFC 021: Test alias-aware expression lowering (constructor, field access, patterns)
+    let source = load_test_file("model_alias_expressions");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("model_alias_expressions", rust_code);
+}
+
+#[test]
+fn test_model_alias_self_access_codegen() {
+    // RFC 021: Ensure `self.<alias>` field access lowers to canonical field name
+    let source = load_test_file("model_alias_self_access");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("model_alias_self_access", rust_code);
+}
+
 // ============================================================================
 // Tests migrated from legacy codegen/expressions/mod.rs tests
 // ============================================================================

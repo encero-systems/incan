@@ -9,6 +9,7 @@ use std::hash::Hash;
 
 use crate::errors::raise;
 use incan_core::errors::{IncanError, key_not_found_in_dict};
+use incan_core::indexing::normalize_slice_bounds;
 
 /// Get a list element by Python-style index (supports negative indices).
 ///
@@ -65,29 +66,7 @@ pub fn list_slice<T: Clone>(list: &[T], start: Option<i64>, end: Option<i64>, st
 
     let len = list.len() as i64;
 
-    let default_start = if step > 0 { 0 } else { len - 1 };
-    let default_end = if step > 0 { len } else { -1 };
-
-    let mut start_idx = start.unwrap_or(default_start);
-    let mut end_idx = end.unwrap_or(default_end);
-
-    if start_idx < 0 {
-        start_idx += len;
-    }
-    // Important: for negative steps, `end = None` uses the sentinel `-1` (not `len-1`).
-    // Python's slice normalization keeps this sentinel as-is.
-    if end.is_some() && end_idx < 0 {
-        end_idx += len;
-    }
-
-    if step > 0 {
-        start_idx = start_idx.clamp(0, len);
-        end_idx = end_idx.clamp(0, len);
-    } else {
-        // For negative steps, indices are clamped to [-1, len-1] (Python-like).
-        start_idx = start_idx.clamp(-1, len - 1);
-        end_idx = end_idx.clamp(-1, len - 1);
-    }
+    let (start_idx, end_idx) = normalize_slice_bounds(len, start, end, step);
 
     let mut out = Vec::new();
     let mut i = start_idx;
