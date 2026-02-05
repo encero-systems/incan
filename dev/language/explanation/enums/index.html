@@ -2339,6 +2339,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#common-pitfall-enums-are-not-lookup-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      Common pitfall: enums are not lookup tables
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#enums-vs-models-vs-classes" class="md-nav__link">
     <span class="md-ellipsis">
       Enums vs models vs classes
@@ -4111,6 +4120,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#common-pitfall-enums-are-not-lookup-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      Common pitfall: enums are not lookup tables
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#enums-vs-models-vs-classes" class="md-nav__link">
     <span class="md-ellipsis">
       Enums vs models vs classes
@@ -4394,6 +4412,36 @@ hierarchies and <code>isinstance(...)</code> checks, which are not exhaustive an
     <span class="nc">Completed</span>
 </code></pre></div>
 <p>For serialization details, see <a href="../../reference/derives/serialization/">Derives: Serialization</a>.</p>
+<hr />
+<h2 id="common-pitfall-enums-are-not-lookup-tables">Common pitfall: enums are not lookup tables<a class="headerlink" href="#common-pitfall-enums-are-not-lookup-tables" title="Permanent link">&para;</a></h2>
+<p>Incan enums are <strong>algebraic types</strong> — each variant is a fixed tag, optionally carrying data.
+They are <strong>not</strong> key-value mappings or integer-valued constants.</p>
+<p>The compiler will catch the mistake early with a targeted error message:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># ✗ These are all rejected with clear diagnostics:</span>
+<span class="k">enum</span> <span class="nc">Categories</span><span class="p">:</span>
+    <span class="nc">GROCERIES</span> <span class="o">=&gt;</span> <span class="nc">Category</span><span class="p">(</span><span class="s2">&quot;Groceries&quot;</span><span class="p">)</span>   <span class="c1"># &quot;cannot have mapped values&quot;</span>
+
+<span class="k">enum</span> <span class="nc">FlowType</span><span class="p">:</span>
+    <span class="nc">Cash</span><span class="o">.</span><span class="nc">Inflow</span>                           <span class="c1"># &quot;cannot contain dots&quot;</span>
+
+<span class="k">enum</span> <span class="nc">Color</span><span class="p">:</span>
+    <span class="nc">Red</span> <span class="o">=</span> <span class="mi">1</span>                               <span class="c1"># &quot;cannot have assigned values&quot;</span>
+</code></pre></div>
+<p><strong>Instead</strong>, use plain variants for the enum and a separate model for rich data:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">CategoryKey</span><span class="p">:</span>
+    <span class="nc">Groceries</span>
+    <span class="nc">Utilities</span>
+
+<span class="k">model</span> <span class="nc">Category</span><span class="p">:</span>
+    <span class="n">key</span><span class="p">:</span> <span class="nc">CategoryKey</span>
+    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">all_categories</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">Category</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="p">[</span>
+        <span class="nc">Category</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="nc">CategoryKey</span><span class="o">.</span><span class="nc">Groceries</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Food items&quot;</span><span class="p">),</span>
+        <span class="nc">Category</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="nc">CategoryKey</span><span class="o">.</span><span class="nc">Utilities</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Gas, electric&quot;</span><span class="p">),</span>
+    <span class="p">]</span>
+</code></pre></div>
 <hr />
 <h2 id="enums-vs-models-vs-classes">Enums vs models vs classes<a class="headerlink" href="#enums-vs-models-vs-classes" title="Permanent link">&para;</a></h2>
 <table>
