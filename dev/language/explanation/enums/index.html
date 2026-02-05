@@ -2330,6 +2330,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#derives-and-docstrings" class="md-nav__link">
+    <span class="md-ellipsis">
+      Derives and docstrings
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#enums-vs-models-vs-classes" class="md-nav__link">
     <span class="md-ellipsis">
       Enums vs models vs classes
@@ -4093,6 +4102,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#derives-and-docstrings" class="md-nav__link">
+    <span class="md-ellipsis">
+      Derives and docstrings
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#enums-vs-models-vs-classes" class="md-nav__link">
     <span class="md-ellipsis">
       Enums vs models vs classes
@@ -4366,6 +4384,17 @@ hierarchies and <code>isinstance(...)</code> checks, which are not exhaustive an
 <li><a href="../../how-to/modeling_with_enums/">Modeling with enums</a></li>
 </ul>
 <hr />
+<h2 id="derives-and-docstrings">Derives and docstrings<a class="headerlink" href="#derives-and-docstrings" title="Permanent link">&para;</a></h2>
+<p>Enums support <code>@derive(...)</code> decorators and docstrings:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<span class="k">enum</span> <span class="nc">Status</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Represents the current state of a task.&quot;&quot;&quot;</span>
+    <span class="nc">Pending</span>
+    <span class="nc">Active</span>
+    <span class="nc">Completed</span>
+</code></pre></div>
+<p>For serialization details, see <a href="../../reference/derives/serialization/">Derives: Serialization</a>.</p>
+<hr />
 <h2 id="enums-vs-models-vs-classes">Enums vs models vs classes<a class="headerlink" href="#enums-vs-models-vs-classes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -4402,8 +4431,8 @@ hierarchies and <code>isinstance(...)</code> checks, which are not exhaustive an
 <td></td>
 </tr>
 <tr>
-<td>Serialization focus (<code>@derive</code>)</td>
-<td></td>
+<td>Serialization (<code>@derive</code>)</td>
+<td>✓</td>
 <td>✓</td>
 <td></td>
 </tr>

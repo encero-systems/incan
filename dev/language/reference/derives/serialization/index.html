@@ -1919,6 +1919,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#enums" class="md-nav__link">
+    <span class="md-ellipsis">
+      Enums
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#newtypes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Newtypes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#type-mappings-incan-json" class="md-nav__link">
     <span class="md-ellipsis">
       Type mappings (Incan → JSON)
@@ -3837,6 +3855,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#enums" class="md-nav__link">
+    <span class="md-ellipsis">
+      Enums
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#newtypes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Newtypes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#type-mappings-incan-json" class="md-nav__link">
     <span class="md-ellipsis">
       Type mappings (Incan → JSON)
@@ -3910,6 +3946,43 @@
 <p>When <code>Serialize</code>/<code>Deserialize</code> is derived, the alias is used as the JSON key (<code>"type"</code>). The canonical identifier
 (<code>type_</code>) remains the stable field name in code. See <a href="../../../explanation/models_and_classes/models/#using-aliases-in-code">Models: Using aliases in code</a>.</p>
 <p><code>class</code> does not support field metadata/aliases, so class JSON keys always match the canonical field names.</p>
+<h2 id="enums">Enums<a class="headerlink" href="#enums" title="Permanent link">&para;</a></h2>
+<p>Enums support <code>Serialize</code> and <code>Deserialize</code> just like models:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<span class="k">enum</span> <span class="nc">Status</span><span class="p">:</span>
+    <span class="nc">Pending</span>
+    <span class="nc">Active</span>
+    <span class="nc">Completed</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<span class="k">enum</span> <span class="nc">ApiResponse</span><span class="p">:</span>
+    <span class="nc">Success</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+    <span class="nc">Error</span><span class="p">(</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span>
+</code></pre></div>
+<p>When a model references an enum in its fields, the compiler automatically propagates <code>Serialize</code>/<code>Deserialize</code> derives
+to the enum:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<span class="k">enum</span> <span class="nc">Priority</span><span class="p">:</span>
+    <span class="nc">Low</span>
+    <span class="nc">Medium</span>
+    <span class="nc">High</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<span class="k">model</span> <span class="nc">Task</span><span class="p">:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">priority</span><span class="p">:</span> <span class="nc">Priority</span>  <span class="c1"># Priority automatically gets serde derives</span>
+</code></pre></div>
+<hr />
+<h2 id="newtypes">Newtypes<a class="headerlink" href="#newtypes" title="Permanent link">&para;</a></h2>
+<p>Newtypes also support <code>Serialize</code> and <code>Deserialize</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<span class="k">newtype</span> <span class="nc">UserId</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<span class="k">newtype</span> <span class="nc">Email</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+</code></pre></div>
+<p>Newtypes serialize to/from their underlying type's JSON representation.</p>
+<hr />
 <h2 id="type-mappings-incan-json">Type mappings (Incan → JSON)<a class="headerlink" href="#type-mappings-incan-json" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -3950,6 +4023,14 @@
 <tr>
 <td><code>model</code> / <code>class</code></td>
 <td>object</td>
+</tr>
+<tr>
+<td><code>enum</code></td>
+<td>variant encoding</td>
+</tr>
+<tr>
+<td><code>newtype</code></td>
+<td>underlying type</td>
 </tr>
 </tbody>
 </table>

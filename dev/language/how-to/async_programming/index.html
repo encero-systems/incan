@@ -4996,7 +4996,7 @@ More efficient than Mutex when reads are frequent.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Allow max 3 concurrent connections</span>
 <span class="n">connection_limit</span> <span class="o">=</span> <span class="kt">Semaphore</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
 
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">make_request</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Response</span><span class="p">:</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">make_request</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
     <span class="n">permit</span> <span class="o">=</span> <span class="k">await</span> <span class="n">connection_limit</span><span class="o">.</span><span class="n">acquire</span><span class="p">()</span>  <span class="c1"># Blocks if no permits</span>
     <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">http_get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
     <span class="c1"># Permit released automatically when permit goes out of scope</span>
