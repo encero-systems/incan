@@ -1,5 +1,10 @@
 [
   {
+    "version": "incan-language-v0.1",
+    "title": "incan-language-v0.1",
+    "aliases": []
+  },
+  {
     "version": "dev",
     "title": "dev",
     "aliases": []

@@ -1,0 +1,4657 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the Incan programming language">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>RFC 009: Sized Integer Types & Builtin Type Registry - Incan Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/pygments.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#rfc-009-sized-integer-types-builtin-type-registry" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Incan Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              RFC 009: Sized Integer Types &amp; Builtin Type Registry
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1M8 13h8v-2H8zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4a5 5 0 0 0 5-5 5 5 0 0 0-5-5"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="purple" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5m0 8a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-label="Switch to system preference"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Switch to system preference" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5M7 15a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/dannys-code-corner/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dannys-code-corner/incan
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Incan Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/dannys-code-corner/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dannys-code-corner/incan
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../start_here/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Start here
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Start here
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/coming_from_python/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Python (apps)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Rust (evaluator)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/beginner/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Beginner
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Language
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Language
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    The Incan Book (Basics)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_2_1" id="__nav_3_2_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            The Incan Book (Basics)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Hello world
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Values, variables, and types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Functions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Modules and imports
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Errors (Result/Option and `?`)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Strings and formatting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Collections and iteration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    9. Enums and better `match`
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    10. Models vs classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    11. Traits and derives
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    12. Newtypes (stronger types)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    13. Unit tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Build your first API
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/async_programming/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Async programming
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Customize derived behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling recipes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/error_messages/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error messages
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Modeling with enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/string_processing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/performance/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Performance
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust interop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust types (coming from Python)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/reference/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Language reference (generated)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/glossary/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Glossary
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O reference (Path/File APIs)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric semantics
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/strings/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Strings and Bytes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (reference)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_11" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Stdlib traits
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_11" id="__nav_3_4_11_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_11">
+            <span class="md-nav__icon md-icon"></span>
+            Stdlib traits
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Collection protocols
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Indexing and slicing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable objects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error trait
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Operators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Conversions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_12" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4_12" id="__nav_3_4_12_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Derives
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_12">
+            <span class="md-nav__icon md-icon"></span>
+            Derives
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String representation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Comparison
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Copying/default
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Serialization
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/validation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Validation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Custom behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/why_incan/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why Incan?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why not just Rust?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How Incan works
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/closures/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Closures
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/consts/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Consts
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (explained)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How derives work
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/error_handling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_12" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Models and classes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_5_12" id="__nav_3_5_12_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_12">
+            <span class="md-nav__icon md-icon"></span>
+            Models and classes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Models
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Traits as language hooks
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Scopes and name resolution
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../tooling/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Tooling
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Tooling
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipeline mini-project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Troubleshooting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Editor setup
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Formatting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Projects today
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP protocol support
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+          
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../contributing/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Contributing
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Contributing
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Incan Contributor Book (Advanced)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2_1" id="__nav_5_2_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            Incan Contributor Book (Advanced)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Architecture tour
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Layering and boundaries
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Proposals: issues vs RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Your first change: add a builtin
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Your first syntax change
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Tooling loop: formatter + tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Tooling loop: LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Docsite contributor loop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Extending the language
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Benchmarks & profiling (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Writing RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_4">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/layering/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Layering rules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Readable, maintainable Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../release_notes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Release notes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            Release notes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_1/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.1
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../roadmap/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Roadmap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stability/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Stability policy
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Summary
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#motivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Motivation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Motivation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#example-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      Example Problem
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#new-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      New Types
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#type-aliases-preserved" class="md-nav__link">
+    <span class="md-ellipsis">
+      Type Aliases (Preserved)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#literals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Literals
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Literals">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#without-suffix-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      Without Suffix (Default)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#with-suffix-explicit" class="md-nav__link">
+    <span class="md-ellipsis">
+      With Suffix (Explicit)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conversions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Conversions
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Conversions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#explicit-casting-required" class="md-nav__link">
+    <span class="md-ellipsis">
+      Explicit Casting Required
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conversion-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Conversion Functions
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arithmetic" class="md-nav__link">
+    <span class="md-ellipsis">
+      Arithmetic
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#overflow-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      Overflow Behavior
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      Examples
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#binary-protocol-parsing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Binary Protocol Parsing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#network-port-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Network Port Handling
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory-efficient-arrays" class="md-nav__link">
+    <span class="md-ellipsis">
+      Memory-Efficient Arrays
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bit-manipulation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Bit Manipulation
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation Plan
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-0-builtin-type-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 0: Builtin Type Registry
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 0: Builtin Type Registry">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      Problem
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#solution" class="md-nav__link">
+    <span class="md-ellipsis">
+      Solution
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#benefits" class="md-nav__link">
+    <span class="md-ellipsis">
+      Benefits
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      Scope
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-lexer" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 1: Lexer
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-parser" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 2: Parser
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-type-checker" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 3: Type Checker
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-codegen" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 4: Codegen
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-standard-library" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 5: Standard Library
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      Alternatives Considered
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alternatives Considered">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-only-add-when-needed-via-rust-interop" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Only Add When Needed via Rust Interop
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-python-style-arbitrary-precision" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Python-Style Arbitrary Precision
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-wrapper-types-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Wrapper Types Only
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-c-style-type-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. C-Style Type Names
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Open Questions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      Checklist
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Checklist">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-0-builtin-type-registry-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 0: Builtin Type Registry (checklist)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-4-sized-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 1-4: Sized Types
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-standard-library-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 5: Standard Library Methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Documentation
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      References
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="rfc-009-sized-integer-types-builtin-type-registry">RFC 009: Sized Integer Types &amp; Builtin Type Registry<a class="headerlink" href="#rfc-009-sized-integer-types-builtin-type-registry" title="Permanent link">&para;</a></h1>
+<p><strong>Status:</strong> Planned<br />
+<strong>Created:</strong> 2024-12-11<br />
+<strong>Updated:</strong> 2024-12-23</p>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>Add explicit sized integer and float types to Incan, enabling precise control over numeric representation for FFI,
+binary protocols, and memory-sensitive applications.</p>
+<p>This RFC also introduces a <strong>Builtin Type Registry</strong> infrastructure (Phase 0) that allows <code>incan_core::lang</code>
+registries to be the source of truth for builtin type methods, eliminating hardcoded method lookups scattered across
+the compiler.</p>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>Currently, Incan has only two numeric types:</p>
+<ul>
+<li><code>int</code> → <code>i64</code> (64-bit signed)</li>
+<li><code>float</code> → <code>f64</code> (64-bit float)</li>
+</ul>
+<p>This simplicity is great for general-purpose code, but insufficient for:</p>
+<ol>
+<li><strong>FFI / Rust Interop</strong> — Calling Rust functions that expect specific sizes</li>
+<li><strong>Binary Protocols</strong> — Parsing network packets, file formats (PNG, MP3, etc.)</li>
+<li><strong>Memory Efficiency</strong> — Large arrays where <code>i8</code> vs <code>i64</code> matters (8x difference)</li>
+<li><strong>Hardware Interfaces</strong> — GPIO pins, registers, embedded systems</li>
+<li><strong>Cryptography</strong> — Exact bit-width operations</li>
+</ol>
+<h3 id="example-problem">Example Problem<a class="headerlink" href="#example-problem" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Current: Can&#39;t express this cleanly</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">net</span> <span class="kn">import</span><span class="w"> </span><span class="nn">TcpStream</span>
+
+<span class="c1"># TcpStream::connect expects &amp;str, but port is u16 internally</span>
+<span class="c1"># How do we work with u16 port numbers?</span>
+</code></pre></div>
+<h2 id="design">Design<a class="headerlink" href="#design" title="Permanent link">&para;</a></h2>
+<h3 id="new-types">New Types<a class="headerlink" href="#new-types" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Incan Type</th>
+<th>Rust Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>i8</code></td>
+<td><code>i8</code></td>
+<td>8-bit signed (-128 to 127)</td>
+</tr>
+<tr>
+<td><code>i16</code></td>
+<td><code>i16</code></td>
+<td>16-bit signed</td>
+</tr>
+<tr>
+<td><code>i32</code></td>
+<td><code>i32</code></td>
+<td>32-bit signed</td>
+</tr>
+<tr>
+<td><code>i64</code></td>
+<td><code>i64</code></td>
+<td>64-bit signed (same as <code>int</code>)</td>
+</tr>
+<tr>
+<td><code>i128</code></td>
+<td><code>i128</code></td>
+<td>128-bit signed</td>
+</tr>
+<tr>
+<td><code>u8</code></td>
+<td><code>u8</code></td>
+<td>8-bit unsigned (0 to 255)</td>
+</tr>
+<tr>
+<td><code>u16</code></td>
+<td><code>u16</code></td>
+<td>16-bit unsigned</td>
+</tr>
+<tr>
+<td><code>u32</code></td>
+<td><code>u32</code></td>
+<td>32-bit unsigned</td>
+</tr>
+<tr>
+<td><code>u64</code></td>
+<td><code>u64</code></td>
+<td>64-bit unsigned</td>
+</tr>
+<tr>
+<td><code>u128</code></td>
+<td><code>u128</code></td>
+<td>128-bit unsigned</td>
+</tr>
+<tr>
+<td><code>f32</code></td>
+<td><code>f32</code></td>
+<td>32-bit float</td>
+</tr>
+<tr>
+<td><code>f64</code></td>
+<td><code>f64</code></td>
+<td>64-bit float (same as <code>float</code>)</td>
+</tr>
+<tr>
+<td><code>isize</code></td>
+<td><code>isize</code></td>
+<td>Pointer-sized signed</td>
+</tr>
+<tr>
+<td><code>usize</code></td>
+<td><code>usize</code></td>
+<td>Pointer-sized unsigned</td>
+</tr>
+</tbody>
+</table>
+<h3 id="type-aliases-preserved">Type Aliases (Preserved)<a class="headerlink" href="#type-aliases-preserved" title="Permanent link">&para;</a></h3>
+<p>The existing <code>int</code> and <code>float</code> remain as aliases:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># These are equivalent</span>
+<span class="n">x</span><span class="p">:</span> <span class="nb">int</span>    <span class="c1"># Preferred for general code</span>
+<span class="n">x</span><span class="p">:</span> <span class="kt">i64</span>    <span class="c1"># Explicit when size matters</span>
+
+<span class="n">y</span><span class="p">:</span> <span class="nb">float</span>  <span class="c1"># Preferred for general code  </span>
+<span class="n">y</span><span class="p">:</span> <span class="kt">f64</span>    <span class="c1"># Explicit when size matters</span>
+</code></pre></div>
+<h3 id="literals">Literals<a class="headerlink" href="#literals" title="Permanent link">&para;</a></h3>
+<h4 id="without-suffix-default">Without Suffix (Default)<a class="headerlink" href="#without-suffix-default" title="Permanent link">&para;</a></h4>
+<p>Unsuffixed literals infer type from context, defaulting to <code>int</code>/<code>float</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">let</span> <span class="n">x</span> <span class="o">=</span> <span class="mi">42</span>        <span class="c1"># int (i64)</span>
+<span class="k">let</span> <span class="n">y</span> <span class="o">=</span> <span class="mf">3.14</span>      <span class="c1"># float (f64)</span>
+<span class="k">let</span> <span class="n">z</span><span class="p">:</span> <span class="kt">i32</span> <span class="o">=</span> <span class="mi">42</span>   <span class="c1"># i32 (from annotation)</span>
+</code></pre></div>
+<h4 id="with-suffix-explicit">With Suffix (Explicit)<a class="headerlink" href="#with-suffix-explicit" title="Permanent link">&para;</a></h4>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">let</span> <span class="n">a</span> <span class="o">=</span> <span class="mi">42</span><span class="n">i8</span>      <span class="c1"># i8</span>
+<span class="k">let</span> <span class="n">b</span> <span class="o">=</span> <span class="mi">42</span><span class="n">u16</span>     <span class="c1"># u16</span>
+<span class="k">let</span> <span class="n">c</span> <span class="o">=</span> <span class="mi">42</span><span class="kt">i32</span>     <span class="c1"># i32</span>
+<span class="k">let</span> <span class="n">d</span> <span class="o">=</span> <span class="mi">42</span><span class="n">u64</span>     <span class="c1"># u64</span>
+<span class="k">let</span> <span class="n">e</span> <span class="o">=</span> <span class="mf">3.14</span><span class="kt">f32</span>   <span class="c1"># f32</span>
+<span class="k">let</span> <span class="n">f</span> <span class="o">=</span> <span class="mi">255</span><span class="n">u8</span>     <span class="c1"># u8</span>
+</code></pre></div>
+<h3 id="conversions">Conversions<a class="headerlink" href="#conversions" title="Permanent link">&para;</a></h3>
+<h4 id="explicit-casting-required">Explicit Casting Required<a class="headerlink" href="#explicit-casting-required" title="Permanent link">&para;</a></h4>
+<p>No implicit narrowing — all conversions are explicit:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">let</span> <span class="n">big</span><span class="p">:</span> <span class="kt">i64</span> <span class="o">=</span> <span class="mi">1000</span>
+<span class="k">let</span> <span class="n">small</span><span class="p">:</span> <span class="n">i16</span> <span class="o">=</span> <span class="n">big</span> <span class="k">as</span> <span class="n">i16</span>        <span class="c1"># Explicit cast (may truncate)</span>
+<span class="k">let</span> <span class="n">safe</span><span class="p">:</span> <span class="n">i16</span> <span class="o">=</span> <span class="n">i16</span><span class="o">.</span><span class="n">try_from</span><span class="p">(</span><span class="n">big</span><span class="p">)</span><span class="o">?</span> <span class="c1"># Safe conversion (returns Result)</span>
+</code></pre></div>
+<h4 id="conversion-functions">Conversion Functions<a class="headerlink" href="#conversion-functions" title="Permanent link">&para;</a></h4>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Fallible conversions (return Result)</span>
+<span class="k">let</span> <span class="n">x</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="n">i16</span><span class="p">,</span> <span class="nc">ConversionError</span><span class="p">]</span> <span class="o">=</span> <span class="n">i16</span><span class="o">.</span><span class="n">try_from</span><span class="p">(</span><span class="n">big_value</span><span class="p">)</span>
+
+<span class="c1"># Infallible widening (always safe)</span>
+<span class="k">let</span> <span class="n">wide</span><span class="p">:</span> <span class="kt">i64</span> <span class="o">=</span> <span class="kt">i64</span><span class="o">.</span><span class="k">from</span><span class="p">(</span><span class="n">small_value</span><span class="p">)</span>  <span class="c1"># i16 -&gt; i64 always works</span>
+
+<span class="c1"># Truncating cast (use with caution)</span>
+<span class="k">let</span> <span class="n">truncated</span><span class="p">:</span> <span class="n">i8</span> <span class="o">=</span> <span class="n">big_value</span> <span class="k">as</span> <span class="n">i8</span>    <span class="c1"># May lose data</span>
+</code></pre></div>
+<h3 id="arithmetic">Arithmetic<a class="headerlink" href="#arithmetic" title="Permanent link">&para;</a></h3>
+<p>Same-type operations return the same type:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">let</span> <span class="n">a</span><span class="p">:</span> <span class="kt">i32</span> <span class="o">=</span> <span class="mi">10</span>
+<span class="k">let</span> <span class="n">b</span><span class="p">:</span> <span class="kt">i32</span> <span class="o">=</span> <span class="mi">20</span>
+<span class="k">let</span> <span class="n">c</span><span class="p">:</span> <span class="kt">i32</span> <span class="o">=</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>  <span class="c1"># i32</span>
+
+<span class="c1"># Mixed types require explicit conversion</span>
+<span class="k">let</span> <span class="n">x</span><span class="p">:</span> <span class="kt">i32</span> <span class="o">=</span> <span class="mi">10</span>
+<span class="k">let</span> <span class="n">y</span><span class="p">:</span> <span class="kt">i64</span> <span class="o">=</span> <span class="mi">20</span>
+<span class="k">let</span> <span class="n">z</span> <span class="o">=</span> <span class="n">x</span> <span class="k">as</span> <span class="kt">i64</span> <span class="o">+</span> <span class="n">y</span>  <span class="c1"># Must convert first</span>
+</code></pre></div>
+<h3 id="overflow-behavior">Overflow Behavior<a class="headerlink" href="#overflow-behavior" title="Permanent link">&para;</a></h3>
+<p>Follow Rust's behavior:</p>
+<ul>
+<li><strong>Debug builds</strong>: Panic on overflow</li>
+<li><strong>Release builds</strong>: Wrap (two's complement)</li>
+</ul>
+<p>Explicit wrapping/saturating operations available:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">let</span> <span class="n">x</span><span class="p">:</span> <span class="n">u8</span> <span class="o">=</span> <span class="mi">255</span>
+<span class="k">let</span> <span class="n">y</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">wrapping_add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>    <span class="c1"># 0 (wrapped)</span>
+<span class="k">let</span> <span class="n">z</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">saturating_add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># 255 (saturated)</span>
+<span class="k">let</span> <span class="n">w</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">checked_add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>     <span class="c1"># None (overflow detected)</span>
+</code></pre></div>
+<h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
+<h3 id="binary-protocol-parsing">Binary Protocol Parsing<a class="headerlink" href="#binary-protocol-parsing" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">parse_header</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Header</span><span class="p">,</span> <span class="nc">ParseError</span><span class="p">]:</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">8</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">ParseError</span><span class="o">.</span><span class="nc">TooShort</span><span class="p">)</span>
+
+    <span class="k">let</span> <span class="n">magic</span><span class="p">:</span> <span class="n">u32</span> <span class="o">=</span> <span class="n">u32</span><span class="o">.</span><span class="n">from_le_bytes</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="mf">0..4</span><span class="p">])</span>
+    <span class="k">let</span> <span class="n">version</span><span class="p">:</span> <span class="n">u16</span> <span class="o">=</span> <span class="n">u16</span><span class="o">.</span><span class="n">from_le_bytes</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="mf">4..6</span><span class="p">])</span>
+    <span class="k">let</span> <span class="n">flags</span><span class="p">:</span> <span class="n">u8</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="mi">6</span><span class="p">]</span>
+    <span class="k">let</span> <span class="n">reserved</span><span class="p">:</span> <span class="n">u8</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="mi">7</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nc">Header</span><span class="p">(</span><span class="n">magic</span><span class="p">,</span> <span class="n">version</span><span class="p">,</span> <span class="n">flags</span><span class="p">))</span>
+</code></pre></div>
+<h3 id="network-port-handling">Network Port Handling<a class="headerlink" href="#network-port-handling" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">connect</span><span class="p">(</span><span class="n">host</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">port</span><span class="p">:</span> <span class="n">u16</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Connection</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
+    <span class="k">let</span> <span class="n">addr</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">host</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="k">return</span> <span class="nc">Connection</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">addr</span><span class="p">)</span>
+
+<span class="c1"># Usage</span>
+<span class="k">let</span> <span class="n">conn</span> <span class="o">=</span> <span class="n">connect</span><span class="p">(</span><span class="s2">&quot;localhost&quot;</span><span class="p">,</span> <span class="mi">8080</span><span class="n">u16</span><span class="p">)</span><span class="o">?</span>
+</code></pre></div>
+<h3 id="memory-efficient-arrays">Memory-Efficient Arrays<a class="headerlink" href="#memory-efficient-arrays" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Image pixel data - 3 bytes per pixel instead of 24</span>
+<span class="k">model</span> <span class="nc">Pixel</span><span class="p">:</span>
+    <span class="n">r</span><span class="p">:</span> <span class="n">u8</span>
+    <span class="n">g</span><span class="p">:</span> <span class="n">u8</span>
+    <span class="n">b</span><span class="p">:</span> <span class="n">u8</span>
+
+<span class="k">let</span> <span class="n">image</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nc">Pixel</span><span class="p">]</span> <span class="o">=</span> <span class="n">load_image</span><span class="p">(</span><span class="s2">&quot;photo.png&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="bit-manipulation">Bit Manipulation<a class="headerlink" href="#bit-manipulation" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">set_bit</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="n">u32</span><span class="p">,</span> <span class="n">bit</span><span class="p">:</span> <span class="n">u8</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">u32</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">value</span> <span class="o">|</span> <span class="p">(</span><span class="mi">1</span><span class="n">u32</span> <span class="o">&lt;&lt;</span> <span class="n">bit</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">clear_bit</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="n">u32</span><span class="p">,</span> <span class="n">bit</span><span class="p">:</span> <span class="n">u8</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">u32</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">value</span> <span class="o">&amp;</span> <span class="o">~</span><span class="p">(</span><span class="mi">1</span><span class="n">u32</span> <span class="o">&lt;&lt;</span> <span class="n">bit</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_bit</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="n">u32</span><span class="p">,</span> <span class="n">bit</span><span class="p">:</span> <span class="n">u8</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">value</span> <span class="o">&amp;</span> <span class="p">(</span><span class="mi">1</span><span class="n">u32</span> <span class="o">&lt;&lt;</span> <span class="n">bit</span><span class="p">))</span> <span class="o">!=</span> <span class="mi">0</span>
+</code></pre></div>
+<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h3 id="phase-0-builtin-type-registry">Phase 0: Builtin Type Registry<a class="headerlink" href="#phase-0-builtin-type-registry" title="Permanent link">&para;</a></h3>
+<p>Before adding new types, establish <strong>registry-first</strong> infrastructure so the compiler has a single source of truth for:</p>
+<ul>
+<li>builtin type spellings (e.g. <code>i32</code>, <code>u8</code>)</li>
+<li>builtin/surface method vocabulary (e.g. <code>str.upper()</code>, <code>List.append()</code>)</li>
+<li>metadata like “introduced in RFC”, stability, and docs</li>
+</ul>
+<p><strong>Current crate layout note:</strong> in the current workspace, canonical language vocabulary lives in:</p>
+<ul>
+<li><code>crates/incan_core/src/lang/types/*</code> for builtin type names</li>
+<li><code>crates/incan_core/src/lang/surface/*</code> for method/function/type “surface” vocabulary</li>
+<li><code>crates/incan_syntax</code> for lexer/token/parsing (syntax), consuming registries where appropriate</li>
+</ul>
+<p>So Phase 0 should be implemented by extending these registries and migrating compiler call sites to consult them,
+rather than parsing <code>incan_stdlib</code> source code.</p>
+<h4 id="problem">Problem<a class="headerlink" href="#problem" title="Permanent link">&para;</a></h4>
+<p>Currently, builtin type methods (e.g., <code>str.upper()</code>, <code>List.append()</code>, <code>FrozenStr.len()</code>) are hardcoded in multiple places:</p>
+<ul>
+<li><code>src/frontend/typechecker/check_expr/access.rs</code> — method return types</li>
+<li><code>src/backend/ir/emit/mod.rs</code> — code generation</li>
+<li><code>src/backend/ir/emit/expressions/methods.rs</code> — method emission</li>
+</ul>
+<p>This creates triple maintenance burden and increases drift risk between docs/spec/compiler behavior.</p>
+<h4 id="solution">Solution<a class="headerlink" href="#solution" title="Permanent link">&para;</a></h4>
+<ol>
+<li>
+<p><strong>Define method vocab in <code>incan_core</code></strong> (source of truth):</p>
+<ul>
+<li><code>crates/incan_core/src/lang/surface/methods.rs</code> (surface method vocab registries; re-exported as
+  <code>incan_core::lang::surface::{string_methods, list_methods, dict_methods, ...}</code> for stable import paths)</li>
+<li>For sized integer methods, add a new registry section within <code>methods.rs</code> (or a sibling module re-exported from
+  <code>crates/incan_core/src/lang/surface/mod.rs</code> if it grows too large)</li>
+</ul>
+</li>
+<li>
+<p><strong>Compiler consumes registries</strong> instead of string matches:</p>
+<ul>
+<li>Typechecker consults the registries to determine allowed methods and return types.</li>
+<li>Backend/codegen consults the same registries (or enum/ID mapping derived from them) to emit method calls.</li>
+</ul>
+</li>
+<li>
+<p><strong>Guardrails</strong></p>
+<ul>
+<li>Add tests that ensure registry uniqueness and prevent drift with lexer/parser expectations (parity checks).</li>
+</ul>
+</li>
+</ol>
+<h4 id="benefits">Benefits<a class="headerlink" href="#benefits" title="Permanent link">&para;</a></h4>
+<ul>
+<li><strong>Single source of truth</strong>: <code>incan_core</code> defines the language surface vocabulary.</li>
+<li><strong>No hardcoding</strong>: typechecker and emitter read from registries.</li>
+<li><strong>Extensibility</strong>: adding a method is a single edit in <code>incan_core::lang::surface</code>.</li>
+<li><strong>Documentation</strong>: reference docs can be generated from registries.</li>
+</ul>
+<h4 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h4>
+<p>Phase 0 covers:</p>
+<ul>
+<li>Registry infrastructure (IDs + metadata tables + docs generation + guardrails)</li>
+<li>Migration of existing hardcoded types:<ul>
+<li><code>str</code>, <code>bytes</code></li>
+<li><code>List</code>, <code>Dict</code>, <code>Set</code></li>
+<li><code>FrozenStr</code>, <code>FrozenBytes</code></li>
+<li><code>FrozenList</code>, <code>FrozenSet</code>, <code>FrozenDict</code></li>
+</ul>
+</li>
+<li>Foundation for sized integer methods in Phase 5</li>
+</ul>
+<h3 id="phase-1-lexer">Phase 1: Lexer<a class="headerlink" href="#phase-1-lexer" title="Permanent link">&para;</a></h3>
+<p>Add token recognition for:</p>
+<ul>
+<li>Type names: <code>i8</code>, <code>i16</code>, <code>i32</code>, <code>i64</code>, <code>i128</code>, <code>u8</code>, <code>u16</code>, <code>u32</code>, <code>u64</code>, <code>u128</code>, <code>f32</code>, <code>isize</code>, <code>usize</code></li>
+<li>Literal suffixes: <code>42i32</code>, <code>255u8</code>, <code>3.14f32</code></li>
+</ul>
+<h3 id="phase-2-parser">Phase 2: Parser<a class="headerlink" href="#phase-2-parser" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Parse sized type annotations</li>
+<li>Parse suffixed numeric literals</li>
+</ul>
+<h3 id="phase-3-type-checker">Phase 3: Type Checker<a class="headerlink" href="#phase-3-type-checker" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add sized integer types to type system</li>
+<li>Enforce explicit conversions (no implicit narrowing)</li>
+<li>Type inference for unsuffixed literals</li>
+<li>Use builtin registry (from Phase 0) for method lookups</li>
+</ul>
+<h3 id="phase-4-codegen">Phase 4: Codegen<a class="headerlink" href="#phase-4-codegen" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Map types directly to Rust equivalents</li>
+<li>Emit proper literal suffixes</li>
+<li>Generate conversion code</li>
+<li>Use builtin registry for method emission</li>
+</ul>
+<h3 id="phase-5-standard-library">Phase 5: Standard Library<a class="headerlink" href="#phase-5-standard-library" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add conversion methods (<code>try_from</code>, <code>from</code>, <code>as</code>) to registry</li>
+<li>Add byte conversion methods (<code>from_le_bytes</code>, <code>to_be_bytes</code>, etc.) to registry</li>
+<li>Add overflow-handling methods (<code>wrapping_add</code>, <code>saturating_sub</code>, etc.) to registry</li>
+<li>Implement corresponding Rust methods in <code>incan_stdlib</code></li>
+</ul>
+<h2 id="alternatives-considered">Alternatives Considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<h3 id="1-only-add-when-needed-via-rust-interop">1. Only Add When Needed via Rust Interop<a class="headerlink" href="#1-only-add-when-needed-via-rust-interop" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">primitive</span> <span class="kn">import</span><span class="w"> </span><span class="nn">i16</span><span class="o">,</span><span class="w"> </span><span class="nn">u8</span>
+</code></pre></div>
+<p><strong>Rejected</strong>: Awkward syntax, doesn't integrate well with literals.</p>
+<h3 id="2-python-style-arbitrary-precision">2. Python-Style Arbitrary Precision<a class="headerlink" href="#2-python-style-arbitrary-precision" title="Permanent link">&para;</a></h3>
+<p>Python's <code>int</code> is arbitrary precision. We could do the same.</p>
+<p><strong>Rejected</strong>: Doesn't help with FFI, binary protocols, or memory efficiency. Also has performance overhead.</p>
+<h3 id="3-wrapper-types-only">3. Wrapper Types Only<a class="headerlink" href="#3-wrapper-types-only" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">newtype</span> <span class="nc">Port</span> <span class="o">=</span> <span class="n">u16</span>  <span class="c1"># Define in stdlib</span>
+</code></pre></div>
+<p><strong>Rejected</strong>: Still need the underlying sized types.</p>
+<h3 id="4-c-style-type-names">4. C-Style Type Names<a class="headerlink" href="#4-c-style-type-names" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">let</span> <span class="n">x</span><span class="p">:</span> <span class="n">short</span> <span class="o">=</span> <span class="mi">10</span>      <span class="c1"># i16</span>
+<span class="k">let</span> <span class="n">y</span><span class="p">:</span> <span class="n">unsigned</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">20</span>  <span class="c1"># u32</span>
+</code></pre></div>
+<p><strong>Rejected</strong>: Verbose, platform-dependent sizes in C, Rust-style is clearer.</p>
+<h2 id="open-questions">Open Questions<a class="headerlink" href="#open-questions" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Literal inference</strong>: Should <code>let x: u8 = 256</code> be a compile error or runtime panic?</li>
+<li>
+<p>Proposal: Compile error for out-of-range literals</p>
+</li>
+<li>
+<p><strong>Default integer type</strong>: Keep <code>int</code> as <code>i64</code> or make it platform-dependent like <code>isize</code>?</p>
+</li>
+<li>
+<p>Proposal: Keep as <code>i64</code> for predictability</p>
+</li>
+<li>
+<p><strong>Char type</strong>: Add <code>char</code> as a separate type (Rust's 4-byte Unicode scalar)?</p>
+</li>
+<li>
+<p>Proposal: Defer to separate RFC</p>
+</li>
+<li>
+<p><strong>SIMD types</strong>: Should we include <code>i8x16</code>, <code>f32x4</code> etc?</p>
+</li>
+<li>
+<p>Proposal: Defer to separate RFC for SIMD</p>
+</li>
+<li>
+<p><strong>List/array indexing</strong>: How should <code>int</code> work with indexing?</p>
+</li>
+<li>Problem: <code>arr[i]</code> where <code>i: int</code> fails in Rust (needs <code>usize</code>)</li>
+<li>Option A: Auto-coerce <code>int</code> → <code>usize</code> in indexing context (ergonomic, implicit)</li>
+<li>Option B: Require explicit cast <code>arr[i as usize]</code> (explicit, verbose)</li>
+<li>Option C: Make <code>range()</code> return <code>usize</code> (natural for loops, but breaks if used elsewhere)</li>
+<li>Proposal: Option A — compiler inserts <code>as usize</code> for indexing; matches Python's ergonomics</li>
+</ol>
+<h2 id="checklist">Checklist<a class="headerlink" href="#checklist" title="Permanent link">&para;</a></h2>
+<h3 id="phase-0-builtin-type-registry-checklist">Phase 0: Builtin Type Registry (checklist)<a class="headerlink" href="#phase-0-builtin-type-registry-checklist" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] Extend <code>incan_core::lang::types</code> with sized type vocabulary (<code>i8</code>, <code>u16</code>, <code>f32</code>, <code>usize</code>, ...)</li>
+<li>[ ] Extend <code>incan_core::lang::surface</code> with sized integer method vocabulary (new registry module)</li>
+<li>[ ] Typechecker: consult <code>incan_core::lang::surface</code> registries for method typing</li>
+<li>[ ] Backend: consult <code>incan_core::lang::surface</code> registries (or enum mapping) for method emission</li>
+<li>[ ] Migrate <code>str</code> methods from hardcoded to registry</li>
+<li>[ ] Migrate <code>bytes</code> methods from hardcoded to registry</li>
+<li>[ ] Migrate <code>List</code> methods from hardcoded to registry</li>
+<li>[ ] Migrate <code>Dict</code> methods from hardcoded to registry</li>
+<li>[ ] Migrate <code>Set</code> methods from hardcoded to registry</li>
+<li>[ ] Migrate <code>FrozenStr</code> methods from hardcoded to registry</li>
+<li>[ ] Migrate <code>FrozenBytes</code> methods from hardcoded to registry</li>
+<li>[ ] Migrate <code>FrozenList</code>/<code>FrozenSet</code>/<code>FrozenDict</code> methods from hardcoded to registry</li>
+<li>[ ] Update emitter to use registry for method emission</li>
+<li>[ ] Remove hardcoded method matches from <code>check_expr/access.rs</code></li>
+<li>[ ] Remove hardcoded method matches from <code>emit/mod.rs</code></li>
+</ul>
+<h3 id="phase-1-4-sized-types">Phase 1-4: Sized Types<a class="headerlink" href="#phase-1-4-sized-types" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] Lexer: recognize sized type names</li>
+<li>[ ] Lexer: parse literal suffixes (<code>42i32</code>, <code>3.14f32</code>)</li>
+<li>[ ] Parser: sized type annotations</li>
+<li>[ ] Type checker: sized integer types in type system</li>
+<li>[ ] Type checker: enforce explicit conversions</li>
+<li>[ ] Type checker: literal range checking</li>
+<li>[ ] Codegen: emit proper Rust types</li>
+<li>[ ] Codegen: emit literal suffixes</li>
+<li>[ ] Codegen: auto-coerce <code>int</code> → <code>usize</code> for list indexing</li>
+</ul>
+<h3 id="phase-5-standard-library-methods">Phase 5: Standard Library Methods<a class="headerlink" href="#phase-5-standard-library-methods" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] Stdlib: add sized type interface traits (<code>I8Methods</code>, <code>U16Methods</code>, etc.)</li>
+<li>[ ] Stdlib: conversion methods (<code>try_from</code>, <code>from</code>)</li>
+<li>[ ] Stdlib: byte conversion methods (<code>from_le_bytes</code>, <code>to_be_bytes</code>, etc.)</li>
+<li>[ ] Stdlib: overflow-handling methods (<code>wrapping_add</code>, <code>saturating_sub</code>, etc.)</li>
+</ul>
+<h3 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] Documentation update</li>
+<li>[ ] Examples</li>
+</ul>
+<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="https://doc.rust-lang.org/std/primitive/index.html">Rust Primitive Types</a></li>
+<li><a href="https://doc.rust-lang.org/book/ch03-02-data-types.html#integer-overflow">Rust Integer Overflow</a></li>
+<li><a href="https://docs.python.org/3/library/struct.html">Python struct module</a> (for comparison)</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+        <script src="../../_snippets/javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
+      
+        <script src="../../_snippets/javascripts/tablesort.js"></script>
+      
+        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+      
+    
+  </body>
+</html>
