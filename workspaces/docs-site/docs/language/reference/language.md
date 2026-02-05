@@ -447,6 +447,11 @@ def main() -> None:
 | OneshotReceiver | `OneshotReceiver` |  | Generic | Oneshot channel receiver. | RFC 000 | 0.1 | Stable |
 | Vec | `Vec` |  | Generic | Rust interop `Vec<T>`. | RFC 005 | 0.1 | Stable |
 | HashMap | `HashMap` |  | Generic | Rust interop `HashMap<K, V>`. | RFC 005 | 0.1 | Stable |
+| App | `App` |  | Named | Web application handle for running an HTTP server. | RFC 000 | 0.1 | Stable |
+| Response | `Response` |  | Named | HTTP response builder for web handlers. | RFC 000 | 0.1 | Stable |
+| Html | `Html` |  | Named | HTML response wrapper for web handlers. | RFC 000 | 0.1 | Stable |
+| Json | `Json` |  | Generic | JSON response/extractor wrapper for web handlers. | RFC 000 | 0.1 | Stable |
+| Query | `Query` |  | Generic | Query-string extractor wrapper for web handlers. | RFC 000 | 0.1 | Stable |
 | FieldInfo | `FieldInfo` |  | Named | Field metadata record returned by __fields__(). | RFC 021 | 0.1 | Stable |
 
 ## Surface methods
