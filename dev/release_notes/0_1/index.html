@@ -3932,25 +3932,23 @@
 
 
 <h1 id="release-01">Release 0.1<a class="headerlink" href="#release-01" title="Permanent link">&para;</a></h1>
-<p>This is the first published release of Incan.</p>
-<p>Incan is a <code>0.x</code> release: expect evolution as the language and toolchain stabilize. See the
-<a href="../../stability/">Stability policy</a> for what changes are allowed in minor vs patch releases.</p>
+<p>This is the first published minor release line for Incan.</p>
+<p>Incan is in <strong>beta</strong>: expect evolution as the language and toolchain stabilize. See the <a href="../../stability/">Stability policy</a>
+for what changes are allowed in minor vs patch releases.</p>
 <h2 id="highlights">Highlights<a class="headerlink" href="#highlights" title="Permanent link">&para;</a></h2>
 <ul>
 <li>A complete docs site (Start here, Tooling, Language Guide, Reference), built with MkDocs</li>
 <li>A make-first developer workflow (<code>make install</code>, <code>make smoke-test</code>)</li>
 <li>A usable CLI surface: <code>incan build</code>, <code>incan run</code>, <code>incan fmt</code>, <code>incan test</code></li>
 <li>A generated language reference to keep documentation and implementation aligned</li>
-<li>Multi-file web applications with typed route extractors</li>
-<li>Model field aliases and metadata for schema-safe mapping (<a href="/dev/RFCs/closed/implemented/021_model_field_metadata_and_aliases">RFC 021</a>)</li>
 </ul>
 <h2 id="getting-started-recommended">Getting started (recommended)<a class="headerlink" href="#getting-started-recommended" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Start at: <a href="../../language/">Language</a> and <a href="../../tooling/">Tooling</a></li>
-<li>For "first steps" workflows, use the CLI and Make targets referenced there.</li>
+<li>For “first steps” workflows, use the CLI and Make targets referenced there.</li>
 </ul>
 <h2 id="looking-for-contributors">Looking for contributors?<a class="headerlink" href="#looking-for-contributors" title="Permanent link">&para;</a></h2>
-<p>Incan is still early and we'd love help—whether that's improving docs, fixing bugs, or implementing RFC-backed features.</p>
+<p>Incan is still early and we’d love help—whether that’s improving docs, fixing bugs, or implementing RFC-backed features.</p>
 <ul>
 <li>Start here: <a href="../../contributing/">Contributing</a></li>
 <li>Good places to start:<ul>
@@ -3972,50 +3970,31 @@
 <li><strong>Language/runtime</strong>: Evolved <code>incan_semantics</code> into <code>incan_core</code> (#20)</li>
 <li><strong>Language/runtime</strong>: Python-style exceptions modeled as typed errors (#21)</li>
 <li><strong>Models</strong>: Keyword-only construction, defaults, and reflection helpers</li>
-<li><strong>Models</strong>: Field aliases and metadata for schema-safe mapping (<a href="/dev/RFCs/closed/implemented/021_model_field_metadata_and_aliases">RFC 021</a>, #98)</li>
+<li><strong>Models</strong>: Field aliases and metadata for schema-safe mapping (#98)</li>
 <li><strong>Classes</strong>: Behavior-first types with methods, <code>mut self</code>, and inheritance (<code>extends</code>)</li>
 <li><strong>Traits/derives</strong>: Trait composition (<code>with ...</code>) and derives for common behavior (serialization, validation, etc.)</li>
 <li><strong>Derives</strong>: <code>@derive(Validate)</code> for validated construction (#49)</li>
-<li><strong>Derives</strong>: <code>@derive(...)</code> on enums now parsed, stored in AST, and used during lowering (#101)</li>
-<li><strong>Derives</strong>: Automatic <code>Serialize</code>/<code>Deserialize</code> propagation from models to referenced enums and newtypes (#103, #115)</li>
-<li><strong>Enums</strong>: Optional docstrings inside enum bodies (#102)</li>
-<li><strong>Web</strong>: Multi-path parameters, <code>Json[T]</code>/<code>Query[T]</code> extractors in generated route wrappers (#95)</li>
-<li><strong>Web</strong>: <code>Html</code> response wrapper with <code>IntoResponse</code> impl (#108)</li>
-<li><strong>Web</strong>: Web route wrappers work for nested modules via <code>module_path_segments</code> (#107)</li>
-<li><strong>Web</strong>: Web feature flags detected across dependency modules (#105)</li>
-<li><strong>Web</strong>: <code>SurfaceTypeId</code> registry extended with web types: <code>App</code>, <code>Response</code>, <code>Html</code>, <code>Json</code>, <code>Query</code> (#114)</li>
 <li><strong>Codegen</strong>: Optimize <code>while True</code> to <code>loop</code> in emitted Rust (#8)</li>
-<li><strong>Codegen</strong>: Cross-module enum variant access emits <code>Type::Variant</code> instead of <code>Type.Variant</code> (#110)</li>
-<li><strong>Codegen</strong>: Newtype tuple fields emitted as <code>pub</code> for cross-module construction (#104)</li>
-<li><strong>Codegen</strong>: <code>List.append</code> emits <code>.clone()</code> for non-Copy element types</li>
-<li><strong>Codegen</strong>: Associated function calls emit correctly in dependency modules (#112)</li>
-<li><strong>Compiler</strong>: Dependency module typechecking with <code>check_with_imports_allow_private</code> (#111)</li>
-<li><strong>Compiler</strong>: Targeted parser diagnostics for invalid enum body patterns (#113)</li>
 <li><strong>Tooling</strong>: Centralized <code>INCAN_VERSION</code> and version-agnostic codegen snapshots (#14)</li>
 <li><strong>Tooling</strong>: <code>incan --help</code> / <code>incan --version</code> are script-friendly (no banner/ANSI by default) (#34)</li>
 <li><strong>Tooling</strong>: <code>incan test --fail-on-empty</code> (non-zero when no tests are discovered) (#36)</li>
-<li><strong>Tooling</strong>: <code>incan run</code> executes from project root so relative paths work as expected (#109)</li>
-<li><strong>Tooling</strong>: Axum extractor import collisions resolved by qualifying imports (#100)</li>
 <li><strong>Docs</strong>: Restructured docs using the Divio system (#27)</li>
 <li><strong>Docs</strong>: MkDocs syntax highlighting (including <code>incan</code> fenced code blocks) (#37)</li>
-<li><strong>Docs</strong>: Generated language reference "Since" column populated (#39)</li>
-<li><strong>Docs</strong>: Enum documentation updated with derives, docstrings, and common pitfalls</li>
-<li><strong>Docs</strong>: Serialization reference expanded with enum and newtype sections</li>
+<li><strong>Docs</strong>: Generated language reference “Since” column populated (#39)</li>
 <li><strong>DX</strong>: Closed-set vocabulary registries and drift guardrails (#88)</li>
 <li><strong>DX</strong>: Remove TitleCase heuristic for associated-function emission (#52)</li>
 <li><strong>DX</strong>: Align docs/examples for cross-module imports and codegen status (#41)</li>
 <li><strong>DX</strong>: Benchmark metadata drift fixes (#40)</li>
 <li><strong>DX</strong>: Simplified lexer frontend (#2)</li>
 <li><strong>Testing</strong>: Test harness improvements (#24)</li>
+<li><strong>Docs</strong>: Complete docs site (Start here, Tooling, Language Guide, Reference) built with MkDocs</li>
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Web</strong>: Fully qualified extractor types across modules (#106)</li>
 <li><strong>Codegen/IR</strong>: Internal module imports in multi-file projects use correct <code>crate::</code>/<code>super::</code> prefixes (#90, #91)</li>
 <li><strong>Parser</strong>: Fat-arrow inline match arms now support <code>return</code> statement (#92, #96)</li>
 <li><strong>Lowering/codegen</strong>: <code>None</code> literal now correctly lowers to <code>Option::None</code> instead of unit <code>()</code> (#93, #97)</li>
-<li><strong>Typechecker/traits</strong>: Trait conformance checks are signature-aware, respect <code>@requires</code> field types, and include
-  inherited members (#45, #46, #47, #48)</li>
+<li><strong>Typechecker/traits</strong>: Trait conformance checks are signature-aware, respect <code>@requires</code> field types, and include inherited members (#45, #46, #47, #48)</li>
 <li><strong>Typechecker/traits</strong>: Models can implement traits (#42)</li>
 <li><strong>Typechecker/newtypes</strong>: Direct newtype construction is disallowed (#44)</li>
 <li><strong>Typechecker/constructors</strong>: Field defaults are applied in model/class constructors (#43)</li>
@@ -4025,7 +4004,7 @@
 <li><strong>Codegen</strong>: Default visibility is private (no longer <code>pub</code> everywhere) (#6)</li>
 <li><strong>Codegen</strong>: Avoid unnecessary <code>mut</code> function parameters (#5)</li>
 <li><strong>Codegen</strong>: Mixed int/float arithmetic compiles correctly (#4)</li>
-<li><strong>Tooling</strong>: <code>import this</code> prints "One obvious way" once (#33)</li>
+<li><strong>Tooling</strong>: <code>import this</code> prints “One obvious way” once (#33)</li>
 <li><strong>Tooling/formatter</strong>: <code>incan fmt --diff</code> output is actionable for newline-only changes (#32)</li>
 <li><strong>Tooling/CLI</strong>: <code>incan build --help</code> output directory default matches actual output path (#31)</li>
 <li><strong>Examples/web</strong>: <code>examples/web/hello_web.incn</code> compiles (#30)</li>
@@ -4035,9 +4014,7 @@
 <p>Incan is still evolving. A few things you may run into:</p>
 <ul>
 <li>Some compiler/language features described in RFCs may be partially implemented.</li>
-<li>Rust interop is available, but crate support is gated by a "known-good" list (see: <a href="../../language/how-to/rust_interop/">Rust interop</a>).</li>
-<li>Web route handlers and their request models must be declared <code>pub</code> for cross-module wrapper generation (#117).</li>
-<li>Multi-line parenthesized imports are not yet supported; use multiple single-line imports as a workaround (#116).</li>
+<li>Rust interop is available, but crate support is gated by a “known-good” list (see: <a href="../../language/how-to/rust_interop/">Rust interop</a>).</li>
 </ul>
 <h2 id="breaking-changes">Breaking changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h2>
 <ul>

@@ -3733,6 +3733,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#module-placement-and-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      Module placement and names
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#motivation" class="md-nav__link">
     <span class="md-ellipsis">
       Motivation
@@ -3934,6 +3943,30 @@
 <p><strong>Status:</strong> Draft</p>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>Add a <code>JsonValue</code> type for handling JSON with unknown or varying structure at runtime.</p>
+<h2 id="module-placement-and-names">Module placement and names<a class="headerlink" href="#module-placement-and-names" title="Permanent link">&para;</a></h2>
+<p>This RFC proposes that dynamic JSON support lives in a dedicated stdlib module:</p>
+<ul>
+<li><strong>Canonical module</strong>: <code>std.json</code></li>
+<li><strong>Python analogy</strong>: <code>import json</code></li>
+</ul>
+<p>Rationale:</p>
+<ul>
+<li>JSON is cross-cutting (web responses, HTTP clients, config, tooling).</li>
+<li>A dedicated module avoids duplicating “JSON-ish” vocabulary across <code>std.web</code>, <code>std.http</code>, etc.</li>
+<li>It cleanly separates “dynamic JSON data” (<code>std.json.JsonValue</code>) from “web transport wrappers” like <code>std.web.Json[T]</code>.</li>
+</ul>
+<p>Clarifications:</p>
+<ul>
+<li><code>std.json.JsonValue</code> is the <strong>dynamic JSON data</strong> type (parseable, indexable, inspectable).</li>
+<li><code>std.web.Json[T]</code> is a <strong>web transport wrapper</strong> for request/response bodies; it is not “the JSON module”.
+  It may internally use <code>std.json</code> but has distinct semantics and typing.</li>
+<li>Rust backing type is expected to be <code>serde_json::Value</code> under the hood, but that Rust type is an implementation detail
+  (accessible explicitly via <code>rust::…</code> interop when needed).</li>
+</ul>
+<p>Recommended import style:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonValue</span>
+</code></pre></div>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>Currently, Incan requires defining models with <code>@derive(Serialize, Deserialize)</code> for JSON handling.
 This works well for known, fixed schemas but falls short for:</p>
@@ -3953,7 +3986,10 @@ This works well for known, fixed schemas but falls short for:</p>
 <span class="nb">println</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="proposed-addition">Proposed Addition<a class="headerlink" href="#proposed-addition" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Parse unknown JSON</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Recommended: import the stdlib json module</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">json</span>
+
+<span class="c1"># Parse unknown JSON</span>
 <span class="n">data</span> <span class="o">=</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">json_str</span><span class="p">)</span><span class="o">?</span>
 
 <span class="c1"># Access dynamically</span>
