@@ -6,6 +6,34 @@
 
 Add a `JsonValue` type for handling JSON with unknown or varying structure at runtime.
 
+## Module placement and names
+
+This RFC proposes that dynamic JSON support lives in a dedicated stdlib module:
+
+- **Canonical module**: `std.json`
+- **Python analogy**: `import json`
+
+Rationale:
+
+- JSON is cross-cutting (web responses, HTTP clients, config, tooling).
+- A dedicated module avoids duplicating “JSON-ish” vocabulary across `std.web`, `std.http`, etc.
+- It cleanly separates “dynamic JSON data” (`std.json.JsonValue`) from “web transport wrappers” like `std.web.Json[T]`.
+
+Clarifications:
+
+- `std.json.JsonValue` is the **dynamic JSON data** type (parseable, indexable, inspectable).
+- `std.web.Json[T]` is a **web transport wrapper** for request/response bodies; it is not “the JSON module”.
+  It may internally use `std.json` but has distinct semantics and typing.
+- Rust backing type is expected to be `serde_json::Value` under the hood, but that Rust type is an implementation detail
+  (accessible explicitly via `rust::…` interop when needed).
+
+Recommended import style:
+
+```incan
+import std.json as json
+from std.json import JsonValue
+```
+
 ## Motivation
 
 Currently, Incan requires defining models with `@derive(Serialize, Deserialize)` for JSON handling.
@@ -31,6 +59,9 @@ println(user.name)
 ### Proposed Addition
 
 ```incan
+# Recommended: import the stdlib json module
+import std.json as json
+
 # Parse unknown JSON
 data = JsonValue.parse(json_str)?
 
