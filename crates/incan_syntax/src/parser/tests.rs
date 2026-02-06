@@ -410,4 +410,69 @@ const ANSWER: int = 42
             _ => panic!("Expected const"),
         }
     }
+
+    // ========================================================================
+    // Enum diagnostic tests (#113)
+    // ========================================================================
+
+    #[test]
+    fn test_enum_fat_arrow_mapping_rejected_with_hint() {
+        let source = "enum Categories:\n    GROCERIES => Category(\"Groceries\")\n";
+        let err = parse_str(source).expect_err("Fat arrow in enum body should be rejected");
+        let msg = format!("{:?}", err);
+        assert!(
+            msg.contains("mapped values"),
+            "Expected hint about mapped values, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_enum_dotted_variant_rejected_with_hint() {
+        let source = "enum FlowType:\n    Cash.Inflow\n";
+        let err = parse_str(source).expect_err("Dotted variant in enum body should be rejected");
+        let msg = format!("{:?}", err);
+        assert!(
+            msg.contains("cannot contain dots"),
+            "Expected hint about dots, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_enum_assigned_value_rejected_with_hint() {
+        let source = "enum Color:\n    Red = 1\n";
+        let err = parse_str(source).expect_err("Assigned value in enum body should be rejected");
+        let msg = format!("{:?}", err);
+        assert!(
+            msg.contains("assigned values"),
+            "Expected hint about assigned values, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_enum_colon_annotation_rejected_with_hint() {
+        let source = "enum Fields:\n    Name: str\n";
+        let err = parse_str(source).expect_err("Type annotation in enum body should be rejected");
+        let msg = format!("{:?}", err);
+        assert!(
+            msg.contains("type annotations"),
+            "Expected hint about type annotations, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_valid_enum_still_parses() {
+        let source = "enum Status:\n    Pending\n    Active\n    Done(str)\n";
+        let program = parse_str(source).expect("Valid enum should parse");
+        assert_eq!(program.declarations.len(), 1);
+        match &program.declarations[0].node {
+            Declaration::Enum(e) => {
+                assert_eq!(e.variants.len(), 3);
+                assert_eq!(e.variants[0].node.name, "Pending");
+                assert_eq!(e.variants[1].node.name, "Active");
+                assert_eq!(e.variants[2].node.name, "Done");
+                assert_eq!(e.variants[2].node.fields.len(), 1);
+            }
+            _ => panic!("Expected enum"),
+        }
+    }
 }

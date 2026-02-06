@@ -521,6 +521,55 @@ impl<'a> Parser<'a> {
         let start = self.current_span().start;
         // Allow keywords like "None" as variant names (Rust allows this)
         let name = self.identifier_or_keyword()?;
+
+        // Detect common mistakes in enum bodies and emit targeted diagnostics.
+        if self.check_punct(PunctuationId::FatArrow) {
+            return Err(CompileError::syntax(
+                "Enum variants cannot have mapped values".to_string(),
+                self.current_span(),
+            )
+            .with_note("Enum bodies only accept variant identifiers, optionally with payload types")
+            .with_hint(
+                "To model a lookup table, use a function that returns records instead:\n\n  \
+                 def all_categories() -> list[Category]:\n      \
+                 return [Category(\"Groceries\"), Category(\"Utilities\")]",
+            ));
+        }
+        if self.check_punct(PunctuationId::Dot) {
+            return Err(CompileError::syntax(
+                "Enum variants cannot contain dots".to_string(),
+                self.current_span(),
+            )
+            .with_note("Enum bodies only accept simple identifiers, optionally with payload types")
+            .with_hint("Use plain variant names: e.g. `Inflow` instead of `Cash.Inflow`"));
+        }
+        if self.check_op(OperatorId::Eq) {
+            return Err(CompileError::syntax(
+                "Enum variants cannot have assigned values".to_string(),
+                self.current_span(),
+            )
+            .with_note("Incan enums are algebraic types, not integer-valued enums")
+            .with_hint(
+                "If you need key-value data, use a model instead:\n\n  \
+                 model Color:\n      \
+                 name: str\n      \
+                 value: int",
+            ));
+        }
+        if self.check_punct(PunctuationId::Colon) {
+            return Err(CompileError::syntax(
+                "Enum variants cannot have type annotations".to_string(),
+                self.current_span(),
+            )
+            .with_note("Enum variants use parenthesized payloads, not field-style declarations")
+            .with_hint(
+                "If you need typed fields, use a model instead:\n\n  \
+                 model MyRecord:\n      \
+                 name: str\n\n  \
+                 Or use a payload: `MyVariant(str)`",
+            ));
+        }
+
         let fields = if self.match_punct(PunctuationId::LParen) {
             let fields = self.type_list()?;
             self.expect_punct(PunctuationId::RParen, "Expected ')' after variant fields")?;

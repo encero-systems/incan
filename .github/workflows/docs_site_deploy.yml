@@ -3,8 +3,8 @@ name: Docs Site Deploy
 on:
   push:
     branches: [ main ]
-    tags:
-      - "*.*.*"
+  release:
+    types: [ published ]
   workflow_dispatch:
 
 permissions:
@@ -37,19 +37,21 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Deploy dev from main
-        if: github.ref_type == 'branch'
+        if: github.event_name != 'release'
         run: |
           export INCAN_DOCS_BASE_PREFIX="dev"
           python -m mkdocs build --strict
           mike deploy --push dev
           mike set-default --push dev
 
-      - name: Deploy minor version from tag
-        if: github.ref_type == 'tag'
+      - name: Deploy versioned docs from release
+        if: github.event_name == 'release'
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ github.event.release.tag_name }}
         run: |
-          MINOR="${TAG%.*}"
+          # Strip monorepo prefix: incan-v0.1.0 → v0.1.0 → v0.1
+          VERSION="${TAG#incan-}"
+          MINOR="${VERSION%.*}"
           export INCAN_DOCS_BASE_PREFIX="${MINOR}"
           python -m mkdocs build --strict
           mike deploy --push "${MINOR}"

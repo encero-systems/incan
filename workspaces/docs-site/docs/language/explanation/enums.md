@@ -255,6 +255,45 @@ For serialization details, see [Derives: Serialization](../reference/derives/ser
 
 ---
 
+## Common pitfall: enums are not lookup tables
+
+Incan enums are **algebraic types** — each variant is a fixed tag, optionally carrying data.
+They are **not** key-value mappings or integer-valued constants.
+
+The compiler will catch the mistake early with a targeted error message:
+
+```incan
+# ✗ These are all rejected with clear diagnostics:
+enum Categories:
+    GROCERIES => Category("Groceries")   # "cannot have mapped values"
+
+enum FlowType:
+    Cash.Inflow                           # "cannot contain dots"
+
+enum Color:
+    Red = 1                               # "cannot have assigned values"
+```
+
+**Instead**, use plain variants for the enum and a separate model for rich data:
+
+```incan
+enum CategoryKey:
+    Groceries
+    Utilities
+
+model Category:
+    key: CategoryKey
+    description: str
+
+def all_categories() -> list[Category]:
+    return [
+        Category(key=CategoryKey.Groceries, description="Food items"),
+        Category(key=CategoryKey.Utilities, description="Gas, electric"),
+    ]
+```
+
+---
+
 ## Enums vs models vs classes
 
 | Use Case                               | Enum | Model | Class |
