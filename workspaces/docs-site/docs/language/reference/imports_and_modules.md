@@ -148,7 +148,49 @@ set(iterable)       # Convert to Set
 incan run -c "import this"
 ```
 
+## Incan standard library (`std.*`)
+
+<!-- TODO: move this to its own section -->
+
+Incan's standard library lives under the `std` namespace. Import modules and items from it just like any other module.
+The compiler activates features (e.g. async runtime, web framework) automatically based on which `std.*` modules you
+import — no manual feature flags needed.
+
+### Available modules
+
+|      Module      |                  Description                  | Activates feature |
+| ---------------- | --------------------------------------------- | ----------------- |
+| `std.web`        | Web framework (routes, responses, extractors) | `web` (Axum)      |
+| `std.testing`    | Test fixtures and assertions                  | —                 |
+| `std.async`      | Async utilities (tasks, channels, timers)     | —                 |
+| `std.serde.json` | JSON serialization/deserialization            | `json`            |
+| `std.reflection` | Reflection helpers (`FieldInfo`, etc.)        | —                 |
+
+### Import examples
+
+```incan
+# Import items from the web framework
+from std.web import App, route, Response, Json, GET, POST
+
+# Import test fixtures
+from std.testing import fixture
+
+# Import JSON helpers
+from std.serde.json import json_stringify, json_parse
+```
+
+### Reserved root namespaces
+
+The names `std` and `rust` are reserved at the root level. You cannot shadow them with local modules or aliases:
+
+```incan
+# ERROR: 'std' is a reserved root namespace
+import models as std
+```
+
 ## Standard library: `math`
+
+<!-- TODO: move this to its own section -->
 
 You must import `math` before use:
 
@@ -191,20 +233,18 @@ def main() -> None:
 
 ## Rust standard library access
 
-Incan can import from Rust’s standard library.
-
-```incan
-import std::fs
-import std::env
-import std::path::Path
-import std::time
-```
-
-This is equivalent to using the explicit Rust interop prefix:
+To import from Rust’s standard library, use the `rust::` prefix:
 
 ```incan
 import rust::std::fs
+import rust::std::env
+import rust::std::path::Path
+import rust::std::time
 ```
+
+!!! warning "The `std` root is reserved"
+    Bare `import std::fs` refers to **Incan’s** standard library, not Rust’s.
+    Always use the `rust::std::` prefix when you need Rust’s stdlib.
 
 Note: using these requires understanding the underlying Rust types. Prefer Incan built-ins (`read_file`, `write_file`,
 etc.) where available.

@@ -553,6 +553,8 @@ pub fn discover_tests_and_fixtures(file_path: &Path) -> Result<DiscoveryResult, 
 
     let ast = parser::parse(&tokens).map_err(|e| format!("Parser error: {:?}", e))?;
 
+    let import_aliases = crate::frontend::decorator_resolution::collect_import_aliases(&ast);
+
     let mut tests = Vec::new();
     let mut fixtures = Vec::new();
 
@@ -561,7 +563,7 @@ pub fn discover_tests_and_fixtures(file_path: &Path) -> Result<DiscoveryResult, 
         .iter()
         .filter_map(|decl| {
             if let crate::frontend::ast::Declaration::Function(func) = &decl.node {
-                if has_fixture_decorator(&func.decorators) {
+                if has_fixture_decorator(&func.decorators, &import_aliases) {
                     return Some(func.name.clone());
                 }
             }
@@ -571,8 +573,8 @@ pub fn discover_tests_and_fixtures(file_path: &Path) -> Result<DiscoveryResult, 
 
     for decl in &ast.declarations {
         if let crate::frontend::ast::Declaration::Function(func) = &decl.node {
-            if has_fixture_decorator(&func.decorators) {
-                let (scope, autouse) = extract_fixture_args(&func.decorators);
+            if has_fixture_decorator(&func.decorators, &import_aliases) {
+                let (scope, autouse) = extract_fixture_args(&func.decorators, &import_aliases);
                 let dependencies = extract_fixture_dependencies(&func.params, &fixture_names);
                 let has_teardown = function_has_yield(&func.body);
 
@@ -586,7 +588,7 @@ pub fn discover_tests_and_fixtures(file_path: &Path) -> Result<DiscoveryResult, 
                     is_async: func.is_async,
                 });
             } else if func.name.starts_with("test_") {
-                let markers = extract_test_markers(&func.decorators);
+                let markers = extract_test_markers(&func.decorators, &import_aliases);
                 let required_fixtures = extract_fixture_dependencies(&func.params, &fixture_names);
 
                 tests.push(TestInfo {
@@ -602,20 +604,43 @@ pub fn discover_tests_and_fixtures(file_path: &Path) -> Result<DiscoveryResult, 
     Ok(DiscoveryResult { tests, fixtures })
 }
 
-fn has_fixture_decorator(decorators: &[crate::frontend::ast::Spanned<crate::frontend::ast::Decorator>]) -> bool {
+fn has_fixture_decorator(
+    decorators: &[crate::frontend::ast::Spanned<crate::frontend::ast::Decorator>],
+    aliases: &HashMap<String, Vec<String>>,
+) -> bool {
     decorators
         .iter()
-        .any(|d| decorators::from_str(d.node.name.as_str()) == Some(DecoratorId::Fixture))
+        .any(|d| resolve_decorator_id(&d.node, aliases) == Some(DecoratorId::Fixture))
+}
+
+fn resolve_decorator_id(
+    dec: &crate::frontend::ast::Decorator,
+    aliases: &HashMap<String, Vec<String>>,
+) -> Option<DecoratorId> {
+    let resolved = crate::frontend::decorator_resolution::resolve_decorator_path(dec, aliases);
+    decorators::from_segments(&resolved)
+}
+
+fn resolve_decorator_path_string(
+    dec: &crate::frontend::ast::Decorator,
+    aliases: &HashMap<String, Vec<String>>,
+) -> String {
+    let resolved = crate::frontend::decorator_resolution::resolve_decorator_path(dec, aliases);
+    if resolved.is_empty() {
+        return dec.name.clone();
+    }
+    resolved.join(".")
 }
 
 fn extract_fixture_args(
     decorators: &[crate::frontend::ast::Spanned<crate::frontend::ast::Decorator>],
+    aliases: &HashMap<String, Vec<String>>,
 ) -> (FixtureScope, bool) {
     let mut scope = FixtureScope::default();
     let mut autouse = false;
 
     for dec in decorators {
-        if decorators::from_str(dec.node.name.as_str()) == Some(DecoratorId::Fixture) {
+        if resolve_decorator_id(&dec.node, aliases) == Some(DecoratorId::Fixture) {
             for arg in &dec.node.args {
                 if let crate::frontend::ast::DecoratorArg::Named(name, value) = arg {
                     if name == decorators::FIXTURE_SCOPE_ARG {
@@ -712,25 +737,28 @@ fn get_autouse_fixtures(fixtures: &HashMap<String, FixtureInfo>, scope: FixtureS
         .collect()
 }
 
+/// Extract test markers from the decorators.
+/// FIXME: stringly typed lookup - this should be moved/removed
 fn extract_test_markers(
     decorators: &[crate::frontend::ast::Spanned<crate::frontend::ast::Decorator>],
+    aliases: &HashMap<String, Vec<String>>,
 ) -> Vec<TestMarker> {
     let mut markers = Vec::new();
 
     for dec in decorators {
-        match dec.node.name.as_str() {
-            "skip" => {
+        match resolve_decorator_path_string(&dec.node, aliases).as_str() {
+            "std.testing.skip" => {
                 let reason = extract_string_arg(&dec.node.args).unwrap_or_default();
                 markers.push(TestMarker::Skip(reason));
             }
-            "xfail" => {
+            "std.testing.xfail" => {
                 let reason = extract_string_arg(&dec.node.args).unwrap_or_default();
                 markers.push(TestMarker::XFail(reason));
             }
-            "slow" => {
+            "std.testing.slow" => {
                 markers.push(TestMarker::Slow);
             }
-            "parametrize" => {
+            "std.testing.parametrize" => {
                 markers.push(TestMarker::Parametrize(String::new(), Vec::new()));
             }
             _ => {}

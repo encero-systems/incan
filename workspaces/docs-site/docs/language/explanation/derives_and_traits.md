@@ -61,17 +61,19 @@ Incan intentionally separates two kinds of “stringification”:
 This mirrors the common “logs vs user output” split: Debug is stable and structural; Display is designed for
 human-friendly formatting.
 
-## `@compiler_expand` (stdlib marker)
+## `@rust.extern` (Rust-backed functions)
 
-You may see `@compiler_expand` used in stdlib sources. It is **not a user feature**.
+You may see `@rust.extern` used in stdlib sources and Rust-backed libraries. It marks functions whose body are provided
+by a Rust module (declared via `rust.module()`).
 
 The intended meaning is:
 
-- the stdlib contains *stubs* that declare vocabulary and signatures
-- the compiler is responsible for providing the actual implementation for those stubs
+- the function's signature is defined in Incan (`.incn` source)
+- the function's implementation lives in a Rust crate, mapped via `rust.module()`
+- the compiler emits a call to the Rust implementation instead of compiling the `...` body
 
-This lets the stdlib function as documentation and a vocabulary registry, without requiring users to learn a special
-compiler-only mechanism.
+This lets the stdlib (and third-party libraries) wrap Rust crates with Incan-shaped APIs while keeping most logic in
+pure Incan.
 
 See also:
 

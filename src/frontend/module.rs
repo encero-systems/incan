@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::ast::{Declaration, ImportDecl, ImportKind, Program, Span, Visibility};
-use super::diagnostics::CompileError;
+use super::diagnostics::{CompileError, errors};
 use super::lexer;
 use super::parser;
 use incan_core::lang::stdlib;
@@ -75,21 +75,13 @@ impl ModuleCollector {
 
         // Cycle detection
         if self.loading.contains(path) {
-            return Err(vec![CompileError::new(
-                format!("Circular import detected: {}", path.display()),
-                Span::default(),
-            )]);
+            return Err(vec![errors::circular_import(path, Span::default())]);
         }
 
         self.loading.insert(path.to_path_buf());
 
         // Read and parse
-        let source = fs::read_to_string(path).map_err(|e| {
-            vec![CompileError::new(
-                format!("Cannot read '{}': {}", path.display(), e),
-                Span::default(),
-            )]
-        })?;
+        let source = fs::read_to_string(path).map_err(|e| vec![errors::cannot_read_file(path, &e, Span::default())])?;
 
         let tokens = lexer::lex(&source)?;
         let ast = parser::parse(&tokens)?;

@@ -3,11 +3,10 @@
 # Python equivalents: json.dumps(), json.loads()
 
 trait Serialize:
-    @compiler_expand
+    @rust.extern
     def to_json(self) -> str: ...
 
 
 trait Deserialize:
-    @compiler_expand
-    @classmethod
-    def from_json(cls, json_str: str) -> Result[Self, str]: ...
+    @rust.extern
+    def from_json(json_str: str) -> Result[Self, str]: ...

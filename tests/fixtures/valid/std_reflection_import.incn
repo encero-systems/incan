@@ -1,0 +1,6 @@
+"""Valid fixture: std.reflection import required for FieldInfo types"""
+
+from std.reflection import FieldInfo
+
+def describe(fields: List[FieldInfo]) -> None:
+    pass

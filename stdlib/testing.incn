@@ -5,7 +5,7 @@ A pytest-like testing library for Incan.
 
 Example:
 
-    from testing import fixture, parametrize, skip, xfail
+    from std.testing import fixture, parametrize, skip, xfail
 
     @fixture
     def database() -> Database:

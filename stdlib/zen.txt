@@ -10,4 +10,3 @@
   › Namespaces are great        ─  keep modules and traits explicit
   › One obvious way             ─  conventions beat novelty,
                                    with escape hatches documented
-

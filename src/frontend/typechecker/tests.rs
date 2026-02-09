@@ -52,6 +52,198 @@ def foo() -> int:
 }
 
 #[test]
+fn test_reserved_root_namespace_std() {
+    let source = r#"
+def std() -> int:
+  return 1
+"#;
+    let result = check_str(source);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_reserved_root_namespace_rust_import_alias() {
+    // Aliasing a std import to `rust` (a different reserved root) is rejected.
+    let source = r#"
+import std.web as rust
+"#;
+    let result = check_str(source);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_rust_extern_accepted_in_user_code() {
+    // @rust.extern (formerly @std.builtin) is allowed everywhere per RFC 023.
+    let source = r#"
+@rust.extern
+def foo() -> None:
+  pass
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_web_type_requires_import() {
+    let source = r#"
+async def search(params: Query[int]) -> None:
+  pass
+"#;
+    let result = check_str(source);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_std_web_type_import_ok() {
+    let source = r#"
+from std.web import Query
+
+async def search(params: Query[int]) -> None:
+  pass
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_async_type_requires_import() {
+    let source = r#"
+def queue(handle: JoinHandle[int]) -> None:
+  pass
+"#;
+    let result = check_str(source);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_std_async_type_import_ok() {
+    let source = r#"
+from std.async.task import JoinHandle
+
+def queue(handle: JoinHandle[int]) -> None:
+  pass
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_async_function_requires_import() {
+    let source = r#"
+async def foo():
+  await sleep(1.0)
+"#;
+    let result = check_str(source);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_std_async_function_import_ok() {
+    let source = r#"
+from std.async.time import sleep
+
+async def foo() -> None:
+  await sleep(1.0)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_reflection_type_requires_import() {
+    let source = r#"
+def foo(fields: List[FieldInfo]) -> None:
+  pass
+"#;
+    let result = check_str(source);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_std_reflection_type_import_ok() {
+    let source = r#"
+from std.reflection import FieldInfo
+
+def foo(fields: List[FieldInfo]) -> None:
+  pass
+"#;
+    assert_check_ok(source);
+}
+
+// ============================================================================
+// RFC 022: Decorator resolution — canonical, aliased, and from-imported paths
+// ============================================================================
+
+#[test]
+fn test_decorator_resolution_canonical_path() {
+    // Canonical @std.web.route with fully qualified path
+    let source = r#"
+from std.web import Response
+
+@std.web.route("/")
+async def index() -> Response:
+  return Response.ok()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_decorator_resolution_module_alias() {
+    // Aliased @web.route after `import std.web as web`
+    let source = r#"
+import std.web as web
+from std.web import Response
+
+@web.route("/")
+async def index() -> Response:
+  return Response.ok()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_decorator_resolution_from_import() {
+    // Bare @route after `from std.web import route`
+    let source = r#"
+from std.web import route, Response
+
+@route("/")
+async def index() -> Response:
+  return Response.ok()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_decorator_resolution_colcolon_path() {
+    // `::` separator variant: @std::web::route
+    let source = r#"
+from std.web import Response
+
+@std::web::route("/")
+async def index() -> Response:
+  return Response.ok()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_reserved_root_namespace_std_import_alias_allowed() {
+    // Import aliases may use reserved roots — only declarations are rejected.
+    let source = r#"
+import std.web as std
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_unknown_decorator_path() {
+    let source = r#"
+@std.web.missing
+def foo() -> None:
+  pass
+"#;
+    let result = check_str(source);
+    assert!(result.is_err());
+}
+
+#[test]
 fn test_try_on_non_result() {
     let source = r#"
 def foo() -> Result[int, str]:
@@ -66,6 +258,8 @@ def foo() -> Result[int, str]:
 #[test]
 fn test_sleep_requires_float() {
     let source = r#"
+from std.async.time import sleep
+
 async def foo():
   await sleep(1)
 "#;
@@ -1542,7 +1736,7 @@ def foo() -> int:
 #[test]
 fn test_web_wrapper_value_and_deref_access() {
     let source = r#"
-from web import Json, Query
+from std.web import Json, Query
 
 @derive(Deserialize)
 model SearchParams:
@@ -1568,7 +1762,7 @@ def use_body(body: Json[CreateUser]) -> str:
 #[test]
 fn test_web_wrapper_invalid_constructor_args() {
     let source = r#"
-from web import Json, Query
+from std.web import Json, Query
 
 @derive(Serialize)
 model User:

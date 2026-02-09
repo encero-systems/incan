@@ -5,7 +5,7 @@
 use super::Lexer;
 use super::tokens::{FStringPart, Token, TokenKind};
 use crate::ast::Span;
-use crate::diagnostics::CompileError;
+use crate::diagnostics::errors;
 
 // ============================================================================
 // Escape sequence handling
@@ -104,10 +104,8 @@ impl<'a> Lexer<'a> {
         loop {
             match self.peek() {
                 None => {
-                    self.errors.push(CompileError::new(
-                        "Unterminated string".to_string(),
-                        Span::new(start, self.current_pos),
-                    ));
+                    self.errors
+                        .push(errors::unterminated_string(Span::new(start, self.current_pos)));
                     break;
                 }
                 Some(c) if c == quote => {
@@ -132,10 +130,8 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 Some('\n') if !triple => {
-                    self.errors.push(CompileError::new(
-                        "Unterminated string (newline in single-quoted string)".to_string(),
-                        Span::new(start, self.current_pos),
-                    ));
+                    self.errors
+                        .push(errors::unterminated_string_newline(Span::new(start, self.current_pos)));
                     break;
                 }
                 Some('\\') => {
@@ -147,10 +143,8 @@ impl<'a> Lexer<'a> {
                             value.push(c);
                         }
                         EscapeResult::Eof => {
-                            self.errors.push(CompileError::new(
-                                "Unterminated escape sequence".to_string(),
-                                Span::new(start, self.current_pos),
-                            ));
+                            self.errors
+                                .push(errors::unterminated_escape_sequence(Span::new(start, self.current_pos)));
                             break;
                         }
                     }
@@ -172,10 +166,8 @@ impl<'a> Lexer<'a> {
         loop {
             match self.peek() {
                 None => {
-                    self.errors.push(CompileError::new(
-                        "Unterminated byte string".to_string(),
-                        Span::new(start, self.current_pos),
-                    ));
+                    self.errors
+                        .push(errors::unterminated_byte_string(Span::new(start, self.current_pos)));
                     break;
                 }
                 Some(c) if c == quote => {
@@ -183,10 +175,10 @@ impl<'a> Lexer<'a> {
                     break;
                 }
                 Some('\n') => {
-                    self.errors.push(CompileError::new(
-                        "Unterminated byte string (newline in string)".to_string(),
-                        Span::new(start, self.current_pos),
-                    ));
+                    self.errors.push(errors::unterminated_byte_string_newline(Span::new(
+                        start,
+                        self.current_pos,
+                    )));
                     break;
                 }
                 Some('\\') => {
@@ -198,16 +190,12 @@ impl<'a> Lexer<'a> {
                             value.push(c);
                         }
                         ByteEscapeResult::HexError(hex) => {
-                            self.errors.push(CompileError::new(
-                                format!("Invalid hex escape: \\x{}", hex),
-                                Span::new(start, self.current_pos),
-                            ));
+                            self.errors
+                                .push(errors::invalid_hex_escape(&hex, Span::new(start, self.current_pos)));
                         }
                         ByteEscapeResult::Eof => {
-                            self.errors.push(CompileError::new(
-                                "Unterminated escape sequence".to_string(),
-                                Span::new(start, self.current_pos),
-                            ));
+                            self.errors
+                                .push(errors::unterminated_escape_sequence(Span::new(start, self.current_pos)));
                             break;
                         }
                     }
@@ -217,10 +205,8 @@ impl<'a> Lexer<'a> {
                     if c.is_ascii() {
                         value.push(c as u8);
                     } else {
-                        self.errors.push(CompileError::new(
-                            format!("Non-ASCII character in byte string: '{}'", c),
-                            Span::new(start, self.current_pos),
-                        ));
+                        self.errors
+                            .push(errors::non_ascii_in_byte_string(c, Span::new(start, self.current_pos)));
                     }
                     self.advance();
                 }
@@ -238,10 +224,8 @@ impl<'a> Lexer<'a> {
         loop {
             match self.peek() {
                 None => {
-                    self.errors.push(CompileError::new(
-                        "Unterminated f-string".to_string(),
-                        Span::new(start, self.current_pos),
-                    ));
+                    self.errors
+                        .push(errors::unterminated_fstring(Span::new(start, self.current_pos)));
                     break;
                 }
                 Some(c) if c == quote => {
@@ -270,10 +254,10 @@ impl<'a> Lexer<'a> {
                         self.advance();
                         literal.push('}');
                     } else {
-                        self.errors.push(CompileError::new(
-                            "Unmatched '}' in f-string".to_string(),
-                            Span::new(start, self.current_pos),
-                        ));
+                        self.errors.push(errors::unmatched_right_brace_in_fstring(Span::new(
+                            start,
+                            self.current_pos,
+                        )));
                     }
                 }
                 Some('\\') => {
@@ -285,19 +269,15 @@ impl<'a> Lexer<'a> {
                             literal.push(c);
                         }
                         EscapeResult::Eof => {
-                            self.errors.push(CompileError::new(
-                                "Unterminated escape in f-string".to_string(),
-                                Span::new(start, self.current_pos),
-                            ));
+                            self.errors
+                                .push(errors::unterminated_fstring_escape(Span::new(start, self.current_pos)));
                             break;
                         }
                     }
                 }
                 Some('\n') => {
-                    self.errors.push(CompileError::new(
-                        "Unterminated f-string".to_string(),
-                        Span::new(start, self.current_pos),
-                    ));
+                    self.errors
+                        .push(errors::unterminated_fstring(Span::new(start, self.current_pos)));
                     break;
                 }
                 Some(c) => {

@@ -1,0 +1,6 @@
+"""Aliasing an import to reserved root 'std' is allowed (only declarations are rejected)."""
+
+import std.web as std
+
+def main() -> None:
+    pass

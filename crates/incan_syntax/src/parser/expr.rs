@@ -252,10 +252,7 @@ impl<'a> Parser<'a> {
 
         // Check for immediate closing bracket (not valid, but let expression handle error)
         if self.check(&TokenKind::Punctuation(PunctuationId::RBracket)) {
-            return Err(CompileError::syntax(
-                "Empty index is not allowed".to_string(),
-                self.current_span(),
-            ));
+            return Err(errors::empty_index_not_allowed(self.current_span()));
         }
 
         // Parse first expression
@@ -384,8 +381,8 @@ impl<'a> Parser<'a> {
             return Ok(Spanned::new(Expr::Ident(name), Span::new(start, end)));
         }
 
-        Err(CompileError::syntax(
-            format!("Expected expression, found {:?}", self.peek().kind),
+        Err(errors::expected_expression(
+            &format!("{:?}", self.peek().kind),
             self.current_span(),
         ))
     }
@@ -643,10 +640,7 @@ impl<'a> Parser<'a> {
                         "None".to_string()
                     }
                     _ => {
-                        return Err(CompileError::syntax(
-                            "Expected variant name after '.'".to_string(),
-                            self.current_span(),
-                        ));
+                        return Err(errors::expected_variant_name_after_dot(self.current_span()));
                     }
                 };
                 // Build qualified name: "Type::Variant" for Rust
@@ -703,8 +697,8 @@ impl<'a> Parser<'a> {
             return Ok(Spanned::new(Pattern::Binding(name), Span::new(start, end)));
         }
 
-        Err(CompileError::syntax(
-            format!("Expected pattern, found {:?}", self.peek().kind),
+        Err(errors::expected_pattern(
+            &format!("{:?}", self.peek().kind),
             self.current_span(),
         ))
     }
@@ -1000,10 +994,7 @@ impl<'a> Parser<'a> {
                     ));
                 }
                 _ => {
-                    return Err(CompileError::syntax(
-                        "Closure parameters must be identifiers".to_string(),
-                        expr.span,
-                    ));
+                    return Err(errors::closure_params_must_be_identifiers(expr.span));
                 }
             }
         }

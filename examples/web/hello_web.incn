@@ -2,7 +2,7 @@
 Hello Web - A simple Incan web application
 
 This example demonstrates:
-- Route definitions with @route decorator
+    - Route definitions with @route decorator
 - HTML and JSON responses
 - Path parameters
 - Model serialization
@@ -17,7 +17,7 @@ Then visit:
     http://localhost:8080/api/user/42
 """
 
-from web import App, route, Response, Json, GET
+from std.web import App, route, Response, Json, GET
 
 
 # Models for JSON responses

@@ -9,6 +9,7 @@ use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DecoratorId {
     Derive,
+    RustExtern,
     Route,
     Fixture,
     Requires,
@@ -46,8 +47,16 @@ pub const DECORATORS: &[DecoratorInfo] = &[
         Since(0, 1),
     ),
     info(
+        DecoratorId::RustExtern,
+        "rust.extern",
+        &[],
+        "Mark functions whose body is provided by a Rust module.",
+        RFC::_022,
+        Since(0, 2),
+    ),
+    info(
         DecoratorId::Route,
-        "route",
+        "std.web.route",
         &[],
         "Declare a web route handler.",
         RFC::_000,
@@ -55,7 +64,7 @@ pub const DECORATORS: &[DecoratorInfo] = &[
     ),
     info(
         DecoratorId::Fixture,
-        "fixture",
+        "std.testing.fixture",
         &[],
         "Declare a test fixture.",
         RFC::_001,
@@ -71,7 +80,7 @@ pub const DECORATORS: &[DecoratorInfo] = &[
     ),
 ];
 
-/// Resolve a decorator name to its stable id.
+/// Resolve a decorator path to its stable id.
 pub fn from_str(name: &str) -> Option<DecoratorId> {
     if let Some(info) = DECORATORS.iter().find(|d| d.canonical == name) {
         return Some(info.id);
@@ -83,6 +92,12 @@ pub fn from_str(name: &str) -> Option<DecoratorId> {
             aliases.contains(&name)
         })
         .map(|d| d.id)
+}
+
+/// Resolve a decorator path segments to its stable id.
+pub fn from_segments(segments: &[String]) -> Option<DecoratorId> {
+    let path = segments.join(".");
+    from_str(path.as_str())
 }
 
 /// Return the canonical spelling for a decorator.

@@ -1,12 +1,15 @@
 """Test fixture: valid async function declarations"""
 
+async def delay(seconds: float) -> None:
+    pass
+
 async def fetch(url: str) -> str:
-    await sleep(0.1)
+    await delay(0.1)
     return f"response from {url}"
 
 
 async def process() -> int:
-    await sleep(0.05)
+    await delay(0.05)
     return 42
 
 

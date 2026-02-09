@@ -188,6 +188,130 @@ def f(a: Foo) -> int:
     }
 
     #[test]
+    fn test_parse_decorator_paths() {
+        let source = r#"
+import std.web as web
+
+@std.web.route("/")
+def a() -> None:
+  pass
+
+@std::web::route("/b")
+def b() -> None:
+  pass
+
+@web.route("/c")
+def c() -> None:
+  pass
+"#;
+        let program = parse_str(source).unwrap();
+        let funcs: Vec<_> = program
+            .declarations
+            .iter()
+            .filter_map(|d| match &d.node {
+                Declaration::Function(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(funcs.len(), 3);
+
+        let dec_a = &funcs[0].decorators[0].node;
+        assert_eq!(dec_a.path.segments, vec!["std", "web", "route"]);
+        assert_eq!(dec_a.name, "route");
+
+        let dec_b = &funcs[1].decorators[0].node;
+        assert_eq!(dec_b.path.segments, vec!["std", "web", "route"]);
+        assert_eq!(dec_b.name, "route");
+
+        let dec_c = &funcs[2].decorators[0].node;
+        assert_eq!(dec_c.path.segments, vec!["web", "route"]);
+        assert_eq!(dec_c.name, "route");
+    }
+
+    #[test]
+    fn test_parse_namespaced_decorator_with_named_args() {
+        // RFC 022: Namespaced decorators with positional + named arguments
+        let source = r#"
+from std.web import POST
+
+@std.web.route("/things", methods=[POST])
+async def create() -> None:
+  pass
+"#;
+        let program = parse_str(source).unwrap();
+        let funcs: Vec<_> = program
+            .declarations
+            .iter()
+            .filter_map(|d| match &d.node {
+                Declaration::Function(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(funcs.len(), 1);
+
+        let dec = &funcs[0].decorators[0].node;
+        assert_eq!(dec.path.segments, vec!["std", "web", "route"]);
+        assert_eq!(dec.name, "route");
+        assert_eq!(dec.args.len(), 2);
+        // Positional: "/"
+        assert!(matches!(&dec.args[0], DecoratorArg::Positional(_)));
+        // Named: methods=[POST]
+        assert!(matches!(&dec.args[1], DecoratorArg::Named(name, _) if name == "methods"));
+    }
+
+    #[test]
+    fn test_parse_decorator_with_rust_namespace() {
+        // RFC 023: @rust.extern decorator must parse correctly (rust is a keyword)
+        let source = r#"
+@rust.extern
+def foo() -> None:
+  pass
+"#;
+        let program = parse_str(source).unwrap();
+        let func = match &program.declarations[0].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function"),
+        };
+        assert_eq!(func.decorators.len(), 1);
+        let dec = &func.decorators[0].node;
+        assert_eq!(dec.path.segments, vec!["rust", "extern"]);
+        assert_eq!(dec.name, "extern");
+    }
+
+    #[test]
+    fn test_parse_import_path_with_async_segment() {
+        let source = r#"
+from std.async.time import sleep
+"#;
+        let program = parse_str(source).unwrap();
+        let decl = match &program.declarations[0].node {
+            Declaration::Import(import) => import,
+            _ => panic!("Expected import declaration"),
+        };
+        let ImportKind::From { module, .. } = &decl.kind else {
+            panic!("Expected from-import");
+        };
+        assert_eq!(module.segments, vec!["std", "async", "time"]);
+    }
+
+    #[test]
+    fn test_parse_trait_with_docstring() {
+        let source = r#"
+trait Debug:
+    """Debug representation."""
+    def __repr__(self) -> str: ...
+"#;
+        let program = parse_str(source).unwrap();
+        let tr = match &program.declarations[0].node {
+            Declaration::Trait(t) => t,
+            _ => panic!("Expected trait declaration"),
+        };
+        assert_eq!(tr.name, "Debug");
+        assert_eq!(tr.methods.len(), 1);
+        assert_eq!(tr.methods[0].node.name, "__repr__");
+    }
+
+    #[test]
     fn test_parse_non_identifier_alias() {
         let source = r#"
 model Weird:

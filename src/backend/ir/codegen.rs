@@ -437,8 +437,6 @@ impl<'a> IrCodegen<'a> {
     pub fn scan_for_web(&mut self, program: &Program) {
         if detect_web_usage(program) {
             self.needs_axum = true;
-            self.needs_tokio = true;
-            self.needs_serde = true;
         }
     }
 

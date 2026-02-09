@@ -2,7 +2,7 @@
 Example test file demonstrating the pytest-like test runner.
 """
 
-from testing import assert_eq
+from std.testing import assert_eq, skip, xfail
 
 def add(a: int, b: int) -> int:
     return a + b

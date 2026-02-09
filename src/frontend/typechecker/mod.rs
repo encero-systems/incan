@@ -164,6 +164,8 @@ pub struct TypeChecker {
     pub(crate) type_info: TypeCheckInfo,
     /// Public exports for imported dependency modules, keyed by module name.
     pub(crate) dependency_exports: HashMap<String, Vec<ExportedSymbol>>,
+    /// Module path for the program being checked (if known).
+    pub(crate) current_module_path: Option<Vec<String>>,
 }
 
 impl TypeChecker {
@@ -181,7 +183,12 @@ impl TypeChecker {
             const_eval_cache: HashMap::new(),
             type_info: TypeCheckInfo::default(),
             dependency_exports: HashMap::new(),
+            current_module_path: None,
         }
+    }
+
+    pub fn set_current_module_path(&mut self, path: Option<Vec<String>>) {
+        self.current_module_path = path;
     }
 
     /// Return accumulated type information for reuse by later stages (lowering/codegen).
@@ -236,6 +243,48 @@ impl TypeChecker {
             seen.insert(field.to_string());
         }
         None
+    }
+
+    fn validate_stdlib_type_usage(&mut self, ty: &Spanned<Type>) {
+        self.validate_stdlib_type_usage_inner(&ty.node, ty.span);
+    }
+
+    fn validate_stdlib_type_usage_inner(&mut self, ty: &Type, span: Span) {
+        match ty {
+            Type::Simple(name) => self.validate_stdlib_type_name(name, span),
+            Type::Generic(name, args) => {
+                self.validate_stdlib_type_name(name, span);
+                for arg in args {
+                    self.validate_stdlib_type_usage_inner(&arg.node, arg.span);
+                }
+            }
+            Type::Function(params, ret) => {
+                for param in params {
+                    self.validate_stdlib_type_usage_inner(&param.node, param.span);
+                }
+                self.validate_stdlib_type_usage_inner(&ret.node, ret.span);
+            }
+            Type::Tuple(elems) => {
+                for elem in elems {
+                    self.validate_stdlib_type_usage_inner(&elem.node, elem.span);
+                }
+            }
+            Type::Unit | Type::SelfType => {}
+        }
+    }
+
+    fn validate_stdlib_type_name(&mut self, name: &str, span: Span) {
+        let Some(id) = surface_types::from_str(name) else {
+            return;
+        };
+        if surface_types::stdlib_module_path(id).is_some() && self.symbols.lookup(name).is_none() {
+            self.errors.push(errors::unknown_symbol(name, span));
+        }
+    }
+
+    fn resolve_type_checked(&mut self, ty: &Spanned<Type>) -> ResolvedType {
+        self.validate_stdlib_type_usage(ty);
+        resolve_type(&ty.node, &self.symbols)
     }
 
     /// Check a program and return errors if any.
@@ -388,6 +437,7 @@ impl TypeChecker {
             // Allow bare surface generic types (e.g. `Json`) to match `Json[T]` when used without args.
             (ResolvedType::Named(name), ResolvedType::Generic(generic_name, _))
                 if name == generic_name
+                    && self.symbols.lookup(name).is_some()
                     && surface_types::from_str(name.as_str())
                         .is_some_and(|id| surface_types::info_for(id).kind == SurfaceTypeKind::Generic) =>
             {
@@ -395,6 +445,7 @@ impl TypeChecker {
             }
             (ResolvedType::Generic(generic_name, _), ResolvedType::Named(name))
                 if name == generic_name
+                    && self.symbols.lookup(name).is_some()
                     && surface_types::from_str(name.as_str())
                         .is_some_and(|id| surface_types::info_for(id).kind == SurfaceTypeKind::Generic) =>
             {

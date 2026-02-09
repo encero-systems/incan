@@ -8,7 +8,6 @@ use crate::frontend::ast::{Receiver, Span, Type};
 use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_core::lang::conventions;
 use incan_core::lang::surface::constructors;
-use incan_core::lang::surface::functions::{self as surface_functions, SurfaceFnId};
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::traits;
 use incan_core::lang::types::collections;
@@ -61,8 +60,12 @@ impl SymbolTable {
             builtin_types.extend_from_slice(t.aliases);
         }
         for t in surface_types::SURFACE_TYPES {
-            builtin_types.push(t.item.canonical);
-            builtin_types.extend_from_slice(t.item.aliases);
+            // RFC 022: stdlib-scoped types must be explicitly imported (e.g. `from std.web import App`).
+            // Only truly global surface types (Rust interop helpers) are injected here.
+            if surface_types::is_global(t.item.id) {
+                builtin_types.push(t.item.canonical);
+                builtin_types.extend_from_slice(t.item.aliases);
+            }
         }
         // Unit-ish types that are not yet modeled in `incan_core::lang::types`.
         builtin_types.push(conventions::UNIT_TYPE_NAME);
@@ -160,91 +163,6 @@ impl SymbolTable {
             span: Span::default(),
             scope: 0,
         });
-        // Async primitives (exposed as builtins)
-        self.define(Symbol {
-            name: builtins::as_str(BuiltinFnId::Sleep).to_string(),
-            kind: SymbolKind::Function(FunctionInfo {
-                params: vec![("seconds".to_string(), ResolvedType::Float)],
-                return_type: ResolvedType::Unit,
-                is_async: true,
-                type_params: vec![],
-            }),
-            span: Span::default(),
-            scope: 0,
-        });
-        self.define(Symbol {
-            name: surface_functions::as_str(SurfaceFnId::SleepMs).to_string(),
-            kind: SymbolKind::Function(FunctionInfo {
-                params: vec![("millis".to_string(), ResolvedType::Int)],
-                return_type: ResolvedType::Unit,
-                is_async: true,
-                type_params: vec![],
-            }),
-            span: Span::default(),
-            scope: 0,
-        });
-        self.define(Symbol {
-            name: surface_functions::as_str(SurfaceFnId::YieldNow).to_string(),
-            kind: SymbolKind::Function(FunctionInfo {
-                params: vec![],
-                return_type: ResolvedType::Unit,
-                is_async: true,
-                type_params: vec![],
-            }),
-            span: Span::default(),
-            scope: 0,
-        });
-        self.define(Symbol {
-            name: surface_functions::as_str(SurfaceFnId::Timeout).to_string(),
-            kind: SymbolKind::Function(FunctionInfo {
-                params: vec![
-                    ("seconds".to_string(), ResolvedType::Float),
-                    ("task".to_string(), ResolvedType::Unknown),
-                ],
-                return_type: ResolvedType::Unknown,
-                is_async: true,
-                type_params: vec![],
-            }),
-            span: Span::default(),
-            scope: 0,
-        });
-        self.define(Symbol {
-            name: surface_functions::as_str(SurfaceFnId::TimeoutMs).to_string(),
-            kind: SymbolKind::Function(FunctionInfo {
-                params: vec![
-                    ("millis".to_string(), ResolvedType::Int),
-                    ("task".to_string(), ResolvedType::Unknown),
-                ],
-                return_type: ResolvedType::Unknown,
-                is_async: true,
-                type_params: vec![],
-            }),
-            span: Span::default(),
-            scope: 0,
-        });
-        self.define(Symbol {
-            name: surface_functions::as_str(SurfaceFnId::Spawn).to_string(),
-            kind: SymbolKind::Function(FunctionInfo {
-                params: vec![("task".to_string(), ResolvedType::Unknown)],
-                return_type: ResolvedType::Unknown,
-                is_async: true,
-                type_params: vec![],
-            }),
-            span: Span::default(),
-            scope: 0,
-        });
-        self.define(Symbol {
-            name: surface_functions::as_str(SurfaceFnId::SpawnBlocking).to_string(),
-            kind: SymbolKind::Function(FunctionInfo {
-                params: vec![("task".to_string(), ResolvedType::Unknown)],
-                return_type: ResolvedType::Unknown,
-                is_async: true,
-                type_params: vec![],
-            }),
-            span: Span::default(),
-            scope: 0,
-        });
-
         // range() builtin - returns an iterator
         self.define(Symbol {
             name: builtins::as_str(BuiltinFnId::Range).to_string(),

@@ -414,7 +414,7 @@ pub enum BuiltinFn {
     WriteFile,
     /// `json_stringify(x)` → `serde_json::to_string(&x).unwrap()`
     JsonStringify,
-    /// `sleep(secs)` → `tokio::time::sleep(...)`
+    /// `sleep(secs)` → `incan_stdlib::__private::tokio::time::sleep(...)`
     Sleep,
 }
 

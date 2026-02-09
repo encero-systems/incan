@@ -4,7 +4,7 @@ Web Application Framework
 Provides a Flask/FastAPI-like API that compiles to Axum (Rust).
 
 Example:
-    from web import App, route, Response
+    from std.web import App, route, Response
     
     app = App()
     
@@ -21,11 +21,13 @@ model App:
     """
     Web application container.
     
-    Routes are registered via the @route decorator on handler functions.
+    Routes are registered via the `route` decorator from `std.web`.
     The app collects all routes and builds an Axum Router at compile time.
     
     Example:
     ```incan
+    from std.web import App, route, Response
+    
     app = App()
     
     @route("/health")

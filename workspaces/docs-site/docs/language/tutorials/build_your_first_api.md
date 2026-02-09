@@ -46,7 +46,7 @@ curl http://localhost:8080/health
 
 The example demonstrates:
 
-- `@route("/path")` for routes
+- `@std.web.route("/path")` for routes
 - `Json[T]` for JSON responses
 - `@derive(Serialize)` for response models
 - `async def` handlers (async/await)

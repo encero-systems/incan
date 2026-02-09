@@ -1,7 +1,7 @@
 //! Testing helpers for Incan-generated Rust code.
 //!
 //! These are intended to be imported from Incan via:
-//! - `from testing import assert, assert_eq, assert_ne, assert_true, assert_false, fail`
+//! - `from std.testing import assert, assert_eq, assert_ne, assert_true, assert_false, fail`
 
 use std::fmt::Debug;
 

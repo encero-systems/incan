@@ -8,29 +8,25 @@ expression: rust_code
 
 // __INCAN_INSERT_MODS__
 
+incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.0");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
 use serde::{Serialize, Deserialize};
-use tokio::time::{sleep, timeout, Duration};
-use tokio::sync::{mpsc, Mutex, RwLock};
-use tokio::task::JoinHandle;
-use axum::{Router, routing::{get, post, put, delete, patch}};
-fn __incan_web_router() -> axum::Router {
-    axum::Router::new()
-        .route("/things", axum::routing::post(__incan_web_create))
-        .route("/search", axum::routing::get(__incan_web_search))
-}
-async fn __incan_web_create(
-    axum::extract::Json(
-        req,
-    ): axum::extract::Json<Vec<crate::api::routes::CreateThingRequest>>,
-) -> impl axum::response::IntoResponse {
-    crate::api::routes::create(incan_stdlib::web::Json::new(req)).await
-}
-async fn __incan_web_search(
-    axum::extract::Query(params): axum::extract::Query<crate::api::routes::SearchParams>,
-) -> impl axum::response::IntoResponse {
-    crate::api::routes::search(incan_stdlib::web::Query::new(params)).await
+use incan_stdlib::__private::tokio::time::{sleep, timeout, Duration};
+use incan_stdlib::__private::tokio::sync::{mpsc, Mutex, RwLock};
+use incan_stdlib::__private::tokio::task::JoinHandle;
+incan_stdlib::web::__incan_router! {
+    wrappers : [async fn
+    __incan_web_create(::incan_stdlib::web::__private::extract::Json(req) :
+    ::incan_stdlib::web::__private::extract::Json < Vec < crate
+    ::api::routes::CreateThingRequest > >) -> impl
+    ::incan_stdlib::web::__private::response::IntoResponse { crate
+    ::api::routes::create(incan_stdlib::web::Json::new(req)). await } async fn
+    __incan_web_search(::incan_stdlib::web::__private::extract::Query(params) :
+    ::incan_stdlib::web::__private::extract::Query < crate ::api::routes::SearchParams >)
+    -> impl ::incan_stdlib::web::__private::response::IntoResponse { crate
+    ::api::routes::search(incan_stdlib::web::Query::new(params)). await }], routes :
+    [("/things", post, __incan_web_create), ("/search", get, __incan_web_search)]
 }
 use incan_stdlib::web::App;
 use crate::api::routes;

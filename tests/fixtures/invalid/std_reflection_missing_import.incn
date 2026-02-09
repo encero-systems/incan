@@ -1,0 +1,4 @@
+"""Invalid fixture: std.reflection import missing"""
+
+def describe(fields: List[FieldInfo]) -> None:
+    pass

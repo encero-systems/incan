@@ -14,7 +14,7 @@
 //! ```
 
 use crate::ast::*;
-use crate::diagnostics::CompileError;
+use crate::diagnostics::{CompileError, errors};
 use crate::lexer::{FStringPart as LexFStringPart, Token, TokenKind};
 use incan_core::lang::field_metadata::{self, FieldMetadataKey};
 use incan_core::lang::keywords::KeywordId;
@@ -25,12 +25,12 @@ use incan_core::lang::punctuation::PunctuationId;
 // methods in the same Rust module (preserving privacy + call patterns) while avoiding
 // a single large source file.
 
-include!("parser/core.rs");
-include!("parser/helpers.rs");
-include!("parser/decl.rs");
-include!("parser/types.rs");
-include!("parser/stmts.rs");
-include!("parser/expr.rs");
-include!("parser/util.rs");
-include!("parser/api.rs");
-include!("parser/tests.rs");
+include!("core.rs");
+include!("helpers.rs");
+include!("decl/mod.rs");
+include!("types.rs");
+include!("stmts.rs");
+include!("expr.rs");
+include!("util.rs");
+include!("api.rs");
+include!("tests.rs");

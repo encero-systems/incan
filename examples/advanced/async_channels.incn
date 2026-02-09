@@ -5,6 +5,9 @@ Demonstrates concurrent task communication patterns.
 Note: these are just simple examples and are not meant to resemble production code.
 """
 
+from std.async.time import sleep
+from std.async.task import spawn, yield_now
+
 model Message:
     id: int
     text: str

@@ -4,6 +4,8 @@ Async/Await in Incan
 Demonstrates async functions and the await keyword.
 """
 
+from std.async.time import sleep
+
 
 async def fetch_data(source: str) -> str:
     """Simulate fetching data with a delay"""

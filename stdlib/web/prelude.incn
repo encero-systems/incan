@@ -4,7 +4,7 @@ Web Framework Prelude
 Re-exports common types for convenient imports.
 
 Example:
-    from web import App, route, Response, Json
+    from std.web import App, route, Response, Json
     
     app = App()
     
@@ -26,17 +26,17 @@ Compiles to Axum with Tokio — native Rust performance, no GC.
 """
 
 # Application
-from web.app import App
+from std.web.app import App
 
 # Routing
-from web.routing import route
-from web.routing import GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS
+from std.web.routing import route
+from std.web.routing import GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS
 
 # Request extractors
-from web.request import Request, Query, Path, Body
+from std.web.request import Request, Query, Path, Body
 
 # Response builders
-from web.response import Response, Json, Html
-from web.response import HTTP_OK, HTTP_CREATED, HTTP_NO_CONTENT
-from web.response import HTTP_BAD_REQUEST, HTTP_UNAUTHORIZED, HTTP_FORBIDDEN
-from web.response import HTTP_NOT_FOUND, HTTP_INTERNAL_ERROR
+from std.web.response import Response, Json, Html
+from std.web.response import HTTP_OK, HTTP_CREATED, HTTP_NO_CONTENT
+from std.web.response import HTTP_BAD_REQUEST, HTTP_UNAUTHORIZED, HTTP_FORBIDDEN
+from std.web.response import HTTP_NOT_FOUND, HTTP_INTERNAL_ERROR

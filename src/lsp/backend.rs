@@ -14,7 +14,9 @@ use crate::frontend::ast::{Declaration, Program, Span, Type};
 use crate::frontend::module::resolve_import_path;
 use crate::frontend::{lexer, parser, typechecker};
 use crate::lsp::diagnostics::{compile_error_to_diagnostic, position_to_offset, span_to_range};
+use incan_core::lang::decorators;
 use incan_core::lang::keywords;
+use incan_core::lang::stdlib;
 use incan_core::lang::surface::constructors;
 use incan_core::lang::types::collections;
 
@@ -453,6 +455,120 @@ fn format_type(ty: &Type) -> String {
     }
 }
 
+fn collect_import_aliases(ast: &Program) -> HashMap<String, Vec<String>> {
+    crate::frontend::decorator_resolution::collect_import_aliases(ast)
+}
+
+fn resolve_decorator_path(
+    dec: &crate::frontend::ast::Decorator,
+    aliases: &HashMap<String, Vec<String>>,
+) -> Vec<String> {
+    crate::frontend::decorator_resolution::resolve_decorator_path(dec, aliases)
+}
+
+fn stdlib_location_for_path(path: &[String]) -> Option<Location> {
+    let stub_rel = stdlib::stdlib_stub_path(path)?;
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let stub_abs = root.join(stub_rel);
+    let uri = Url::from_file_path(stub_abs).ok()?;
+    Some(Location {
+        uri,
+        range: Range {
+            start: Position::new(0, 0),
+            end: Position::new(0, 0),
+        },
+    })
+}
+
+fn find_stdlib_import_path(ast: &Program, offset: usize) -> Option<Vec<String>> {
+    for decl in &ast.declarations {
+        let Declaration::Import(import) = &decl.node else {
+            continue;
+        };
+        if !(decl.span.start <= offset && offset < decl.span.end) {
+            continue;
+        }
+        let segments = match &import.kind {
+            crate::frontend::ast::ImportKind::Module(path) => &path.segments,
+            crate::frontend::ast::ImportKind::From { module, .. } => &module.segments,
+            _ => continue,
+        };
+        if segments.first().map(|s| s.as_str()) != Some(stdlib::STDLIB_ROOT) {
+            continue;
+        }
+        return Some(segments.clone());
+    }
+    None
+}
+
+/// Find a decorator at `offset` and resolve it to its registry info.
+///
+/// Returns `(decorator_id, resolved_path_segments)` if a recognized decorator is found.
+fn find_decorator_at_position(
+    ast: &Program,
+    offset: usize,
+    aliases: &HashMap<String, Vec<String>>,
+) -> Option<(decorators::DecoratorId, Vec<String>)> {
+    let check_decorators = |decs: &[crate::frontend::ast::Spanned<crate::frontend::ast::Decorator>]| {
+        for dec in decs {
+            if !(dec.span.start <= offset && offset < dec.span.end) {
+                continue;
+            }
+            let resolved = resolve_decorator_path(&dec.node, aliases);
+            let id = decorators::from_segments(&resolved)?;
+            return Some((id, resolved));
+        }
+        None
+    };
+
+    for decl in &ast.declarations {
+        match &decl.node {
+            Declaration::Model(m) => {
+                if let Some(r) = check_decorators(&m.decorators) {
+                    return Some(r);
+                }
+                for method in &m.methods {
+                    if let Some(r) = check_decorators(&method.node.decorators) {
+                        return Some(r);
+                    }
+                }
+            }
+            Declaration::Class(c) => {
+                if let Some(r) = check_decorators(&c.decorators) {
+                    return Some(r);
+                }
+                for method in &c.methods {
+                    if let Some(r) = check_decorators(&method.node.decorators) {
+                        return Some(r);
+                    }
+                }
+            }
+            Declaration::Trait(t) => {
+                if let Some(r) = check_decorators(&t.decorators) {
+                    return Some(r);
+                }
+                for method in &t.methods {
+                    if let Some(r) = check_decorators(&method.node.decorators) {
+                        return Some(r);
+                    }
+                }
+            }
+            Declaration::Enum(e) => {
+                if let Some(r) = check_decorators(&e.decorators) {
+                    return Some(r);
+                }
+            }
+            Declaration::Function(f) => {
+                if let Some(r) = check_decorators(&f.decorators) {
+                    return Some(r);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn push_completion(
     items: &mut Vec<CompletionItem>,
     seen: &mut HashSet<String>,
@@ -551,6 +667,48 @@ impl LanguageServer for IncanLanguageServer {
             None => return Ok(None),
         };
 
+        if let Some(offset) = position_to_offset(&doc.source, position) {
+            let aliases = collect_import_aliases(ast);
+
+            // Decorator hover: show decorator name + description from registry
+            if let Some((id, resolved)) = find_decorator_at_position(ast, offset, &aliases) {
+                let info = decorators::info_for(id);
+                let canonical = info.canonical;
+                let description = info.description;
+                // If the decorator's owning module has a stdlib stub, show the path
+                let module_path: Vec<String> = resolved[..resolved.len().saturating_sub(1)].to_vec();
+                let stub_note = stdlib::stdlib_stub_path(&module_path)
+                    .map(|p| format!("\n\n`{}`", p))
+                    .unwrap_or_default();
+                let markdown = format!("```incan\n@{}\n```\n\n{}{}", canonical, description, stub_note);
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: markdown,
+                    }),
+                    range: None,
+                }));
+            }
+
+            // Stdlib import hover: show module path + stub path
+            if let Some(path) = find_stdlib_import_path(ast, offset) {
+                let module_path = path.join(".");
+                let stub_path = stdlib::stdlib_stub_path(&path).unwrap_or_default();
+                let markdown = if stub_path.is_empty() {
+                    format!("```incan\n{}\n```\n\n*stdlib module*", module_path)
+                } else {
+                    format!("```incan\n{}\n```\n\n*stdlib module*\n\n`{}`", module_path, stub_path)
+                };
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: markdown,
+                    }),
+                    range: None,
+                }));
+            }
+        }
+
         if let Some(info) = self.find_symbol_at_position(ast, &doc.source, position) {
             let detail = if info.kind == "const" {
                 if let Some(resolved) = doc.const_types.get(&info.name) {
@@ -592,6 +750,23 @@ impl LanguageServer for IncanLanguageServer {
             None => return Ok(None),
         };
 
+        let Some(offset) = position_to_offset(&doc.source, position) else {
+            return Ok(None);
+        };
+        if let Some(path) = find_stdlib_import_path(ast, offset) {
+            if let Some(location) = stdlib_location_for_path(&path) {
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            }
+        }
+        let aliases = collect_import_aliases(ast);
+        // Decorator go-to-definition: navigate to the owning module's stdlib stub (if any)
+        if let Some((_id, resolved)) = find_decorator_at_position(ast, offset, &aliases) {
+            let module_path: Vec<String> = resolved[..resolved.len().saturating_sub(1)].to_vec();
+            if let Some(location) = stdlib_location_for_path(&module_path) {
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            }
+        }
+
         // Find what symbol the cursor is on
         if let Some(info) = self.find_symbol_at_position(ast, &doc.source, position) {
             // Find definition of that symbol
@@ -609,6 +784,7 @@ impl LanguageServer for IncanLanguageServer {
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = &params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
 
         let docs = self.documents.read().await;
         let doc = match docs.get(uri) {
@@ -618,6 +794,21 @@ impl LanguageServer for IncanLanguageServer {
 
         let mut items: Vec<CompletionItem> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
+
+        // Extract the current line text before the cursor for context-aware completions.
+        let line_prefix = line_text_before_cursor(&doc.source, position);
+
+        // ---- Context: stdlib module completions (`from std.` / `import std::`) ----
+        if let Some(stdlib_items) = stdlib_module_completions(&line_prefix) {
+            return Ok(Some(CompletionResponse::Array(stdlib_items)));
+        }
+
+        // ---- Context: decorator completions (`@` at line start) ----
+        if let Some(decorator_items) = decorator_completions(&line_prefix) {
+            return Ok(Some(CompletionResponse::Array(decorator_items)));
+        }
+
+        // ---- General completions (not in a specific context) ----
 
         // Add keywords from the registry (canonical + aliases).
         for info in keywords::KEYWORDS {
@@ -792,6 +983,143 @@ impl LanguageServer for IncanLanguageServer {
             }
         }
 
+        // Add `std` as a module name so import completions can start from it.
+        push_completion(
+            &mut items,
+            &mut seen,
+            "std",
+            CompletionItemKind::MODULE,
+            Some("Incan standard library namespace".to_string()),
+            None,
+        );
+
         Ok(Some(CompletionResponse::Array(items)))
     }
+}
+
+/// Extract the text of the current line up to (but not including) the cursor position.
+fn line_text_before_cursor(source: &str, position: Position) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    let line_idx = position.line as usize;
+    if line_idx >= lines.len() {
+        return String::new();
+    }
+    let line = lines[line_idx];
+    let col = (position.character as usize).min(line.len());
+    line[..col].to_string()
+}
+
+/// If the cursor is inside a `from std.<...>` or `import std::<...>` context,
+/// return completions for stdlib module names. Returns `None` if not in that context.
+fn stdlib_module_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
+    let trimmed = line_prefix.trim_start();
+
+    // Detect `from std.X.` or `from std.` patterns
+    let after_std = trimmed
+        .strip_prefix("from std.")
+        .or_else(|| trimmed.strip_prefix("import std::"))
+        .or_else(|| trimmed.strip_prefix("import std."))?;
+
+    // Split what the user has typed after `std.` to determine depth.
+    // e.g. "serde." → ["serde", ""] → user wants children of std.serde
+    // e.g. "" → user wants top-level std.* modules
+    // e.g. "web import " → user has completed the module path, don't intercept
+    let parts: Vec<&str> = after_std.split(['.', ':']).collect();
+
+    // If we see " import " in the remainder, the user is selecting items from the module — bail.
+    if after_std.contains(" import ") {
+        return None;
+    }
+
+    // Determine the prefix segments the user has already typed.
+    // The last element is the partial text being typed (could be empty after a dot).
+    let (completed, _partial) = if parts.is_empty() {
+        (vec![], "")
+    } else {
+        let last = parts.last().unwrap_or(&"");
+        let completed: Vec<&str> = parts[..parts.len() - 1]
+            .iter()
+            .copied()
+            .filter(|s| !s.is_empty())
+            .collect();
+        (completed, *last)
+    };
+
+    // Build full prefix: ["std"] + completed segments
+    let depth = completed.len() + 1; // +1 for "std"
+
+    let mut items = Vec::new();
+    let mut seen = HashSet::new();
+
+    for info in stdlib::STDLIB_MODULES {
+        // Only show modules that match the completed prefix
+        if info.path.len() <= depth {
+            continue;
+        }
+        // Check that the first `depth` segments match
+        let prefix_matches = info.path[1..depth].iter().zip(completed.iter()).all(|(a, b)| a == b);
+        if !prefix_matches {
+            continue;
+        }
+        // The next segment to suggest
+        let next_segment = info.path[depth];
+        if seen.insert(next_segment.to_string()) {
+            let full_path: String = info.path.iter().take(depth + 1).copied().collect::<Vec<_>>().join(".");
+            let detail = info.feature.map(|f| format!("enables {} feature", f));
+            items.push(CompletionItem {
+                label: next_segment.to_string(),
+                kind: Some(CompletionItemKind::MODULE),
+                detail: Some(detail.unwrap_or_else(|| format!("{} module", full_path))),
+                sort_text: Some(format!("0_{}", next_segment)),
+                ..Default::default()
+            });
+        }
+    }
+
+    if items.is_empty() {
+        return None;
+    }
+
+    Some(items)
+}
+
+/// If the cursor is on a decorator line (starts with `@`), return completions
+/// for known decorator names. Returns `None` if not in a decorator context.
+fn decorator_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
+    let trimmed = line_prefix.trim_start();
+    if !trimmed.starts_with('@') {
+        return None;
+    }
+
+    let mut items = Vec::new();
+    for info in decorators::DECORATORS {
+        // Show the short name (after the last dot) as the label, with the full
+        // canonical path as detail.
+        let short_name = info.canonical.rsplit('.').next().unwrap_or(info.canonical);
+        items.push(CompletionItem {
+            label: short_name.to_string(),
+            kind: Some(CompletionItemKind::FUNCTION),
+            detail: Some(format!("@{} — {}", info.canonical, info.description)),
+            insert_text: Some(short_name.to_string()),
+            sort_text: Some(format!("0_{}", short_name)),
+            ..Default::default()
+        });
+        // Also offer the full canonical path (e.g. `std.web.route`)
+        if info.canonical.contains('.') {
+            items.push(CompletionItem {
+                label: info.canonical.to_string(),
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: Some(info.description.to_string()),
+                insert_text: Some(info.canonical.to_string()),
+                sort_text: Some(format!("1_{}", info.canonical)),
+                ..Default::default()
+            });
+        }
+    }
+
+    if items.is_empty() {
+        return None;
+    }
+
+    Some(items)
 }

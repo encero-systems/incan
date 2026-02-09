@@ -4,6 +4,9 @@ Async Tasks in Incan
 Demonstrates spawning and awaiting concurrent tasks.
 """
 
+from std.async.time import sleep
+from std.async.task import spawn
+
 
 async def do_work(name: str, delay: float) -> str:
     """Simulate async work with a delay"""

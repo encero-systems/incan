@@ -117,8 +117,9 @@ impl<'a> Parser<'a> {
         if self.check(kind) {
             Ok(self.advance())
         } else {
-            Err(CompileError::syntax(
-                format!("{}, found {:?}", msg, self.peek().kind),
+            Err(errors::expected_token_message(
+                msg,
+                &format!("{:?}", self.peek().kind),
                 self.peek().span,
             ))
         }
@@ -128,8 +129,9 @@ impl<'a> Parser<'a> {
         if self.check_keyword(id) {
             Ok(self.advance())
         } else {
-            Err(CompileError::syntax(
-                format!("{}, found {:?}", msg, self.peek().kind),
+            Err(errors::expected_token_message(
+                msg,
+                &format!("{:?}", self.peek().kind),
                 self.peek().span,
             ))
         }
@@ -139,8 +141,9 @@ impl<'a> Parser<'a> {
         if self.check_punct(id) {
             Ok(self.advance())
         } else {
-            Err(CompileError::syntax(
-                format!("{}, found {:?}", msg, self.peek().kind),
+            Err(errors::expected_token_message(
+                msg,
+                &format!("{:?}", self.peek().kind),
                 self.peek().span,
             ))
         }
@@ -150,8 +153,9 @@ impl<'a> Parser<'a> {
         if self.check_op(id) {
             Ok(self.advance())
         } else {
-            Err(CompileError::syntax(
-                format!("{}, found {:?}", msg, self.peek().kind),
+            Err(errors::expected_token_message(
+                msg,
+                &format!("{:?}", self.peek().kind),
                 self.peek().span,
             ))
         }

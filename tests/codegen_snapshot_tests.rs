@@ -106,7 +106,7 @@ fn test_web_route_extractors_codegen() {
 #[test]
 fn test_web_route_extractors_nested_module_codegen() {
     let main_source = r#"
-from web import App
+from std.web import App
 import api::routes
 
 def main() -> None:
@@ -114,7 +114,8 @@ def main() -> None:
   app.run(port=8080)
 "#;
     let routes_source = r#"
-from web import route, Response, Json, Query, POST
+import std.web as web
+from std.web import Response, Json, Query, POST
 
 @derive(Deserialize)
 model CreateThingRequest:
@@ -124,11 +125,11 @@ model CreateThingRequest:
 model SearchParams:
   q: str
 
-@route("/things", methods=[POST])
+@web.route("/things", methods=[POST])
 async def create(req: Json[list[CreateThingRequest]]) -> Response:
   return Response.ok()
 
-@route("/search")
+@web.route("/search")
 async def search(params: Query[SearchParams]) -> Response:
   return Response.ok()
 "#;
@@ -150,7 +151,7 @@ async def search(params: Query[SearchParams]) -> Response:
 #[test]
 fn test_web_route_path_param_duplicate_errors() {
     let source = r#"
-from web import route, Response
+from std.web import route, Response
 
 @route("/users/{id}/{id}")
 def get(id: int) -> Response:
@@ -165,7 +166,7 @@ def get(id: int) -> Response:
 #[test]
 fn test_web_route_path_param_unterminated_errors() {
     let source = r#"
-from web import route, Response
+from std.web import route, Response
 
 @route("/users/{id")
 def get(id: int) -> Response:
@@ -175,6 +176,39 @@ def get(id: int) -> Response:
     let ast = parser::parse(&tokens).expect("parser failed");
     let err = IrCodegen::new().try_generate(&ast).expect_err("expected codegen error");
     assert!(err.to_string().contains("unterminated web route param"));
+}
+
+// ============================================================================
+// RFC 022: Codegen emits incan_stdlib handoff, not framework crate references
+// ============================================================================
+
+#[test]
+fn test_web_route_codegen_no_framework_crate_leakage() {
+    // RFC 022 requires that generated Rust for web programs references
+    // incan_stdlib::web::... but never directly references framework crates
+    // like axum::, actix_web::, etc.
+    let source = load_test_file("web_route_extractors");
+    let rust_code = generate_rust(&source);
+
+    // Must reference the stdlib handoff
+    assert!(
+        rust_code.contains("incan_stdlib"),
+        "Generated web code should reference incan_stdlib"
+    );
+    assert!(
+        rust_code.contains("__incan_router!"),
+        "Generated web code should use __incan_router! macro"
+    );
+
+    // Must NOT directly reference framework crates
+    assert!(
+        !rust_code.contains("axum::"),
+        "Generated web code should not directly reference axum::"
+    );
+    assert!(
+        !rust_code.contains("actix_web::"),
+        "Generated web code should not directly reference actix_web::"
+    );
 }
 
 // ============================================================================

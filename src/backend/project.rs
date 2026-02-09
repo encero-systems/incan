@@ -262,7 +262,7 @@ pub struct ProjectGenerator {
     needs_serde: bool,
     /// Whether tokio is needed (for async runtime)
     needs_tokio: bool,
-    /// Whether axum is needed (for web framework)
+    /// Whether web routing support is needed (stdlib feature)
     needs_axum: bool,
     /// Additional Rust crate dependencies from `rust::` imports
     /// Key: crate name, Value: optional version spec (if None, uses latest)
@@ -580,6 +580,9 @@ path = "src/lib.rs""#
         if self.needs_axum {
             stdlib_features.push("web");
         }
+        if self.needs_tokio {
+            stdlib_features.push("async");
+        }
         if self.needs_serde {
             stdlib_features.push("json");
         }
@@ -608,22 +611,6 @@ path = "src/lib.rs""#
             deps.push(r#"serde_json = "1.0""#.to_string());
             added_crates.insert("serde");
             added_crates.insert("serde_json");
-        }
-
-        if self.needs_axum {
-            // Axum needs tokio with net feature and full features for web serving
-            deps.push(r#"axum = "0.8""#.to_string());
-            deps.push(
-                r#"tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }"#
-                    .to_string(),
-            );
-            added_crates.insert("axum");
-            added_crates.insert("tokio");
-        } else if self.needs_tokio {
-            deps.push(
-                r#"tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }"#.to_string(),
-            );
-            added_crates.insert("tokio");
         }
 
         // Add dependencies from rust:: imports

@@ -14,8 +14,8 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(name)
             }
-            _ => Err(CompileError::syntax(
-                format!("Expected identifier, found {:?}", self.peek().kind),
+            _ => Err(errors::expected_identifier(
+                &format!("{:?}", self.peek().kind),
                 self.current_span(),
             )),
         }
@@ -29,8 +29,8 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(Spanned::new(name, span))
             }
-            _ => Err(CompileError::syntax(
-                format!("Expected identifier, found {:?}", self.peek().kind),
+            _ => Err(errors::expected_identifier(
+                &format!("{:?}", self.peek().kind),
                 self.current_span(),
             )),
         }
@@ -49,8 +49,8 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok("None".to_string())
             }
-            _ => Err(CompileError::syntax(
-                format!("Expected identifier, found {:?}", self.peek().kind),
+            _ => Err(errors::expected_identifier(
+                &format!("{:?}", self.peek().kind),
                 self.current_span(),
             )),
         }
@@ -69,8 +69,31 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(name)
             }
-            _ => Err(CompileError::syntax(
-                format!("Expected identifier, found {:?}", self.peek().kind),
+            _ => Err(errors::expected_identifier(
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            )),
+        }
+    }
+
+    /// Parse an identifier in import/decorator paths, allowing specific keyword segments (e.g. `std.async`, `rust.extern`).
+    fn identifier_or_import_keyword(&mut self) -> Result<Ident, CompileError> {
+        match &self.peek().kind {
+            TokenKind::Ident(name) => {
+                let name = name.clone();
+                self.advance();
+                Ok(name)
+            }
+            TokenKind::Keyword(KeywordId::Async) => {
+                self.advance();
+                Ok("async".to_string())
+            }
+            TokenKind::Keyword(KeywordId::Rust) => {
+                self.advance();
+                Ok("rust".to_string())
+            }
+            _ => Err(errors::expected_identifier(
+                &format!("{:?}", self.peek().kind),
                 self.current_span(),
             )),
         }
@@ -99,8 +122,8 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(s)
             }
-            _ => Err(CompileError::syntax(
-                format!("Expected string literal, found {:?}", self.peek().kind),
+            _ => Err(errors::expected_string_literal(
+                &format!("{:?}", self.peek().kind),
                 self.current_span(),
             )),
         }

@@ -5,7 +5,7 @@
 use super::Lexer;
 use super::tokens::{Token, TokenKind};
 use crate::ast::Span;
-use crate::diagnostics::CompileError;
+use crate::diagnostics::errors;
 
 impl<'a> Lexer<'a> {
     pub(super) fn handle_indentation(&mut self) {
@@ -86,11 +86,9 @@ impl<'a> Lexer<'a> {
             // Verify we landed on a valid indent level
             let final_indent = *self.indent_stack.last().unwrap_or(&0);
             if indent != final_indent {
-                self.errors.push(CompileError::new(
-                    format!(
-                        "Inconsistent indentation: expected {} spaces, got {}",
-                        final_indent, indent
-                    ),
+                self.errors.push(errors::inconsistent_indentation(
+                    final_indent,
+                    indent,
                     Span::new(start, self.current_pos),
                 ));
             }

@@ -13,6 +13,7 @@
 pub use incan_syntax::{ast, diagnostics, lexer, parser};
 
 // Compiler-specific pieces remain local.
+pub mod decorator_resolution;
 pub mod module;
 pub mod resolver;
 pub mod symbols;

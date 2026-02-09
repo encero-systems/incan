@@ -5,6 +5,10 @@ Demonstrates Mutex, RwLock, Semaphore, and Barrier.
 See docs/guide/async_programming.md for detailed explanations.
 """
 
+from std.async.time import sleep
+from std.async.task import spawn
+from std.async.sync import Mutex, RwLock, Semaphore, Barrier
+
 
 async def increment_worker(counter: Mutex[int], id: int, times: int) -> None:
     for i in range(0..times):

@@ -190,21 +190,20 @@ impl Formatter {
     }
 
     fn format_import_path(&mut self, path: &ImportPath) {
+        let mut parts: Vec<&str> = Vec::new();
         if path.is_absolute {
-            self.writer.write("crate");
-            if !path.segments.is_empty() {
-                self.writer.write("::");
-            }
+            parts.push("crate");
         } else {
-            for _ in 0..path.parent_levels {
-                self.writer.write("super::");
-            }
+            parts.extend(std::iter::repeat_n("super", path.parent_levels));
         }
-        for (i, segment) in path.segments.iter().enumerate() {
+        for segment in &path.segments {
+            parts.push(segment);
+        }
+        for (i, part) in parts.iter().enumerate() {
             if i > 0 {
-                self.writer.write("::");
+                self.writer.write(".");
             }
-            self.writer.write(segment);
+            self.writer.write(part);
         }
     }
 
@@ -490,7 +489,7 @@ impl Formatter {
 
     fn format_decorator(&mut self, dec: &Decorator) {
         self.writer.write("@");
-        self.writer.write(&dec.name);
+        self.format_decorator_path(&dec.path);
         if !dec.args.is_empty() {
             self.writer.write("(");
             for (i, arg) in dec.args.iter().enumerate() {
@@ -512,6 +511,24 @@ impl Formatter {
             self.writer.write(")");
         }
         self.writer.newline();
+    }
+
+    fn format_decorator_path(&mut self, path: &ImportPath) {
+        let mut parts: Vec<&str> = Vec::new();
+        if path.is_absolute {
+            parts.push("crate");
+        } else {
+            parts.extend(std::iter::repeat_n("super", path.parent_levels));
+        }
+        for segment in &path.segments {
+            parts.push(segment);
+        }
+        for (i, part) in parts.iter().enumerate() {
+            if i > 0 {
+                self.writer.write(".");
+            }
+            self.writer.write(part);
+        }
     }
 
     fn format_field(&mut self, field: &FieldDecl) {

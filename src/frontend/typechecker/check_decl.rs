@@ -140,9 +140,10 @@ impl TypeChecker {
     fn check_model(&mut self, model: &ModelDecl) {
         self.symbols.enter_scope(ScopeKind::Model);
 
+        self.validate_decorators(&model.decorators);
         // Validate @derive decorators
         self.validate_derives(&model.decorators);
-        let derives = Self::extract_derive_names(&model.decorators);
+        let derives = self.extract_derive_names(&model.decorators);
         let has_validate = derives
             .iter()
             .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Validate));
@@ -181,7 +182,7 @@ impl TypeChecker {
 
         // Define fields in scope
         for field in &model.fields {
-            let ty = resolve_type(&field.node.ty.node, &self.symbols);
+            let ty = self.resolve_type_checked(&field.node.ty);
             self.symbols.define(Symbol {
                 name: field.node.name.clone(),
                 kind: SymbolKind::Field(FieldInfo {
@@ -197,7 +198,7 @@ impl TypeChecker {
             // Check default expression type
             if let Some(default) = &field.node.default {
                 let default_ty = self.check_expr(default);
-                let field_ty = resolve_type(&field.node.ty.node, &self.symbols);
+                let field_ty = self.resolve_type_checked(&field.node.ty);
                 if !self.types_compatible(&default_ty, &field_ty) {
                     self.errors.push(errors::type_mismatch(
                         &field_ty.to_string(),
@@ -294,7 +295,7 @@ impl TypeChecker {
                         .push(errors::missing_field(&model.name, field_name, adoption_span));
                 }
                 Some(f) => {
-                    let actual_ty = resolve_type(&f.node.ty.node, &self.symbols);
+                    let actual_ty = self.resolve_type_checked(&f.node.ty);
                     if !self.types_compatible(&actual_ty, field_ty) {
                         self.errors.push(errors::type_mismatch(
                             &field_ty.to_string(),
@@ -354,6 +355,7 @@ impl TypeChecker {
     fn check_class(&mut self, class: &ClassDecl) {
         self.symbols.enter_scope(ScopeKind::Class);
 
+        self.validate_decorators(&class.decorators);
         // Validate @derive decorators
         self.validate_derives(&class.decorators);
 
@@ -399,7 +401,7 @@ impl TypeChecker {
 
         // Define fields
         for field in &class.fields {
-            let ty = resolve_type(&field.node.ty.node, &self.symbols);
+            let ty = self.resolve_type_checked(&field.node.ty);
             self.symbols.define(Symbol {
                 name: field.node.name.clone(),
                 kind: SymbolKind::Field(FieldInfo {
@@ -414,7 +416,7 @@ impl TypeChecker {
 
             if let Some(default) = &field.node.default {
                 let default_ty = self.check_expr(default);
-                let field_ty = resolve_type(&field.node.ty.node, &self.symbols);
+                let field_ty = self.resolve_type_checked(&field.node.ty);
                 if !self.types_compatible(&default_ty, &field_ty) {
                     self.errors.push(errors::type_mismatch(
                         &field_ty.to_string(),
@@ -501,6 +503,7 @@ impl TypeChecker {
     fn check_trait(&mut self, tr: &TraitDecl) {
         self.symbols.enter_scope(ScopeKind::Trait);
 
+        self.validate_decorators(&tr.decorators);
         let requires_map: HashMap<String, ResolvedType> = self
             .symbols
             .lookup(&tr.name)
@@ -541,7 +544,7 @@ impl TypeChecker {
 
     fn check_newtype(&mut self, nt: &NewtypeDecl) {
         // Check underlying type exists
-        let underlying = resolve_type(&nt.underlying.node, &self.symbols);
+        let underlying = self.resolve_type_checked(&nt.underlying);
         if matches!(underlying, ResolvedType::Unknown) {
             self.errors.push(errors::unknown_symbol(
                 &format!("{:?}", nt.underlying.node),
@@ -558,10 +561,11 @@ impl TypeChecker {
     }
 
     fn check_enum(&mut self, en: &EnumDecl) {
+        self.validate_decorators(&en.decorators);
         // Check variant field types exist
         for variant in &en.variants {
             for field_ty in &variant.node.fields {
-                let resolved = resolve_type(&field_ty.node, &self.symbols);
+                let resolved = self.resolve_type_checked(field_ty);
                 if matches!(resolved, ResolvedType::Unknown) {
                     self.errors
                         .push(errors::unknown_symbol(&format!("{:?}", field_ty.node), field_ty.span));
@@ -573,9 +577,10 @@ impl TypeChecker {
     fn check_function(&mut self, func: &FunctionDecl) {
         self.symbols.enter_scope(ScopeKind::Function);
 
+        self.validate_decorators(&func.decorators);
         // Define parameters
         for param in &func.params {
-            let ty = resolve_type(&param.node.ty.node, &self.symbols);
+            let ty = self.resolve_type_checked(&param.node.ty);
             self.symbols.define(Symbol {
                 name: param.node.name.clone(),
                 kind: SymbolKind::Variable(VariableInfo {
@@ -588,7 +593,7 @@ impl TypeChecker {
             });
         }
 
-        let return_type = resolve_type(&func.return_type.node, &self.symbols);
+        let return_type = self.resolve_type_checked(&func.return_type);
         self.symbols.set_return_type(return_type.clone());
 
         // Set error type for ? checking
@@ -604,6 +609,7 @@ impl TypeChecker {
     }
 
     pub(crate) fn check_method(&mut self, method: &MethodDecl, owner: &str) {
+        self.validate_decorators(&method.decorators);
         self.check_method_with_self_ty(method, ResolvedType::Named(owner.to_string()));
     }
 
@@ -632,7 +638,7 @@ impl TypeChecker {
 
         // Define parameters
         for param in &method.params {
-            let ty = resolve_type(&param.node.ty.node, &self.symbols);
+            let ty = self.resolve_type_checked(&param.node.ty);
             self.symbols.define(Symbol {
                 name: param.node.name.clone(),
                 kind: SymbolKind::Variable(VariableInfo {
@@ -645,7 +651,7 @@ impl TypeChecker {
             });
         }
 
-        let return_type = resolve_type(&method.return_type.node, &self.symbols);
+        let return_type = self.resolve_type_checked(&method.return_type);
         self.symbols.set_return_type(return_type.clone());
 
         // Set error type for ? checking

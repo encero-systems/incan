@@ -39,7 +39,7 @@ trait Eq:
             return self.id == other.id  # Only compare by id
     ```
     """
-    @compiler_expand
+    @rust.extern
     def __eq__(self, other: Self) -> bool: ...
     
     def __ne__(self, other: Self) -> bool:
@@ -79,7 +79,7 @@ trait Ord:
             return self.score < other.score  # Only compare by score
     ```
     """
-    @compiler_expand
+    @rust.extern
     def __lt__(self, other: Self) -> bool: ...
     
     def __le__(self, other: Self) -> bool:
@@ -126,5 +126,5 @@ trait Hash:
     ⚠️ Important: If you override `__eq__`, you must also override `__hash__`
     to ensure equal objects have equal hashes. Otherwise Set/Dict lookups break.
     """
-    @compiler_expand
+    @rust.extern
     def __hash__(self) -> int: ...

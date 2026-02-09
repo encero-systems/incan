@@ -15,9 +15,19 @@ pub mod prelude;
 pub mod reflection;
 pub mod strings;
 pub mod testing;
+pub mod version;
 
 #[cfg(feature = "json")]
 pub mod json;
+
+/// Internal re-exports used by compiler-generated code.
+///
+/// These are **not** part of the user-facing stdlib API and may change alongside the compiler (toolchain-locked).
+#[cfg(any(feature = "async", feature = "web"))]
+pub mod __private {
+    #[cfg(any(feature = "async", feature = "web"))]
+    pub use tokio;
+}
 
 #[cfg(feature = "web")]
 pub mod web;

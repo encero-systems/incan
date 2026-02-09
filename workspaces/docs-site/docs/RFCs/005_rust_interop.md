@@ -310,7 +310,8 @@ Rationale (why these limits exist):
 - Arbitrary proc-macros are effectively “run arbitrary Rust at build time”; they undermine determinism, portability,
   and the “Incan stays Incan” surface. A curated `@derive(...)` set keeps the interop contract explicit and reviewable.
 - Trait-heavy and lifetime-heavy Rust APIs often require expressing trait bounds and borrowing/lifetimes at call
-  sites; this is intentionally deferred until Incan has a richer, explicit trait/borrow surface for interop.
+  sites; trait bound inference and explicit annotation syntax are addressed by RFC 023 (Compilable Stdlib & Rust Module
+  Binding). Lifetime/borrow surface beyond strings is deferred to a future RFC.
 - Incan’s goal is to remove Rust’s borrow-checker ergonomics from user code. The compiler may adapt borrows internally
   (currently scoped mainly to strings), but users should not be forced to write Rust-like lifetime/borrow annotations.
 

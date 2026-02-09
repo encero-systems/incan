@@ -1,0 +1,6 @@
+"""rust interop should be with `::`-notation not `.` notation."""
+
+import rust.std.time
+
+def main() -> None:
+    pass

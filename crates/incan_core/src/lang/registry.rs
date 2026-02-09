@@ -49,6 +49,9 @@ pub const RFC_009: RfcId = "RFC 009";
 /// RFC 021 — model field metadata and aliases.
 pub const RFC_021: RfcId = "RFC 021";
 
+/// RFC 022 — stdlib namespacing and compiler handoff.
+pub const RFC_022: RfcId = "RFC 022";
+
 /// Namespace-style access to RFC ids.
 ///
 /// This exists purely for ergonomics at call sites so individual registries don’t need to import
@@ -74,6 +77,8 @@ impl RFC {
     pub const _009: RfcId = RFC_009;
     /// RFC 021 — model field metadata and aliases.
     pub const _021: RfcId = RFC_021;
+    /// RFC 022 — stdlib namespacing and compiler handoff.
+    pub const _022: RfcId = RFC_022;
 }
 
 /// Identify the language/compiler version a vocabulary item is available since.

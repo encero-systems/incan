@@ -23,7 +23,7 @@ trait Debug:
     println(f"{user:?}")  # User { name: "Alice", age: 30 }
     ```
     """
-    @compiler_expand
+    @rust.extern
     def __repr__(self) -> str: ...
 
 

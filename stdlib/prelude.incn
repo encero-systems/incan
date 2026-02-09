@@ -3,12 +3,12 @@ Incan Prelude - Core traits automatically available in every program
 To view the implementation of any trait, Cmd+click on the import
 """
 
-from derives::string import Debug, Display
-from derives::comparison import Eq, Ord, Hash
-from derives::copying import Clone, Copy, Default
-from derives::collection import Contains, Bool, Len, Iterable, Iterator
-from traits::convert import From, Into, TryFrom, TryInto
-from traits::ops import Add, Sub, Mul, Div, Neg, Mod
-from traits::error import Error
-from traits::indexing import Index, IndexMut, Sliceable
-from traits::callable import Callable0, Callable1, Callable2
+from std.derives.string import Debug, Display
+from std.derives.comparison import Eq, Ord, Hash
+from std.derives.copying import Clone, Copy, Default
+from std.derives.collection import Contains, Bool, Len, Iterable, Iterator
+from std.traits.convert import From, Into, TryFrom, TryInto
+from std.traits.ops import Add, Sub, Mul, Div, Neg, Mod
+from std.traits.error import Error
+from std.traits.indexing import Index, IndexMut, Sliceable
+from std.traits.callable import Callable0, Callable1, Callable2

@@ -20,4 +20,5 @@ tokio = { version = "1", optional = true, features = ["rt-multi-thread", "macros
 [features]
 default = []
 json = ["dep:serde", "dep:serde_json"]
-web = ["dep:axum", "dep:tokio", "dep:serde"]
+async = ["dep:tokio"]
+web = ["dep:axum", "async", "dep:serde"]

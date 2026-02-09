@@ -85,7 +85,7 @@ impl TypeChecker {
         let param_types: Vec<_> = params
             .iter()
             .map(|p| {
-                let ty = resolve_type(&p.node.ty.node, &self.symbols);
+                let ty = self.resolve_type_checked(&p.node.ty);
                 self.symbols.define(Symbol {
                     name: p.node.name.clone(),
                     kind: SymbolKind::Variable(VariableInfo {

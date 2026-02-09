@@ -8,7 +8,7 @@ giving you Flask/FastAPI-like syntax with native Rust performance.
 --8<-- "_snippets/callouts/no_install_fallback.md"
 
 ```incan
-from web import App, route, Response, Json
+from std.web import App, route, Response, Json
 
 @derive(Serialize)
 model Greeting:
@@ -41,7 +41,7 @@ Note: the first build may download Rust crates via Cargo (can take minutes) and 
 Define routes using the `@route` decorator:
 
 ```incan
-from web import route, Response, GET, POST
+from std.web import route, Response, GET, POST
 
 @route("/path")
 async def handler() -> Response:
@@ -61,6 +61,8 @@ async def create_resource() -> Response:
 Use `{name}` syntax for path parameters:
 
 ```incan
+from std.web import route, Json
+
 @route("/users/{id}")
 async def get_user(id: int) -> Json[User]:
     user = find_user(id)?
@@ -74,12 +76,16 @@ async def get_posts(year: int, month: int) -> Json[list[Post]]:
 ### HTTP Methods
 
 Specify allowed methods with the `methods` parameter.
-For now, each handler supports a single method; define separate handlers per method if needed.
+Handlers can be registered for multiple HTTP methods by passing multiple entries.
 Import the method constants from the web prelude (e.g. `GET`, `POST`).
 Supported methods are `GET`, `POST`, `PUT`, `DELETE`, and `PATCH`.
 
 ```incan
-from web import GET, POST, PUT, DELETE
+from std.web import route, Json, Response, GET, POST, PUT, DELETE
+
+@route("/items/ping", methods=[GET, POST])
+async def ping_items() -> Response:
+    return Response.ok()
 
 @route("/items", methods=[GET])
 async def list_items() -> Json[list[Item]]:
@@ -105,6 +111,8 @@ async def delete_item(id: int) -> Response:
 Use `Json[T]` for JSON responses. The inner type must have `@derive(Serialize)`:
 
 ```incan
+from std.web import route, Json
+
 @derive(Serialize)
 model User:
     id: int
@@ -122,6 +130,8 @@ async def get_user(id: int) -> Json[User]:
 Return HTML with `Response.html()`:
 
 ```incan
+from std.web import route, Response
+
 @route("/")
 async def index() -> Response:
     return Response.html("<h1>Welcome!</h1>")
@@ -132,6 +142,8 @@ async def index() -> Response:
 Use `Response` methods for different status codes:
 
 ```incan
+from std.web import route, Response
+
 @route("/health")
 async def health() -> Response:
     return Response.ok()  # 200
@@ -164,6 +176,8 @@ async def server_error() -> Response:
 Path parameters are automatically extracted into function arguments:
 
 ```incan
+from std.web import route, Json
+
 @route("/users/{user_id}/posts/{post_id}")
 async def get_post(user_id: int, post_id: int) -> Json[Post]:
     ...
@@ -174,6 +188,8 @@ async def get_post(user_id: int, post_id: int) -> Json[Post]:
 Use `Query[T]` for query string parameters:
 
 ```incan
+from std.web import route, Json, Query
+
 @derive(Deserialize)
 model SearchParams:
     q: str
@@ -190,6 +206,8 @@ async def search(params: Query[SearchParams]) -> Json[list[Result]]:
 Use `Json[T]` as a parameter for JSON request bodies:
 
 ```incan
+from std.web import route, Json, POST
+
 @derive(Deserialize)
 model CreateUser:
     name: str
@@ -208,6 +226,8 @@ async def create_user(body: Json[CreateUser]) -> Json[User]:
 Create an `App` and call `run()`:
 
 ```incan
+from std.web import App
+
 def main() -> None:
     app = App()
     app.run(host="0.0.0.0", port=3000)
@@ -242,7 +262,7 @@ The generated Rust code uses:
 A simple REST API for managing items.
 """
 
-from web import App, route, Response, Json, GET, POST, DELETE
+from std.web import App, route, Response, Json, GET, POST, DELETE
 
 
 @derive(Serialize, Deserialize)

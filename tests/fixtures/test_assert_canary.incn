@@ -2,7 +2,7 @@
 Canary file to exercise assertion codegen end-to-end via `incan test`.
 """
 
-from testing import assert, assert_eq, assert_ne, assert_true, assert_false, fail
+from std.testing import assert, assert_eq, assert_ne, assert_true, assert_false, fail
 
 
 def test_assertions_work() -> None:

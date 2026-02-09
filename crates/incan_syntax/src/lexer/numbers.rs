@@ -5,7 +5,7 @@
 use super::Lexer;
 use super::tokens::TokenKind;
 use crate::ast::Span;
-use crate::diagnostics::CompileError;
+use crate::diagnostics::errors;
 
 impl<'a> Lexer<'a> {
     pub(super) fn scan_number(&mut self, start: usize, first: char) {
@@ -69,8 +69,8 @@ impl<'a> Lexer<'a> {
             match value.parse::<f64>() {
                 Ok(f) => self.add_token(TokenKind::Float(f), start),
                 Err(_) => {
-                    self.errors.push(CompileError::new(
-                        format!("Invalid float literal: {}", value),
+                    self.errors.push(errors::invalid_float_literal(
+                        &value,
                         Span::new(start, self.current_pos),
                     ));
                 }
@@ -79,8 +79,8 @@ impl<'a> Lexer<'a> {
             match value.parse::<i64>() {
                 Ok(i) => self.add_token(TokenKind::Int(i), start),
                 Err(_) => {
-                    self.errors.push(CompileError::new(
-                        format!("Invalid integer literal: {}", value),
+                    self.errors.push(errors::invalid_integer_literal(
+                        &value,
                         Span::new(start, self.current_pos),
                     ));
                 }

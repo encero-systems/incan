@@ -225,6 +225,7 @@ nav:
       - RFCs: RFCs/index.md
   - Release notes:
       - Overview: release_notes/index.md
+      - Release 0.2: release_notes/0_2.md
       - Release 0.1: release_notes/0_1.md
   - Roadmap: roadmap.md
   # XXX: Temporary page while in beta

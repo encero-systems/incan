@@ -5,7 +5,7 @@
 //! small utilities to type-check call argument lists consistently.
 
 use crate::frontend::ast::*;
-use crate::frontend::diagnostics::{CompileError, errors};
+use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::*;
 use crate::frontend::typechecker::helpers::{collection_type_id, dict_ty, list_ty, option_ty, result_ty, set_ty};
 use incan_core::lang::builtins::{self, BuiltinFnId};
@@ -145,13 +145,8 @@ impl TypeChecker {
         let total_allowed = positional_count + named_value_count;
         if has_invalid_named || total_allowed != 1 || (positional_count > 0 && named_value_count > 0) {
             let name = surface_types::as_str(tid);
-            self.errors.push(CompileError::type_error(
-                format!(
-                    "{name}() expects exactly one argument (positional or named `value`), got {}",
-                    args.len()
-                ),
-                call_span,
-            ));
+            self.errors
+                .push(errors::constructor_single_arg_required(name, args.len(), call_span));
         }
 
         ResolvedType::Generic(surface_types::as_str(tid).to_string(), vec![inner])
@@ -166,10 +161,11 @@ impl TypeChecker {
 
     /// Handle a known builtin call (if the callee is a builtin name).
     fn check_builtin_call(&mut self, name: &str, args: &[CallArg], call_span: Span) -> Option<ResolvedType> {
-        // Helper function to create an arity (number of arguments) error.
-        fn arity_err(name: &str, expected: usize, found: usize, span: Span) -> CompileError {
-            CompileError::type_error(format!("{name}() expects {expected} argument(s), got {found}"), span)
-        }
+        let has_function_symbol = self
+            .symbols
+            .lookup(name)
+            .and_then(|id| self.symbols.get(id))
+            .is_some_and(|sym| matches!(sym.kind, SymbolKind::Function(_)));
 
         // Constructors (variant-like)
         if let Some(cid) = constructors::from_str(name) {
@@ -203,6 +199,9 @@ impl TypeChecker {
 
         // Core builtin functions (registry-driven)
         if let Some(bid) = builtins::from_str(name) {
+            if bid == BuiltinFnId::Sleep && !has_function_symbol {
+                return None;
+            }
             return match bid {
                 BuiltinFnId::Print => {
                     self.check_call_args(args);
@@ -218,7 +217,7 @@ impl TypeChecker {
                 }
                 BuiltinFnId::Min | BuiltinFnId::Max => {
                     if args.len() != 1 {
-                        self.errors.push(arity_err(name, 1, args.len(), call_span));
+                        self.errors.push(errors::builtin_arity(name, 1, args.len(), call_span));
                         self.check_call_args(args);
                         return Some(ResolvedType::Unknown);
                     }
@@ -242,10 +241,8 @@ impl TypeChecker {
                     };
 
                     if matches!(inner, ResolvedType::Unknown) {
-                        self.errors.push(CompileError::type_error(
-                            format!("{name}() expects a list, got {}", arg_ty),
-                            call_span,
-                        ));
+                        self.errors
+                            .push(errors::builtin_expects_list(name, &arg_ty.to_string(), call_span));
                         return Some(ResolvedType::Unknown);
                     }
 
@@ -257,8 +254,9 @@ impl TypeChecker {
                         | ResolvedType::Str
                         | ResolvedType::FrozenStr => Some(inner),
                         other => {
-                            self.errors.push(CompileError::type_error(
-                                format!("{name}() does not support list element type {}", other),
+                            self.errors.push(errors::builtin_list_element_type_not_supported(
+                                name,
+                                &other.to_string(),
                                 call_span,
                             ));
                             Some(ResolvedType::Unknown)
@@ -279,7 +277,7 @@ impl TypeChecker {
                 }
                 BuiltinFnId::Bool => {
                     if args.len() != 1 {
-                        self.errors.push(arity_err(name, 1, args.len(), call_span));
+                        self.errors.push(errors::builtin_arity(name, 1, args.len(), call_span));
                         self.check_call_args(args);
                         return Some(ResolvedType::Bool);
                     }
@@ -319,10 +317,8 @@ impl TypeChecker {
                     );
 
                     if !ok {
-                        self.errors.push(CompileError::type_error(
-                            format!("bool() does not support type {}", arg_ty),
-                            call_span,
-                        ));
+                        self.errors
+                            .push(errors::builtin_bool_type_not_supported(&arg_ty.to_string(), call_span));
                     }
                     Some(ResolvedType::Bool)
                 }
@@ -389,7 +385,7 @@ impl TypeChecker {
                 }
                 BuiltinFnId::Sorted => {
                     if args.len() != 1 {
-                        self.errors.push(arity_err(name, 1, args.len(), call_span));
+                        self.errors.push(errors::builtin_arity(name, 1, args.len(), call_span));
                         self.check_call_args(args);
                         return Some(ResolvedType::Unknown);
                     }
@@ -412,10 +408,8 @@ impl TypeChecker {
                     };
 
                     if matches!(inner, ResolvedType::Unknown) {
-                        self.errors.push(CompileError::type_error(
-                            format!("sorted() expects a list, got {}", arg_ty),
-                            call_span,
-                        ));
+                        self.errors
+                            .push(errors::builtin_expects_list(name, &arg_ty.to_string(), call_span));
                         return Some(ResolvedType::Unknown);
                     }
 
@@ -426,8 +420,9 @@ impl TypeChecker {
                         | ResolvedType::Str
                         | ResolvedType::FrozenStr => Some(list_ty(inner)),
                         other => {
-                            self.errors.push(CompileError::type_error(
-                                format!("sorted() does not support list element type {}", other),
+                            self.errors.push(errors::builtin_list_element_type_not_supported(
+                                name,
+                                &other.to_string(),
                                 call_span,
                             ));
                             Some(ResolvedType::Unknown)
@@ -462,6 +457,9 @@ impl TypeChecker {
 
         // Surface/runtime functions (registry-driven)
         if let Some(fid) = surface_functions::from_str(name) {
+            if !has_function_symbol {
+                return None;
+            }
             return match fid {
                 SurfaceFnId::SleepMs => {
                     if let Some(arg) = args.first() {
@@ -711,12 +709,15 @@ impl TypeChecker {
                 return result;
             }
 
-            if let Some(tid) = surface_types::from_str(name) {
-                if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
-                    return self.check_json_query_constructor_call(tid, args, span);
-                }
-                if matches!(tid, SurfaceTypeId::Html) {
-                    return ResolvedType::Named(surface_types::as_str(tid).to_string());
+            let in_scope = self.symbols.lookup(name).is_some();
+            if in_scope {
+                if let Some(tid) = surface_types::from_str(name) {
+                    if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
+                        return self.check_json_query_constructor_call(tid, args, span);
+                    }
+                    if matches!(tid, SurfaceTypeId::Html) {
+                        return ResolvedType::Named(surface_types::as_str(tid).to_string());
+                    }
                 }
             }
 
@@ -745,12 +746,14 @@ impl TypeChecker {
                 });
             if let Some(fields) = ctor_fields {
                 self.check_model_or_class_constructor_call(name, &fields, args, span);
-                if let Some(tid) = surface_types::from_str(name) {
-                    if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
-                        return self.check_json_query_constructor_call(tid, args, span);
-                    }
-                    if matches!(tid, SurfaceTypeId::Html) {
-                        return ResolvedType::Named(surface_types::as_str(tid).to_string());
+                if in_scope {
+                    if let Some(tid) = surface_types::from_str(name) {
+                        if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
+                            return self.check_json_query_constructor_call(tid, args, span);
+                        }
+                        if matches!(tid, SurfaceTypeId::Html) {
+                            return ResolvedType::Named(surface_types::as_str(tid).to_string());
+                        }
                     }
                 }
                 return ResolvedType::Named(name.to_string());
@@ -790,12 +793,14 @@ impl TypeChecker {
     ) -> ResolvedType {
         self.check_call_args(args);
 
-        if let Some(tid) = surface_types::from_str(name) {
-            if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
-                return self.check_json_query_constructor_call(tid, args, span);
-            }
-            if matches!(tid, SurfaceTypeId::Html) {
-                return ResolvedType::Named(surface_types::as_str(tid).to_string());
+        if self.symbols.lookup(name).is_some() {
+            if let Some(tid) = surface_types::from_str(name) {
+                if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
+                    return self.check_json_query_constructor_call(tid, args, span);
+                }
+                if matches!(tid, SurfaceTypeId::Html) {
+                    return ResolvedType::Named(surface_types::as_str(tid).to_string());
+                }
             }
         }
 

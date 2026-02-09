@@ -309,7 +309,7 @@ impl<'a> Parser<'a> {
                     }));
                 }
                 _ => {
-                    return Err(CompileError::syntax("Invalid assignment target".to_string(), expr.span));
+                    return Err(errors::invalid_assignment_target(expr.span));
                 }
             }
         }
@@ -374,10 +374,7 @@ impl<'a> Parser<'a> {
                     }));
                 }
                 _ => {
-                    return Err(CompileError::syntax(
-                        "Invalid compound assignment target".to_string(),
-                        expr.span,
-                    ));
+                    return Err(errors::invalid_compound_assignment_target(expr.span));
                 }
             }
         }

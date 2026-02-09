@@ -13,6 +13,10 @@ For details and tasks, use the split pages:
 - Modules are discovered from the filesystem — there is no explicit `mod` declaration step.
 - Directories can act as modules; use `mod.incn` as the “main file” for a directory module when needed.
 - Common types and functions are available without imports via the prelude (see the reference page for the full list).
+- The **standard library** lives under the `std` namespace (e.g. `from std.web import route`). The compiler activates
+  features automatically based on which `std.*` modules you import.
+
+<!-- TODO: Add a link to the standard library sections once we create them -->
 
 !!! info "Coming from Python?"
     In Python, packages are driven by directory structure and `__init__.py`.  

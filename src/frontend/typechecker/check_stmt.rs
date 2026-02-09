@@ -1,7 +1,7 @@
 //! Statement checking: assignments, returns, control flow.
 
 use crate::frontend::ast::*;
-use crate::frontend::diagnostics::{CompileError, errors};
+use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::*;
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved};
 use incan_core::lang::types::collections::CollectionTypeId;
@@ -111,12 +111,9 @@ impl TypeChecker {
 
                 // Check that tuple has enough elements
                 if element_types.len() < unpack.names.len() {
-                    self.errors.push(CompileError::type_error(
-                        format!(
-                            "Cannot unpack {} values from tuple with {} elements",
-                            unpack.names.len(),
-                            element_types.len()
-                        ),
+                    self.errors.push(errors::tuple_unpack_count_mismatch(
+                        unpack.names.len(),
+                        element_types.len(),
                         stmt.span,
                     ));
                 }
@@ -155,12 +152,9 @@ impl TypeChecker {
 
                 // Check that tuple has enough elements
                 if element_types.len() < assign.targets.len() {
-                    self.errors.push(CompileError::type_error(
-                        format!(
-                            "Cannot unpack {} values from tuple with {} elements",
-                            assign.targets.len(),
-                            element_types.len()
-                        ),
+                    self.errors.push(errors::tuple_unpack_count_mismatch(
+                        assign.targets.len(),
+                        element_types.len(),
                         stmt.span,
                     ));
                 }
@@ -190,10 +184,7 @@ impl TypeChecker {
                             // Type compatibility is checked below
                         }
                         _ => {
-                            self.errors.push(CompileError::syntax(
-                                "Invalid assignment target in tuple assignment".to_string(),
-                                target.span,
-                            ));
+                            self.errors.push(errors::invalid_tuple_assignment_target(target.span));
                         }
                     }
 
@@ -364,10 +355,7 @@ impl TypeChecker {
             }
             ResolvedType::Str => {
                 // Strings are immutable in Incan
-                self.errors.push(CompileError::type_error(
-                    "Strings are immutable - cannot assign to index".to_string(),
-                    span,
-                ));
+                self.errors.push(errors::string_index_assignment_not_allowed(span));
             }
             ResolvedType::Unknown => {
                 // Don't report additional errors on unknown types
@@ -416,7 +404,7 @@ impl TypeChecker {
         }
 
         let ty = if let Some(ty_ann) = &assign.ty {
-            let ann_ty = resolve_type(&ty_ann.node, &self.symbols);
+            let ann_ty = self.resolve_type_checked(ty_ann);
             // Check value matches annotation
             if !self.types_compatible(&value_ty, &ann_ty) {
                 self.errors.push(errors::type_mismatch(

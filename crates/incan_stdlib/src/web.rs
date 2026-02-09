@@ -36,6 +36,39 @@ pub const HTTP_INTERNAL_ERROR: i64 = 500;
 
 static ROUTER: OnceLock<Router> = OnceLock::new();
 
+#[doc(hidden)]
+pub mod __private {
+    pub use axum::Router;
+    pub use axum::extract;
+    pub use axum::response;
+    pub use axum::routing;
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __incan_router {
+    (
+        wrappers: [ $($wrapper:item)* ],
+        routes: [ $( ($path:literal, $method:ident, $wrapper_name:ident) ),* $(,)? ]
+    ) => {
+        $($wrapper)*
+
+        fn __incan_web_router() -> ::incan_stdlib::web::__private::Router {
+            let mut router = ::incan_stdlib::web::__private::Router::new();
+            $(
+                router = router.route(
+                    $path,
+                    ::incan_stdlib::web::__private::routing::$method($wrapper_name)
+                );
+            )*
+            router
+        }
+    };
+}
+
+#[doc(hidden)]
+pub use crate::__incan_router;
+
 /// Register the generated router for the `App::run` entrypoint.
 ///
 /// This only captures the first router; subsequent calls are ignored.
@@ -241,7 +274,7 @@ impl IntoResponse for Response {
     }
 }
 
-/// No-op placeholder so `from web import route` resolves at Rust compile time.
+/// No-op placeholder so `from std.web import route` resolves at Rust compile time.
 ///
 /// The compiler collects `@route(...)` decorators during codegen; this function is not used at runtime.
 pub fn route(_path: &str) {}

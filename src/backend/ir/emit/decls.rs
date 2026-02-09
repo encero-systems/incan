@@ -441,10 +441,10 @@ impl<'a> IrEmitter<'a> {
                 }
 
                 // Special-case stdlib shims:
-                // - `web` maps to `incan_stdlib::web`
-                // - `testing` maps to `incan_stdlib::testing`
-                let is_stdlib_web = path.first().map(|s| s == stdlib::STDLIB_WEB).unwrap_or(false);
-                let is_stdlib_testing = path.first().map(|s| s == stdlib::STDLIB_TESTING).unwrap_or(false);
+                // - `std.web` maps to `incan_stdlib::web`
+                // - `std.testing` maps to `incan_stdlib::testing`
+                let is_stdlib_web = stdlib::is_stdlib_module(path, stdlib::STDLIB_WEB);
+                let is_stdlib_testing = stdlib::is_stdlib_module(path, stdlib::STDLIB_TESTING);
                 let mapped_path_tokens: Vec<_> = if is_stdlib_web {
                     vec![quote! { incan_stdlib }, quote! { web }]
                 } else if is_stdlib_testing {
@@ -911,7 +911,7 @@ impl<'a> IrEmitter<'a> {
         };
 
         let tokio_main_attr = if is_main && func.is_async && self.needs_tokio {
-            quote! { #[tokio::main] }
+            quote! { #[incan_stdlib::__private::tokio::main] }
         } else {
             quote! {}
         };

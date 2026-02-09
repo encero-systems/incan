@@ -3,26 +3,26 @@ Async Prelude - Re-exports all async primitives
 
 Import this for convenient access to all async features:
 
-    from async::prelude import *
+    from std.async.prelude import *
 """
 
 # Time primitives
-from async::time import sleep, sleep_ms, timeout, timeout_ms, Duration, TimeoutError
+from std.async.time import sleep, sleep_ms, timeout, timeout_ms, Duration, TimeoutError
 
 # Task spawning
-from async::task import spawn, spawn_blocking, yield_now, JoinHandle
+from std.async.task import spawn, spawn_blocking, yield_now, JoinHandle
 
 # Channels
-from async::channel import channel, unbounded_channel, oneshot
-from async::channel import Sender, Receiver, OneshotSender, OneshotReceiver
-from async::channel import SendError, RecvError
+from std.async.channel import channel, unbounded_channel, oneshot
+from std.async.channel import Sender, Receiver, OneshotSender, OneshotReceiver
+from std.async.channel import SendError, RecvError
 
 # Synchronization
-from async::sync import Mutex, MutexGuard
-from async::sync import RwLock, RwLockReadGuard, RwLockWriteGuard  
-from async::sync import Semaphore, SemaphorePermit
-from async::sync import Barrier
+from std.async.sync import Mutex, MutexGuard
+from std.async.sync import RwLock, RwLockReadGuard, RwLockWriteGuard
+from std.async.sync import Semaphore, SemaphorePermit
+from std.async.sync import Barrier
 
 # Select
-from async::select import select2, select3, select_timeout, race
-from async::select import Either, Either3
+from std.async.select import select2, select3, select_timeout, race
+from std.async.select import Either, Either3

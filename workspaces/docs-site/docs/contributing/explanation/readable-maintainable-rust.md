@@ -1,7 +1,7 @@
 
 # Readable & Maintainable Rust: A Practical Guide
 
-This document contains a pragmatic set of principles, patterns, and guardrails for writing Rust that’s easy to understand
+This document contains a pragmatic set of principles, patterns, and guardrails for writing Rust that's easy to understand
 and safe to evolve. It draws from [The Rust Book](https://doc.rust-lang.org/book/) and the
 [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/about.html).
 
@@ -9,8 +9,8 @@ Incan contributors are expected to follow these principles and patterns when wri
 
 ## Table of Contents
 
-- [What “Readable” Means in Rust](#what-readable-means-in-rust)
-- [What “Maintainable” Means in Rust](#what-maintainable-means-in-rust)
+- [What "Readable" Means in Rust](#what-readable-means-in-rust)
+- [What "Maintainable" Means in Rust](#what-maintainable-means-in-rust)
 - [Pragmatic Checklist](#pragmatic-checklist)
 - [Idiomatic Examples](#idiomatic-examples)
     - [Errors: Internal vs External](#1-errors-internal-vs-external)
@@ -22,12 +22,12 @@ Incan contributors are expected to follow these principles and patterns when wri
     - [`rustfmt.toml`](#rustfmttoml)
     - [`Cargo.toml`](#cargotoml)
     - [Typical CI Steps](#typical-ci-steps)
-- [Common Pitfalls](#common-pitfalls)
+- [Common Pitfalls & Anti-Patterns](#common-pitfalls--anti-patterns)
 - [Simple Heuristic](#simple-heuristic)
 
 ---
 
-## What “Readable” Means in Rust
+## What "Readable" Means in Rust
 
 Readable Rust is code that a competent Rustacean can **scan and understand quickly**, without excessive file-hopping or
 ownership gymnastics.
@@ -44,10 +44,10 @@ ownership gymnastics.
 
 3. **Clear error handling**
    - Use `Result<T, E>` pervasively; reserve panics for programmer errors (`unreachable!`, `expect` with invariant context).
-   - Propagate with `?`; keep error messages actionable; don’t lose context when mapping.
+   - Propagate with `?`; keep error messages actionable; don't lose context when mapping.
 
 4. **Minimal magic**
-   - Macros remove boilerplate but don’t hide logic or create opaque DSLs.
+   - Macros remove boilerplate but don't hide logic or create opaque DSLs.
    - Generics are purposeful; trait bounds are explicit and readable.
 
 5. **Consistent naming & layout**
@@ -59,13 +59,13 @@ ownership gymnastics.
 
 ---
 
-## What “Maintainable” Means in Rust
+## What "Maintainable" Means in Rust
 
 Maintainable Rust withstands change with **minimal risk and effort**—thanks to stable seams, guardrails, and predictable
 behavior.
 
 1. **Stable, minimal public API**
-   - Public types/traits are small and composable; prefer **capability-oriented traits** over “god traits.”
+   - Public types/traits are small and composable; prefer **capability-oriented traits** over "god traits."
    - Keep internals private (`mod` visibility) unless exposure is justified.
    - Avoid leaking concrete types when `impl Trait` or trait objects suffice.
 
@@ -81,7 +81,7 @@ behavior.
 
 4. **Concurrency discipline**
    - Make `Send + Sync` requirements explicit; guard shared state predictably.
-   - Use **structured concurrency** (task groups, cancellation) over “fire-and-forget.”
+   - Use **structured concurrency** (task groups, cancellation) over "fire-and-forget."
    - Prefer channels/async streams for coordination when appropriate.
 
 5. **Tooling baked in**
@@ -253,19 +253,147 @@ Note: MSRV is enforced via CI running build/test with a pinned toolchain.
 
 ---
 
-## Common Pitfalls
+## Common Pitfalls & Anti-Patterns
 
-- **Overusing generics**: Complex bounds and many type params → prefer trait objects or smaller traits.
+### Quick-reference
+
+<!-- markdownlint-disable MD013 -->
+
+|                  Instead of                   |                 Prefer                 |                                Why                                |
+| --------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------- |
+| `.unwrap()` / `.expect()` in library code     | `?`, `.context()`, or explicit `match` | Panics crash the process; propagate errors instead                |
+| `.clone()` to appease the borrow checker      | Restructure ownership or borrow        | Hides design issues and adds unnecessary allocations              |
+| `&String`, `&Vec<T>`, `&Box<T>` in parameters | `&str`, `&[T]`, `&T`                   | More general — accepts owned and borrowed callers alike           |
+| `x as u32` (silent truncation)                | `x.try_into()` or `From`/`Into`        | `as` silently wraps/truncates; conversions should be explicit     |
+| `use foo::*` (wildcard imports)               | `use foo::{Bar, Baz}`                  | Makes origins clear; avoids surprise breakage on upstream changes |
+| `.collect::<Vec<_>>()` just to re-iterate     | Chain iterators directly               | Avoids an unnecessary allocation + copy                           |
+| `pub` on everything                           | `pub(crate)` or private by default     | Minimize public surface; promote visibility only when needed      |
+| Blocking I/O in `async fn`                    | `tokio::fs`, `spawn_blocking`          | Blocks the executor and starves other tasks                       |
+| `Result<T, String>` in public APIs            | A typed error enum (`thiserror`)       | Stringly-typed errors are hard to match on and evolve             |
+| `Rc<RefCell<T>>` everywhere                   | Restructure data / ownership           | Usually signals a design that fights the borrow checker           |
+
+<!-- markdownlint-enable MD013 -->
+
+### Detailed guidance
+
+#### Panics on recoverable paths
+
+Reserve `.unwrap()` and `.expect()` for cases where you can **prove** the value is always `Some`/`Ok` — and add a
+comment explaining the invariant. Everywhere else, propagate with `?`:
+
+```rust
+// Bad — panics with no context if the file is missing
+let file = File::open(path).unwrap();
+
+// Good — propagates a meaningful error to the caller
+let file = File::open(path)
+    .map_err(|e| anyhow!("failed to open {}: {e}", path.display()))?;
+```
+
+#### Cloning — question every `.clone()`
+
+A `.clone()` is sometimes the right answer (crossing an API boundary, shared ownership), but treat every occurrence
+as a review signal. Ask: *can I borrow instead? Can I restructure to remove the simultaneous borrow?*
+
+#### Stringly-typed APIs
+
+Use enums or newtypes instead of raw strings for fixed sets of values:
+
+```rust
+// Bad — typo-prone, no exhaustiveness checking
+fn set_role(role: &str) { /* ... */ }
+
+// Good — the compiler enforces valid values
+enum Role { Admin, User }
+fn set_role(role: Role) { /* ... */ }
+```
+
+#### Parameter types — accept the most general borrow
+
+```rust
+// Bad — forces callers to own a String / Vec
+fn process(input: &String) { /* ... */ }
+fn filter(items: &Vec<Item>) { /* ... */ }
+
+// Good — accepts &String, &str, string literals, slices, etc.
+fn process(input: &str) { /* ... */ }
+fn filter(items: &[Item]) { /* ... */ }
+```
+
+#### Type casting — prefer safe conversions
+
+`as` silently truncates or wraps. Prefer `TryFrom`/`TryInto` for fallible conversions and `From`/`Into` for
+infallible ones:
+
+```rust
+// Bad — silently wraps on overflow
+let small = big_number as u16;
+
+// Good — panics with a message instead of silently producing garbage
+let small: u16 = big_number.try_into().expect("value fits in u16");
+```
+
+#### Iterator chains — don't collect just to iterate again
+
+```rust
+// Bad — allocates a Vec only to loop over it
+let v: Vec<_> = items.iter().filter(|x| x.is_valid()).collect();
+for item in &v { process(item); }
+
+// Good — zero extra allocation
+for item in items.iter().filter(|x| x.is_valid()) {
+    process(item);
+}
+```
+
+#### Visibility — start private, widen deliberately
+
+Default to private. Use `pub(crate)` for crate-internal sharing. Only use `pub` for your actual public API. This
+keeps refactoring safe and communicates intent to future readers.
+
+#### Match arms — factor out shared logic
+
+```rust
+// Bad — duplicated setup/cleanup in every arm
+match kind {
+    A => { setup(); handle_a(); cleanup(); }
+    B => { setup(); handle_b(); cleanup(); }
+}
+
+// Good — shared logic lives outside the match
+setup();
+match kind {
+    A => handle_a(),
+    B => handle_b(),
+}
+cleanup();
+```
+
+#### `#[must_use]` on important return values
+
+If a function returns a value that callers should never silently discard (validation results, builders, etc.), mark
+it `#[must_use]`. Rust already enforces this for `Result`, but custom types often miss it.
+
+### Architecture-level pitfalls
+
+- **Overusing generics**: Complex bounds and many type params — prefer trait objects or smaller traits.
 - **Lifetime gymnastics**: If lifetimes leak everywhere, restructure ownership or use owned buffers at boundaries.
-- **Macro-heavy APIs**: If consumers must “think in macros,” reconsider the design.
-- **Ambiguous errors**: `Result<T, String>` in public API → hard to evolve safely.
-- **Panics on recoverable paths**: Reserve panics for invariants; use `Result` elsewhere.
-- **Async everywhere**: Keep `async` at IO boundaries; don’t make pure functions `async`.
+- **Macro-heavy APIs**: If consumers must "think in macros," reconsider the design.
+- **Async everywhere**: Keep `async` at IO boundaries; don't make pure functions `async`.
 - **Global mutable state**: Hide state behind interfaces; avoid implicit singletons.
+
+### Clippy
+
+`cargo clippy` is mandatory in CI. Common catches worth internalizing:
+
+- `if let Some(_) = x` — use `x.is_some()` instead
+- Manual `Default` impl when `#[derive(Default)]` works
+- `.map(|x| foo(x))` — use `.map(foo)` (redundant closure)
+- `.map().unwrap_or()` — use `.map_or()`
 
 ---
 
 ## Simple Heuristic
 
 > If a teammate can fix a bug or add a feature **without asking you to explain ownership or lifetimes**, and **CI**
-> tells them when they’re wrong—your Rust is both **readable** and **maintainable**.
+> tells them when they're wrong — your Rust is both **readable** and **maintainable**.

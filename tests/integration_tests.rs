@@ -752,13 +752,16 @@ def fixture() -> str:
     #[test]
     fn test_fixture_decorator() {
         let source = r#"
+from std.testing import fixture
+
 @fixture(scope="module")
 def database() -> Database:
   db = connect()
   yield db
 "#;
         let program = parse_str(source).unwrap();
-        match &program.declarations[0].node {
+        // declarations[0] is the import, declarations[1] is the function
+        match &program.declarations[1].node {
             Declaration::Function(f) => {
                 assert_eq!(f.decorators.len(), 1);
                 assert_eq!(f.decorators[0].node.name, "fixture");

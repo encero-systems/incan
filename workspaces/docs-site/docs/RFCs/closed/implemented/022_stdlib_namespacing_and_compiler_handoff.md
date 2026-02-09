@@ -1,10 +1,11 @@
 # RFC 022: Namespaced stdlib modules and compiler→stdlib handoff
 
-**Status:** Planned  
+**Status:** Implemented  
 **Created:** 2026-02-06  
 **Author(s):** Danny Meijer (@dannymeijer)  
 **Related:** RFC 000 (core imports/modules), RFC 005 (Rust interop), RFC 012 (JsonValue),  
 RFC 013 (Rust crate dependencies), RFC 020 (offline/locked policy)
+**Issues:** [#120](https://github.com/incan-lang/incan/issues/120)
 
 ## Summary
 
@@ -247,7 +248,7 @@ Implementation guidance (v0.x):
 - Stdlib `.incn` sources are the **authoritative surface** (docs + signatures) for tooling and navigation.
 - The compiler’s semantic wiring should be driven by a small, versioned registry (likely in `incan_core`) that maps:
     - `std.<module>` → `incan_stdlib` Cargo feature(s)
-    - known `@std.*` decorators / `@std.builtin` stubs → compiler/runtime lowering entrypoints
+    - known `@std.*` decorators / `@rust.extern` stubs → compiler/runtime lowering entrypoints
 
 This keeps the compiler deterministic and avoids requiring it to parse stdlib sources at compile-time, while still making
 the stdlib “Incan-first” for developer experience.
@@ -265,22 +266,24 @@ is a **whole-program concern**:
 - Each route entry references the handler by its fully qualified symbol path so the stdlib handoff can build a single
   router regardless of where the handler is declared.
 
-### `@std.builtin` — stdlib handoff marker
+### `@rust.extern` — Rust-backed function marker
+
+> **Note:** This section originally introduced `@std.builtin`. RFC 023 renamed it to `@rust.extern`
+> and removed the stdlib-only restriction. All references below use the current name.
 
 Stdlib modules are **Incan-first at the surface**:
 every stdlib module should have an Incan source file that declares its public vocabulary (types, signatures, docs).
-Where the implementation is provided by the compiler or runtime rather than written in Incan, the stdlib surface marks those
-items with `@std.builtin` (this replaces the `@compiler_expand` marker).
+Where the implementation is provided by a Rust module rather than written in Incan, the source marks those
+items with `@rust.extern` (this replaces the `@compiler_expand` marker).
 
 Definition:
 
-- `@std.builtin` means **the compiler/runtime provides the implementation for this stdlib-authored signature stub**.
+- `@rust.extern` means **the function's body is provided by a Rust module** (declared via `rust.module()`).
   It does *not* mean "globally available language builtin" (e.g. `print`, `len`). The two concepts are unrelated!
-- `@std.builtin` is **reserved for stdlib sources** (i.e., modules whose resolved path begins with `std`).
-  The compiler must reject it in user code with a clear diagnostic.
-- Apply `@std.builtin` at the **smallest granularity possible** — individual functions or methods, not entire modules or
-  types. Stdlib type definitions (`model`, `enum`, `class` in the example below) are compiled normally from their Incan
-  source; only the items whose *bodies* are runtime-provided carry the marker.
+- `@rust.extern` is allowed in **all Incan source categories** (stdlib, library, application).
+- Apply `@rust.extern` at the **smallest granularity possible** — individual functions or methods, not entire modules or
+  types. Type definitions (`model`, `enum`, `class` in the example below) are compiled normally from their Incan
+  source; only the items whose *bodies* are Rust-provided carry the marker.
 
 This serves two purposes:
 
@@ -307,17 +310,18 @@ model Response:
     status: int
     body: json.JsonValue
 
-@std.builtin
+@rust.extern
 def request(req: Request) -> Result[Response, str]: ...
 ```
 
 Here `Method`, `Request`, and `Response` are ordinary Incan types compiled by the standard pipeline.
-Only `request()` is marked `@std.builtin` — its body is provided by the runtime (e.g. delegating to an HTTP client in
+Only `request()` is marked `@rust.extern` — its body is provided by the Rust module (e.g. delegating to an HTTP client in
 `incan_stdlib`).
 
 Migration note (normative):
 
-- This RFC **renames** the legacy stdlib marker `@compiler_expand` to `@std.builtin`.
+- This RFC originally renamed the legacy marker `@compiler_expand` to `@std.builtin`; RFC 023 further renamed it to
+  `@rust.extern` and removed the stdlib-only restriction.
 - `@compiler_expand` must be treated as deprecated and **removed as part of implementing this RFC**.
 
 ### Surface vocabulary: reduce global injections (follow-up)
@@ -375,8 +379,7 @@ At a minimum, an implementation must:
     - Codegen snapshot tests: ensure the emitted Rust references `incan_stdlib::...` handoff
       entrypoints and does **not** directly reference framework crates (e.g. no `axum::` in
       generated output for web programs).
-    - Negative tests: `@std.builtin` rejected in user code; `std` / `rust` roots cannot be
-      shadowed.
+    - Negative tests: `std` / `rust` roots cannot be shadowed.
 
 ## Decisions / direction (v0.x)
 
@@ -429,67 +432,66 @@ This RFC can be considered "implemented" when the following are complete.
 
 ### Spec / semantics
 
-- [ ] `std` and `rust` are reserved roots and cannot be shadowed.
-- [ ] Path qualifiers `crate`, `super`, and `..` remain reserved and retain their special meaning in paths.
-- [ ] Incan module paths accept both `.` and `::` separators as equivalent spellings (RFC 000).
-- [ ] Rust interop remains `rust::...` and is `::`-only (RFC 005); dot-notation is rejected for `rust::...` imports.
-- [ ] Decorators accept a namespaced path (`@<module_path>`); `decorator_args` behavior is unchanged.
-- [ ] Decorator identity is established by *resolution* (module path + name), not by a global string match.
-- [ ] `@std.builtin` semantics are enforced:
-    - [ ] Allowed only in stdlib sources (modules whose resolved path begins with `std`).
-    - [ ] Rejected in user code with a clear diagnostic.
-    - [ ] Legacy `@compiler_expand` is deprecated and removed as part of this RFC.
+- [x] `std` and `rust` are reserved roots and cannot be shadowed.
+- [x] Path qualifiers `crate`, `super`, and `..` remain reserved and retain their special meaning in paths.
+- [x] Incan module paths accept both `.` and `::` separators as equivalent spellings (RFC 000).
+- [x] Rust interop remains `rust::...` and is `::`-only (RFC 005); dot-notation is rejected for `rust::...` imports.
+- [x] Decorators accept a namespaced path (`@<module_path>`); `decorator_args` behavior is unchanged.
+- [x] Decorator identity is established by *resolution* (module path + name), not by a global string match.
+- [x] `@rust.extern` semantics are enforced (RFC 023 supersedes the stdlib-only restriction):
+    - [x] Recognized in all Incan source categories (stdlib, library, application).
+    - [x] Legacy `@compiler_expand` is deprecated and removed as part of this RFC.
 
 ### Syntax / AST / formatting
 
-- [ ] Parser/AST supports decorator paths (nested, mixed separators) with precise spans.
-- [ ] Formatter produces deterministic, canonical output for Incan module paths and decorator paths (recommended: dot-style).
-- [ ] Formatter does not rewrite or normalize `rust::...` interop paths (RFC 005 rules apply).
+- [x] Parser/AST supports decorator paths (nested, mixed separators) with precise spans.
+- [x] Formatter produces deterministic, canonical output for Incan module paths and decorator paths (recommended: dot-style).
+- [x] Formatter does not rewrite or normalize `rust::...` interop paths (RFC 005 rules apply).
 
 ### Name resolution / frontend
 
-- [ ] Resolver/typechecker resolves decorator paths through the same import/alias machinery as other names.
-- [ ] High-quality diagnostics exist for unresolved decorator paths (include full path + actionable suggestions).
-- [ ] `@std.builtin` enforcement uses resolved module identity (starts with `std`), not filesystem heuristics.
+- [x] Resolver/typechecker resolves decorator paths through the same import/alias machinery as other names.
+- [x] High-quality diagnostics exist for unresolved decorator paths (include full path + actionable suggestions).
+- [x] `@rust.extern` is recognized by the decorator registry and resolved through normal path resolution.
 
 ### Backend (IR / lowering / emission)
 
-- [ ] Web routes are collected as *structured metadata* across the full compilation unit (entry module + dependency modules).
-- [ ] Route entries reference handlers by fully-qualified symbol path.
-- [ ] Codegen emits a single stdlib handoff for routing (macro/entrypoint in `incan_stdlib`), without embedding framework
+- [x] Web routes are collected as *structured metadata* across the full compilation unit (entry module + dependency modules).
+- [x] Route entries reference handlers by fully-qualified symbol path.
+- [x] Codegen emits a single stdlib handoff for routing (macro/entrypoint in `incan_stdlib`), without embedding framework
   glue.
-- [ ] Generated Rust for stdlib-driven web programs does not directly reference framework crates (e.g. no `axum::` in output).
+- [x] Generated Rust for stdlib-driven web programs does not directly reference framework crates (e.g. no `axum::` in output).
 
 ### Runtime / stdlib
 
-- [ ] `incan_stdlib` provides stable handoff entrypoints/macros for web routing and owns framework crates behind features.
-- [ ] Stdlib `.incn` surfaces exist for `std.*` modules, authored in Incan.
-- [ ] Runtime-provided bodies in stdlib surfaces are marked with `@std.builtin` (smallest granularity).
-- [ ] Existing stdlib stubs and docs are migrated off `@compiler_expand` per the rename/removal policy.
+- [x] `incan_stdlib` provides stable handoff entrypoints/macros for web routing and owns framework crates behind features.
+- [x] Stdlib `.incn` surfaces exist for `std.*` modules, authored in Incan.
+- [x] Runtime-provided bodies in stdlib surfaces are marked with `@rust.extern` (smallest granularity).
+- [x] Existing stdlib stubs and docs are migrated off `@compiler_expand` per the rename/removal policy.
 
 ### Dependency model / generated project
 
-- [ ] Generated `Cargo.toml` depends on `incan_stdlib` (with features) rather than directly depending on framework crates
+- [x] Generated `Cargo.toml` depends on `incan_stdlib` (with features) rather than directly depending on framework crates
   when those are purely stdlib implementation details.
-- [ ] User `rust::...` dependencies remain explicit and governed by RFC 005 / RFC 013 (`incan.toml`, version/features policy).
+- [x] User `rust::...` dependencies remain explicit and governed by RFC 005 / RFC 013 (`incan.toml`, version/features policy).
 
 ### Tooling / IDE
 
-- [ ] LSP go-to-definition / hover can navigate `std.*` imports and namespaced stdlib decorators to stdlib surface sources
+- [x] LSP go-to-definition / hover can navigate `std.*` imports and namespaced stdlib decorators to stdlib surface sources
   (via the same registry used for feature gating).
-- [ ] LSP reports decorator resolution errors without requiring backend/codegen.
+- [x] LSP reports decorator resolution errors without requiring backend/codegen.
 
 ### Tests (at minimum)
 
-- [ ] Parser tests: decorator paths with `.` and `::`, nested paths, and argument parsing on namespaced decorators.
-- [ ] Resolution/typechecker tests: canonical vs aliased decorator paths; unresolved-path diagnostics quality.
-- [ ] Codegen snapshot tests: routing handoff emission and absence of direct framework crate references.
-- [ ] Multi-file tests: routes declared in dependency modules are collected and registered correctly.
-- [ ] Negative tests: `@std.builtin` in user code; shadowing `std`/`rust`; dot notation rejected for `rust::...` imports.
+- [x] Parser tests: decorator paths with `.` and `::`, nested paths, and argument parsing on namespaced decorators.
+- [x] Resolution/typechecker tests: canonical vs aliased decorator paths; unresolved-path diagnostics quality.
+- [x] Codegen snapshot tests: routing handoff emission and absence of direct framework crate references.
+- [x] Multi-file tests: routes declared in dependency modules are collected and registered correctly.
+- [x] Negative tests: shadowing `std`/`rust`; dot notation rejected for `rust::...` imports.
 
 ### Docs
 
-- [ ] Documentation that mentions the legacy marker is updated to the new spelling (`@std.builtin`) and the legacy
-  spelling is marked as removed by this RFC.
-- [ ] Documentation, tutorials, and examples are updated to use `std.*` imports and namespaced decorators
+- [x] Documentation that mentions the legacy marker is updated to the new spelling (`@rust.extern`) and the legacy
+  spellings (`@compiler_expand`, `@std.builtin`) are marked as removed.
+- [x] Documentation, tutorials, and examples are updated to use `std.*` imports and namespaced decorators
   (e.g. `std.web`and `@std.web.route`), removing legacy spellings like `from web import ...` and `@route(...)`.

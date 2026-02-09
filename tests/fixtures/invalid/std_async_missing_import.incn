@@ -1,0 +1,4 @@
+"""Invalid fixture: std.async import missing"""
+
+async def work() -> None:
+    await sleep(0.1)

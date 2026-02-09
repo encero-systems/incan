@@ -291,9 +291,17 @@ impl<'a> IrEmitter<'a> {
             BuiltinFn::Sleep => {
                 if let Some(arg) = args.first() {
                     let duration_arg = self.emit_expr(arg)?;
-                    Ok(quote! { tokio::time::sleep(tokio::time::Duration::from_secs_f64(#duration_arg)) })
+                    Ok(quote! {
+                        incan_stdlib::__private::tokio::time::sleep(
+                            incan_stdlib::__private::tokio::time::Duration::from_secs_f64(#duration_arg)
+                        )
+                    })
                 } else {
-                    Ok(quote! { tokio::time::sleep(tokio::time::Duration::from_secs(0)) })
+                    Ok(quote! {
+                        incan_stdlib::__private::tokio::time::sleep(
+                            incan_stdlib::__private::tokio::time::Duration::from_secs(0)
+                        )
+                    })
                 }
             }
         }
@@ -540,9 +548,11 @@ impl<'a> IrEmitter<'a> {
             BuiltinFnId::Sleep => {
                 if let Some(arg) = args.first() {
                     let duration_arg = self.emit_expr(arg)?;
-                    Ok(Some(
-                        quote! { tokio::time::sleep(tokio::time::Duration::from_secs_f64(#duration_arg)) },
-                    ))
+                    Ok(Some(quote! {
+                        incan_stdlib::__private::tokio::time::sleep(
+                            incan_stdlib::__private::tokio::time::Duration::from_secs_f64(#duration_arg)
+                        )
+                    }))
                 } else {
                     Ok(None)
                 }

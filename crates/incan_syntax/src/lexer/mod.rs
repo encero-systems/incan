@@ -21,7 +21,7 @@ pub mod tokens;
 pub use tokens::{FStringPart, Token, TokenKind, keyword_id};
 
 use crate::ast::Span;
-use crate::diagnostics::CompileError;
+use crate::diagnostics::{CompileError, errors};
 use incan_core::lang::operators::OperatorId;
 use incan_core::lang::punctuation::PunctuationId;
 
@@ -245,10 +245,8 @@ impl<'a> Lexer<'a> {
                 if self.match_char('=') {
                     self.add_op(OperatorId::NotEq, start);
                 } else {
-                    self.errors.push(CompileError::new(
-                        "Unexpected character '!'".to_string(),
-                        Span::new(start, self.current_pos),
-                    ));
+                    self.errors
+                        .push(errors::unexpected_bang(Span::new(start, self.current_pos)));
                 }
             }
             '<' => self.operator(start, OperatorId::Lt, &[('=', OperatorId::LtEq)]),
@@ -292,10 +290,8 @@ impl<'a> Lexer<'a> {
             _ if is_ident_start(c) => self.scan_identifier(start, c),
 
             _ => {
-                self.errors.push(CompileError::new(
-                    format!("Unexpected character '{}'", c),
-                    Span::new(start, self.current_pos),
-                ));
+                self.errors
+                    .push(errors::unexpected_character(c, Span::new(start, self.current_pos)));
             }
         }
     }
@@ -364,10 +360,8 @@ impl<'a> Lexer<'a> {
     /// Produces an error if there's no matching opening bracket.
     fn close_bracket(&mut self, kind: PunctuationId, start: usize) {
         if self.bracket_depth == 0 {
-            self.errors.push(CompileError::new(
-                "Unmatched closing bracket".to_string(),
-                Span::new(start, self.current_pos),
-            ));
+            self.errors
+                .push(errors::unmatched_closing_bracket(Span::new(start, self.current_pos)));
         } else {
             self.bracket_depth -= 1;
         }

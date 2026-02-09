@@ -274,6 +274,8 @@ impl<'a> IrEmitter<'a> {
         let mut tracker = ImportTracker::default();
         tracker.scan_program(program);
 
+        let compiler_version = crate::version::INCAN_VERSION;
+        items.push(quote! { incan_stdlib::__incan_stdlib_version_check!(#compiler_version); });
         items.push(quote! { use incan_stdlib::prelude::*; });
         items.push(quote! { use incan_derive::{FieldInfo, IncanClass}; });
 
@@ -289,24 +291,14 @@ impl<'a> IrEmitter<'a> {
         }
 
         if self.needs_tokio {
-            items.push(quote! { use tokio::time::{sleep, timeout, Duration}; });
-            items.push(quote! { use tokio::sync::{mpsc, Mutex, RwLock}; });
-            items.push(quote! { use tokio::task::JoinHandle; });
-        }
-
-        if self.needs_axum {
-            items.push(quote! {
-                use axum::{
-                    Router,
-                    routing::{get, post, put, delete, patch}
-                };
-            });
+            items.push(quote! { use incan_stdlib::__private::tokio::time::{sleep, timeout, Duration}; });
+            items.push(quote! { use incan_stdlib::__private::tokio::sync::{mpsc, Mutex, RwLock}; });
+            items.push(quote! { use incan_stdlib::__private::tokio::task::JoinHandle; });
         }
 
         // Web router glue (only when web is detected and we have collected routes).
         if self.needs_axum && !self.routes.is_empty() {
-            items.push(self.emit_web_router_fn()?);
-            items.extend(self.emit_web_route_wrappers()?);
+            items.push(self.emit_web_router_macro()?);
         }
 
         for decl in &program.declarations {
@@ -315,6 +307,39 @@ impl<'a> IrEmitter<'a> {
 
         Ok(quote! {
             #(#items)*
+        })
+    }
+
+    /// Emit the web router macro.
+    fn emit_web_router_macro(&self) -> Result<TokenStream, EmitError> {
+        let wrappers = self.emit_web_route_wrappers()?;
+        let mut routes = Vec::new();
+
+        for r in &self.routes {
+            if let Some(bad) = r.unknown_methods.first() {
+                return Err(EmitError::Unsupported(format!("unsupported web method '{}'", bad)));
+            }
+            let path = Self::to_axum_path(&r.path)?;
+            let path_lit = proc_macro2::Literal::string(&path);
+            let wrapper_name = format_ident!("__incan_web_{}", r.handler_name);
+
+            for method in &r.methods {
+                let method_fn = match method {
+                    HttpMethodId::Get => quote! { get },
+                    HttpMethodId::Post => quote! { post },
+                    HttpMethodId::Put => quote! { put },
+                    HttpMethodId::Delete => quote! { delete },
+                    HttpMethodId::Patch => quote! { patch },
+                };
+                routes.push(quote! { (#path_lit, #method_fn, #wrapper_name) });
+            }
+        }
+
+        Ok(quote! {
+            incan_stdlib::web::__incan_router! {
+                wrappers: [ #(#wrappers)* ],
+                routes: [ #(#routes),* ]
+            }
         })
     }
 
@@ -386,10 +411,17 @@ impl<'a> IrEmitter<'a> {
                 let path_arg = if path_param_idents.len() == 1 {
                     let pname = &path_param_idents[0];
                     let pty = &path_param_types[0];
-                    quote! { axum::extract::Path(#pname): axum::extract::Path<#pty> }
+                    quote! {
+                        ::incan_stdlib::web::__private::extract::Path(#pname):
+                            ::incan_stdlib::web::__private::extract::Path<#pty>
+                    }
                 } else {
                     quote! {
-                        axum::extract::Path((#(#path_param_idents),*)): axum::extract::Path<(#(#path_param_types),*)>
+                        ::incan_stdlib::web::__private::extract::Path(
+                            (#(#path_param_idents),*)
+                        ): ::incan_stdlib::web::__private::extract::Path<(
+                            #(#path_param_types),*
+                        )>
                     }
                 };
                 args_parts.push(path_arg);
@@ -403,11 +435,17 @@ impl<'a> IrEmitter<'a> {
                 if let Some(inner) = Self::named_generic_arg(&p.ty, "Json") {
                     let pname = format_ident!("{}", Self::escape_keyword(&p.name));
                     let pty = self.emit_type_qualified_for_module(inner, qualify_types)?;
-                    args_parts.push(quote! { axum::extract::Json(#pname): axum::extract::Json<#pty> });
+                    args_parts.push(quote! {
+                        ::incan_stdlib::web::__private::extract::Json(#pname):
+                            ::incan_stdlib::web::__private::extract::Json<#pty>
+                    });
                 } else if let Some(inner) = Self::named_generic_arg(&p.ty, "Query") {
                     let pname = format_ident!("{}", Self::escape_keyword(&p.name));
                     let pty = self.emit_type_qualified_for_module(inner, qualify_types)?;
-                    args_parts.push(quote! { axum::extract::Query(#pname): axum::extract::Query<#pty> });
+                    args_parts.push(quote! {
+                        ::incan_stdlib::web::__private::extract::Query(#pname):
+                            ::incan_stdlib::web::__private::extract::Query<#pty>
+                    });
                 } else {
                     return Err(EmitError::Unsupported(format!(
                         "unsupported web handler param '{}': only path params, Json[T], and Query[T] are supported",
@@ -444,7 +482,7 @@ impl<'a> IrEmitter<'a> {
             };
 
             out.push(quote! {
-                async fn #wrapper_name(#(#args_parts),*) -> impl axum::response::IntoResponse {
+                async fn #wrapper_name(#(#args_parts),*) -> impl ::incan_stdlib::web::__private::response::IntoResponse {
                     #call
                 }
             });
@@ -576,38 +614,6 @@ impl<'a> IrEmitter<'a> {
         }
         let ident = format_ident!("{}", Self::escape_keyword(name));
         Ok(quote! { #ident })
-    }
-
-    /// Emit the axum router builder for collected `@route` handlers.
-    fn emit_web_router_fn(&self) -> Result<TokenStream, EmitError> {
-        let mut router = quote! { axum::Router::new() };
-
-        for r in &self.routes {
-            if let Some(bad) = r.unknown_methods.first() {
-                return Err(EmitError::Unsupported(format!("unsupported web method '{}'", bad)));
-            }
-            let path = Self::to_axum_path(&r.path)?;
-            let path_lit = proc_macro2::Literal::string(&path);
-            let wrapper_name = format_ident!("__incan_web_{}", r.handler_name);
-
-            // For now: only support GET/POST/PUT/DELETE/PATCH single-method routes.
-            let method = r.methods.first().copied().unwrap_or(HttpMethodId::Get);
-            let route_layer = match method {
-                HttpMethodId::Get => quote! { axum::routing::get(#wrapper_name) },
-                HttpMethodId::Post => quote! { axum::routing::post(#wrapper_name) },
-                HttpMethodId::Put => quote! { axum::routing::put(#wrapper_name) },
-                HttpMethodId::Delete => quote! { axum::routing::delete(#wrapper_name) },
-                HttpMethodId::Patch => quote! { axum::routing::patch(#wrapper_name) },
-            };
-
-            router = quote! { #router.route(#path_lit, #route_layer) };
-        }
-
-        Ok(quote! {
-            fn __incan_web_router() -> axum::Router {
-                #router
-            }
-        })
     }
 
     /// Convert `{param}` placeholders to axum `:param` path segments.

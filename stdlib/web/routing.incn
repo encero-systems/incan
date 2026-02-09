@@ -4,6 +4,8 @@ HTTP Routing
 Decorators and constants for defining web routes.
 
 Example:
+    from std.web import route, Json, Response, GET, POST, DELETE
+    
     @route("/users/{id}", methods=[GET])
     async def get_user(id: int) -> Json[User]:
         user = find_user(id)?
@@ -40,6 +42,8 @@ def route(path: str, methods: list[str] = [GET]) -> Callable:
     
     Example:
     ```incan
+    from std.web import route, Response, Json, GET, DELETE
+    
     @route("/api/items/{id}", methods=[GET, DELETE])
     async def item_handler(id: int) -> Response:
         match request_method():

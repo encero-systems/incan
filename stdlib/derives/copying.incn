@@ -25,7 +25,7 @@ trait Clone:
     println(user1.name)  # Still "Alice"
     ```
     """
-    @compiler_expand
+    @rust.extern
     def clone(self) -> Self: ...
 
 
@@ -91,6 +91,6 @@ trait Default:
     Note: Default cannot be derived for types with fields that have no
     sensible default (e.g., custom types without their own Default).
     """
-    @compiler_expand
+    @rust.extern
     @classmethod
     def default(cls) -> Self: ...

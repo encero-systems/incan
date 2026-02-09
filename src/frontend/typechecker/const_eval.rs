@@ -9,10 +9,9 @@
 //! - `**` yields `Int` only for non-negative int literal exponents; otherwise `Float`
 
 use crate::frontend::ast::*;
-use crate::frontend::diagnostics::{CompileError, errors};
-use crate::frontend::symbols::{ResolvedType, resolve_type};
+use crate::frontend::diagnostics::errors;
+use crate::frontend::symbols::ResolvedType;
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved, pow_exponent_kind_from_ast};
-use incan_core::errors::IncanError;
 use incan_core::strings::{self, StringAccessError};
 use incan_core::{NumericTy, result_numeric_type};
 
@@ -93,7 +92,8 @@ impl TypeChecker {
 
         // If an annotation exists, require compatibility.
         if let Some(ann) = &konst.ty {
-            let expected = self.freeze_const_annotation(resolve_type(&ann.node, &self.symbols));
+            let resolved = self.resolve_type_checked(ann);
+            let expected = self.freeze_const_annotation(resolved);
             if !self.types_compatible(&result.ty, &expected) {
                 self.errors.push(errors::type_mismatch(
                     &expected.to_string(),
@@ -102,13 +102,8 @@ impl TypeChecker {
                 ));
             }
         } else if matches!(result.ty, ResolvedType::Unknown) {
-            self.errors.push(CompileError::type_error(
-                format!(
-                    "Cannot infer type for const '{}'; add an explicit type annotation",
-                    konst.name
-                ),
-                decl_span,
-            ));
+            self.errors
+                .push(errors::const_missing_type_annotation(&konst.name, decl_span));
         }
 
         // Update the symbol table type (so later expressions see the refined type).
@@ -139,10 +134,7 @@ impl TypeChecker {
                 cycle.push(name.to_string());
                 let cycle_str = cycle.join(" -> ");
                 let span = self.const_decls.get(name).map(|(_, s)| *s).unwrap_or_default();
-                self.errors.push(CompileError::type_error(
-                    format!("Const dependency cycle detected: {}", cycle_str),
-                    span,
-                ));
+                self.errors.push(errors::const_dependency_cycle(&cycle_str, span));
                 return None;
             }
             ConstEvalState::NotStarted => {}
@@ -157,7 +149,7 @@ impl TypeChecker {
             .insert(name.to_string(), ConstEvalState::InProgress);
         stack.push(name.to_string());
 
-        let expected = decl.ty.as_ref().map(|t| resolve_type(&t.node, &self.symbols));
+        let expected = decl.ty.as_ref().map(|t| self.resolve_type_checked(t));
         let expected = expected.map(|t| self.freeze_const_annotation(t));
         let result = self.eval_const_expr(&decl.value, expected.as_ref(), stack, decl_span);
 
@@ -183,10 +175,7 @@ impl TypeChecker {
             Expr::Ident(name) => {
                 // Only other consts are allowed in const initializers.
                 if !self.const_decls.contains_key(name) {
-                    self.errors.push(CompileError::type_error(
-                        format!("Non-const name '{}' is not allowed in a const initializer", name),
-                        expr.span,
-                    ));
+                    self.errors.push(errors::const_non_const_name(name, expr.span));
                     return None;
                 }
                 self.eval_const_by_name(name, stack)
@@ -223,10 +212,8 @@ impl TypeChecker {
                                 value,
                             })
                         } else {
-                            self.errors.push(CompileError::type_error(
-                                format!("Unary '-' is not supported for type '{}'", r.ty),
-                                expr.span,
-                            ));
+                            self.errors
+                                .push(errors::const_unary_op_not_supported("-", &r.ty.to_string(), expr.span));
                             None
                         }
                     }
@@ -242,8 +229,9 @@ impl TypeChecker {
                                 value,
                             })
                         } else {
-                            self.errors.push(CompileError::type_error(
-                                format!("Unary 'not' is not supported for type '{}'", r.ty),
+                            self.errors.push(errors::const_unary_op_not_supported(
+                                "not",
+                                &r.ty.to_string(),
                                 expr.span,
                             ));
                             None
@@ -338,11 +326,10 @@ impl TypeChecker {
                                 (ty, ConstKind::RustNative, None)
                             }
                             _ => {
-                                self.errors.push(CompileError::type_error(
-                                    format!(
-                                        "Binary operator '{}' is not supported for types '{}' and '{}'",
-                                        op, l.ty, r.ty
-                                    ),
+                                self.errors.push(errors::const_binary_op_not_supported(
+                                    &op.to_string(),
+                                    &l.ty.to_string(),
+                                    &r.ty.to_string(),
                                     expr.span,
                                 ));
                                 return None;
@@ -360,8 +347,9 @@ impl TypeChecker {
                         } else if self.types_compatible(&l.ty, &r.ty) {
                             (ResolvedType::Bool, ConstKind::RustNative, None)
                         } else {
-                            self.errors.push(CompileError::type_error(
-                                format!("Cannot compare '{}' with '{}'", l.ty, r.ty),
+                            self.errors.push(errors::const_compare_incompatible(
+                                &l.ty.to_string(),
+                                &r.ty.to_string(),
                                 expr.span,
                             ));
                             return None;
@@ -382,21 +370,18 @@ impl TypeChecker {
                             };
                             (ResolvedType::Bool, ConstKind::RustNative, value)
                         } else {
-                            self.errors.push(CompileError::type_error(
-                                format!(
-                                    "Logical operator '{}' requires bool operands (got '{}' and '{}')",
-                                    op, l.ty, r.ty
-                                ),
+                            self.errors.push(errors::const_logical_op_requires_bool(
+                                &op.to_string(),
+                                &l.ty.to_string(),
+                                &r.ty.to_string(),
                                 expr.span,
                             ));
                             return None;
                         }
                     }
                     BinaryOp::In | BinaryOp::NotIn | BinaryOp::Is => {
-                        self.errors.push(CompileError::type_error(
-                            format!("Operator '{}' is not allowed inside const initializers (phase 1)", op),
-                            expr.span,
-                        ));
+                        self.errors
+                            .push(errors::const_operator_not_allowed(&op.to_string(), expr.span));
                         return None;
                     }
                 };
@@ -432,10 +417,7 @@ impl TypeChecker {
                 };
 
                 if items.is_empty() && matches!(elem_ty, ResolvedType::Unknown) {
-                    self.errors.push(CompileError::type_error(
-                        "Cannot infer type for empty const list; annotate as FrozenList[T]".to_string(),
-                        expr.span,
-                    ));
+                    self.errors.push(errors::const_empty_list_type_inference(expr.span));
                 }
 
                 Some(ConstEvalResult {
@@ -468,10 +450,7 @@ impl TypeChecker {
                 };
 
                 if items.is_empty() && matches!(elem_ty, ResolvedType::Unknown) {
-                    self.errors.push(CompileError::type_error(
-                        "Cannot infer type for empty const set; annotate as FrozenSet[T]".to_string(),
-                        expr.span,
-                    ));
+                    self.errors.push(errors::const_empty_set_type_inference(expr.span));
                 }
 
                 Some(ConstEvalResult {
@@ -512,10 +491,7 @@ impl TypeChecker {
                 if pairs.is_empty()
                     && (matches!(key_ty, ResolvedType::Unknown) || matches!(val_ty, ResolvedType::Unknown))
                 {
-                    self.errors.push(CompileError::type_error(
-                        "Cannot infer type for empty const dict; annotate as FrozenDict[K, V]".to_string(),
-                        expr.span,
-                    ));
+                    self.errors.push(errors::const_empty_dict_type_inference(expr.span));
                 }
 
                 Some(ConstEvalResult {
@@ -529,17 +505,12 @@ impl TypeChecker {
                 let b = self.eval_const_expr(base, None, stack, decl_span)?;
                 let i = self.eval_const_expr(idx, None, stack, decl_span)?;
                 if !is_frozen_str(&b.ty) && !matches!(b.ty, ResolvedType::Str) {
-                    self.errors.push(CompileError::type_error(
-                        "Indexing is only supported for strings in const initializers".to_string(),
-                        expr.span,
-                    ));
+                    self.errors.push(errors::const_indexing_requires_string(expr.span));
                     return None;
                 }
                 if !is_intlike_for_index(&i.ty) {
-                    self.errors.push(CompileError::type_error(
-                        format!("String index must be int (got '{}')", i.ty),
-                        idx.span,
-                    ));
+                    self.errors
+                        .push(errors::const_string_index_requires_int(&i.ty.to_string(), idx.span));
                     return None;
                 }
                 let mut value = None;
@@ -550,10 +521,7 @@ impl TypeChecker {
                     match strings::str_char_at(base_str, idx_val) {
                         Ok(ch) => value = Some(ConstValue::FrozenStr(ch)),
                         Err(StringAccessError::IndexOutOfRange) => {
-                            self.errors.push(CompileError::type_error(
-                                IncanError::string_index_out_of_range().to_string(),
-                                expr.span,
-                            ));
+                            self.errors.push(errors::const_string_index_out_of_range(expr.span));
                             return None;
                         }
                         Err(StringAccessError::SliceStepZero) => unreachable!("step zero is not used for index"),
@@ -569,10 +537,7 @@ impl TypeChecker {
             Expr::Slice(base, slice) => {
                 let b = self.eval_const_expr(base, None, stack, decl_span)?;
                 if !is_frozen_str(&b.ty) && !matches!(b.ty, ResolvedType::Str) {
-                    self.errors.push(CompileError::type_error(
-                        "Slicing is only supported for strings in const initializers".to_string(),
-                        base.span,
-                    ));
+                    self.errors.push(errors::const_slicing_requires_string(base.span));
                     return None;
                 }
 
@@ -580,8 +545,9 @@ impl TypeChecker {
                 if let Some(s) = &slice.start {
                     let ty = self.eval_const_expr(s, None, stack, decl_span)?;
                     if !is_intlike_for_index(&ty.ty) {
-                        self.errors.push(CompileError::type_error(
-                            format!("Slice start must be int (got '{}')", ty.ty),
+                        self.errors.push(errors::const_slice_component_requires_int(
+                            "start",
+                            &ty.ty.to_string(),
                             s.span,
                         ));
                         return None;
@@ -592,8 +558,9 @@ impl TypeChecker {
                 if let Some(e) = &slice.end {
                     let ty = self.eval_const_expr(e, None, stack, decl_span)?;
                     if !is_intlike_for_index(&ty.ty) {
-                        self.errors.push(CompileError::type_error(
-                            format!("Slice end must be int (got '{}')", ty.ty),
+                        self.errors.push(errors::const_slice_component_requires_int(
+                            "end",
+                            &ty.ty.to_string(),
                             e.span,
                         ));
                         return None;
@@ -604,8 +571,9 @@ impl TypeChecker {
                 if let Some(st) = &slice.step {
                     let ty = self.eval_const_expr(st, None, stack, decl_span)?;
                     if !is_intlike_for_index(&ty.ty) {
-                        self.errors.push(CompileError::type_error(
-                            format!("Slice step must be int (got '{}')", ty.ty),
+                        self.errors.push(errors::const_slice_component_requires_int(
+                            "step",
+                            &ty.ty.to_string(),
                             st.span,
                         ));
                         return None;
@@ -619,18 +587,12 @@ impl TypeChecker {
                         Ok(out) => value = Some(ConstValue::FrozenStr(out)),
                         Err(StringAccessError::SliceStepZero) => {
                             let span = slice.step.as_ref().map(|s| s.span).unwrap_or(expr.span);
-                            self.errors.push(CompileError::type_error(
-                                IncanError::slice_step_zero().to_string(),
-                                span,
-                            ));
+                            self.errors.push(errors::const_slice_step_zero(span));
                             return None;
                         }
                         Err(StringAccessError::IndexOutOfRange) => {
                             // Should not normally occur due to clamping but keep in sync with semantics.
-                            self.errors.push(CompileError::type_error(
-                                IncanError::string_index_out_of_range().to_string(),
-                                expr.span,
-                            ));
+                            self.errors.push(errors::const_string_index_out_of_range(expr.span));
                             return None;
                         }
                     }
@@ -659,17 +621,11 @@ impl TypeChecker {
             | Expr::Paren(_)
             | Expr::Constructor(_, _)
             | Expr::FString(_) => {
-                self.errors.push(CompileError::type_error(
-                    "Expression is not allowed inside const initializers (phase 1)".to_string(),
-                    expr.span,
-                ));
+                self.errors.push(errors::const_expression_not_allowed(expr.span));
                 None
             }
             Expr::SelfExpr => {
-                self.errors.push(CompileError::type_error(
-                    "self is not allowed inside const initializers".to_string(),
-                    expr.span,
-                ));
+                self.errors.push(errors::const_self_not_allowed(expr.span));
                 None
             }
         }
@@ -712,10 +668,7 @@ impl TypeChecker {
                 // None is ambiguous without annotation.
                 let ty = expected.cloned().unwrap_or(ResolvedType::Unknown);
                 if matches!(ty, ResolvedType::Unknown) {
-                    self.errors.push(CompileError::type_error(
-                        "Cannot infer type for None in const initializer; add an explicit type annotation".to_string(),
-                        span,
-                    ));
+                    self.errors.push(errors::const_none_type_inference(span));
                 }
                 ConstEvalResult {
                     ty,

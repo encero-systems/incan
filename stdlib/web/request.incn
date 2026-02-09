@@ -4,6 +4,8 @@ HTTP Request Extractors
 Types for extracting data from HTTP requests.
 
 Example:
+    from std.web import route, Json, Query
+    
     @route("/search")
     async def search(params: Query[SearchParams]) -> Json[list[Result]]:
         results = do_search(params.q, params.limit)
@@ -25,6 +27,8 @@ model Query[T]:
     
     Example:
     ```incan
+    from std.web import route, Json, Query
+    
     @derive(Deserialize)
     model SearchParams:
         q: str
@@ -49,6 +53,8 @@ model Path[T]:
     
     Example:
     ```incan
+    from std.web import route, Json, Path
+    
     # Single param - just use the type
     @route("/users/{id}")
     async def get_user(id: int) -> Json[User]:

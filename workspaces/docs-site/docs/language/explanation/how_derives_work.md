@@ -24,9 +24,9 @@ At a high level:
 
 Incan’s stdlib contains trait definitions that act as **documentation vocabulary** for derive names and dunder hooks.
 
-You may see `@compiler_expand` in stdlib sources:
+You may see `@rust.extern` in stdlib sources:
 
-- it is **not** a user feature
+- it marks functions whose body is provided by Rust (via `rust.module()`)
 - it marks “compiler-provided implementation” stubs in the stdlib
 
 The compiler is responsible for providing the implementation; the stdlib is the stable vocabulary and signature

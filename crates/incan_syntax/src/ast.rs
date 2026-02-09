@@ -325,6 +325,7 @@ pub struct Param {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Decorator {
+    pub path: ImportPath,
     pub name: Ident,
     pub args: Vec<DecoratorArg>,
 }
