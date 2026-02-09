@@ -3685,6 +3685,8 @@
       
         
       
+        
+      
     
     
       
@@ -3726,6 +3728,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3909,9 +3932,9 @@ serde derives, etc.) without boilerplate.</p>
 <hr />
 <h2 id="where-the-derive-vocabulary-lives">Where the “derive vocabulary” lives<a class="headerlink" href="#where-the-derive-vocabulary-lives" title="Permanent link">&para;</a></h2>
 <p>Incan’s stdlib contains trait definitions that act as <strong>documentation vocabulary</strong> for derive names and dunder hooks.</p>
-<p>You may see <code>@compiler_expand</code> in stdlib sources:</p>
+<p>You may see <code>@rust.extern</code> in stdlib sources:</p>
 <ul>
-<li>it is <strong>not</strong> a user feature</li>
+<li>it marks functions whose body is provided by Rust (via <code>rust.module()</code>)</li>
 <li>it marks “compiler-provided implementation” stubs in the stdlib</li>
 </ul>
 <p>The compiler is responsible for providing the implementation; the stdlib is the stable vocabulary and signature

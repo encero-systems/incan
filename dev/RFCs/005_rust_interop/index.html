@@ -3586,6 +3586,8 @@
       
         
       
+        
+      
     
     
       
@@ -3627,6 +3629,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -4241,7 +4264,8 @@ FFI (Foreign Function Interface) boundary.</p>
 <li>Arbitrary proc-macros are effectively “run arbitrary Rust at build time”; they undermine determinism, portability,
   and the “Incan stays Incan” surface. A curated <code>@derive(...)</code> set keeps the interop contract explicit and reviewable.</li>
 <li>Trait-heavy and lifetime-heavy Rust APIs often require expressing trait bounds and borrowing/lifetimes at call
-  sites; this is intentionally deferred until Incan has a richer, explicit trait/borrow surface for interop.</li>
+  sites; trait bound inference and explicit annotation syntax are addressed by RFC 023 (Compilable Stdlib &amp; Rust Module
+  Binding). Lifetime/borrow surface beyond strings is deferred to a future RFC.</li>
 <li>Incan’s goal is to remove Rust’s borrow-checker ergonomics from user code. The compiler may adapt borrows internally
   (currently scoped mainly to strings), but users should not be forced to write Rust-like lifetime/borrow annotations.</li>
 </ul>

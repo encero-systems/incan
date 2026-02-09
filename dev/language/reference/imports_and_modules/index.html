@@ -1586,6 +1586,48 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#incan-standard-library-std" class="md-nav__link">
+    <span class="md-ellipsis">
+      Incan standard library (std.*)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Incan standard library (std.*)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#available-modules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Available modules
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#import-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      Import examples
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reserved-root-namespaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reserved root namespaces
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#standard-library-math" class="md-nav__link">
     <span class="md-ellipsis">
       Standard library: math
@@ -3829,6 +3871,8 @@
       
         
       
+        
+      
     
     
       
@@ -3870,6 +3914,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -4098,6 +4163,48 @@
       Special import: import this
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#incan-standard-library-std" class="md-nav__link">
+    <span class="md-ellipsis">
+      Incan standard library (std.*)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Incan standard library (std.*)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#available-modules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Available modules
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#import-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      Import examples
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reserved-root-namespaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reserved root namespaces
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -4380,7 +4487,67 @@
 <p><code>import this</code> is always available and prints the Incan “Zen” design principles when imported:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import this&quot;</span>
 </code></pre></div>
+<h2 id="incan-standard-library-std">Incan standard library (<code>std.*</code>)<a class="headerlink" href="#incan-standard-library-std" title="Permanent link">&para;</a></h2>
+<!-- TODO: move this to its own section -->
+
+<p>Incan's standard library lives under the <code>std</code> namespace. Import modules and items from it just like any other module.
+The compiler activates features (e.g. async runtime, web framework) automatically based on which <code>std.*</code> modules you
+import — no manual feature flags needed.</p>
+<h3 id="available-modules">Available modules<a class="headerlink" href="#available-modules" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th>Description</th>
+<th>Activates feature</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>std.web</code></td>
+<td>Web framework (routes, responses, extractors)</td>
+<td><code>web</code> (Axum)</td>
+</tr>
+<tr>
+<td><code>std.testing</code></td>
+<td>Test fixtures and assertions</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>std.async</code></td>
+<td>Async utilities (tasks, channels, timers)</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>std.serde.json</code></td>
+<td>JSON serialization/deserialization</td>
+<td><code>json</code></td>
+</tr>
+<tr>
+<td><code>std.reflection</code></td>
+<td>Reflection helpers (<code>FieldInfo</code>, etc.)</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<h3 id="import-examples">Import examples<a class="headerlink" href="#import-examples" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Import items from the web framework</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.web</span><span class="w"> </span><span class="kn">import</span> <span class="kt">App</span><span class="p">,</span> <span class="n">route</span><span class="p">,</span> <span class="kt">Response</span><span class="p">,</span> <span class="kt">Json</span><span class="p">,</span> <span class="nc">GET</span><span class="p">,</span> <span class="nc">POST</span>
+
+<span class="c1"># Import test fixtures</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
+
+<span class="c1"># Import JSON helpers</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nb">json_stringify</span><span class="p">,</span> <span class="n">json_parse</span>
+</code></pre></div>
+<h3 id="reserved-root-namespaces">Reserved root namespaces<a class="headerlink" href="#reserved-root-namespaces" title="Permanent link">&para;</a></h3>
+<p>The names <code>std</code> and <code>rust</code> are reserved at the root level. You cannot shadow them with local modules or aliases:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># ERROR: &#39;std&#39; is a reserved root namespace</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">models</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">std</span>
+</code></pre></div>
 <h2 id="standard-library-math">Standard library: <code>math</code><a class="headerlink" href="#standard-library-math" title="Permanent link">&para;</a></h2>
+<!-- TODO: move this to its own section -->
+
 <p>You must import <code>math</code> before use:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
 
@@ -4490,15 +4657,17 @@
 </tbody>
 </table>
 <h2 id="rust-standard-library-access">Rust standard library access<a class="headerlink" href="#rust-standard-library-access" title="Permanent link">&para;</a></h2>
-<p>Incan can import from Rust’s standard library.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std</span><span class="p">::</span><span class="n">fs</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">std</span><span class="p">::</span><span class="n">env</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">std</span><span class="p">::</span><span class="n">path</span><span class="p">::</span><span class="nc">Path</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">std</span><span class="p">::</span><span class="n">time</span>
-</code></pre></div>
-<p>This is equivalent to using the explicit Rust interop prefix:</p>
+<p>To import from Rust’s standard library, use the <code>rust::</code> prefix:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">fs</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">env</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">path</span><span class="p">::</span><span class="kt">Path</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">time</span>
 </code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">The <code>std</code> root is reserved</p>
+<p>Bare <code>import std::fs</code> refers to <strong>Incan’s</strong> standard library, not Rust’s.
+Always use the <code>rust::std::</code> prefix when you need Rust’s stdlib.</p>
+</div>
 <p>Note: using these requires understanding the underlying Rust types. Prefer Incan built-ins (<code>read_file</code>, <code>write_file</code>,
 etc.) where available.</p>
 <h2 id="rust-crates-vs-incan-modules-important">Rust crates vs Incan modules (important)<a class="headerlink" href="#rust-crates-vs-incan-modules-important" title="Permanent link">&para;</a></h2>

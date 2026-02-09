@@ -3586,6 +3586,8 @@
       
         
       
+        
+      
     
     
       
@@ -3627,6 +3629,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -4822,15 +4845,15 @@ restoration afterward.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">module</span> <span class="k">tests</span><span class="p">:</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span><span class="p">,</span> <span class="n">tmp_workdir</span><span class="p">,</span> <span class="n">tmp_path</span><span class="p">,</span> <span class="n">env</span><span class="p">,</span> <span class="nc">TestEnv</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">test_uses_tmp_path</span><span class="p">(</span><span class="n">tmp_path</span><span class="p">:</span> <span class="nc">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_uses_tmp_path</span><span class="p">(</span><span class="n">tmp_path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="k">let</span> <span class="n">config</span> <span class="o">=</span> <span class="n">tmp_path</span> <span class="o">/</span> <span class="s2">&quot;config.json&quot;</span>
         <span class="c1"># write/read config using an absolute path (error handling omitted in examples)</span>
         <span class="n">config</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s2">&quot;</span><span class="si">{}</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">?</span>
         <span class="k">assert</span> <span class="n">config</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">test_relative_paths</span><span class="p">(</span><span class="n">tmp_workdir</span><span class="p">:</span> <span class="nc">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_relative_paths</span><span class="p">(</span><span class="n">tmp_workdir</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="c1"># current working directory is a fresh temp dir for this test</span>
-        <span class="nc">Path</span><span class="p">(</span><span class="s2">&quot;output.txt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s2">&quot;ok&quot;</span><span class="p">)</span>
+        <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;output.txt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s2">&quot;ok&quot;</span><span class="p">)</span>
         <span class="k">assert</span> <span class="p">(</span><span class="n">tmp_workdir</span> <span class="o">/</span> <span class="s2">&quot;output.txt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">test_env</span><span class="p">(</span><span class="n">env</span><span class="p">:</span> <span class="nc">TestEnv</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -4876,7 +4899,7 @@ conditions, <code>@parametrize</code> data (and ids), <code>TEST_MARKS</code>, a
 <li>Example: pass a filename as <code>str</code> and construct a <code>Path</code> inside the test.</li>
 </ul>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@parametrize</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;config.json&quot;</span><span class="p">,</span> <span class="s2">&quot;defaults.json&quot;</span><span class="p">])</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">test_config</span><span class="p">(</span><span class="n">tmp_path</span><span class="p">:</span> <span class="nc">Path</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">test_config</span><span class="p">(</span><span class="n">tmp_path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="k">let</span> <span class="n">path</span> <span class="o">=</span> <span class="n">tmp_path</span> <span class="o">/</span> <span class="n">name</span>
     <span class="k">assert</span> <span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span> <span class="o">==</span> <span class="kc">False</span>
 </code></pre></div>

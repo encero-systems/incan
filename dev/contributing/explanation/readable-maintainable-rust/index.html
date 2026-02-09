@@ -3586,7 +3586,7 @@
         <li class="md-nav__item">
   <a href="#what-readable-means-in-rust" class="md-nav__link">
     <span class="md-ellipsis">
-      What “Readable” Means in Rust
+      What "Readable" Means in Rust
     </span>
   </a>
   
@@ -3595,7 +3595,7 @@
         <li class="md-nav__item">
   <a href="#what-maintainable-means-in-rust" class="md-nav__link">
     <span class="md-ellipsis">
-      What “Maintainable” Means in Rust
+      What "Maintainable" Means in Rust
     </span>
   </a>
   
@@ -3713,11 +3713,140 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#common-pitfalls" class="md-nav__link">
+  <a href="#common-pitfalls-anti-patterns" class="md-nav__link">
     <span class="md-ellipsis">
-      Common Pitfalls
+      Common Pitfalls &amp; Anti-Patterns
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Common Pitfalls & Anti-Patterns">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#quick-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      Quick-reference
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#detailed-guidance" class="md-nav__link">
+    <span class="md-ellipsis">
+      Detailed guidance
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Detailed guidance">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#panics-on-recoverable-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      Panics on recoverable paths
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cloning-question-every-clone" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cloning — question every .clone()
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stringly-typed-apis" class="md-nav__link">
+    <span class="md-ellipsis">
+      Stringly-typed APIs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parameter-types-accept-the-most-general-borrow" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parameter types — accept the most general borrow
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#type-casting-prefer-safe-conversions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Type casting — prefer safe conversions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#iterator-chains-dont-collect-just-to-iterate-again" class="md-nav__link">
+    <span class="md-ellipsis">
+      Iterator chains — don't collect just to iterate again
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#visibility-start-private-widen-deliberately" class="md-nav__link">
+    <span class="md-ellipsis">
+      Visibility — start private, widen deliberately
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#match-arms-factor-out-shared-logic" class="md-nav__link">
+    <span class="md-ellipsis">
+      Match arms — factor out shared logic
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#must_use-on-important-return-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      #[must_use] on important return values
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#architecture-level-pitfalls" class="md-nav__link">
+    <span class="md-ellipsis">
+      Architecture-level pitfalls
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clippy" class="md-nav__link">
+    <span class="md-ellipsis">
+      Clippy
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -3790,6 +3919,8 @@
       
         
       
+        
+      
     
     
       
@@ -3831,6 +3962,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3939,7 +4091,7 @@
         <li class="md-nav__item">
   <a href="#what-readable-means-in-rust" class="md-nav__link">
     <span class="md-ellipsis">
-      What “Readable” Means in Rust
+      What "Readable" Means in Rust
     </span>
   </a>
   
@@ -3948,7 +4100,7 @@
         <li class="md-nav__item">
   <a href="#what-maintainable-means-in-rust" class="md-nav__link">
     <span class="md-ellipsis">
-      What “Maintainable” Means in Rust
+      What "Maintainable" Means in Rust
     </span>
   </a>
   
@@ -4066,11 +4218,140 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#common-pitfalls" class="md-nav__link">
+  <a href="#common-pitfalls-anti-patterns" class="md-nav__link">
     <span class="md-ellipsis">
-      Common Pitfalls
+      Common Pitfalls &amp; Anti-Patterns
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Common Pitfalls & Anti-Patterns">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#quick-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      Quick-reference
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#detailed-guidance" class="md-nav__link">
+    <span class="md-ellipsis">
+      Detailed guidance
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Detailed guidance">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#panics-on-recoverable-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      Panics on recoverable paths
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cloning-question-every-clone" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cloning — question every .clone()
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stringly-typed-apis" class="md-nav__link">
+    <span class="md-ellipsis">
+      Stringly-typed APIs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parameter-types-accept-the-most-general-borrow" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parameter types — accept the most general borrow
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#type-casting-prefer-safe-conversions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Type casting — prefer safe conversions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#iterator-chains-dont-collect-just-to-iterate-again" class="md-nav__link">
+    <span class="md-ellipsis">
+      Iterator chains — don't collect just to iterate again
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#visibility-start-private-widen-deliberately" class="md-nav__link">
+    <span class="md-ellipsis">
+      Visibility — start private, widen deliberately
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#match-arms-factor-out-shared-logic" class="md-nav__link">
+    <span class="md-ellipsis">
+      Match arms — factor out shared logic
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#must_use-on-important-return-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      #[must_use] on important return values
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#architecture-level-pitfalls" class="md-nav__link">
+    <span class="md-ellipsis">
+      Architecture-level pitfalls
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clippy" class="md-nav__link">
+    <span class="md-ellipsis">
+      Clippy
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -4102,14 +4383,14 @@
 
 
 <h1 id="readable-maintainable-rust-a-practical-guide">Readable &amp; Maintainable Rust: A Practical Guide<a class="headerlink" href="#readable-maintainable-rust-a-practical-guide" title="Permanent link">&para;</a></h1>
-<p>This document contains a pragmatic set of principles, patterns, and guardrails for writing Rust that’s easy to understand
+<p>This document contains a pragmatic set of principles, patterns, and guardrails for writing Rust that's easy to understand
 and safe to evolve. It draws from <a href="https://doc.rust-lang.org/book/">The Rust Book</a> and the
 <a href="https://rust-lang.github.io/api-guidelines/about.html">Rust API Guidelines</a>.</p>
 <p>Incan contributors are expected to follow these principles and patterns when writing Rust code.</p>
 <h2 id="table-of-contents">Table of Contents<a class="headerlink" href="#table-of-contents" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="#what-readable-means-in-rust">What “Readable” Means in Rust</a></li>
-<li><a href="#what-maintainable-means-in-rust">What “Maintainable” Means in Rust</a></li>
+<li><a href="#what-readable-means-in-rust">What "Readable" Means in Rust</a></li>
+<li><a href="#what-maintainable-means-in-rust">What "Maintainable" Means in Rust</a></li>
 <li><a href="#pragmatic-checklist">Pragmatic Checklist</a></li>
 <li><a href="#idiomatic-examples">Idiomatic Examples</a><ul>
 <li><a href="#1-errors-internal-vs-external">Errors: Internal vs External</a></li>
@@ -4125,11 +4406,11 @@ and safe to evolve. It draws from <a href="https://doc.rust-lang.org/book/">The 
 <li><a href="#typical-ci-steps">Typical CI Steps</a></li>
 </ul>
 </li>
-<li><a href="#common-pitfalls">Common Pitfalls</a></li>
+<li><a href="#common-pitfalls--anti-patterns">Common Pitfalls &amp; Anti-Patterns</a></li>
 <li><a href="#simple-heuristic">Simple Heuristic</a></li>
 </ul>
 <hr />
-<h2 id="what-readable-means-in-rust">What “Readable” Means in Rust<a class="headerlink" href="#what-readable-means-in-rust" title="Permanent link">&para;</a></h2>
+<h2 id="what-readable-means-in-rust">What "Readable" Means in Rust<a class="headerlink" href="#what-readable-means-in-rust" title="Permanent link">&para;</a></h2>
 <p>Readable Rust is code that a competent Rustacean can <strong>scan and understand quickly</strong>, without excessive file-hopping or
 ownership gymnastics.</p>
 <ol>
@@ -4152,12 +4433,12 @@ ownership gymnastics.</p>
 </li>
 <li>Use <code>Result&lt;T, E&gt;</code> pervasively; reserve panics for programmer errors (<code>unreachable!</code>, <code>expect</code> with invariant context).</li>
 <li>
-<p>Propagate with <code>?</code>; keep error messages actionable; don’t lose context when mapping.</p>
+<p>Propagate with <code>?</code>; keep error messages actionable; don't lose context when mapping.</p>
 </li>
 <li>
 <p><strong>Minimal magic</strong></p>
 </li>
-<li>Macros remove boilerplate but don’t hide logic or create opaque DSLs.</li>
+<li>Macros remove boilerplate but don't hide logic or create opaque DSLs.</li>
 <li>
 <p>Generics are purposeful; trait bounds are explicit and readable.</p>
 </li>
@@ -4174,12 +4455,12 @@ ownership gymnastics.</p>
 <li>Functions are small, pure where possible, with limited side effects and clear inputs/outputs.</li>
 </ol>
 <hr />
-<h2 id="what-maintainable-means-in-rust">What “Maintainable” Means in Rust<a class="headerlink" href="#what-maintainable-means-in-rust" title="Permanent link">&para;</a></h2>
+<h2 id="what-maintainable-means-in-rust">What "Maintainable" Means in Rust<a class="headerlink" href="#what-maintainable-means-in-rust" title="Permanent link">&para;</a></h2>
 <p>Maintainable Rust withstands change with <strong>minimal risk and effort</strong>—thanks to stable seams, guardrails, and predictable
 behavior.</p>
 <ol>
 <li><strong>Stable, minimal public API</strong></li>
-<li>Public types/traits are small and composable; prefer <strong>capability-oriented traits</strong> over “god traits.”</li>
+<li>Public types/traits are small and composable; prefer <strong>capability-oriented traits</strong> over "god traits."</li>
 <li>Keep internals private (<code>mod</code> visibility) unless exposure is justified.</li>
 <li>
 <p>Avoid leaking concrete types when <code>impl Trait</code> or trait objects suffice.</p>
@@ -4204,7 +4485,7 @@ behavior.</p>
 <p><strong>Concurrency discipline</strong></p>
 </li>
 <li>Make <code>Send + Sync</code> requirements explicit; guard shared state predictably.</li>
-<li>Use <strong>structured concurrency</strong> (task groups, cancellation) over “fire-and-forget.”</li>
+<li>Use <strong>structured concurrency</strong> (task groups, cancellation) over "fire-and-forget."</li>
 <li>
 <p>Prefer channels/async streams for coordination when appropriate.</p>
 </li>
@@ -4350,21 +4631,166 @@ cargo<span class="w"> </span>+nightly<span class="w"> </span>udeps<span class="w
 </code></pre></div>
 <p>Note: MSRV is enforced via CI running build/test with a pinned toolchain.</p>
 <hr />
-<h2 id="common-pitfalls">Common Pitfalls<a class="headerlink" href="#common-pitfalls" title="Permanent link">&para;</a></h2>
+<h2 id="common-pitfalls-anti-patterns">Common Pitfalls &amp; Anti-Patterns<a class="headerlink" href="#common-pitfalls-anti-patterns" title="Permanent link">&para;</a></h2>
+<h3 id="quick-reference">Quick-reference<a class="headerlink" href="#quick-reference" title="Permanent link">&para;</a></h3>
+<!-- markdownlint-disable MD013 -->
+
+<table>
+<thead>
+<tr>
+<th>Instead of</th>
+<th>Prefer</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.unwrap()</code> / <code>.expect()</code> in library code</td>
+<td><code>?</code>, <code>.context()</code>, or explicit <code>match</code></td>
+<td>Panics crash the process; propagate errors instead</td>
+</tr>
+<tr>
+<td><code>.clone()</code> to appease the borrow checker</td>
+<td>Restructure ownership or borrow</td>
+<td>Hides design issues and adds unnecessary allocations</td>
+</tr>
+<tr>
+<td><code>&amp;String</code>, <code>&amp;Vec&lt;T&gt;</code>, <code>&amp;Box&lt;T&gt;</code> in parameters</td>
+<td><code>&amp;str</code>, <code>&amp;[T]</code>, <code>&amp;T</code></td>
+<td>More general — accepts owned and borrowed callers alike</td>
+</tr>
+<tr>
+<td><code>x as u32</code> (silent truncation)</td>
+<td><code>x.try_into()</code> or <code>From</code>/<code>Into</code></td>
+<td><code>as</code> silently wraps/truncates; conversions should be explicit</td>
+</tr>
+<tr>
+<td><code>use foo::*</code> (wildcard imports)</td>
+<td><code>use foo::{Bar, Baz}</code></td>
+<td>Makes origins clear; avoids surprise breakage on upstream changes</td>
+</tr>
+<tr>
+<td><code>.collect::&lt;Vec&lt;_&gt;&gt;()</code> just to re-iterate</td>
+<td>Chain iterators directly</td>
+<td>Avoids an unnecessary allocation + copy</td>
+</tr>
+<tr>
+<td><code>pub</code> on everything</td>
+<td><code>pub(crate)</code> or private by default</td>
+<td>Minimize public surface; promote visibility only when needed</td>
+</tr>
+<tr>
+<td>Blocking I/O in <code>async fn</code></td>
+<td><code>tokio::fs</code>, <code>spawn_blocking</code></td>
+<td>Blocks the executor and starves other tasks</td>
+</tr>
+<tr>
+<td><code>Result&lt;T, String&gt;</code> in public APIs</td>
+<td>A typed error enum (<code>thiserror</code>)</td>
+<td>Stringly-typed errors are hard to match on and evolve</td>
+</tr>
+<tr>
+<td><code>Rc&lt;RefCell&lt;T&gt;&gt;</code> everywhere</td>
+<td>Restructure data / ownership</td>
+<td>Usually signals a design that fights the borrow checker</td>
+</tr>
+</tbody>
+</table>
+<!-- markdownlint-enable MD013 -->
+
+<h3 id="detailed-guidance">Detailed guidance<a class="headerlink" href="#detailed-guidance" title="Permanent link">&para;</a></h3>
+<h4 id="panics-on-recoverable-paths">Panics on recoverable paths<a class="headerlink" href="#panics-on-recoverable-paths" title="Permanent link">&para;</a></h4>
+<p>Reserve <code>.unwrap()</code> and <code>.expect()</code> for cases where you can <strong>prove</strong> the value is always <code>Some</code>/<code>Ok</code> — and add a
+comment explaining the invariant. Everywhere else, propagate with <code>?</code>:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="c1">// Bad — panics with no context if the file is missing</span>
+<span class="kd">let</span><span class="w"> </span><span class="n">file</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">File</span><span class="p">::</span><span class="n">open</span><span class="p">(</span><span class="n">path</span><span class="p">).</span><span class="n">unwrap</span><span class="p">();</span>
+
+<span class="c1">// Good — propagates a meaningful error to the caller</span>
+<span class="kd">let</span><span class="w"> </span><span class="n">file</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">File</span><span class="p">::</span><span class="n">open</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+<span class="w">    </span><span class="p">.</span><span class="n">map_err</span><span class="p">(</span><span class="o">|</span><span class="n">e</span><span class="o">|</span><span class="w"> </span><span class="n">anyhow</span><span class="o">!</span><span class="p">(</span><span class="s">&quot;failed to open {}: {e}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">path</span><span class="p">.</span><span class="n">display</span><span class="p">()))</span><span class="o">?</span><span class="p">;</span>
+</code></pre></div>
+<h4 id="cloning-question-every-clone">Cloning — question every <code>.clone()</code><a class="headerlink" href="#cloning-question-every-clone" title="Permanent link">&para;</a></h4>
+<p>A <code>.clone()</code> is sometimes the right answer (crossing an API boundary, shared ownership), but treat every occurrence
+as a review signal. Ask: <em>can I borrow instead? Can I restructure to remove the simultaneous borrow?</em></p>
+<h4 id="stringly-typed-apis">Stringly-typed APIs<a class="headerlink" href="#stringly-typed-apis" title="Permanent link">&para;</a></h4>
+<p>Use enums or newtypes instead of raw strings for fixed sets of values:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="c1">// Bad — typo-prone, no exhaustiveness checking</span>
+<span class="k">fn</span><span class="w"> </span><span class="nf">set_role</span><span class="p">(</span><span class="n">role</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="kt">str</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* ... */</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1">// Good — the compiler enforces valid values</span>
+<span class="k">enum</span><span class="w"> </span><span class="nc">Role</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Admin</span><span class="p">,</span><span class="w"> </span><span class="n">User</span><span class="w"> </span><span class="p">}</span>
+<span class="k">fn</span><span class="w"> </span><span class="nf">set_role</span><span class="p">(</span><span class="n">role</span><span class="p">:</span><span class="w"> </span><span class="nc">Role</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* ... */</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<h4 id="parameter-types-accept-the-most-general-borrow">Parameter types — accept the most general borrow<a class="headerlink" href="#parameter-types-accept-the-most-general-borrow" title="Permanent link">&para;</a></h4>
+<div class="language-rust highlight"><pre><span></span><code><span class="c1">// Bad — forces callers to own a String / Vec</span>
+<span class="k">fn</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="n">input</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nb">String</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* ... */</span><span class="w"> </span><span class="p">}</span>
+<span class="k">fn</span><span class="w"> </span><span class="nf">filter</span><span class="p">(</span><span class="n">items</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Item</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* ... */</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1">// Good — accepts &amp;String, &amp;str, string literals, slices, etc.</span>
+<span class="k">fn</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="n">input</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="kt">str</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* ... */</span><span class="w"> </span><span class="p">}</span>
+<span class="k">fn</span><span class="w"> </span><span class="nf">filter</span><span class="p">(</span><span class="n">items</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="p">[</span><span class="n">Item</span><span class="p">])</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* ... */</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<h4 id="type-casting-prefer-safe-conversions">Type casting — prefer safe conversions<a class="headerlink" href="#type-casting-prefer-safe-conversions" title="Permanent link">&para;</a></h4>
+<p><code>as</code> silently truncates or wraps. Prefer <code>TryFrom</code>/<code>TryInto</code> for fallible conversions and <code>From</code>/<code>Into</code> for
+infallible ones:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="c1">// Bad — silently wraps on overflow</span>
+<span class="kd">let</span><span class="w"> </span><span class="n">small</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">big_number</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">u16</span><span class="p">;</span>
+
+<span class="c1">// Good — panics with a message instead of silently producing garbage</span>
+<span class="kd">let</span><span class="w"> </span><span class="n">small</span><span class="p">:</span><span class="w"> </span><span class="kt">u16</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">big_number</span><span class="p">.</span><span class="n">try_into</span><span class="p">().</span><span class="n">expect</span><span class="p">(</span><span class="s">&quot;value fits in u16&quot;</span><span class="p">);</span>
+</code></pre></div>
+<h4 id="iterator-chains-dont-collect-just-to-iterate-again">Iterator chains — don't collect just to iterate again<a class="headerlink" href="#iterator-chains-dont-collect-just-to-iterate-again" title="Permanent link">&para;</a></h4>
+<div class="language-rust highlight"><pre><span></span><code><span class="c1">// Bad — allocates a Vec only to loop over it</span>
+<span class="kd">let</span><span class="w"> </span><span class="n">v</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">_</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">items</span><span class="p">.</span><span class="n">iter</span><span class="p">().</span><span class="n">filter</span><span class="p">(</span><span class="o">|</span><span class="n">x</span><span class="o">|</span><span class="w"> </span><span class="n">x</span><span class="p">.</span><span class="n">is_valid</span><span class="p">()).</span><span class="n">collect</span><span class="p">();</span>
+<span class="k">for</span><span class="w"> </span><span class="n">item</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="o">&amp;</span><span class="n">v</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">process</span><span class="p">(</span><span class="n">item</span><span class="p">);</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1">// Good — zero extra allocation</span>
+<span class="k">for</span><span class="w"> </span><span class="n">item</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="n">items</span><span class="p">.</span><span class="n">iter</span><span class="p">().</span><span class="n">filter</span><span class="p">(</span><span class="o">|</span><span class="n">x</span><span class="o">|</span><span class="w"> </span><span class="n">x</span><span class="p">.</span><span class="n">is_valid</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">process</span><span class="p">(</span><span class="n">item</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+<h4 id="visibility-start-private-widen-deliberately">Visibility — start private, widen deliberately<a class="headerlink" href="#visibility-start-private-widen-deliberately" title="Permanent link">&para;</a></h4>
+<p>Default to private. Use <code>pub(crate)</code> for crate-internal sharing. Only use <code>pub</code> for your actual public API. This
+keeps refactoring safe and communicates intent to future readers.</p>
+<h4 id="match-arms-factor-out-shared-logic">Match arms — factor out shared logic<a class="headerlink" href="#match-arms-factor-out-shared-logic" title="Permanent link">&para;</a></h4>
+<div class="language-rust highlight"><pre><span></span><code><span class="c1">// Bad — duplicated setup/cleanup in every arm</span>
+<span class="k">match</span><span class="w"> </span><span class="n">kind</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">A</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">setup</span><span class="p">();</span><span class="w"> </span><span class="n">handle_a</span><span class="p">();</span><span class="w"> </span><span class="n">cleanup</span><span class="p">();</span><span class="w"> </span><span class="p">}</span>
+<span class="w">    </span><span class="n">B</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">setup</span><span class="p">();</span><span class="w"> </span><span class="n">handle_b</span><span class="p">();</span><span class="w"> </span><span class="n">cleanup</span><span class="p">();</span><span class="w"> </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="c1">// Good — shared logic lives outside the match</span>
+<span class="n">setup</span><span class="p">();</span>
+<span class="k">match</span><span class="w"> </span><span class="n">kind</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">A</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">handle_a</span><span class="p">(),</span>
+<span class="w">    </span><span class="n">B</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">handle_b</span><span class="p">(),</span>
+<span class="p">}</span>
+<span class="n">cleanup</span><span class="p">();</span>
+</code></pre></div>
+<h4 id="must_use-on-important-return-values"><code>#[must_use]</code> on important return values<a class="headerlink" href="#must_use-on-important-return-values" title="Permanent link">&para;</a></h4>
+<p>If a function returns a value that callers should never silently discard (validation results, builders, etc.), mark
+it <code>#[must_use]</code>. Rust already enforces this for <code>Result</code>, but custom types often miss it.</p>
+<h3 id="architecture-level-pitfalls">Architecture-level pitfalls<a class="headerlink" href="#architecture-level-pitfalls" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Overusing generics</strong>: Complex bounds and many type params → prefer trait objects or smaller traits.</li>
+<li><strong>Overusing generics</strong>: Complex bounds and many type params — prefer trait objects or smaller traits.</li>
 <li><strong>Lifetime gymnastics</strong>: If lifetimes leak everywhere, restructure ownership or use owned buffers at boundaries.</li>
-<li><strong>Macro-heavy APIs</strong>: If consumers must “think in macros,” reconsider the design.</li>
-<li><strong>Ambiguous errors</strong>: <code>Result&lt;T, String&gt;</code> in public API → hard to evolve safely.</li>
-<li><strong>Panics on recoverable paths</strong>: Reserve panics for invariants; use <code>Result</code> elsewhere.</li>
-<li><strong>Async everywhere</strong>: Keep <code>async</code> at IO boundaries; don’t make pure functions <code>async</code>.</li>
+<li><strong>Macro-heavy APIs</strong>: If consumers must "think in macros," reconsider the design.</li>
+<li><strong>Async everywhere</strong>: Keep <code>async</code> at IO boundaries; don't make pure functions <code>async</code>.</li>
 <li><strong>Global mutable state</strong>: Hide state behind interfaces; avoid implicit singletons.</li>
+</ul>
+<h3 id="clippy">Clippy<a class="headerlink" href="#clippy" title="Permanent link">&para;</a></h3>
+<p><code>cargo clippy</code> is mandatory in CI. Common catches worth internalizing:</p>
+<ul>
+<li><code>if let Some(_) = x</code> — use <code>x.is_some()</code> instead</li>
+<li>Manual <code>Default</code> impl when <code>#[derive(Default)]</code> works</li>
+<li><code>.map(|x| foo(x))</code> — use <code>.map(foo)</code> (redundant closure)</li>
+<li><code>.map().unwrap_or()</code> — use <code>.map_or()</code></li>
 </ul>
 <hr />
 <h2 id="simple-heuristic">Simple Heuristic<a class="headerlink" href="#simple-heuristic" title="Permanent link">&para;</a></h2>
 <blockquote>
 <p>If a teammate can fix a bug or add a feature <strong>without asking you to explain ownership or lifetimes</strong>, and <strong>CI</strong>
-tells them when they’re wrong—your Rust is both <strong>readable</strong> and <strong>maintainable</strong>.</p>
+tells them when they're wrong — your Rust is both <strong>readable</strong> and <strong>maintainable</strong>.</p>
 </blockquote>
 
 

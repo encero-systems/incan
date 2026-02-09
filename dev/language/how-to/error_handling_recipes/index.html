@@ -3706,6 +3706,8 @@
       
         
       
+        
+      
     
     
       
@@ -3747,6 +3749,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3966,7 +3989,7 @@ and “what to do when…”.</p>
     <span class="nc">Io</span><span class="p">(</span><span class="nc">IoError</span><span class="p">)</span>
     <span class="nc">Parse</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nc">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">ConfigError</span><span class="p">]:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">ConfigError</span><span class="p">]:</span>
     <span class="n">content</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">ConfigError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">parse_toml</span><span class="p">[</span><span class="nc">Config</span><span class="p">](</span><span class="n">content</span><span class="p">)</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="o">|</span><span class="n">e</span><span class="o">|</span> <span class="nc">ConfigError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">(</span><span class="n">e</span><span class="p">))</span><span class="o">?</span>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">cfg</span><span class="p">)</span>

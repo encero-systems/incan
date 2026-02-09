@@ -3586,6 +3586,8 @@
       
         
       
+        
+      
     
     
       
@@ -3627,6 +3629,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -4087,7 +4110,7 @@ Incan should provide similar ergonomic temporary file handling.</p>
 <h3 id="explicit-location">Explicit Location<a class="headerlink" href="#explicit-location" title="Permanent link">&para;</a></h3>
 <p>Create temp files in a specific directory:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># In a specific directory</span>
-<span class="n">temp</span> <span class="o">=</span> <span class="nc">TempFile</span><span class="o">.</span><span class="n">in_dir</span><span class="p">(</span><span class="nc">Path</span><span class="p">(</span><span class="s2">&quot;/var/cache/myapp&quot;</span><span class="p">))</span><span class="o">?</span>
+<span class="n">temp</span> <span class="o">=</span> <span class="nc">TempFile</span><span class="o">.</span><span class="n">in_dir</span><span class="p">(</span><span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;/var/cache/myapp&quot;</span><span class="p">))</span><span class="o">?</span>
 
 <span class="c1"># In system temp directory (default)</span>
 <span class="n">temp</span> <span class="o">=</span> <span class="nc">TempFile</span><span class="o">.</span><span class="n">new</span><span class="p">()</span><span class="o">?</span>  <span class="c1"># Uses system temp dir</span>
@@ -4226,7 +4249,7 @@ This RFC introduces new surface types and methods, so the canonical spellings sh
     <span class="c1"># temp file cleaned up after test</span>
 </code></pre></div>
 <h3 id="safe-file-updates">Safe File Updates<a class="headerlink" href="#safe-file-updates" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">safe_save</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nc">Path</span><span class="p">,</span> <span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">safe_save</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">,</span> <span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
     <span class="c1"># Write to temp file first</span>
     <span class="n">temp</span> <span class="o">=</span> <span class="nc">TempFile</span><span class="o">.</span><span class="n">in_dir</span><span class="p">(</span><span class="n">path</span><span class="o">.</span><span class="n">parent</span><span class="p">())</span><span class="o">?</span>
     <span class="n">temp</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">content</span><span class="p">)</span><span class="o">?</span>

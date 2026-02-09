@@ -3685,6 +3685,8 @@
       
         
       
+        
+      
     
     
       
@@ -3726,6 +3728,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3904,7 +3927,11 @@
 <li>Modules are discovered from the filesystem — there is no explicit <code>mod</code> declaration step.</li>
 <li>Directories can act as modules; use <code>mod.incn</code> as the “main file” for a directory module when needed.</li>
 <li>Common types and functions are available without imports via the prelude (see the reference page for the full list).</li>
+<li>The <strong>standard library</strong> lives under the <code>std</code> namespace (e.g. <code>from std.web import route</code>). The compiler activates
+  features automatically based on which <code>std.*</code> modules you import.</li>
 </ul>
+<!-- TODO: Add a link to the standard library sections once we create them -->
+
 <div class="admonition info">
 <p class="admonition-title">Coming from Python?</p>
 <p>In Python, packages are driven by directory structure and <code>__init__.py</code>.<br />

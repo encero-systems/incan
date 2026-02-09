@@ -3586,6 +3586,8 @@
       
         
       
+        
+      
     
     
       
@@ -3627,6 +3629,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -4197,7 +4220,7 @@
 <li><strong>Explicit return types</strong>: Required for all functions.</li>
 <li><strong>No implicit returns</strong>: Functions must use <code>return</code>. (Future: implicit last-expression returns could be considered, but are not allowed now.)</li>
 </ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nc">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
   <span class="n">raw</span> <span class="o">=</span> <span class="nb">read_file</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="o">?</span>
   <span class="k">return</span> <span class="nc">Config</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span><span class="o">?</span>
 

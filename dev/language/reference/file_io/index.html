@@ -3694,6 +3694,8 @@
       
         
       
+        
+      
     
     
       
@@ -3735,6 +3737,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3914,10 +3937,10 @@
 <p>For task-oriented examples, see <a href="../../how-to/file_io/">File I/O (how-to)</a>.</p>
 <h2 id="path-methods-and-properties">Path methods and properties<a class="headerlink" href="#path-methods-and-properties" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Create from string</span>
-<span class="n">p</span> <span class="o">=</span> <span class="nc">Path</span><span class="p">(</span><span class="s2">&quot;data/config.toml&quot;</span><span class="p">)</span>
+<span class="n">p</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;data/config.toml&quot;</span><span class="p">)</span>
 
 <span class="c1"># Join paths with /</span>
-<span class="n">cfg</span> <span class="o">=</span> <span class="nc">Path</span><span class="p">(</span><span class="s2">&quot;config&quot;</span><span class="p">)</span> <span class="o">/</span> <span class="s2">&quot;app.toml&quot;</span>
+<span class="n">cfg</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;config&quot;</span><span class="p">)</span> <span class="o">/</span> <span class="s2">&quot;app.toml&quot;</span>
 
 <span class="c1"># Queries</span>
 <span class="n">p</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span>
@@ -4140,11 +4163,11 @@
 <h2 id="ioerror">IoError<a class="headerlink" href="#ioerror" title="Permanent link">&para;</a></h2>
 <p>File operations return <code>Result[T, IoError]</code>. Common error variants:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">IoError</span><span class="p">:</span>
-    <span class="nc">NotFound</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nc">Path</span><span class="p">)</span>
-    <span class="nc">PermissionDenied</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nc">Path</span><span class="p">)</span>
-    <span class="nc">AlreadyExists</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nc">Path</span><span class="p">)</span>
-    <span class="nc">IsDirectory</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nc">Path</span><span class="p">)</span>
-    <span class="nc">NotDirectory</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nc">Path</span><span class="p">)</span>
+    <span class="nc">NotFound</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span>
+    <span class="nc">PermissionDenied</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span>
+    <span class="nc">AlreadyExists</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span>
+    <span class="nc">IsDirectory</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span>
+    <span class="nc">NotDirectory</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span>
     <span class="nc">Other</span><span class="p">(</span><span class="n">message</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="raii-automatic-resource-cleanup">RAII: Automatic resource cleanup<a class="headerlink" href="#raii-automatic-resource-cleanup" title="Permanent link">&para;</a></h2>

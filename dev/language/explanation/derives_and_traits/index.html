@@ -2213,9 +2213,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#compiler_expand-stdlib-marker" class="md-nav__link">
+  <a href="#rustextern-rust-backed-functions" class="md-nav__link">
     <span class="md-ellipsis">
-      @compiler_expand (stdlib marker)
+      @rust.extern (Rust-backed functions)
     </span>
   </a>
   
@@ -3712,6 +3712,8 @@
       
         
       
+        
+      
     
     
       
@@ -3753,6 +3755,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3901,9 +3924,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#compiler_expand-stdlib-marker" class="md-nav__link">
+  <a href="#rustextern-rust-backed-functions" class="md-nav__link">
     <span class="md-ellipsis">
-      @compiler_expand (stdlib marker)
+      @rust.extern (Rust-backed functions)
     </span>
   </a>
   
@@ -3995,15 +4018,17 @@ general language feature for authoring reusable behavior.</p>
 </ul>
 <p>This mirrors the common “logs vs user output” split: Debug is stable and structural; Display is designed for
 human-friendly formatting.</p>
-<h2 id="compiler_expand-stdlib-marker"><code>@compiler_expand</code> (stdlib marker)<a class="headerlink" href="#compiler_expand-stdlib-marker" title="Permanent link">&para;</a></h2>
-<p>You may see <code>@compiler_expand</code> used in stdlib sources. It is <strong>not a user feature</strong>.</p>
+<h2 id="rustextern-rust-backed-functions"><code>@rust.extern</code> (Rust-backed functions)<a class="headerlink" href="#rustextern-rust-backed-functions" title="Permanent link">&para;</a></h2>
+<p>You may see <code>@rust.extern</code> used in stdlib sources and Rust-backed libraries. It marks functions whose body are provided
+by a Rust module (declared via <code>rust.module()</code>).</p>
 <p>The intended meaning is:</p>
 <ul>
-<li>the stdlib contains <em>stubs</em> that declare vocabulary and signatures</li>
-<li>the compiler is responsible for providing the actual implementation for those stubs</li>
+<li>the function's signature is defined in Incan (<code>.incn</code> source)</li>
+<li>the function's implementation lives in a Rust crate, mapped via <code>rust.module()</code></li>
+<li>the compiler emits a call to the Rust implementation instead of compiling the <code>...</code> body</li>
 </ul>
-<p>This lets the stdlib function as documentation and a vocabulary registry, without requiring users to learn a special
-compiler-only mechanism.</p>
+<p>This lets the stdlib (and third-party libraries) wrap Rust crates with Incan-shaped APIs while keeping most logic in
+pure Incan.</p>
 <p>See also:</p>
 <ul>
 <li><a href="../how_derives_work/">How derives work</a></li>

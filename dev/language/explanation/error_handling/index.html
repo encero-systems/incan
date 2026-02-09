@@ -3769,6 +3769,8 @@
       
         
       
+        
+      
     
     
       
@@ -3810,6 +3812,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -4063,7 +4086,7 @@
 <p>Incan treats errors as <strong>values</strong>: functions that can fail return a <code>Result[T, E]</code>, and callers handle success/error
 <strong>explicitly</strong>. This makes failure modes visible in APIs, encourages structured error types, and keeps control flow clear.</p>
 <h2 id="quick-start">Quick start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nc">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
     <span class="n">content</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">parse_toml</span><span class="p">[</span><span class="nc">Config</span><span class="p">](</span><span class="n">content</span><span class="p">)</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">)</span><span class="o">?</span>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
@@ -4089,7 +4112,7 @@ Python 3.10+ has <code>match</code>/<code>case</code>, but it still won’t enfo
     <span class="k">return</span> <span class="n">parse_config</span><span class="p">(</span><span class="n">content</span><span class="p">)</span>  <span class="c1"># may raise ParseError</span>
 </code></pre></div>
 <p><strong>Incan (explicit propagation)</strong>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nc">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
     <span class="n">content</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">parse_toml</span><span class="p">[</span><span class="nc">Config</span><span class="p">](</span><span class="n">content</span><span class="p">)</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">)</span><span class="o">?</span>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
@@ -4128,7 +4151,7 @@ Python 3.10+ has <code>match</code>/<code>case</code>, but it still won’t enfo
     <span class="n">config</span> <span class="o">=</span> <span class="n">default_config</span><span class="p">()</span>
 </code></pre></div>
 <p>vs.</p>
-<div class="language-incan highlight"><span class="filename">Incan `match`</span><pre><span></span><code><span class="k">match</span> <span class="n">load_config</span><span class="p">(</span><span class="nc">Path</span><span class="p">(</span><span class="s2">&quot;app.toml&quot;</span><span class="p">)):</span>
+<div class="language-incan highlight"><span class="filename">Incan `match`</span><pre><span></span><code><span class="k">match</span> <span class="n">load_config</span><span class="p">(</span><span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;app.toml&quot;</span><span class="p">)):</span>
     <span class="nb">Ok</span><span class="p">(</span><span class="n">config</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">config</span>
     <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">)</span> <span class="o">=&gt;</span>
         <span class="n">log</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
@@ -4151,12 +4174,12 @@ caught values are frequently <code>unknown</code>).</p>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nc">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
     <span class="n">content</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">parse_toml</span><span class="p">[</span><span class="nc">Config</span><span class="p">](</span><span class="n">content</span><span class="p">)</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">)</span><span class="o">?</span>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">load_config_or_default</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nc">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Config</span><span class="p">:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_config_or_default</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Config</span><span class="p">:</span>
     <span class="k">match</span> <span class="n">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">):</span>
         <span class="nb">Ok</span><span class="p">(</span><span class="n">cfg</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="n">cfg</span>
         <span class="nb">Err</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="n">default_config</span><span class="p">()</span>
@@ -4223,7 +4246,7 @@ otherwise unwrap the <code>Ok(...)</code> value.</p>
 <h2 id="common-helpers">Common helpers<a class="headerlink" href="#common-helpers" title="Permanent link">&para;</a></h2>
 <h3 id="transform-errors-with-map_err">Transform errors with <code>map_err</code><a class="headerlink" href="#transform-errors-with-map_err" title="Permanent link">&para;</a></h3>
 <p>Use this when you want to convert one error type into another at a boundary.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nc">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
     <span class="n">content</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">parse_toml</span><span class="p">[</span><span class="nc">Config</span><span class="p">](</span><span class="n">content</span><span class="p">)</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">)</span><span class="o">?</span>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
