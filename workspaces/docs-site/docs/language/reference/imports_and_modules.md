@@ -257,6 +257,38 @@ etc.) where available.
   the current crate and are emitted as `crate::db::schema::Database` in generated Rust so they compile reliably from
   submodules.
 
+### Version and feature annotations (Rust crates only)
+
+Rust crate imports support optional version and feature annotations using `@` and `with`:
+
+```text
+import rust::CRATE [@ "VERSION"] [with ["FEATURE", ...]]
+from rust::CRATE [@ "VERSION"] [with ["FEATURE", ...]] import ITEMS
+```
+
+Examples:
+
+```incan
+# Version only
+import rust::my_crate @ "1.0"
+
+# Version with features
+import rust::tokio @ "1.0" with ["full"]
+from rust::sqlx @ "0.7" with ["runtime-tokio", "postgres"] import Pool
+```
+
+Rules:
+
+- `@ "VERSION"` uses [Cargo SemVer syntax](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html).
+- `with [...]` requires `@` (you cannot specify features without a version).
+- If the crate is configured in `incan.toml`, inline annotations are **not allowed**.
+- When the same crate is imported in multiple files, versions must match and features are unioned.
+
+These annotations only apply to `rust::` imports. Incan module imports (`from models import User`) do not support version
+or feature annotations.
+
+See: [Rust interop](../how-to/rust_interop.md) for practical guidance and examples.
+
 ## Current status and limitations
 
 Supported:

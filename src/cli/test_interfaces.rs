@@ -11,6 +11,9 @@
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+use crate::dependency_resolver::InlineRustImport;
+use crate::frontend::diagnostics;
+
 /// Errors that occur during test operations
 #[derive(Debug, Error)]
 pub enum TestError {
@@ -124,11 +127,21 @@ pub struct DefaultHarnessGenerator;
 impl HarnessGenerator for DefaultHarnessGenerator {
     fn generate_harness(&self, input: &HarnessInput) -> Result<HarnessOutput, TestError> {
         use crate::backend::{IrCodegen, ProjectGenerator};
+        use crate::dependency_resolver::resolve_dependencies;
         use crate::frontend::{lexer, parser};
+        use crate::lockfile::CargoFeatureSelection;
+        use crate::manifest::ProjectManifest;
 
         let tokens = lexer::lex(&input.source_code).map_err(|e| TestError::Lexer(format!("{:?}", e)))?;
 
         let ast = parser::parse(&tokens).map_err(|e| TestError::Parser(format!("{:?}", e)))?;
+
+        let inline_imports = collect_inline_rust_imports(&ast, &input.source_file);
+        let manifest = ProjectManifest::discover(input.source_file.parent().unwrap_or_else(|| Path::new(".")))
+            .map_err(|e| TestError::ProjectGeneration(e.to_string()))?;
+        let cargo_features = CargoFeatureSelection::default();
+        let resolved = resolve_dependencies(manifest.as_ref(), &inline_imports, true, &cargo_features)
+            .map_err(|errors| format_dependency_errors(&errors, &input.source_file, &input.source_code))?;
 
         let mut codegen = IrCodegen::new();
         codegen.set_test_mode(true);
@@ -140,7 +153,10 @@ impl HarnessGenerator for DefaultHarnessGenerator {
 
         let project_dir = PathBuf::from(format!("target/incan_tests/{}", input.test_function_name));
 
-        let generator = ProjectGenerator::new(&project_dir, "test_runner", true);
+        let mut generator = ProjectGenerator::new(&project_dir, "test_runner", true);
+        generator.set_include_dev_dependencies(true);
+        generator.set_dependencies(resolved.dependencies);
+        generator.set_dev_dependencies(resolved.dev_dependencies);
         generator
             .generate(&rust_code)
             .map_err(|e| TestError::ProjectGeneration(e.to_string()))?;
@@ -151,6 +167,85 @@ impl HarnessGenerator for DefaultHarnessGenerator {
             generated_at: std::time::SystemTime::now(),
         })
     }
+}
+
+/// Collect inline Rust crate imports from an AST.
+fn collect_inline_rust_imports(ast: &crate::frontend::ast::Program, file_path: &Path) -> Vec<InlineRustImport> {
+    let mut imports = Vec::new();
+    for decl in &ast.declarations {
+        let crate::frontend::ast::Declaration::Import(import) = &decl.node else {
+            continue;
+        };
+        match &import.kind {
+            crate::frontend::ast::ImportKind::RustCrate {
+                crate_name,
+                version,
+                features,
+                ..
+            } => {
+                imports.push(InlineRustImport {
+                    crate_name: crate_name.clone(),
+                    version: version.clone(),
+                    features: features.clone(),
+                    span: decl.span,
+                    file_path: file_path.to_path_buf(),
+                    is_test_context: true,
+                });
+            }
+            crate::frontend::ast::ImportKind::RustFrom {
+                crate_name,
+                version,
+                features,
+                ..
+            } => {
+                imports.push(InlineRustImport {
+                    crate_name: crate_name.clone(),
+                    version: version.clone(),
+                    features: features.clone(),
+                    span: decl.span,
+                    file_path: file_path.to_path_buf(),
+                    is_test_context: true,
+                });
+            }
+            _ => {}
+        }
+    }
+    imports
+}
+
+/// Format dependency errors for a test.
+fn format_dependency_errors(
+    errors: &[crate::dependency_resolver::DependencyError],
+    file_path: &Path,
+    source: &str,
+) -> TestError {
+    let mut msg = String::new();
+    for err in errors {
+        if err.file_path == file_path {
+            msg.push_str(&diagnostics::format_error(
+                &file_path.to_string_lossy(),
+                source,
+                &err.error,
+            ));
+            continue;
+        }
+
+        if let Ok(other_source) = std::fs::read_to_string(&err.file_path) {
+            msg.push_str(&diagnostics::format_error(
+                &err.file_path.to_string_lossy(),
+                &other_source,
+                &err.error,
+            ));
+            continue;
+        }
+
+        msg.push_str(&format!(
+            "error: {}\n  --> {}\n",
+            err.error.message,
+            err.file_path.display()
+        ));
+    }
+    TestError::ProjectGeneration(msg.trim_end().to_string())
 }
 
 /// Cargo test execution with output capture (current behavior).

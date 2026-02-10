@@ -20,6 +20,8 @@ Commands:
 - `run` - Compile and run a program
 - `fmt` - Format Incan source files
 - `test` - Run tests (pytest-style)
+- `init` - Create a starter `incan.toml` and project skeleton (entry point, test file)
+- `lock` - Generate or update `incan.lock`
 
 ## Global options
 
@@ -50,7 +52,7 @@ incan --strict --emit-rust path/to/file.incn
 Usage:
 
 ```text
-incan build <FILE> [OUTPUT_DIR]
+incan build [OPTIONS] <FILE> [OUTPUT_DIR]
 ```
 
 Behavior:
@@ -59,10 +61,20 @@ Behavior:
 - Builds the generated Rust project and prints the binary path (example):
   `target/incan/<name>/target/release/<name>`
 
-Example:
+Dependency flags:
+
+- `--locked`: Require `incan.lock` to exist and be up to date. Also passes `--locked` to Cargo.
+- `--frozen`: Like `--locked`, plus passes `--frozen` to Cargo (offline + locked).
+- `--cargo-features <FEATURES>`: Enable specific Cargo features (comma-separated).
+- `--cargo-no-default-features`: Disable default Cargo features.
+- `--cargo-all-features`: Enable all Cargo features.
+
+Examples:
 
 ```bash
 incan build examples/simple/hello.incn
+incan build src/main.incn --locked
+incan build src/main.incn --cargo-features fancy_logging
 ```
 
 ### `incan run`
@@ -84,6 +96,10 @@ Run inline code:
 ```bash
 incan run -c "import this"
 ```
+
+Dependency flags (same as `build`):
+
+- `--locked`, `--frozen`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
 
 ### `incan fmt`
 
@@ -114,6 +130,18 @@ Usage:
 incan test [OPTIONS] [PATH]
 ```
 
+Test runner flags:
+
+- `-k <KEYWORD>`: Filter tests by keyword expression.
+- `-v`: Verbose output (include timing).
+- `-x`: Stop on first failure.
+- `--slow`: Include slow tests (marked `@slow`).
+- `--fail-on-empty`: Return exit code 1 if no tests are collected.
+
+Dependency flags (same as `build`):
+
+- `--locked`, `--frozen`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
+
 Examples:
 
 ```bash
@@ -137,7 +165,65 @@ incan test --slow
 
 # Fail if no tests are collected
 incan test --fail-on-empty
+
+# Strict mode for CI
+incan test --locked
 ```
+
+### `incan init`
+
+Usage:
+
+```text
+incan init [OPTIONS] [PATH]
+```
+
+Creates a starter `incan.toml` in the specified directory (default: current directory).
+
+Options:
+
+- `--name <NAME>`: Project name (default: directory name).
+- `--version <VERSION>`: Project version (default: `"0.1.0"`).
+
+Example:
+
+```bash
+incan init
+incan init --name my_app my_project/
+```
+
+See: [Project configuration reference](project_configuration.md) for the full manifest format.
+
+### `incan lock`
+
+Usage:
+
+```text
+incan lock [OPTIONS] [FILE]
+```
+
+Resolves all dependencies (manifest + inline + test files) and generates or updates `incan.lock`.
+
+If `FILE` is omitted, uses the `[project.scripts].main` entry from `incan.toml`.
+
+Options:
+
+- `--cargo-features <FEATURES>`: Enable specific Cargo features for resolution.
+- `--cargo-no-default-features`: Disable default Cargo features.
+- `--cargo-all-features`: Enable all Cargo features.
+
+Example:
+
+```bash
+incan lock src/main.incn
+incan lock                          # uses [project.scripts].main
+incan lock --cargo-features metrics # include optional deps in lock
+```
+
+The generated `incan.lock` contains an embedded `Cargo.lock` payload and a fingerprint of your dependency
+inputs. Commit it to version control for reproducible builds.
+
+See: [Managing dependencies](../how-to/dependencies.md) for practical guidance.
 
 ## Outputs and paths
 
@@ -180,4 +266,4 @@ Specific behavior:
 
 Before a release, verify the docs stay aligned with the real CLI surface:
 
-- Compare `incan --help` and `incan {build,run,fmt,test} --help` against this page.
+- Compare `incan --help` and `incan {build,run,fmt,test,init,lock} --help` against this page.

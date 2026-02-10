@@ -1,6 +1,6 @@
 # RFC 015: Hatch-like Tooling (Project Lifecycle CLI)
 
-**Status:** Planned  
+**Status:** In Progress  
 **Created:** 2025-12-23  
 **Author(s):** Danny Meijer (@danny-meijer)  
 **Related:** RFC 013 (Rust crate dependencies), RFC 020 (Cargo offline/locked policy)
@@ -501,17 +501,23 @@ Extensibility (future; non-normative):
 
 ## Checklist
 
-- [ ] Define and validate `incan.toml` schema (`[project]`, `[project.scripts]`, `[tool.incan.envs.*]`) and document it
-- [ ] Implement project root discovery + `--project <path>` override
-- [ ] Implement `incan new` and `incan init` (including generating `[project.scripts].main`)
+- [x] Define and validate `incan.toml` schema (`[project]`, `[project.scripts]`, `[tool.incan.envs.*]`) and document it
+      *(partial: `[project]`, `[project.scripts]`, `[build]`, `[dependencies]` implemented; `[tool.incan.envs.*]` pending)*
+- [x] Implement project root discovery + `--project <path>` override
+      *(`ProjectManifest::discover()` walks upward; `--project` not yet wired)*
+- [x] Implement `incan new` and `incan init` (including generating `[project.scripts].main`)
+      *(`incan init` implemented with full scaffold: `src/main.incn`, `tests/test_main.incn`, `incan.toml`)*
 - [ ] Implement `incan version` bump logic (project version only; clear output of modified files)
 - [ ] Implement `incan env list/show/run` with:
     - inheritance (`default`, `extends`, `detached`)
     - merge semantics (scripts/env-vars/cwd + dependency overlays)
     - recursion/duplicate/cycle detection with clear diagnostics
     - `--dry-run` and `--format text|json`
-- [ ] Docs + examples (new/init/version/env + inheritance examples + `env show`)
-- [ ] Teach codegen/project generation to consult `incan.toml` when present
+- [x] Docs + examples (new/init/version/env + inheritance examples + `env show`)
+      *(partial: "Your first Incan project" tutorial, project config reference; env docs pending)*
+- [x] Teach codegen/project generation to consult `incan.toml` when present
+      *(build, run, test, and lock commands all consult `incan.toml`; test runner resolves source
+      modules via convention-based source root (`src/` or `[build] source-root`))*
 
 Follow-ups (recommended):
 

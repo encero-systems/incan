@@ -185,9 +185,11 @@ nav:
       - Start here: tooling/index.md
       - Tutorials:
           - Getting started: tooling/tutorials/getting_started.md
+          - Your first project: tooling/tutorials/your_first_project.md
           - Pipeline mini-project: tooling/tutorials/pipeline_mini_project.md
       - How-to:
           - Install/build/run: tooling/how-to/install_and_run.md
+          - Managing dependencies: tooling/how-to/dependencies.md
           - CI & automation: tooling/how-to/ci_and_automation.md
           - Troubleshooting: tooling/how-to/troubleshooting.md
           - Editor setup: tooling/how-to/editor_setup.md
@@ -199,6 +201,7 @@ nav:
           - LSP architecture: tooling/explanation/lsp_architecture.md
       - Reference:
           - CLI reference: tooling/reference/cli_reference.md
+          - Project configuration: tooling/reference/project_configuration.md
           - LSP protocol support: tooling/reference/lsp_protocol_support.md
   - Contributing:
       - Start here: contributing/index.md

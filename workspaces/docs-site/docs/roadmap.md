@@ -46,9 +46,9 @@ kept high-level and status-oriented (RFCs will be added over time).
 
 ## Status by Area (high-level)
 
-- Core language: see RFC 000 / RFC 008
-- Tooling (build/run/fmt/test): see the CLI docs and RFCs 001/002/004/007 for the planned testing surface
-- Rust interop: see RFC 005 / RFC 013 and the [Rust Interop guide](language/how-to/rust_interop.md)
+- Core language: see [RFC 000] / [RFC 008]
+- Tooling (build/run/fmt/test): see the CLI docs and [RFC 001]/[RFC 002]/[RFC 004]/[RFC 007] for the planned testing surface
+- Rust interop: see [RFC 005] / [RFC 013] and the [Rust Interop guide](language/how-to/rust_interop.md)
 - Web: see [Web Framework guide](language/tutorials/web_framework.md) (stabilization ongoing)
 
 ## Upcoming (next)
@@ -57,8 +57,8 @@ kept high-level and status-oriented (RFCs will be added over time).
 - UI runtime (signals/effects/components) + examples
 - Test runner fixture execution (setup/teardown lifecycle)
 - Dev server + prod build pipeline for WASM target
-- Python-style generators (RFC 006) — `yield` + `Iterator[T]` → Rust `gen` blocks
-- Inline tests (RFC 007) — `@test` in source files, Rust-style proximity
+- Python-style generators ([RFC 006]) — `yield` + `Iterator[T]` → Rust `gen` blocks
+- Inline tests ([RFC 007]) — `@test` in source files, Rust-style proximity
 
 ## Deferred / Later
 
@@ -80,3 +80,5 @@ The following items are intentionally deferred to later, and might be revisited 
 ### Interested in contributing?
 
 See the [Contributing](contributing/index.md) page for more information about contributing to Incan.
+
+--8<-- "_snippets/rfcs_refs.md"

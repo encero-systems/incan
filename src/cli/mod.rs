@@ -6,6 +6,7 @@
 //!
 //! - `build <file>` - Compile to Rust and build executable
 //! - `run <file>` - Compile and run the program
+//! - `init [path]` - Create a starter incan.toml
 //! - `fmt <file|dir>` - Format Incan source files
 //! - `test [path]` - Run tests (pytest-style)
 //!
@@ -163,6 +164,21 @@ pub enum Command {
         /// Output directory (default: target/incan/<name>)
         #[arg(value_name = "OUTPUT_DIR")]
         output_dir: Option<PathBuf>,
+        /// Require up-to-date incan.lock and pass --locked to Cargo
+        #[arg(long)]
+        locked: bool,
+        /// Require up-to-date incan.lock and pass --frozen to Cargo
+        #[arg(long)]
+        frozen: bool,
+        /// Cargo features to enable (comma-separated)
+        #[arg(long = "cargo-features", value_delimiter = ',')]
+        cargo_features: Vec<String>,
+        /// Disable Cargo default features
+        #[arg(long = "cargo-no-default-features")]
+        cargo_no_default_features: bool,
+        /// Enable all Cargo features
+        #[arg(long = "cargo-all-features")]
+        cargo_all_features: bool,
     },
 
     /// Compile and run the program
@@ -173,6 +189,21 @@ pub enum Command {
         /// Run inline source code
         #[arg(short = 'c', long = "command", value_name = "CODE")]
         command: Option<String>,
+        /// Require up-to-date incan.lock and pass --locked to Cargo
+        #[arg(long)]
+        locked: bool,
+        /// Require up-to-date incan.lock and pass --frozen to Cargo
+        #[arg(long)]
+        frozen: bool,
+        /// Cargo features to enable (comma-separated)
+        #[arg(long = "cargo-features", value_delimiter = ',')]
+        cargo_features: Vec<String>,
+        /// Disable Cargo default features
+        #[arg(long = "cargo-no-default-features")]
+        cargo_no_default_features: bool,
+        /// Enable all Cargo features
+        #[arg(long = "cargo-all-features")]
+        cargo_all_features: bool,
     },
 
     /// Format Incan source files
@@ -208,6 +239,50 @@ pub enum Command {
         /// Fail if no tests are collected
         #[arg(long = "fail-on-empty")]
         fail_on_empty: bool,
+        /// Require up-to-date incan.lock and pass --locked to Cargo
+        #[arg(long)]
+        locked: bool,
+        /// Require up-to-date incan.lock and pass --frozen to Cargo
+        #[arg(long)]
+        frozen: bool,
+        /// Cargo features to enable (comma-separated)
+        #[arg(long = "cargo-features", value_delimiter = ',')]
+        cargo_features: Vec<String>,
+        /// Disable Cargo default features
+        #[arg(long = "cargo-no-default-features")]
+        cargo_no_default_features: bool,
+        /// Enable all Cargo features
+        #[arg(long = "cargo-all-features")]
+        cargo_all_features: bool,
+    },
+
+    /// Initialize a new incan.toml manifest
+    Init {
+        /// Directory to create incan.toml in
+        #[arg(value_name = "PATH", default_value = ".")]
+        path: PathBuf,
+        /// Project name (defaults to directory name)
+        #[arg(long, value_name = "NAME")]
+        name: Option<String>,
+        /// Project version
+        #[arg(long, value_name = "VERSION", default_value = "0.1.0")]
+        version: String,
+    },
+
+    /// Generate or update incan.lock for a project
+    Lock {
+        /// Entry file used to resolve inline dependencies
+        #[arg(value_name = "FILE")]
+        file: Option<PathBuf>,
+        /// Cargo features to enable (comma-separated)
+        #[arg(long = "cargo-features", value_delimiter = ',')]
+        cargo_features: Vec<String>,
+        /// Disable Cargo default features
+        #[arg(long = "cargo-no-default-features")]
+        cargo_no_default_features: bool,
+        /// Enable all Cargo features
+        #[arg(long = "cargo-all-features")]
+        cargo_all_features: bool,
     },
 }
 
@@ -271,11 +346,43 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
 
     // Handle subcommands
     match cli.command {
-        Some(Command::Build { file, output_dir }) => {
+        Some(Command::Build {
+            file,
+            output_dir,
+            locked,
+            frozen,
+            cargo_features,
+            cargo_no_default_features,
+            cargo_all_features,
+        }) => {
             let out = output_dir.map(|p| p.to_string_lossy().to_string());
-            commands::build_file(&file.to_string_lossy(), out.as_ref())
+            commands::build_file(
+                &file.to_string_lossy(),
+                out.as_ref(),
+                locked,
+                frozen,
+                cargo_features,
+                cargo_no_default_features,
+                cargo_all_features,
+            )
         }
-        Some(Command::Run { file, command }) => execute_run(file, command),
+        Some(Command::Run {
+            file,
+            command,
+            locked,
+            frozen,
+            cargo_features,
+            cargo_no_default_features,
+            cargo_all_features,
+        }) => execute_run(
+            file,
+            command,
+            locked,
+            frozen,
+            cargo_features,
+            cargo_no_default_features,
+            cargo_all_features,
+        ),
         Some(Command::Fmt { path, check, diff }) => commands::format_files(&path.to_string_lossy(), check, diff),
         Some(Command::Test {
             path,
@@ -284,14 +391,36 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             slow,
             filter,
             fail_on_empty,
-        }) => test_runner::run_tests(
-            &path.to_string_lossy(),
+            locked,
+            frozen,
+            cargo_features,
+            cargo_no_default_features,
+            cargo_all_features,
+        }) => test_runner::run_tests(test_runner::TestRunConfig {
+            path: &path.to_string_lossy(),
             verbose,
             stop_on_fail,
-            slow,
-            filter.as_deref(),
+            include_slow: slow,
+            filter: filter.as_deref(),
             use_color,
             fail_on_empty,
+            locked,
+            frozen,
+            cargo_features,
+            cargo_no_default_features,
+            cargo_all_features,
+        }),
+        Some(Command::Init { path, name, version }) => commands::init_project(&path, name.as_deref(), &version),
+        Some(Command::Lock {
+            file,
+            cargo_features,
+            cargo_no_default_features,
+            cargo_all_features,
+        }) => commands::lock_project(
+            file.as_ref(),
+            cargo_features,
+            cargo_no_default_features,
+            cargo_all_features,
         ),
         None => {
             // Default: type check the file if provided
@@ -306,7 +435,15 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
 }
 
 /// Handle the `run` subcommand with its various forms.
-fn execute_run(file: Option<PathBuf>, code: Option<String>) -> CliResult<ExitCode> {
+fn execute_run(
+    file: Option<PathBuf>,
+    code: Option<String>,
+    locked: bool,
+    frozen: bool,
+    cargo_features: Vec<String>,
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
+) -> CliResult<ExitCode> {
     if let Some(code) = code {
         // Run inline code
         if code.is_empty() {
@@ -330,17 +467,31 @@ fn execute_run(file: Option<PathBuf>, code: Option<String>) -> CliResult<ExitCod
         fs::write(&tmp_path, wrapped)
             .map_err(|e| CliError::failure(format!("Error writing temporary command file: {}", e)))?;
 
-        let result = commands::run_file(&tmp_path.to_string_lossy());
+        let result = commands::run_file(
+            &tmp_path.to_string_lossy(),
+            locked,
+            frozen,
+            cargo_features.clone(),
+            cargo_no_default_features,
+            cargo_all_features,
+        );
         let _ = fs::remove_file(&tmp_path);
         result
     } else if let Some(file) = file {
-        commands::run_file(&file.to_string_lossy())
+        commands::run_file(
+            &file.to_string_lossy(),
+            locked,
+            frozen,
+            cargo_features,
+            cargo_no_default_features,
+            cargo_all_features,
+        )
     } else {
         Err(CliError::failure("Error: run requires a file path or -c \"code\""))
     }
 }
 
-/// Print colored logo to stderr
+/// Print logo to stderr (colored or not)
 fn print_logo(use_color: bool) {
     // Color scheme inspired by the wordmark:
     // - Solid blocks (█) = Gold
@@ -380,8 +531,8 @@ fn print_logo(use_color: bool) {
 
 /// Decide whether ANSI color output is enabled.
 ///
-/// Note: `NO_COLOR` only affects `ColorMode::Auto`; explicit user flags
-/// (`--color=always` / `--color=never`) override the environment.
+/// Note: `NO_COLOR` only affects `ColorMode::Auto`; explicit user flags (`--color=always` / `--color=never`) override
+/// the environment.
 fn should_use_color(color: ColorMode) -> bool {
     match color {
         ColorMode::Always => true,

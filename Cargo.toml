@@ -4,7 +4,7 @@ exclude = ["target/incan"]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0-dev.0"
+version = "0.2.0-dev.1"
 description = "The Incan programming language compiler"
 edition = "2024"
 rust-version = "1.85"
@@ -59,6 +59,15 @@ prettyplease = "0.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# TOML parsing for incan.toml manifests (RFC 013/023)
+toml = "0.9"
+# Serde derive for manifest deserialization
+serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10.9"
+hex = "0.4.3"
+time = { version = "0.3.45", features = ["formatting"] }
+semver = "1.0.27"
+
 [dev-dependencies]
 # Snapshot testing for codegen
 insta = { version = "1.45", features = ["glob"] }
@@ -66,6 +75,8 @@ insta = { version = "1.45", features = ["glob"] }
 proptest = "1"
 # Runtime crate for parity tests
 incan_stdlib = { path = "crates/incan_stdlib" }
+# Temporary directories for manifest discovery tests
+tempfile = "3"
 
 [[bin]]
 name = "incan"

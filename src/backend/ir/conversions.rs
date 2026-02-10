@@ -199,6 +199,10 @@ pub enum Conversion {
     None,
     /// Convert &str to String with .to_string()
     ToString,
+    /// Convert via `.into()` — lets the Rust compiler resolve the target type via the `Into` trait.
+    /// Used for external Rust crate calls where the target type may be a custom string type (e.g., Polars'
+    /// `PlSmallStr`) or other type that implements `From<String>` / `From<&str>`.
+    Into,
     /// Borrow with &
     Borrow,
     /// Mutable borrow with &mut
@@ -215,6 +219,7 @@ impl Conversion {
         match self {
             Conversion::None => tokens,
             Conversion::ToString => quote! { #tokens.to_string() },
+            Conversion::Into => quote! { #tokens.into() },
             Conversion::Borrow => quote! { &#tokens },
             Conversion::MutBorrow => quote! { &mut #tokens },
             Conversion::Clone => quote! { #tokens.clone() },
@@ -522,11 +527,12 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
         }
 
         ConversionContext::ExternalFunctionArg => {
-            // External Rust functions/enum variants
+            // External Rust functions/enum variants — use `.into()` for strings so the Rust compiler can resolve the
+            // target type via the `Into` trait. This handles crates that use custom string types (e.g., Polars'
+            // `PlSmallStr`) implementing `From<String>` / `From<&str>`.
             match &expr.kind {
-                // String literals always need .to_string() (for Option::Some, Result::Ok, etc.)
-                IrExprKind::String(_) => Conversion::ToString,
-                // String variables → borrow for external calls (&str param)
+                // String literals → .into() (works for String, &str, PlSmallStr, and any From<&str>)
+                IrExprKind::String(_) => Conversion::Into, // String variables → borrow for external calls (&str param)
                 IrExprKind::Var { .. } if matches!(expr.ty, IrType::String) => Conversion::Borrow,
                 // Everything else as-is (Rust's type system handles it)
                 _ => Conversion::None,
@@ -649,10 +655,13 @@ mod tests {
 
     #[test]
     fn test_external_function_string_literal() {
+        // External Rust function args use `.into()` so the Rust compiler can resolve the target type via the `Into`
+        // trait — handles crates with custom string types (e.g., Polars' `PlSmallStr`) that implement `From<String>` or
+        // `From<&str>`.
         let expr = IrExpr::new(IrExprKind::String("test".to_string()), IrType::String);
 
         let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
-        assert_eq!(conv, Conversion::ToString);
+        assert_eq!(conv, Conversion::Into);
     }
 
     #[test]

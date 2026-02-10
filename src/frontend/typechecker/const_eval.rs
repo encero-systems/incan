@@ -107,12 +107,8 @@ impl TypeChecker {
         }
 
         // Update the symbol table type (so later expressions see the refined type).
-        if let Some(id) = self.symbols.lookup_local(&konst.name) {
-            if let Some(sym) = self.symbols.get_mut(id) {
-                if let crate::frontend::symbols::SymbolKind::Variable(var_info) = &mut sym.kind {
-                    var_info.ty = result.ty.clone();
-                }
-            }
+        if let Some(var_info) = self.lookup_local_variable_info_mut(&konst.name) {
+            var_info.ty = result.ty.clone();
         }
     }
 

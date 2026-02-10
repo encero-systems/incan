@@ -276,4 +276,6 @@ Return default values instead of panicking (e.g., `0` for missing int parse). Re
 
 - Python's exception model
 - Rust's `unwrap_or_else` pattern
-- [RFC 013: Rust Crate Dependencies](013_rust_crate_dependencies.md) — related codegen concerns
+- [RFC 013: Rust Crate Dependencies][RFC 013] — related codegen concerns
+
+--8<-- "_snippets/rfcs_refs.md"

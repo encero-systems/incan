@@ -1,0 +1,32 @@
+//! CLI command implementations
+//!
+//! All command functions return `CliResult<ExitCode>` instead of calling `process::exit`.
+//! Error handling and exits happen in the top-level `run()`.
+//!
+//! ## Submodules
+//!
+//! - `build` — Build and run pipelines
+//! - `common` — Shared utilities (module collection, dependency helpers, etc.)
+//! - `debug` — Debug commands (lex, parse, check, emit)
+//! - `format` — Source formatting
+//! - `init` — Project scaffolding
+//! - `lock` — Lock file generation and resolution
+
+pub mod build;
+pub mod common;
+pub mod debug;
+pub mod format;
+pub mod init;
+pub mod lock;
+
+// Re-export public API so callers can use `commands::build_file()` etc.
+pub use build::{build_file, run_file};
+pub use common::{collect_modules, read_source};
+pub use debug::{check_file, emit_rust, lex_file, parse_file};
+pub use format::format_files;
+pub use init::init_project;
+pub use lock::lock_project;
+
+// Crate-internal API (used by test_runner and other CLI modules)
+pub(crate) use common::{cargo_command_flags, resolve_source_root};
+pub(crate) use lock::resolve_lock_payload;

@@ -149,13 +149,19 @@ impl Formatter {
                 }
                 self.writer.newline();
             }
-            ImportKind::RustCrate { crate_name, path } => {
+            ImportKind::RustCrate {
+                crate_name,
+                path,
+                version,
+                features,
+            } => {
                 self.writer.write("import rust::");
                 self.writer.write(crate_name);
                 for segment in path {
                     self.writer.write("::");
                     self.writer.write(segment);
                 }
+                self.format_rust_import_spec(version, features);
                 if let Some(alias) = &import.alias {
                     self.writer.write(" as ");
                     self.writer.write(alias);
@@ -165,6 +171,8 @@ impl Formatter {
             ImportKind::RustFrom {
                 crate_name,
                 path,
+                version,
+                features,
                 items,
             } => {
                 self.writer.write("from rust::");
@@ -173,6 +181,7 @@ impl Formatter {
                     self.writer.write("::");
                     self.writer.write(segment);
                 }
+                self.format_rust_import_spec(version, features);
                 self.writer.write(" import ");
                 for (i, item) in items.iter().enumerate() {
                     if i > 0 {
@@ -186,6 +195,29 @@ impl Formatter {
                 }
                 self.writer.newline();
             }
+        }
+    }
+
+    fn format_rust_import_spec(&mut self, version: &Option<String>, features: &[String]) {
+        let Some(version) = version else {
+            return;
+        };
+
+        self.writer.write(" @ \"");
+        self.writer.write(version);
+        self.writer.write("\"");
+
+        if !features.is_empty() {
+            self.writer.write(" with [");
+            for (i, feature) in features.iter().enumerate() {
+                if i > 0 {
+                    self.writer.write(", ");
+                }
+                self.writer.write("\"");
+                self.writer.write(feature);
+                self.writer.write("\"");
+            }
+            self.writer.write("]");
         }
     }
 

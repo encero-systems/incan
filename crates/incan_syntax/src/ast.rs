@@ -106,12 +106,20 @@ pub enum ImportKind {
         crate_name: String,
         /// Optional path within crate: `import rust::serde_json::Value`
         path: Vec<Ident>,
+        /// Optional version requirement string (Cargo semver syntax).
+        version: Option<String>,
+        /// Optional feature list (only valid when `version` is provided).
+        features: Vec<String>,
     },
     /// `from rust::time import Instant, Duration` - Rust crate with specific items
     RustFrom {
         crate_name: String,
         /// Optional path within crate before items: `from rust::std::collections import HashMap`
         path: Vec<Ident>,
+        /// Optional version requirement string (Cargo semver syntax).
+        version: Option<String>,
+        /// Optional feature list (only valid when `version` is provided).
+        features: Vec<String>,
         items: Vec<ImportItem>,
     },
 }

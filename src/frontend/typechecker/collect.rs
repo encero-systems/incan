@@ -151,21 +151,13 @@ impl TypeChecker {
         &self,
         extends: &Option<String>,
     ) -> (HashMap<String, FieldInfo>, HashMap<String, MethodInfo>) {
-        let mut fields = HashMap::new();
-        let mut methods = HashMap::new();
-
-        if let Some(parent_name) = extends {
-            if let Some(parent_id) = self.symbols.lookup(parent_name) {
-                if let Some(parent_sym) = self.symbols.get(parent_id) {
-                    if let SymbolKind::Type(TypeInfo::Class(parent_info)) = &parent_sym.kind {
-                        fields = parent_info.fields.clone();
-                        methods = parent_info.methods.clone();
-                    }
-                }
-            }
-        }
-
-        (fields, methods)
+        let Some(parent_name) = extends else {
+            return (HashMap::new(), HashMap::new());
+        };
+        let Some(TypeInfo::Class(parent_info)) = self.lookup_type_info(parent_name) else {
+            return (HashMap::new(), HashMap::new());
+        };
+        (parent_info.fields.clone(), parent_info.methods.clone())
     }
 
     /// Register a trait declaration with its method signatures and requirements.

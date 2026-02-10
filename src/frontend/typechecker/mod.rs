@@ -223,6 +223,62 @@ impl TypeChecker {
         }
     }
 
+    /// Look up a symbol by name and return a reference to it, if found.
+    ///
+    /// Collapses the common two-step pattern:
+    ///   - `symbols.lookup(name)` → `Option<SymbolId>`
+    ///   - `symbols.get(id)` → `Option<&Symbol>`
+    pub(crate) fn lookup_symbol(&self, name: &str) -> Option<&Symbol> {
+        let id = self.symbols.lookup(name)?;
+        self.symbols.get(id)
+    }
+
+    /// Look up a variable binding by name (in any scope) and return its [`VariableInfo`].
+    ///
+    /// Returns `None` if the symbol is missing or isn't a variable.
+    pub(crate) fn lookup_variable_info(&self, name: &str) -> Option<&VariableInfo> {
+        let sym = self.lookup_symbol(name)?;
+        match &sym.kind {
+            SymbolKind::Variable(info) => Some(info),
+            _ => None,
+        }
+    }
+
+    /// Look up a variable binding by name **in the current scope only** and return its [`VariableInfo`].
+    ///
+    /// Returns `None` if the symbol is missing, not local, or isn't a variable.
+    pub(crate) fn lookup_local_variable_info(&self, name: &str) -> Option<&VariableInfo> {
+        let id = self.symbols.lookup_local(name)?;
+        let sym = self.symbols.get(id)?;
+        match &sym.kind {
+            SymbolKind::Variable(info) => Some(info),
+            _ => None,
+        }
+    }
+
+    /// Look up a trait by name and return its [`TraitInfo`], if known.
+    ///
+    /// Returns `None` if the symbol is missing or isn't a trait.
+    pub(crate) fn lookup_trait_info(&self, name: &str) -> Option<&TraitInfo> {
+        let sym = self.lookup_symbol(name)?;
+        match &sym.kind {
+            SymbolKind::Trait(info) => Some(info),
+            _ => None,
+        }
+    }
+
+    /// Mutable variant of [`lookup_local_variable_info`](Self::lookup_local_variable_info).
+    ///
+    /// Used by const-eval to update inferred types after evaluation.
+    pub(crate) fn lookup_local_variable_info_mut(&mut self, name: &str) -> Option<&mut VariableInfo> {
+        let id = self.symbols.lookup_local(name)?;
+        let sym = self.symbols.get_mut(id)?;
+        match &mut sym.kind {
+            SymbolKind::Variable(info) => Some(info),
+            _ => None,
+        }
+    }
+
     /// Resolve a required field type for the active trait default method, if any.
     ///
     /// Emits a dedicated diagnostic if a trait body accesses an undeclared required field.

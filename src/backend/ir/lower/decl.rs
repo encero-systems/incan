@@ -777,7 +777,7 @@ impl AstLowering {
         let (path, ast_items) = match &i.kind {
             ast::ImportKind::Module(p) => (p.segments.clone(), vec![]),
             ast::ImportKind::From { module, items } => (module.segments.clone(), items.clone()),
-            ast::ImportKind::RustCrate { crate_name, path } => {
+            ast::ImportKind::RustCrate { crate_name, path, .. } => {
                 let mut segs = vec![crate_name.clone()];
                 segs.extend(path.clone());
                 (segs, vec![])
@@ -786,6 +786,7 @@ impl AstLowering {
                 crate_name,
                 path,
                 items,
+                ..  // Ignore version and features
             } => {
                 let mut segs = vec![crate_name.clone()];
                 segs.extend(path.clone());

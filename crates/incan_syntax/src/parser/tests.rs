@@ -472,6 +472,67 @@ def add(a: int, b: int) -> int:
     }
 
     #[test]
+    fn test_parse_rust_import_with_version_and_features() {
+        let source = r#"import rust::tokio @ "1.0" with ["full", "macros"] as rt"#;
+        let program = parse_str(source).unwrap();
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::RustCrate {
+                    crate_name,
+                    path,
+                    version,
+                    features,
+                } => {
+                    assert_eq!(crate_name, "tokio");
+                    assert!(path.is_empty());
+                    assert_eq!(version.as_deref(), Some("1.0"));
+                    assert_eq!(features, &vec!["full".to_string(), "macros".to_string()]);
+                    assert_eq!(i.alias, Some("rt".to_string()));
+                }
+                _ => panic!("Expected rust crate import"),
+            },
+            _ => panic!("Expected import"),
+        }
+    }
+
+    #[test]
+    fn test_parse_rust_from_with_version_and_features() {
+        let source = r#"from rust::time @ "0.3" with ["formatting"] import Instant"#;
+        let program = parse_str(source).unwrap();
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::RustFrom {
+                    crate_name,
+                    path,
+                    version,
+                    features,
+                    items,
+                } => {
+                    assert_eq!(crate_name, "time");
+                    assert!(path.is_empty());
+                    assert_eq!(version.as_deref(), Some("0.3"));
+                    assert_eq!(features, &vec!["formatting".to_string()]);
+                    assert_eq!(items.len(), 1);
+                    assert_eq!(items[0].name, "Instant");
+                }
+                _ => panic!("Expected rust from import"),
+            },
+            _ => panic!("Expected import"),
+        }
+    }
+
+    #[test]
+    fn test_parse_rust_import_with_features_requires_version() {
+        let source = r#"import rust::tokio with ["full"]"#;
+        let err = parse_str(source).expect_err("Expected rust import features to require version");
+        assert!(
+            err[0].message.contains("features require a version"),
+            "Unexpected error: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
     fn test_parse_match() {
         let source = r#"
 def handle(opt: Option[int]) -> int:

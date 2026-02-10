@@ -104,7 +104,7 @@ Notes:
   intermediate outputs (see [Getting Started](../../tooling/tutorials/getting_started.md)).
 - **Multi-file projects**: Import resolution rules and module layout are described in [Imports & Modules](../../language/explanation/imports_and_modules.md).
 - **Rust interop dependencies**: `rust::` imports trigger Cargo dependency injection with a strict policy
-  (see [Rust Interop](../../language/how-to/rust_interop.md) and [RFC 013](../../RFCs/013_rust_crate_dependencies.md)).
+  (see [Rust Interop](../../language/how-to/rust_interop.md) and [RFC 013]).
 - **Runtime boundary**: Generated programs depend on `incan_stdlib` and `incan_derive`, but the compiler does not (see `crates/`).
 
 ## Module Layout
@@ -295,3 +295,5 @@ to reason about, but it also means “language changes” can touch multiple lay
 For contributor guidance on **when to add a builtin vs when to add new syntax**, plus end-to-end checklists, see:
 
 - [Extending Incan: Builtins vs New Syntax](../how-to/extending_language.md)
+
+--8<-- "_snippets/rfcs_refs.md"

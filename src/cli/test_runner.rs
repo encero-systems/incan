@@ -16,15 +16,21 @@
 //!
 //! Default implementations preserve current behavior.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::backend::{IrCodegen, ProjectGenerator};
-use crate::frontend::{lexer, parser};
+use crate::dependency_resolver::{DependencyError, InlineRustImport, resolve_dependencies};
+use crate::frontend::ast::{Declaration, ImportKind, Program};
+use crate::frontend::{diagnostics, lexer, parser};
+use crate::lockfile::CargoFeatureSelection;
+use crate::manifest::ProjectManifest;
 use incan_core::lang::decorators::{self, DecoratorId};
+
+use super::prelude::ParsedModule;
 
 #[allow(unused_imports)]
 use super::test_interfaces::{
@@ -233,16 +239,39 @@ pub struct DiscoveryResult {
     pub fixtures: Vec<FixtureInfo>,
 }
 
+/// Configuration for a test run, grouping the many options that `run_tests` needs.
+pub struct TestRunConfig<'a> {
+    pub path: &'a str,
+    pub verbose: bool,
+    pub stop_on_fail: bool,
+    pub include_slow: bool,
+    pub filter: Option<&'a str>,
+    pub use_color: bool,
+    pub fail_on_empty: bool,
+    pub locked: bool,
+    pub frozen: bool,
+    pub cargo_features: Vec<String>,
+    pub cargo_no_default_features: bool,
+    pub cargo_all_features: bool,
+}
+
 /// Run all tests in the given path.
-pub fn run_tests(
-    path: &str,
-    verbose: bool,
-    stop_on_fail: bool,
-    include_slow: bool,
-    filter: Option<&str>,
-    use_color: bool,
-    fail_on_empty: bool,
-) -> CliResult<ExitCode> {
+pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
+    let TestRunConfig {
+        path,
+        verbose,
+        stop_on_fail,
+        include_slow,
+        filter,
+        use_color,
+        fail_on_empty,
+        locked,
+        frozen,
+        cargo_features,
+        cargo_no_default_features,
+        cargo_all_features,
+    } = config;
+
     let start_time = Instant::now();
 
     let test_files = discover_test_files(Path::new(path));
@@ -356,7 +385,14 @@ pub fn run_tests(
 
         let is_xfail = test.markers.iter().any(|m| matches!(m, TestMarker::XFail(_)));
 
-        let result = run_single_test(&test);
+        let result = run_single_test(
+            &test,
+            locked,
+            frozen,
+            &cargo_features,
+            cargo_no_default_features,
+            cargo_all_features,
+        );
 
         let result = if is_xfail {
             match result {
@@ -777,7 +813,186 @@ fn extract_string_arg(args: &[crate::frontend::ast::DecoratorArg]) -> Option<Str
     None
 }
 
-fn run_single_test(test: &TestInfo) -> TestResult {
+// ============================================================================
+// Source module collection for tests
+// ============================================================================
+
+/// Collect source modules referenced by a test file's imports.
+///
+/// Walks the test AST for `from <module> import ...` statements that reference user modules (not `std.*`, not
+/// `rust::*`). Each is resolved against the project's source root so that `from greet import greet` in a test finds
+/// `src/greet.incn` — the same file that `src/main.incn` uses.
+///
+/// Collected modules include transitive dependencies (if `greet.incn` imports `utils.incn`, it is collected too).
+fn collect_source_modules_for_test(test_ast: &Program, source_root: &Path) -> Result<Vec<ParsedModule>, String> {
+    let mut modules = Vec::new();
+    let mut processed = HashSet::new();
+    let mut to_process: Vec<(PathBuf, String, Vec<String>)> = Vec::new();
+
+    // ---- Walk test AST to find user module imports ----
+    for decl in &test_ast.declarations {
+        let Declaration::Import(import) = &decl.node else {
+            continue;
+        };
+
+        let import_path = match &import.kind {
+            ImportKind::From { module, .. } if !module.segments.is_empty() => Some(module),
+            ImportKind::Module(path) if !path.segments.is_empty() => Some(path),
+            _ => continue,
+        };
+
+        let Some(path) = import_path else { continue };
+
+        // Skip stdlib and rust crate imports
+        if path.segments.first().is_some_and(|s| s == "std" || s == "rust") {
+            continue;
+        }
+        // Skip relative imports (e.g. `from ..src.greet`) — those are the old pattern
+        if path.parent_levels > 0 || path.is_absolute {
+            continue;
+        }
+
+        let module_segments = match &import.kind {
+            ImportKind::From { module, .. } => module.segments.clone(),
+            ImportKind::Module(p) => {
+                if p.segments.len() > 1 {
+                    p.segments[..p.segments.len() - 1].to_vec()
+                } else {
+                    p.segments.clone()
+                }
+            }
+            _ => continue,
+        };
+
+        if module_segments.is_empty() {
+            continue;
+        }
+
+        // Resolve against the source root
+        let mut file_path = source_root.to_path_buf();
+        for seg in &module_segments {
+            file_path = file_path.join(seg);
+        }
+        file_path.set_extension("incn");
+
+        if !file_path.exists() {
+            // Try .incan extension as fallback
+            file_path.set_extension("incan");
+            if !file_path.exists() {
+                continue; // Not a source module — might be a built-in or typo
+            }
+        }
+
+        let module_name = module_segments.join("_");
+        if !processed.contains(&file_path) {
+            to_process.push((file_path, module_name, module_segments));
+        }
+    }
+
+    // ---- Recursively collect modules and their transitive dependencies ----
+    while let Some((file_path, module_name, path_segments)) = to_process.pop() {
+        if processed.contains(&file_path) {
+            continue;
+        }
+        processed.insert(file_path.clone());
+
+        let source = fs::read_to_string(&file_path)
+            .map_err(|e| format!("Failed to read source module '{}': {}", file_path.display(), e))?;
+
+        let tokens = lexer::lex(&source).map_err(|errs| {
+            let mut msg = String::new();
+            let fp = file_path.to_string_lossy();
+            for err in &errs {
+                msg.push_str(&diagnostics::format_error(&fp, &source, err));
+            }
+            msg
+        })?;
+
+        let ast = parser::parse(&tokens).map_err(|errs| {
+            let mut msg = String::new();
+            let fp = file_path.to_string_lossy();
+            for err in &errs {
+                msg.push_str(&diagnostics::format_error(&fp, &source, err));
+            }
+            msg
+        })?;
+
+        // Walk this module's imports for transitive dependencies
+        for decl in &ast.declarations {
+            let Declaration::Import(import) = &decl.node else {
+                continue;
+            };
+            let dep_path = match &import.kind {
+                ImportKind::From { module, .. } if !module.segments.is_empty() => Some(module),
+                ImportKind::Module(p) if !p.segments.is_empty() => Some(p),
+                _ => continue,
+            };
+            let Some(dep) = dep_path else { continue };
+            if dep.segments.first().is_some_and(|s| s == "std" || s == "rust") {
+                continue;
+            }
+            if dep.parent_levels > 0 || dep.is_absolute {
+                continue;
+            }
+
+            let dep_segments = match &import.kind {
+                ImportKind::From { module, .. } => module.segments.clone(),
+                ImportKind::Module(p) => {
+                    if p.segments.len() > 1 {
+                        p.segments[..p.segments.len() - 1].to_vec()
+                    } else {
+                        p.segments.clone()
+                    }
+                }
+                _ => continue,
+            };
+
+            if dep_segments.is_empty() {
+                continue;
+            }
+
+            let mut dep_file = source_root.to_path_buf();
+            for seg in &dep_segments {
+                dep_file = dep_file.join(seg);
+            }
+            dep_file.set_extension("incn");
+            if !dep_file.exists() {
+                dep_file.set_extension("incan");
+                if !dep_file.exists() {
+                    continue;
+                }
+            }
+
+            let dep_name = dep_segments.join("_");
+            if !processed.contains(&dep_file) {
+                to_process.push((dep_file, dep_name, dep_segments));
+            }
+        }
+
+        modules.push(ParsedModule {
+            name: module_name,
+            path_segments,
+            file_path,
+            source,
+            ast,
+        });
+    }
+
+    Ok(modules)
+}
+
+// ============================================================================
+// Single test execution
+// ============================================================================
+
+fn run_single_test(
+    test: &TestInfo,
+    locked: bool,
+    frozen: bool,
+    cargo_features: &[String],
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
+) -> TestResult {
     let start = Instant::now();
 
     let source = match fs::read_to_string(&test.file_path) {
@@ -797,30 +1012,132 @@ fn run_single_test(test: &TestInfo) -> TestResult {
         Err(e) => return TestResult::Failed(start.elapsed(), format!("Parser error: {:?}", e)),
     };
 
+    let inline_imports = collect_inline_rust_imports_for_test(&ast, &test.file_path);
+    let manifest = match ProjectManifest::discover(test.file_path.parent().unwrap_or_else(|| Path::new("."))) {
+        Ok(manifest) => manifest,
+        Err(err) => {
+            return TestResult::Failed(start.elapsed(), format!("Manifest error: {}", err));
+        }
+    };
+
+    let cargo_feature_selection = CargoFeatureSelection {
+        cargo_features: cargo_features.to_vec(),
+        cargo_no_default_features,
+        cargo_all_features,
+    }
+    .normalized();
+    let resolved = match resolve_dependencies(manifest.as_ref(), &inline_imports, true, &cargo_feature_selection) {
+        Ok(resolved) => resolved,
+        Err(errors) => {
+            let msg = format_dependency_errors(&errors, &test.file_path, &source);
+            return TestResult::Failed(start.elapsed(), msg);
+        }
+    };
+
+    let project_root = manifest
+        .as_ref()
+        .map(|m| m.project_root().to_path_buf())
+        .unwrap_or_else(|| test.file_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf());
+    let project_name = manifest
+        .as_ref()
+        .and_then(|m| m.project.as_ref().and_then(|p| p.name.clone()))
+        .or_else(|| {
+            test.file_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| "incan_test".to_string());
+    let lock_payload = match super::commands::resolve_lock_payload(
+        &project_root,
+        &project_name,
+        manifest.as_ref(),
+        &resolved,
+        &cargo_feature_selection,
+        locked,
+        frozen,
+    ) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return TestResult::Failed(start.elapsed(), err.message);
+        }
+    };
+
+    // ---- Collect source modules referenced by the test ----
+    let source_root = super::commands::resolve_source_root(&project_root, manifest.as_ref());
+    let source_modules = match collect_source_modules_for_test(&ast, &source_root) {
+        Ok(m) => m,
+        Err(e) => {
+            return TestResult::Failed(start.elapsed(), format!("Failed to collect source modules: {}", e));
+        }
+    };
+
+    // ---- Setup codegen ----
     let mut codegen = IrCodegen::new();
     codegen.set_test_mode(true);
     codegen.set_test_function(&test.function_name);
 
-    let rust_code = match codegen.try_generate(&ast) {
-        Ok(code) => code,
-        Err(e) => {
-            return TestResult::Failed(start.elapsed(), format!("Code generation error: {}", e));
-        }
-    };
-
-    let temp_dir = format!("target/incan_tests/{}", test.function_name);
-    let generator = ProjectGenerator::new(&temp_dir, "test_runner", true);
-
-    if let Err(e) = generator.generate(&rust_code) {
-        return TestResult::Failed(start.elapsed(), format!("Failed to generate project: {}", e));
+    for module in &source_modules {
+        codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
 
-    let output = std::process::Command::new("cargo")
-        .arg("test")
-        .arg("--")
-        .arg("--nocapture")
-        .current_dir(&temp_dir)
-        .output();
+    // Scan all modules for feature flags
+    codegen.scan_for_serde(&ast);
+    codegen.scan_for_async(&ast);
+    codegen.scan_for_web(&ast);
+    codegen.scan_for_list_helpers(&ast);
+    for module in &source_modules {
+        codegen.scan_for_serde(&module.ast);
+        codegen.scan_for_async(&module.ast);
+        codegen.scan_for_web(&module.ast);
+        codegen.scan_for_list_helpers(&module.ast);
+    }
+
+    let temp_dir = format!("target/incan_tests/{}", test.function_name);
+    let mut generator = ProjectGenerator::new(&temp_dir, "test_runner", true);
+    generator.set_needs_serde(codegen.needs_serde());
+    generator.set_needs_tokio(codegen.needs_tokio());
+    generator.set_needs_axum(codegen.needs_axum());
+    generator.set_include_dev_dependencies(true);
+    generator.set_dependencies(resolved.dependencies);
+    generator.set_dev_dependencies(resolved.dev_dependencies);
+    generator.set_cargo_lock_payload(lock_payload);
+    generator.set_cargo_policy_flags(super::commands::cargo_command_flags(
+        locked,
+        frozen,
+        &cargo_feature_selection,
+    ));
+
+    // ---- Generate project (multi-file when source modules are present) ----
+    if source_modules.is_empty() {
+        let rust_code = match codegen.try_generate(&ast) {
+            Ok(code) => code,
+            Err(e) => {
+                return TestResult::Failed(start.elapsed(), format!("Code generation error: {}", e));
+            }
+        };
+        if let Err(e) = generator.generate(&rust_code) {
+            return TestResult::Failed(start.elapsed(), format!("Failed to generate project: {}", e));
+        }
+    } else {
+        let module_paths: Vec<Vec<String>> = source_modules.iter().map(|m| m.path_segments.clone()).collect();
+        let (main_code, rust_modules) = match codegen.try_generate_multi_file_nested(&ast, &module_paths) {
+            Ok(result) => result,
+            Err(e) => {
+                return TestResult::Failed(start.elapsed(), format!("Code generation error: {}", e));
+            }
+        };
+        if let Err(e) = generator.generate_nested(&main_code, &rust_modules) {
+            return TestResult::Failed(start.elapsed(), format!("Failed to generate project: {}", e));
+        }
+    }
+
+    let mut command = std::process::Command::new("cargo");
+    command.arg("test");
+    for flag in super::commands::cargo_command_flags(locked, frozen, &cargo_feature_selection) {
+        command.arg(flag);
+    }
+    let output = command.arg("--").arg("--nocapture").current_dir(&temp_dir).output();
 
     match output {
         Ok(output) => {
@@ -872,4 +1189,80 @@ fn extract_panic_message(stdout: &str) -> String {
     }
 
     if msg.is_empty() { stdout.to_string() } else { msg }
+}
+
+fn collect_inline_rust_imports_for_test(
+    ast: &crate::frontend::ast::Program,
+    file_path: &Path,
+) -> Vec<InlineRustImport> {
+    let mut imports = Vec::new();
+    for decl in &ast.declarations {
+        let crate::frontend::ast::Declaration::Import(import) = &decl.node else {
+            continue;
+        };
+        match &import.kind {
+            crate::frontend::ast::ImportKind::RustCrate {
+                crate_name,
+                version,
+                features,
+                ..
+            } => {
+                imports.push(InlineRustImport {
+                    crate_name: crate_name.clone(),
+                    version: version.clone(),
+                    features: features.clone(),
+                    span: decl.span,
+                    file_path: file_path.to_path_buf(),
+                    is_test_context: true,
+                });
+            }
+            crate::frontend::ast::ImportKind::RustFrom {
+                crate_name,
+                version,
+                features,
+                ..
+            } => {
+                imports.push(InlineRustImport {
+                    crate_name: crate_name.clone(),
+                    version: version.clone(),
+                    features: features.clone(),
+                    span: decl.span,
+                    file_path: file_path.to_path_buf(),
+                    is_test_context: true,
+                });
+            }
+            _ => {}
+        }
+    }
+    imports
+}
+
+fn format_dependency_errors(errors: &[DependencyError], file_path: &Path, source: &str) -> String {
+    let mut msg = String::new();
+    for err in errors {
+        if err.file_path == file_path {
+            msg.push_str(&diagnostics::format_error(
+                &file_path.to_string_lossy(),
+                source,
+                &err.error,
+            ));
+            continue;
+        }
+
+        if let Ok(other_source) = fs::read_to_string(&err.file_path) {
+            msg.push_str(&diagnostics::format_error(
+                &err.file_path.to_string_lossy(),
+                &other_source,
+                &err.error,
+            ));
+            continue;
+        }
+
+        msg.push_str(&format!(
+            "error: {}\n  --> {}\n",
+            err.error.message,
+            err.file_path.display()
+        ));
+    }
+    msg
 }

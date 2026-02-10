@@ -31,7 +31,7 @@
 //!   - `decl.rs` - Declarations
 //!   - `lower.rs` - AST to IR lowering
 //!   - `emit.rs` - IR to Rust via syn/quote/prettyplease
-//! - `project.rs` - Cargo project generation
+//! - `project/` - Cargo project generation (plan, generator, cargo_toml, runner)
 
 // Enforce explicit error handling in project generation code.
 // XXX: codegen modules emit `.unwrap()` as string literals in generated Rust code.
@@ -50,7 +50,6 @@ pub use ir::{GenerationError, IrCodegen};
 // Project generation (public API)
 pub use project::{
     CargoCommand, CompilationPlan, ExecutionResult, Executor, PlannedDirectory, PlannedFile, ProjectGenerator,
-    UnknownCrateError,
 };
 
 // For tests that need to verify lowering behavior

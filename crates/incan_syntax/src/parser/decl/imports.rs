@@ -7,6 +7,7 @@ impl<'a> Parser<'a> {
             if self.match_keyword(KeywordId::Rust) {
                 self.expect_punct(PunctuationId::ColonColon, "Expected '::' after 'rust'")?;
                 let (crate_name, path) = self.rust_crate_path()?;
+                let (version, features) = self.rust_import_spec()?;
                 self.expect_keyword(KeywordId::Import, "Expected 'import' after rust crate path")?;
 
                 // Parse import items
@@ -29,6 +30,8 @@ impl<'a> Parser<'a> {
                     kind: ImportKind::RustFrom {
                         crate_name,
                         path,
+                        version,
+                        features,
                         items,
                     },
                     alias: None,
@@ -72,7 +75,13 @@ impl<'a> Parser<'a> {
             // Rust crate import: import rust::serde_json or import rust::serde_json::Value
             self.expect_punct(PunctuationId::ColonColon, "Expected '::' after 'rust'")?;
             let (crate_name, path) = self.rust_crate_path()?;
-            ImportKind::RustCrate { crate_name, path }
+            let (version, features) = self.rust_import_spec()?;
+            ImportKind::RustCrate {
+                crate_name,
+                path,
+                version,
+                features,
+            }
         } else {
             // Module import: import foo::bar::baz or import super::foo or import crate::foo
             let path = self.import_path()?;
@@ -104,6 +113,45 @@ impl<'a> Parser<'a> {
         }
 
         Ok((crate_name, path))
+    }
+
+    /// Parse optional `@ "version"` and `with ["feature"]` specifiers for rust imports.
+    fn rust_import_spec(&mut self) -> Result<(Option<String>, Vec<String>), CompileError> {
+        let mut version = None;
+        let mut features = Vec::new();
+
+        if self.match_punct(PunctuationId::At) {
+            version = Some(self.string_literal()?);
+
+            if self.match_keyword(KeywordId::With) {
+                features = self.string_list()?;
+            }
+        } else if self.check_keyword(KeywordId::With) {
+            return Err(errors::rust_import_features_require_version(self.current_span()));
+        }
+
+        Ok((version, features))
+    }
+
+    /// Parse a bracketed list of string literals, e.g. `["a", "b"]`.
+    fn string_list(&mut self) -> Result<Vec<String>, CompileError> {
+        self.expect_punct(PunctuationId::LBracket, "Expected '[' to start feature list")?;
+        let mut items = Vec::new();
+
+        if self.match_punct(PunctuationId::RBracket) {
+            return Ok(items);
+        }
+
+        loop {
+            items.push(self.string_literal()?);
+            if self.match_punct(PunctuationId::Comma) {
+                continue;
+            }
+            self.expect_punct(PunctuationId::RBracket, "Expected ']' after feature list")?;
+            break;
+        }
+
+        Ok(items)
     }
 
     /// Parse an import path, supporting:

@@ -13,12 +13,8 @@ impl TypeChecker {
     fn collect_trait_method_names(&self, traits: &[Spanned<Ident>]) -> HashSet<String> {
         let mut names = HashSet::new();
         for trait_ref in traits {
-            if let Some(id) = self.symbols.lookup(trait_ref.node.as_str()) {
-                if let Some(sym) = self.symbols.get(id) {
-                    if let SymbolKind::Trait(trait_info) = &sym.kind {
-                        names.extend(trait_info.methods.keys().cloned());
-                    }
-                }
+            if let Some(trait_info) = self.lookup_trait_info(trait_ref.node.as_str()) {
+                names.extend(trait_info.methods.keys().cloned());
             }
         }
         names
@@ -162,13 +158,9 @@ impl TypeChecker {
         // Note: do this after defining type params so `@requires(field: T)` can resolve `T`.
         for trait_ref in &model.traits {
             let trait_name = trait_ref.node.as_str();
-            if let Some(id) = self.symbols.lookup(trait_name) {
-                if let Some(sym) = self.symbols.get(id) {
-                    if let SymbolKind::Trait(trait_info) = &sym.kind {
-                        self.check_trait_conformance_model(model, trait_info.clone(), trait_name, trait_ref.span);
-                    }
-                }
-            } else {
+            if let Some(trait_info) = self.lookup_trait_info(trait_name) {
+                self.check_trait_conformance_model(model, trait_info.clone(), trait_name, trait_ref.span);
+            } else if self.lookup_symbol(trait_name).is_none() {
                 self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
             }
         }
@@ -369,13 +361,9 @@ impl TypeChecker {
         // Check traits exist and are satisfied
         for trait_ref in &class.traits {
             let trait_name = trait_ref.node.as_str();
-            if let Some(id) = self.symbols.lookup(trait_name) {
-                if let Some(sym) = self.symbols.get(id) {
-                    if let SymbolKind::Trait(trait_info) = &sym.kind {
-                        self.check_trait_conformance(class, trait_info.clone(), trait_name, trait_ref.span);
-                    }
-                }
-            } else {
+            if let Some(trait_info) = self.lookup_trait_info(trait_name) {
+                self.check_trait_conformance(class, trait_info.clone(), trait_name, trait_ref.span);
+            } else if self.lookup_symbol(trait_name).is_none() {
                 self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
             }
         }

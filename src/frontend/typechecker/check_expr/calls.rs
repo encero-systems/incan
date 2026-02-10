@@ -678,15 +678,10 @@ impl TypeChecker {
         if let Expr::Field(base, variant_name) = &callee.node {
             let base_ty = self.check_expr(base);
             if let ResolvedType::Named(enum_name) = &base_ty {
-                if let Some(id) = self.symbols.lookup(enum_name) {
-                    if let Some(sym) = self.symbols.get(id) {
-                        if let SymbolKind::Type(TypeInfo::Enum(enum_info)) = &sym.kind {
-                            if enum_info.variants.iter().any(|v| v == variant_name) {
-                                // Validate arguments but do not attempt strict arity/type checking here.
-                                self.check_call_args(args);
-                                return ResolvedType::Named(enum_name.clone());
-                            }
-                        }
+                if let Some(TypeInfo::Enum(enum_info)) = self.lookup_type_info(enum_name) {
+                    if enum_info.variants.iter().any(|v| v == variant_name) {
+                        self.check_call_args(args);
+                        return ResolvedType::Named(enum_name.clone());
                     }
                 }
             }
@@ -765,21 +760,11 @@ impl TypeChecker {
 
         match callee_ty {
             ResolvedType::Function(_, ret) => *ret,
-            ResolvedType::Named(name) => {
-                if let Some(id) = self.symbols.lookup(&name) {
-                    if let Some(sym) = self.symbols.get(id) {
-                        match &sym.kind {
-                            SymbolKind::Type(_) => ResolvedType::Named(name),
-                            SymbolKind::Variant(info) => ResolvedType::Named(info.enum_name.clone()),
-                            _ => ResolvedType::Unknown,
-                        }
-                    } else {
-                        ResolvedType::Unknown
-                    }
-                } else {
-                    ResolvedType::Unknown
-                }
-            }
+            ResolvedType::Named(name) => match self.lookup_symbol(&name).map(|s| &s.kind) {
+                Some(SymbolKind::Type(_)) => ResolvedType::Named(name),
+                Some(SymbolKind::Variant(info)) => ResolvedType::Named(info.enum_name.clone()),
+                _ => ResolvedType::Unknown,
+            },
             _ => ResolvedType::Unknown,
         }
     }
@@ -804,19 +789,14 @@ impl TypeChecker {
             }
         }
 
-        if let Some(id) = self.symbols.lookup(name) {
-            if let Some(sym) = self.symbols.get(id) {
-                match &sym.kind {
-                    SymbolKind::Type(_) => ResolvedType::Named(name.to_string()),
-                    SymbolKind::Variant(info) => ResolvedType::Named(info.enum_name.clone()),
-                    _ => ResolvedType::Unknown,
-                }
-            } else {
+        match self.lookup_symbol(name).map(|s| &s.kind) {
+            Some(SymbolKind::Type(_)) => ResolvedType::Named(name.to_string()),
+            Some(SymbolKind::Variant(info)) => ResolvedType::Named(info.enum_name.clone()),
+            Some(_) => ResolvedType::Unknown,
+            None => {
+                self.errors.push(errors::unknown_symbol(name, span));
                 ResolvedType::Unknown
             }
-        } else {
-            self.errors.push(errors::unknown_symbol(name, span));
-            ResolvedType::Unknown
         }
     }
 }

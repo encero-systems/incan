@@ -30,6 +30,8 @@ pub struct ParsedModule {
     pub name: String,
     /// Path segments for nested modules (e.g., ["db", "models"] for db::models)
     pub path_segments: Vec<String>,
+    /// Absolute path to the module file (for diagnostics).
+    pub file_path: PathBuf,
     pub source: String,
     pub ast: Program,
 }
@@ -145,6 +147,7 @@ pub fn parse_prelude_file(stdlib_dir: &Path, relative_path: &str) -> Result<Opti
     Ok(Some(ParsedModule {
         name: module_name,
         path_segments,
+        file_path: path,
         source,
         ast,
     }))

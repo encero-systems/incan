@@ -169,7 +169,7 @@ impl TypeChecker {
                 self.validate_root_namespace(&name, span);
                 self.define_import_symbol(name, vec![pkg.clone()], true, span);
             }
-            ImportKind::RustCrate { crate_name, path } => {
+            ImportKind::RustCrate { crate_name, path, .. } => {
                 // Rust crate import: import rust::serde_json or import rust::serde_json::Value
                 let name = import
                     .alias
@@ -185,6 +185,7 @@ impl TypeChecker {
                 crate_name,
                 path,
                 items,
+                ..  // version, features: not used here
             } => {
                 // from rust::time import Instant, Duration
                 for item in items {
@@ -242,17 +243,9 @@ impl TypeChecker {
 
     /// Define a symbol for a Rust crate import, skipping if a real definition exists.
     fn define_rust_import_symbol(&mut self, name: Ident, crate_name: String, path: Vec<Ident>, span: Span) {
-        if let Some(id) = self.symbols.lookup(&name) {
-            if let Some(sym) = self.symbols.get(id) {
-                match &sym.kind {
-                    SymbolKind::Type(_) | SymbolKind::Function(_) | SymbolKind::Trait(_) | SymbolKind::Variant(_) => {
-                        return;
-                    }
-                    _ => {}
-                }
-            }
+        if self.has_real_definition(&name) {
+            return;
         }
-
         self.symbols.define(Symbol {
             name,
             kind: SymbolKind::RustModule {
@@ -266,23 +259,25 @@ impl TypeChecker {
 
     /// Define a symbol for a module import, skipping if a real definition exists.
     fn define_import_symbol(&mut self, name: Ident, path: Vec<Ident>, is_python: bool, span: Span) {
-        if let Some(id) = self.symbols.lookup(&name) {
-            if let Some(sym) = self.symbols.get(id) {
-                match &sym.kind {
-                    SymbolKind::Type(_) | SymbolKind::Function(_) | SymbolKind::Trait(_) | SymbolKind::Variant(_) => {
-                        // Already have a real definition, don't overwrite with Module placeholder
-                        return;
-                    }
-                    _ => {}
-                }
-            }
+        if self.has_real_definition(&name) {
+            return;
         }
-
         self.symbols.define(Symbol {
             name,
             kind: SymbolKind::Module(ModuleInfo { path, is_python }),
             span,
             scope: 0,
         });
+    }
+
+    /// Returns `true` if `name` already resolves to a "real" definition (type, function, trait, or variant) that
+    /// should not be overwritten by a module/rust-module placeholder.
+    fn has_real_definition(&self, name: &str) -> bool {
+        self.lookup_symbol(name).is_some_and(|sym| {
+            matches!(
+                sym.kind,
+                SymbolKind::Type(_) | SymbolKind::Function(_) | SymbolKind::Trait(_) | SymbolKind::Variant(_)
+            )
+        })
     }
 }

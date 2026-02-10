@@ -86,22 +86,20 @@ impl<'a> IrEmitter<'a> {
                     }
                 }
 
-                // If we have function signature, use it to determine borrows
-                if let Some(sig) = function_sig {
-                    if let Some(param) = sig.params.get(idx) {
-                        if param.mutability == Mutability::Mutable {
-                            match &a.ty {
-                                IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
-                                _ => return Ok(quote! { &mut #emitted }),
-                            }
+                // If we have a function signature, use it to determine borrows
+                if let Some(param) = function_sig.and_then(|sig| sig.params.get(idx)) {
+                    if param.mutability == Mutability::Mutable {
+                        match &a.ty {
+                            IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
+                            _ => return Ok(quote! { &mut #emitted }),
                         }
-                        if matches!(&param.ty, IrType::Ref(_)) {
-                            match &a.ty {
-                                IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
-                                _ => {
-                                    if !a.ty.is_copy() {
-                                        return Ok(quote! { &#emitted });
-                                    }
+                    }
+                    if matches!(&param.ty, IrType::Ref(_)) {
+                        match &a.ty {
+                            IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
+                            _ => {
+                                if !a.ty.is_copy() {
+                                    return Ok(quote! { &#emitted });
                                 }
                             }
                         }

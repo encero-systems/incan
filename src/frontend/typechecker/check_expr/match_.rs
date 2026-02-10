@@ -238,18 +238,9 @@ impl TypeChecker {
     /// error if patterns are missing.
     fn check_match_exhaustiveness(&mut self, subject_ty: &ResolvedType, arms: &[Spanned<MatchArm>], span: Span) {
         let variants = if let ResolvedType::Named(name) = subject_ty {
-            if let Some(id) = self.symbols.lookup(name) {
-                if let Some(sym) = self.symbols.get(id) {
-                    if let SymbolKind::Type(TypeInfo::Enum(enum_info)) = &sym.kind {
-                        Some(enum_info.variants.clone())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
+            match self.lookup_type_info(name) {
+                Some(TypeInfo::Enum(enum_info)) => Some(enum_info.variants.clone()),
+                _ => None,
             }
         } else if subject_ty.is_result() || subject_ty.is_option() {
             if subject_ty.is_result() {

@@ -22,9 +22,12 @@
 
 pub mod backend;
 pub mod cli;
+pub mod dependency_resolver;
 pub mod format;
 pub mod frontend;
+pub mod lockfile;
 pub mod lsp;
+pub mod manifest;
 pub mod numeric;
 pub mod numeric_adapters;
 pub mod version;

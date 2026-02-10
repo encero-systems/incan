@@ -42,6 +42,30 @@ Run a program and use its exit code as the CI result:
 incan run path/to/main.incn
 ```
 
+## Reproducible builds with locked dependencies
+
+If your project uses `incan.toml` and has an `incan.lock` committed to version control, use `--locked` or `--frozen` in
+CI to ensure builds use exactly the locked dependency versions:
+
+```bash
+# Require incan.lock to exist and be up to date
+incan build src/main.incn --locked
+incan test --locked
+
+# Same as --locked, plus Cargo runs in offline/frozen mode (no network)
+incan build src/main.incn --frozen
+```
+
+If the lock file is missing or stale, the command fails immediately — no silent re-resolution.
+
+**Recommended workflow**:
+
+1. Developers run `incan lock` after changing dependencies (locally).
+2. Commit both `incan.toml` and `incan.lock` to version control.
+3. CI uses `--locked` to catch stale lock files.
+
+See: [Managing dependencies](dependencies.md) for more details.
+
 ## GitHub Actions example
 
 ```yaml
@@ -51,6 +75,9 @@ incan run path/to/main.incn
 - name: Format (CI)
   run: incan fmt --check .
 
-- name: Tests
-  run: incan test .
+- name: Tests (locked)
+  run: incan test --locked
+
+- name: Build (locked)
+  run: incan build src/main.incn --locked
 ```

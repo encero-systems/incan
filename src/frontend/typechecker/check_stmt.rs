@@ -167,15 +167,10 @@ impl TypeChecker {
                     // Check that target is a valid lvalue
                     match &target.node {
                         Expr::Ident(name) => {
-                            // TODO: lots of nested ifs here, we should refactor this to be more readable.
                             // Check that the variable is mutable
-                            if let Some(id) = self.symbols.lookup_local(name) {
-                                if let Some(sym) = self.symbols.get(id) {
-                                    if let SymbolKind::Variable(var_info) = &sym.kind {
-                                        if !var_info.is_mutable {
-                                            self.errors.push(errors::mutation_without_mut(name, target.span));
-                                        }
-                                    }
+                            if let Some(var_info) = self.lookup_local_variable_info(name) {
+                                if !var_info.is_mutable {
+                                    self.errors.push(errors::mutation_without_mut(name, target.span));
                                 }
                             }
                         }
@@ -251,37 +246,32 @@ impl TypeChecker {
                 }
             }
             ResolvedType::Named(type_name) => {
-                // TODO: lots of nested ifs here, we should refactor this to be more readable.
-                if let Some(id) = self.symbols.lookup(type_name) {
-                    if let Some(sym) = self.symbols.get(id) {
-                        if let SymbolKind::Type(type_info) = &sym.kind {
-                            let field_type = match type_info {
-                                TypeInfo::Model(model) => model.fields.get(field).map(|f| f.ty.clone()),
-                                TypeInfo::Class(class) => class.fields.get(field).map(|f| f.ty.clone()),
-                                _ => None,
-                            };
+                let Some(type_info) = self.lookup_type_info(type_name) else {
+                    // Type not found — already reported elsewhere
+                    return;
+                };
 
-                            match field_type {
-                                Some(expected_ty) => {
-                                    // Check type compatibility
-                                    if !self.types_compatible(&value_ty, &expected_ty) {
-                                        self.errors.push(errors::field_type_mismatch(
-                                            field,
-                                            &expected_ty.to_string(),
-                                            &value_ty.to_string(),
-                                            field_assign.value.span,
-                                        ));
-                                    }
-                                }
-                                None => {
-                                    // Field doesn't exist
-                                    self.errors.push(errors::missing_field(type_name, field, span));
-                                }
-                            }
+                let field_type = match type_info {
+                    TypeInfo::Model(model) => model.fields.get(field).map(|f| f.ty.clone()),
+                    TypeInfo::Class(class) => class.fields.get(field).map(|f| f.ty.clone()),
+                    _ => None,
+                };
+
+                match field_type {
+                    Some(expected_ty) => {
+                        if !self.types_compatible(&value_ty, &expected_ty) {
+                            self.errors.push(errors::field_type_mismatch(
+                                field,
+                                &expected_ty.to_string(),
+                                &value_ty.to_string(),
+                                field_assign.value.span,
+                            ));
                         }
                     }
+                    None => {
+                        self.errors.push(errors::missing_field(type_name, field, span));
+                    }
                 }
-                // Type not found - already reported elsewhere
             }
             ResolvedType::Unknown => {
                 // Don't report additional errors on unknown types
@@ -370,23 +360,19 @@ impl TypeChecker {
         let value_ty = self.check_expr(&assign.value);
 
         // Check if it's a re-assignment
-        if let Some(id) = self.symbols.lookup_local(&assign.name) {
-            // TODO: lots of nested ifs here, we should refactor this to be more readable.
-            // Re-assignment - check mutability
-            if let Some(sym) = self.symbols.get(id) {
-                if let SymbolKind::Variable(var_info) = &sym.kind {
-                    if !var_info.is_mutable {
-                        self.errors.push(errors::mutation_without_mut(&assign.name, span));
-                    }
-                    // Type check
-                    if !self.types_compatible(&value_ty, &var_info.ty) {
-                        self.errors.push(errors::type_mismatch(
-                            &var_info.ty.to_string(),
-                            &value_ty.to_string(),
-                            assign.value.span,
-                        ));
-                    }
-                }
+        if let Some(var_info) = self.lookup_local_variable_info(&assign.name) {
+            let is_mutable = var_info.is_mutable;
+            let var_ty = var_info.ty.clone();
+
+            if !is_mutable {
+                self.errors.push(errors::mutation_without_mut(&assign.name, span));
+            }
+            if !self.types_compatible(&value_ty, &var_ty) {
+                self.errors.push(errors::type_mismatch(
+                    &var_ty.to_string(),
+                    &value_ty.to_string(),
+                    assign.value.span,
+                ));
             }
             return;
         }

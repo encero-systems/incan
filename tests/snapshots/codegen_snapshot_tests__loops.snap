@@ -8,7 +8,7 @@ expression: rust_code
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.0");
+incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.1");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
 fn test_while_loop() {

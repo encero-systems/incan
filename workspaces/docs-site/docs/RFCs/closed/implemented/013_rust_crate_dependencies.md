@@ -1,6 +1,6 @@
 # RFC 013: Rust Crate Dependencies
 
-**Status:** Planned  
+**Status:** Implemented  
 **Created:** 2025-12-16  
 **Author(s):** Danny Meijer (@danny-meijer)  
 **Supersedes:** Parts of RFC 005 (Cargo integration section)  
@@ -989,67 +989,84 @@ from rust::chrono @ "0.4" with ["serde", "clock"] import DateTime, Utc
 
 ### Implementing Phase 1: Inline Versions
 
-- [ ] Parser: `@ "version"` syntax on `rust::...` imports
-- [ ] Validation: version requirement strings must use **Cargo SemVer requirement syntax** (not PEP 440)
-- [ ] Codegen/resolution: pass the crate spec (crate name + version requirement) to project generation
-- [ ] Error: unknown crate without version (hard error)
-- [ ] Docs: update rust_interop.md
+- [x] Parser: `@ "version"` syntax on `rust::...` imports
+- [x] Validation: version requirement strings must use **Cargo SemVer requirement syntax** (not PEP 440)
+    - Early validation via `semver` crate in `dependency_resolver::validate_cargo_version_req()`
+- [x] Codegen/resolution: pass the crate spec (crate name + version requirement) to project generation
+- [x] Error: unknown crate without version (hard error)
+- [x] Docs: update rust_interop.md
 
 ### Implementing Phase 2: Features
 
-- [ ] Parser: `with ["features"]` syntax
-- [ ] Resolution: features are unioned across sites per merging rules
-- [ ] Codegen: emit features in generated Cargo metadata
-- [ ] Error: unknown feature
+- [x] Parser: `with ["features"]` syntax
+- [x] Resolution: features are unioned across sites per merging rules
+- [x] Codegen: emit features in generated Cargo metadata
+- [x] Error: unknown feature — **deferred to Cargo**: feature validation requires querying crate registry
+  metadata, which Incan does not currently do. Invalid features are caught by Cargo during the build step.
 
 ### Implementing Phase 3: Project Configuration
 
-- [ ] Parser: `incan.toml` dependency tables (canonical + aliases):
-    - [ ] `[dependencies]`
-    - [ ] `[dev-dependencies]`
-    - [ ] Optional group: `[dependencies.optional]`
-    - [ ] Alias support: `[rust.dependencies]` and `[rust.dev-dependencies]`
-    - [ ] Error if both canonical and alias table are provided for the same kind
-- [ ] CLI: `incan init` command
-- [ ] Resolution: apply precedence rules (incan.toml > inline > known-good > error)
-- [ ] Known-good defaults: apply only when there is no `incan.toml` spec (canonical or alias) and no inline annotation
-- [ ] Rule: if a crate is specified in incan.toml (canonical or alias tables), inline annotations for that crate are a
+- [x] Parser: `incan.toml` dependency tables (canonical + aliases):
+    - [x] `[dependencies]`
+    - [x] `[dev-dependencies]`
+    - [x] Optional group: `[dependencies.optional]`
+    - [x] Alias support: `[rust.dependencies]` and `[rust.dev-dependencies]`
+    - [x] Error if both canonical and alias table are provided for the same kind
+- [x] CLI: `incan init` command
+- [x] Resolution: apply precedence rules (incan.toml > inline > known-good > error)
+- [x] Known-good defaults: apply only when there is no `incan.toml` spec (canonical or alias) and no inline annotation
+- [x] Rule: if a crate is specified in incan.toml (canonical or alias tables), inline annotations for that crate are a
   compile-time error
-- [ ] Dev-dependencies gating: crates that are only in `[dev-dependencies]` are only allowed in test contexts (RFC 018/019)
+- [x] Dev-dependencies gating: crates that are only in `[dev-dependencies]` are only allowed in test contexts (RFC 018/019)
   and error in production code
-- [ ] Error: version/source/default-features conflicts across sites (per §4.2/§4.3)
-- [ ] Multiple inline sites (no incan.toml entry): enforce this RFC’s merge rules:
-    - [ ] version requirement strings must match exactly across inline sites
-    - [ ] source must match across inline sites
-    - [ ] `default-features` must match across inline sites
-    - [ ] features are unioned across inline sites
-- [ ] Diagnostics: conflicting specs and resolution failures produce actionable errors that point to all relevant locations
+- [x] Error: version/source/default-features conflicts across sites (per §4.2/§4.3)
+- [x] Multiple inline sites (no incan.toml entry): enforce this RFC’s merge rules:
+    - [x] version requirement strings must match exactly across inline sites
+    - [x] source must match across inline sites (inline imports are always registry)
+    - [x] `default-features` must match across inline sites (inline imports always use default)
+    - [x] features are unioned across inline sites
+- [x] Diagnostics: conflicting specs and resolution failures produce actionable errors that point to all relevant locations
   (e.g. inline import site(s) + `incan.toml`), and suggest the concrete fix
 
 ### Implementing Phase 4: Lock File
 
-- [ ] CLI: `incan lock` command (produce/refresh `incan.lock`)
-- [ ] `incan.lock` format (container + embedded Cargo.lock payload):
-    - [ ] `[incan]` metadata (`format`, `incan-version`, `generated`, `deps-fingerprint`, cargo feature selection)
-    - [ ] `[cargo].lock` verbatim embedded `Cargo.lock` payload
-- [ ] `deps-fingerprint` computation fingerprints dependency inputs and Cargo feature selection, and excludes non-dependency
+- [x] CLI: `incan lock` command (produce/refresh `incan.lock`)
+- [x] `incan.lock` format (container + embedded Cargo.lock payload):
+    - [x] `[incan]` metadata (`format`, `incan-version`, `generated`, `deps-fingerprint`, cargo feature selection)
+    - [x] `[cargo].lock` verbatim embedded `Cargo.lock` payload
+- [x] `deps-fingerprint` computation fingerprints dependency inputs and Cargo feature selection, and excludes non-dependency
   settings like `[build].rust-edition`
-- [ ] Default behavior: if `incan.lock` is missing and no strict policy flag is set, builds/tests may generate it
+- [x] Default behavior: if `incan.lock` is missing and no strict policy flag is set, builds/tests may generate it
   (first-run convenience)
-- [ ] Strict behavior (uv-style; see RFC 020 for flags):
-    - [ ] `--locked`: `incan.lock` must exist and be up-to-date (fingerprint matches) or fail with “run incan lock”
-    - [ ] `--frozen`: `incan.lock` must exist and be up-to-date (fingerprint matches); use it and also enforce Cargo
+- [x] Strict behavior (uv-style; see RFC 020 for flags):
+    - [x] `--locked`: `incan.lock` must exist and be up-to-date (fingerprint matches) or fail with “run incan lock”
+    - [x] `--frozen`: `incan.lock` must exist and be up-to-date (fingerprint matches); use it and also enforce Cargo
       `--frozen` policy (offline + locked)
-- [ ] Diagnostics: missing/out-of-date lock failures are targeted and instruct the user to run `incan lock`
-- [ ] Materialization: embedded `Cargo.lock` is written as `Cargo.lock` into generated build/test Cargo project directories
-- [ ] Ensure dev-dependencies are represented so `incan test --locked` is meaningful
+- [x] Diagnostics: missing/out-of-date lock failures are targeted and instruct the user to run `incan lock`
+- [x] Materialization: embedded `Cargo.lock` is written as `Cargo.lock` into generated build/test Cargo project directories
+- [x] Ensure dev-dependencies are represented so `incan test --locked` is meaningful
 
 ### Implementing Phase 5: Advanced Sources
 
-- [ ] Git dependencies
-- [ ] Path dependencies
-- [ ] Optional dependencies
-- [ ] Dev dependencies
+- [x] Git dependencies
+- [x] Path dependencies
+- [x] Optional dependencies
+- [x] Dev dependencies
+
+### Error messages (section 5)
+
+- [x] 5.1: Unknown crate without version
+- [x] 5.2: Feature not found -- **deferred to Cargo** (requires registry queries; invalid features are caught by Cargo
+  during the build step)
+- [x] 5.3: Version not found -- **deferred to Cargo** (requires registry queries; invalid versions are caught by Cargo
+  during the build step)
+- [x] 5.4: Lock out of date (includes fingerprint details and explanation)
+- [x] 5.5: Optional dependency not enabled
+- [x] 5.6: Inline annotation forbidden (crate in incan.toml)
+- [x] 5.7: Conflicting inline sites
+- [x] 5.8: Dev-dependency imported from production code
+- [x] 5.9: Git branch not allowed in strict mode
+- [x] 5.10: Dependency rename collision
 
 ---
 

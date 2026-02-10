@@ -18,33 +18,89 @@ from rust::std::collections import HashMap, HashSet
 import rust::serde_json::Value
 ```
 
-### Note on Rust-style imports without `rust::`
+### The `std` and `rust` namespaces
 
-Incan also supports Rust-style module paths in regular imports (e.g. `import std::fs`).
+- `std::...` is reserved for **Incan's** standard library (e.g. `from std.web import App`).
+- `rust::...` is for Rust crates from crates.io **and** Rust's standard library.
 
-- For the Rust standard library, `std::...` is supported as a convenience.
-- For crates from crates.io (e.g. `serde`, `regex`, `reqwest`), prefer `rust::...` so the compiler can manage
-  dependencies in the generated `Cargo.toml`.
+To use Rust's own standard library, use the `rust::std::` prefix:
 
-## Automatic Dependency Management
+```incan
+import rust::std::fs
+import rust::std::collections::BTreeMap
+```
+
+For example, if you would use `import std::fs`, this would refer to Incan's stdlib, **not** Rust's!
+
+## Dependency Management
 
 When you use `import rust::crate_name`, Incan automatically adds the dependency to your generated `Cargo.toml`.
+Dependencies are resolved using a three-tier precedence system:
+
+1. **`incan.toml`** (highest priority): If the crate is configured in your project manifest, that spec is used.
+2. **Inline annotations**: If you write `import rust::foo @ "1.0"`, that version is used.
+3. **Known-good defaults**: For common crates (see table below), the compiler provides tested defaults.
+
+If none of these apply, the compiler emits an error asking you to specify a version.
 
 For the bigger picture, see: [Projects today](../../tooling/explanation/projects_today.md).
 
-### Strict Dependency Policy
+### Specifying versions and features
 
-Incan uses a **strict dependency policy** to reduce dependency drift and keep builds predictable:
+You can annotate any `rust::` import with a version requirement and optional feature list:
 
-- **Known-good crates**: Curated crates have tested version/feature combinations (see table below)
-- **Unknown crates**: Currently produce a compiler error (planned: explicit versions and project config)
+```incan
+# Version only
+import rust::my_crate @ "1.0"
+from rust::obscure_lib @ "0.5" import Widget
 
-This policy prevents "works on my machine" issues caused by wildcard (`*`) dependencies
-that resolve to different versions at different times.
+# Version with features
+import rust::tokio @ "1.0" with ["full"]
+import rust::serde @ "1.0" with ["derive", "rc"]
+from rust::sqlx @ "0.7" with ["runtime-tokio", "postgres"] import Pool
+```
 
-### Known-Good Crates
+Version strings use [Cargo SemVer syntax](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html):
 
-The following crates have pre-configured versions with appropriate features:
+| Syntax      | Meaning                      | Example            |
+| ----------- | ---------------------------- | ------------------ |
+| `"1.2.3"`   | Caret (^1.2.3): >=1.2.3 <2.0 | `@ "1.0"`          |
+| `"~1.2"`    | Tilde: >=1.2.0 <1.3.0        | `@ "~0.3"`         |
+| `">=1, <2"` | Range                        | `@ ">=1.30, <2.0"` |
+| `"=1.2.3"`  | Exact version                | `@ "=1.2.3"`       |
+
+**Merging rules** when the same crate is imported in multiple files:
+
+- Version strings must match exactly across all sites (mismatch is an error).
+- Features are unioned automatically.
+
+### Project-level dependencies (`incan.toml`)
+
+For projects with multiple dependencies, use an `incan.toml` manifest instead of inline annotations.
+This is the recommended approach for anything beyond single-file scripts:
+
+```toml
+[project]
+name = "my_app"
+version = "0.1.0"
+
+[dependencies]
+tokio = { version = "1.35", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+my_crate = "2.0"
+```
+
+When a crate is configured in `incan.toml`, inline version annotations for that crate are **not allowed** —
+the manifest is the single source of truth. Bare imports (without `@`) are fine.
+
+For the full manifest format, see:  
+[Project configuration reference](../../tooling/reference/project_configuration.md).  
+For a practical guide, see: [Managing dependencies](../../tooling/how-to/dependencies.md).
+
+### Known-good defaults
+
+The following crates have pre-configured versions with appropriate features. These defaults apply automatically when you
+import a crate without a version annotation and without an `incan.toml` entry:
 
 | Crate      | Version | Features                            |
 | ---------- | ------- | ----------------------------------- |
@@ -68,57 +124,21 @@ The following crates have pre-configured versions with appropriate features:
 | bytes      | 1.0     | -                                   |
 | itertools  | 0.12    | -                                   |
 
-### Using Unknown Crates
+You can override any of these via `incan.toml` or inline `@ "version"` annotations.
 
-**Current behavior**: If you try to import a crate not in the known-good list, you'll see an error:
+### Using unknown crates
 
-```bash
-Error: unknown Rust crate `my_crate`: no known-good version mapping exists.
+If you import a crate not in the known-good list and provide no version, you'll see:
 
-To use this crate today, request that `my_crate` be added to the known-good list by opening an issue/PR.
+```text
+error: unknown Rust crate `my_crate`: no version specified
+  --> src/main.incn:5
+    import rust::my_crate
+
+hint: Add a version annotation: `import rust::my_crate @ "1.0"` or add it to incan.toml.
 ```
 
-> **Why so strict?** Implicit wildcard (`*`) dependencies can cause “works on my machine” failures when crate versions change.
-> This policy will evolve—[RFC 013](../../RFCs/013_rust_crate_dependencies.md) proposes inline version annotations, `incan.toml`
-> project configuration, and lock files for full flexibility.
-
-**Current workarounds**:
-
-1. Open an issue/PR to add the crate to the known-good list
-2. (Temporary) Manually edit the generated `Cargo.toml` to add your dependency
-
-### Adding to the Known-Good List
-
-If you'd like a crate added to the known-good list:
-
-1. Open an issue or PR on the Incan repository
-2. Include the crate name, recommended version, and any required features
-3. Explain why this crate is commonly useful
-
-The maintainers will test the crate and add it to `src/backend/project.rs`.
-
-### Coming Soon: Version Annotations and `incan.toml`
-
-[RFC 013](../../RFCs/013_rust_crate_dependencies.md) defines a comprehensive dependency system that will allow:
-
-```incan
-# Inline version annotations (planned)
-import rust::my_crate @ "1.0"
-import rust::tokio @ "1.35" with ["full"]
-```
-
-```toml
-# incan.toml project configuration (planned)
-[project]
-name = "my_app"
-version = "0.1.0"
-
-[rust.dependencies]
-my_crate = "1.0"
-tokio = { version = "1.35", features = ["full"] }
-```
-
-This will enable any Rust crate while maintaining reproducibility.
+**Fix**: add an inline version annotation, or add the crate to your `incan.toml`.
 
 ## Examples
 
@@ -144,11 +164,11 @@ from rust::time import Instant, Duration
 
 def measure_operation() -> None:
     start = Instant.now()
-    
+
     # Do some work
     for i in range(1000000):
         pass
-    
+
     elapsed = start.elapsed()
     println(f"Operation took: {elapsed}")
 ```
@@ -226,7 +246,7 @@ Incan types map to Rust types:
 ## Understanding Rust types (optional)
 
 ??? tip "Coming from Python?"
-    If you’re new to Rust types like `Vec`, `HashMap`, `String`, `Option`, and `Result`, see
+    If you're new to Rust types like `Vec`, `HashMap`, `String`, `Option`, and `Result`, see
     [Understanding Rust types (coming from Python)](rust_types_for_python_devs.md).
 
 ## Limitations
@@ -242,12 +262,10 @@ Incan types map to Rust types:
 
 4. **Macros**: Rust macros are not directly callable. Use the expanded form or a wrapper function.
 
-5. **Feature flags**: Default features are used for common crates.
-    For custom feature combinations, edit the generated `Cargo.toml` manually.
-
 ## Best Practices
 
-1. **Prefer Incan types**: Use Incan's built-in types when possible. Use Rust types only when you need specific functionality.
+1. **Prefer Incan types**: Use Incan's built-in types when possible. Use Rust types only when you need
+    specific functionality.
 
 2. **Handle Results**: Rust crate functions often return `Result`. Use `?` or explicit matching:
 
@@ -277,10 +295,11 @@ Incan types map to Rust types:
 
 ## See Also
 
+- [Managing dependencies](../../tooling/how-to/dependencies.md) - Adding crates, locking, CI
+- [Project configuration reference](../../tooling/reference/project_configuration.md) - Full `incan.toml` format
 - [Error Handling](../explanation/error_handling.md) - Working with `Result` types
 - [Derives & Traits](../reference/derives_and_traits.md) - Drop trait for custom cleanup
 - [File I/O](file_io.md) - Reading, writing, and path handling
 - [Async Programming](async_programming.md) - Async/await with Tokio
 - [Imports & Modules](imports_and_modules.md) - Module system, imports, and built-in functions
-- [Rust Interop](rust_interop.md) - Using Rust crates directly from Incan
 - [Web Framework](../tutorials/web_framework.md) - Building web apps with Axum

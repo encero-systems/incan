@@ -2,18 +2,16 @@
 
 This page specifies the **standard library testing API** exposed by the `testing` module.
 
-If you’re looking for how to *run* tests (`incan test`, discovery rules, CLI flags), see:
-[Tooling → Testing](../../tooling/how-to/testing.md).
+If you’re looking for how to *run* tests (`incan test`, discovery rules, CLI flags), see: [Tooling → Testing](../../tooling/how-to/testing.md).
 
-If you want a guided walkthrough, see:
-[The Incan Book → Unit tests](../tutorials/book/13_unit_tests.md).
+If you want a guided walkthrough, see: [The Incan Book → Unit tests](../tutorials/book/13_unit_tests.md).
 
 ## Importing the testing API
 
-Incan test helpers are provided via the `testing` module:
+Incan test helpers are provided via the `std.testing` module:
 
 ```incan
-from testing import assert, assert_eq, assert_ne, assert_true, assert_false, fail
+from std.testing import assert, assert_eq, assert_ne, assert_true, assert_false, fail
 ```
 
 ## Assertion functions
@@ -67,5 +65,4 @@ The `testing` module also defines the surface API for:
 - `@fixture` (fixtures + dependency injection)
 - `@parametrize` (parameterized tests)
 
-These are implemented by the `incan test` runner. For current behavior and CLI support, see:
-[Tooling → Testing](../../tooling/how-to/testing.md).
+These are implemented by the `incan test` runner. For current behavior and CLI support, see: [Tooling → Testing](../../tooling/how-to/testing.md).

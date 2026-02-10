@@ -59,7 +59,7 @@ Create `tests/test_pipeline_step.incn`:
 
 ```incan
 from ..pipeline_step import normalize_name
-from testing import assert_eq
+from std.testing import assert_eq
 
 def test_normalize_name_ok() -> None:
     assert_eq(normalize_name("  Alice  "), Ok("alice"))

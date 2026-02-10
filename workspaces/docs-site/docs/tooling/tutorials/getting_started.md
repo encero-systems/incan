@@ -39,22 +39,38 @@ If you used the no-install fallback:
 
 ## Project Structure
 
-A typical Incan project is just a folder of `.incn` files (and optionally `tests/`):
+To scaffold a full project with an entry point, test file, and manifest:
+
+```bash
+mkdir my_project && cd my_project
+incan init
+```
+
+This creates a ready-to-run layout:
 
 ```text
 my_project/
 ├── src/
-│   ├── main.incn      # Entry point
-│   └── utils.incn     # Additional modules
+│   └── main.incn          # Entry point ("Hello from my_project!")
 ├── tests/
-│   └── test_utils.incn
-└── incan.toml         # Project config (planned)
+│   └── test_main.incn     # Starter test
+└── incan.toml             # Project manifest
 ```
 
-Note: `incan.toml` is **planned** and not required to get started today.
+You can run it immediately:
+
+```bash
+incan run src/main.incn
+incan test tests/
+```
+
+For the full walkthrough — adding modules, Rust crate dependencies, and lock files — see:
+[Your first project](your_first_project.md).
 
 ## Next Steps
 
+- [Your first project](your_first_project.md) - Set up a real project with modules, dependencies, tests, and
+  lock files
 - [Formatting Guide](../how-to/formatting.md) - Code style and `incan fmt`
 - [CLI Reference](../reference/cli_reference.md) - Commands, flags, and environment variables
 - [Projects today](../explanation/projects_today.md) - Where builds go, what is regenerated, and what’s planned

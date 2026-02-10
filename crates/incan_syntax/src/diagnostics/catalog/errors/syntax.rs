@@ -93,6 +93,11 @@ pub fn import_path_expected_separator_after_super(span: Span) -> CompileError {
     CompileError::syntax("Expected '::' or '.' after 'super'".to_string(), span)
 }
 
+pub fn rust_import_features_require_version(span: Span) -> CompileError {
+    CompileError::syntax("Rust import features require a version annotation".to_string(), span)
+        .with_hint("Use `@ \"version\" with [\"feature\"]` on the rust import")
+}
+
 // -- Enum variants -----------------------------------------------------------
 
 pub fn enum_variant_mapped_values(span: Span) -> CompileError {

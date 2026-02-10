@@ -21,7 +21,7 @@ Create a test file (must be named `test_*.incn` or `*_test.incn`):
 ```incan
 """Test file for math operations"""
 
-from testing import assert_eq
+from std.testing import assert_eq
 
 def add(a: int, b: int) -> int:
     return a + b
@@ -62,10 +62,10 @@ my_project/
 
 ## Assertions
 
-Use assertion functions from the `testing` module (not Python-style `assert expr`):
+Use assertion functions from the `std.testing` module (not Python-style `assert expr`):
 
 ```incan
-from testing import assert, assert_eq, assert_ne, assert_true, assert_false, fail
+from std.testing import assert, assert_eq, assert_ne, assert_true, assert_false, fail
 
 # Equality
 assert_eq(actual, expected)
@@ -184,7 +184,7 @@ Fixtures provide setup/teardown and dependency injection for tests.
 ### Basic Fixture
 
 ```incan
-from testing import fixture
+from std.testing import fixture
 
 @fixture
 def database() -> Database:
@@ -253,7 +253,7 @@ def setup_logging() -> None:
 Run a test with multiple parameter sets:
 
 ```incan
-from testing import parametrize
+from std.testing import parametrize
 
 @parametrize("a, b, expected", [
     (1, 2, 3),
@@ -309,7 +309,7 @@ def test_insert(database: Database, key: str, value: str) -> None:
 Support for async test functions and fixtures with Tokio:
 
 ```incan
-from testing import fixture
+from std.testing import fixture
 
 @fixture
 async def http_server() -> ServerHandle:

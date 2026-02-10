@@ -168,10 +168,18 @@ impl<'a> IrEmitter<'a> {
                 // but many Incan-level signatures expect owned `String` in Rust (e.g., newtype `from_underlying(v:
                 // str)`).
                 //
-                // For unknown/external types, keep the previous behavior to avoid accidental conversions for Rust APIs
-                // that truly want `&str`.
+                // For external Rust types (VarRefKind::ExternalName), use ExternalFunctionArg conversions so that
+                // string literals get `.into()` — this lets the Rust compiler resolve the target type via the Into
+                // trait (e.g., Polars' PlSmallStr, sqlx identifiers, etc.).
+                let is_external = matches!(
+                    receiver.kind,
+                    IrExprKind::Var {
+                        ref_kind: VarRefKind::ExternalName,
+                        ..
+                    }
+                );
                 let apply_incan_arg_conversions =
-                    matches!(receiver.ty, IrType::Struct(_) | IrType::Enum(_) | IrType::Trait(_));
+                    !is_external && matches!(receiver.ty, IrType::Struct(_) | IrType::Enum(_) | IrType::Trait(_));
 
                 let arg_tokens: Vec<TokenStream> = if apply_incan_arg_conversions {
                     arg_exprs
@@ -183,7 +191,17 @@ impl<'a> IrEmitter<'a> {
                         })
                         .collect::<Result<_, _>>()?
                 } else {
-                    arg_exprs.iter().map(|a| self.emit_expr(a)).collect::<Result<_, _>>()?
+                    // External types: apply ExternalFunctionArg conversions so that string literals get `.into()`
+                    // (resolves to the correct target type via Rust's Into trait — e.g., Polars' PlSmallStr, sqlx
+                    // identifiers, etc.)
+                    arg_exprs
+                        .iter()
+                        .map(|a| {
+                            let emitted = self.emit_expr(a)?;
+                            let conv = determine_conversion(a, None, ConversionContext::ExternalFunctionArg);
+                            Ok(conv.apply(emitted))
+                        })
+                        .collect::<Result<_, _>>()?
                 };
                 return Ok(quote! { #type_ident::#m(#(#arg_tokens),*) });
             }
@@ -217,7 +235,16 @@ impl<'a> IrEmitter<'a> {
         //
         // For unknown/external types, keep the previous behavior to avoid accidental conversions for Rust APIs that
         // truly want `&str`.
-        let apply_incan_arg_conversions = matches!(receiver.ty, IrType::Struct(_) | IrType::Enum(_) | IrType::Trait(_));
+        // For regular method calls, also check if the receiver is an external Rust type.
+        let is_external_receiver = matches!(
+            receiver.kind,
+            IrExprKind::Var {
+                ref_kind: VarRefKind::ExternalName,
+                ..
+            }
+        );
+        let apply_incan_arg_conversions =
+            !is_external_receiver && matches!(receiver.ty, IrType::Struct(_) | IrType::Enum(_) | IrType::Trait(_));
         let arg_tokens: Vec<TokenStream> = if apply_incan_arg_conversions {
             arg_exprs
                 .iter()
@@ -228,7 +255,16 @@ impl<'a> IrEmitter<'a> {
                 })
                 .collect::<Result<_, _>>()?
         } else {
-            arg_exprs.iter().map(|a| self.emit_expr(a)).collect::<Result<_, _>>()?
+            // External types: apply ExternalFunctionArg conversions so that string literals get `.into()` (resolves to
+            // the correct target type via Rust's Into trait — e.g., Polars' PlSmallStr, sqlx identifiers, etc.)
+            arg_exprs
+                .iter()
+                .map(|a| {
+                    let emitted = self.emit_expr(a)?;
+                    let conv = determine_conversion(a, None, ConversionContext::ExternalFunctionArg);
+                    Ok(conv.apply(emitted))
+                })
+                .collect::<Result<_, _>>()?
         };
         Ok(quote! { #r.#m(#(#arg_tokens),*) })
     }

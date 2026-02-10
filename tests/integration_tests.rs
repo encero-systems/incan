@@ -778,9 +778,16 @@ def database() -> Database:
         match &program.declarations[0].node {
             Declaration::Import(i) => {
                 match &i.kind {
-                    ImportKind::RustCrate { crate_name, path } => {
+                    ImportKind::RustCrate {
+                        crate_name,
+                        path,
+                        version,
+                        features,
+                    } => {
                         assert_eq!(crate_name, "serde_json");
                         assert!(path.is_empty());
+                        assert!(version.is_none());
+                        assert!(features.is_empty());
                     }
                     _ => panic!("Expected RustCrate import kind"),
                 }
@@ -799,10 +806,14 @@ def database() -> Database:
                 ImportKind::RustFrom {
                     crate_name,
                     path,
+                    version,
+                    features,
                     items,
                 } => {
                     assert_eq!(crate_name, "time");
                     assert!(path.is_empty());
+                    assert!(version.is_none());
+                    assert!(features.is_empty());
                     assert_eq!(items.len(), 2);
                     assert_eq!(items[0].name, "Instant");
                     assert_eq!(items[1].name, "Duration");
