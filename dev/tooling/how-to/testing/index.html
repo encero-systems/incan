@@ -2453,6 +2453,8 @@
       
         
       
+        
+      
     
     
       
@@ -2495,6 +2497,27 @@
   
   <span class="md-ellipsis">
     Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
   </span>
   
 
@@ -2558,6 +2581,8 @@
       
         
       
+        
+      
     
     
       
@@ -2600,6 +2625,27 @@
   
   <span class="md-ellipsis">
     Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
   </span>
   
 
@@ -3096,6 +3142,8 @@
       
         
       
+        
+      
     
     
       
@@ -3138,6 +3186,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
   </span>
   
 
@@ -4255,7 +4324,7 @@ If it still looks like a bug, please <a href="https://github.com/dannys-code-cor
 <p>Create a test file (must be named <code>test_*.incn</code> or <code>*_test.incn</code>):</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;Test file for math operations&quot;&quot;&quot;</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
@@ -4288,8 +4357,8 @@ If it still looks like a bug, please <a href="https://github.com/dannys-code-cor
 <span class="w">    </span>└──<span class="w"> </span>helpers.incn<span class="w">        </span><span class="c1"># ✗ not a test file</span>
 </code></pre></div>
 <h2 id="assertions">Assertions<a class="headerlink" href="#assertions" title="Permanent link">&para;</a></h2>
-<p>Use assertion functions from the <code>testing</code> module (not Python-style <code>assert expr</code>):</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="k">assert</span><span class="p">,</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_ne</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_false</span><span class="p">,</span> <span class="n">fail</span>
+<p>Use assertion functions from the <code>std.testing</code> module (not Python-style <code>assert expr</code>):</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="k">assert</span><span class="p">,</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_ne</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_false</span><span class="p">,</span> <span class="n">fail</span>
 
 <span class="c1"># Equality</span>
 <span class="nf">assert_eq</span><span class="p">(</span><span class="n">actual</span><span class="p">,</span> <span class="n">expected</span><span class="p">)</span>
@@ -4393,7 +4462,7 @@ ___________<span class="w"> </span>test_division<span class="w"> </span>________
 <h2 id="fixtures">Fixtures<a class="headerlink" href="#fixtures" title="Permanent link">&para;</a></h2>
 <p>Fixtures provide setup/teardown and dependency injection for tests.</p>
 <h3 id="basic-fixture">Basic Fixture<a class="headerlink" href="#basic-fixture" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
 
 <span class="nd">@fixture</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">database</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Database</span><span class="p">:</span>
@@ -4446,7 +4515,7 @@ ___________<span class="w"> </span>test_division<span class="w"> </span>________
 </code></pre></div>
 <h2 id="parametrize">Parametrize<a class="headerlink" href="#parametrize" title="Permanent link">&para;</a></h2>
 <p>Run a test with multiple parameter sets:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">parametrize</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">parametrize</span>
 
 <span class="nd">@parametrize</span><span class="p">(</span><span class="s2">&quot;a, b, expected&quot;</span><span class="p">,</span> <span class="p">[</span>
     <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span>
@@ -4489,7 +4558,7 @@ test_math.incn::test_add<span class="o">[</span><span class="m">100</span>-200-3
 </code></pre></div>
 <h2 id="async-tests-coming-soon">Async Tests (Coming Soon)<a class="headerlink" href="#async-tests-coming-soon" title="Permanent link">&para;</a></h2>
 <p>Support for async test functions and fixtures with Tokio:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
 
 <span class="nd">@fixture</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">http_server</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">ServerHandle</span><span class="p">:</span>

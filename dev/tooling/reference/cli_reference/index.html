@@ -14,7 +14,7 @@
         <link rel="prev" href="../../explanation/lsp_architecture/">
       
       
-        <link rel="next" href="../lsp_protocol_support/">
+        <link rel="next" href="../project_configuration/">
       
       
       <link rel="icon" href="../../../assets/images/favicon.png">
@@ -2453,6 +2453,8 @@
       
         
       
+        
+      
     
     
       
@@ -2495,6 +2497,27 @@
   
   <span class="md-ellipsis">
     Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
   </span>
   
 
@@ -2556,6 +2579,8 @@
       
         
       
+        
+      
     
     
       
@@ -2598,6 +2623,27 @@
   
   <span class="md-ellipsis">
     Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
   </span>
   
 
@@ -2849,6 +2895,8 @@
       
         
       
+        
+      
     
     
       
@@ -3004,6 +3052,24 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#incan-init" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan init
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-lock" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan lock
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3049,6 +3115,27 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
+  </span>
+  
+
+      </a>
     </li>
   
 
@@ -3981,6 +4068,24 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#incan-init" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan init
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-lock" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan lock
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4069,6 +4174,8 @@
 <li><code>run</code> - Compile and run a program</li>
 <li><code>fmt</code> - Format Incan source files</li>
 <li><code>test</code> - Run tests (pytest-style)</li>
+<li><code>init</code> - Create a starter <code>incan.toml</code> and project skeleton (entry point, test file)</li>
+<li><code>lock</code> - Generate or update <code>incan.lock</code></li>
 </ul>
 <h2 id="global-options">Global options<a class="headerlink" href="#global-options" title="Permanent link">&para;</a></h2>
 <ul>
@@ -4088,7 +4195,7 @@ incan<span class="w"> </span>--emit-rust<span class="w"> </span>path/to/file.inc
 <h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link">&para;</a></h2>
 <h3 id="incan-build"><code>incan build</code><a class="headerlink" href="#incan-build" title="Permanent link">&para;</a></h3>
 <p>Usage:</p>
-<div class="language-text highlight"><pre><span></span><code>incan build &lt;FILE&gt; [OUTPUT_DIR]
+<div class="language-text highlight"><pre><span></span><code>incan build [OPTIONS] &lt;FILE&gt; [OUTPUT_DIR]
 </code></pre></div>
 <p>Behavior:</p>
 <ul>
@@ -4096,8 +4203,18 @@ incan<span class="w"> </span>--emit-rust<span class="w"> </span>path/to/file.inc
 <li>Builds the generated Rust project and prints the binary path (example):
   <code>target/incan/&lt;name&gt;/target/release/&lt;name&gt;</code></li>
 </ul>
-<p>Example:</p>
+<p>Dependency flags:</p>
+<ul>
+<li><code>--locked</code>: Require <code>incan.lock</code> to exist and be up to date. Also passes <code>--locked</code> to Cargo.</li>
+<li><code>--frozen</code>: Like <code>--locked</code>, plus passes <code>--frozen</code> to Cargo (offline + locked).</li>
+<li><code>--cargo-features &lt;FEATURES&gt;</code>: Enable specific Cargo features (comma-separated).</li>
+<li><code>--cargo-no-default-features</code>: Disable default Cargo features.</li>
+<li><code>--cargo-all-features</code>: Enable all Cargo features.</li>
+</ul>
+<p>Examples:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>examples/simple/hello.incn
+incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--locked
+incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--cargo-features<span class="w"> </span>fancy_logging
 </code></pre></div>
 <h3 id="incan-run"><code>incan run</code><a class="headerlink" href="#incan-run" title="Permanent link">&para;</a></h3>
 <p>Usage:</p>
@@ -4109,6 +4226,10 @@ incan<span class="w"> </span>--emit-rust<span class="w"> </span>path/to/file.inc
 <p>Run inline code:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import this&quot;</span>
 </code></pre></div>
+<p>Dependency flags (same as <code>build</code>):</p>
+<ul>
+<li><code>--locked</code>, <code>--frozen</code>, <code>--cargo-features</code>, <code>--cargo-no-default-features</code>, <code>--cargo-all-features</code></li>
+</ul>
 <h3 id="incan-fmt"><code>incan fmt</code><a class="headerlink" href="#incan-fmt" title="Permanent link">&para;</a></h3>
 <p>Usage:</p>
 <div class="language-text highlight"><pre><span></span><code>incan fmt [OPTIONS] [PATH]
@@ -4127,6 +4248,18 @@ incan<span class="w"> </span>fmt<span class="w"> </span>--diff<span class="w"> <
 <p>Usage:</p>
 <div class="language-text highlight"><pre><span></span><code>incan test [OPTIONS] [PATH]
 </code></pre></div>
+<p>Test runner flags:</p>
+<ul>
+<li><code>-k &lt;KEYWORD&gt;</code>: Filter tests by keyword expression.</li>
+<li><code>-v</code>: Verbose output (include timing).</li>
+<li><code>-x</code>: Stop on first failure.</li>
+<li><code>--slow</code>: Include slow tests (marked <code>@slow</code>).</li>
+<li><code>--fail-on-empty</code>: Return exit code 1 if no tests are collected.</li>
+</ul>
+<p>Dependency flags (same as <code>build</code>):</p>
+<ul>
+<li><code>--locked</code>, <code>--frozen</code>, <code>--cargo-features</code>, <code>--cargo-no-default-features</code>, <code>--cargo-all-features</code></li>
+</ul>
 <p>Examples:</p>
 <div class="language-bash highlight"><pre><span></span><code><span class="c1"># Run all tests in a directory</span>
 incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests/
@@ -4148,7 +4281,45 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 
 <span class="c1"># Fail if no tests are collected</span>
 incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--fail-on-empty
+
+<span class="c1"># Strict mode for CI</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--locked
 </code></pre></div>
+<h3 id="incan-init"><code>incan init</code><a class="headerlink" href="#incan-init" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan init [OPTIONS] [PATH]
+</code></pre></div>
+<p>Creates a starter <code>incan.toml</code> in the specified directory (default: current directory).</p>
+<p>Options:</p>
+<ul>
+<li><code>--name &lt;NAME&gt;</code>: Project name (default: directory name).</li>
+<li><code>--version &lt;VERSION&gt;</code>: Project version (default: <code>"0.1.0"</code>).</li>
+</ul>
+<p>Example:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>init
+incan<span class="w"> </span>init<span class="w"> </span>--name<span class="w"> </span>my_app<span class="w"> </span>my_project/
+</code></pre></div>
+<p>See: <a href="../project_configuration/">Project configuration reference</a> for the full manifest format.</p>
+<h3 id="incan-lock"><code>incan lock</code><a class="headerlink" href="#incan-lock" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan lock [OPTIONS] [FILE]
+</code></pre></div>
+<p>Resolves all dependencies (manifest + inline + test files) and generates or updates <code>incan.lock</code>.</p>
+<p>If <code>FILE</code> is omitted, uses the <code>[project.scripts].main</code> entry from <code>incan.toml</code>.</p>
+<p>Options:</p>
+<ul>
+<li><code>--cargo-features &lt;FEATURES&gt;</code>: Enable specific Cargo features for resolution.</li>
+<li><code>--cargo-no-default-features</code>: Disable default Cargo features.</li>
+<li><code>--cargo-all-features</code>: Enable all Cargo features.</li>
+</ul>
+<p>Example:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>lock<span class="w"> </span>src/main.incn
+incan<span class="w"> </span>lock<span class="w">                          </span><span class="c1"># uses [project.scripts].main</span>
+incan<span class="w"> </span>lock<span class="w"> </span>--cargo-features<span class="w"> </span>metrics<span class="w"> </span><span class="c1"># include optional deps in lock</span>
+</code></pre></div>
+<p>The generated <code>incan.lock</code> contains an embedded <code>Cargo.lock</code> payload and a fingerprint of your dependency
+inputs. Commit it to version control for reproducible builds.</p>
+<p>See: <a href="../../how-to/dependencies/">Managing dependencies</a> for practical guidance.</p>
 <h2 id="outputs-and-paths">Outputs and paths<a class="headerlink" href="#outputs-and-paths" title="Permanent link">&para;</a></h2>
 <p>Build outputs:</p>
 <ul>
@@ -4185,7 +4356,7 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 <h2 id="drift-prevention-maintainers">Drift prevention (maintainers)<a class="headerlink" href="#drift-prevention-maintainers" title="Permanent link">&para;</a></h2>
 <p>Before a release, verify the docs stay aligned with the real CLI surface:</p>
 <ul>
-<li>Compare <code>incan --help</code> and <code>incan {build,run,fmt,test} --help</code> against this page.</li>
+<li>Compare <code>incan --help</code> and <code>incan {build,run,fmt,test,init,lock} --help</code> against this page.</li>
 </ul>
 
 

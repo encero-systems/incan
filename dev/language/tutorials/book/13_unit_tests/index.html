@@ -995,6 +995,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#what-to-learn-next" class="md-nav__link">
+    <span class="md-ellipsis">
+      What to learn next
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2557,6 +2566,8 @@
       
         
       
+        
+      
     
     
       
@@ -2599,6 +2610,27 @@
   
   <span class="md-ellipsis">
     Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/tutorials/your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
   </span>
   
 
@@ -2660,6 +2692,8 @@
       
         
       
+        
+      
     
     
       
@@ -2702,6 +2736,27 @@
   
   <span class="md-ellipsis">
     Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
   </span>
   
 
@@ -2951,6 +3006,8 @@
       
         
       
+        
+      
     
     
       
@@ -2993,6 +3050,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
   </span>
   
 
@@ -3916,6 +3994,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#what-to-learn-next" class="md-nav__link">
+    <span class="md-ellipsis">
+      What to learn next
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3942,9 +4029,9 @@
 <p>If you have pytest muscle memory:</p>
 <ul>
 <li><strong>Discovery</strong>: test files are found by name (e.g. <code>test_*.incn</code>) and test functions by name (<code>def test_*()</code>).</li>
-<li><strong>Assertions</strong>: import assertion helpers from <code>testing</code> (they are normal functions):
-  <code>from testing import assert_eq, assert_ne, assert_true, assert_false, fail</code>.</li>
-<li><strong>Markers/fixtures</strong>: <code>@skip</code>, <code>@xfail</code>, <code>@fixture</code>, and <code>@parametrize</code> are provided by the <code>testing</code> module.</li>
+<li><strong>Assertions</strong>: import assertion helpers from <code>std.testing</code> (they are normal functions):
+  <code>from std.testing import assert_eq, assert_ne, assert_true, assert_false, fail</code>.</li>
+<li><strong>Markers/fixtures</strong>: <code>@skip</code>, <code>@xfail</code>, <code>@fixture</code>, and <code>@parametrize</code> are provided by the <code>std.testing</code> module.</li>
 </ul>
 <p>References:</p>
 <ul>
@@ -3953,8 +4040,8 @@
 </ul>
 </div>
 <h2 id="the-testing-module">The testing module<a class="headerlink" href="#the-testing-module" title="Permanent link">&para;</a></h2>
-<p>Test assertions and helpers are imported from the <code>testing</code> module:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="k">assert</span><span class="p">,</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_ne</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_false</span><span class="p">,</span> <span class="n">fail</span>
+<p>Test assertions and helpers are imported from the <code>std.testing</code> module:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="k">assert</span><span class="p">,</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_ne</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_false</span><span class="p">,</span> <span class="n">fail</span>
 </code></pre></div>
 <p>These are normal functions (not language keywords), which makes them easy for tooling to understand.</p>
 <p>For the full API reference, see:
@@ -3963,7 +4050,7 @@
 <p>Create a test file, for example <code>tests/test_math.incn</code>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;Unit tests for math utilities.&quot;&quot;&quot;</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
@@ -3980,13 +4067,12 @@
 <li>Test files are discovered by name (e.g. <code>test_*.incn</code>).</li>
 <li>Test functions are discovered by name (e.g. <code>def test_*()</code>).</li>
 </ul>
-<p>If you use inline tests (<code>module tests:</code> inside a production file), keep <code>from testing import ...</code> <strong>inside</strong> the
+<p>If you use inline tests (<code>module tests:</code> inside a production file), keep <code>from std.testing import ...</code> <strong>inside</strong> the
 <code>module tests:</code> block so test-only imports don’t leak into the production module scope.</p>
-<p>The exact discovery and CLI flags are documented here:
-<a href="../../../../tooling/how-to/testing/">Tooling → Testing</a>.</p>
+<p>The exact discovery and CLI flags are documented here: <a href="../../../../tooling/how-to/testing/">Tooling → Testing</a>.</p>
 <h2 id="common-patterns">Common patterns<a class="headerlink" href="#common-patterns" title="Permanent link">&para;</a></h2>
 <h3 id="boolean-assertions">Boolean assertions<a class="headerlink" href="#boolean-assertions" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="k">assert</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_false</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="k">assert</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_false</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">test_flags</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="k">assert</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
@@ -3994,11 +4080,20 @@
     <span class="nf">assert_false</span><span class="p">(</span><span class="mi">2</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="explicit-failure">Explicit failure<a class="headerlink" href="#explicit-failure" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fail</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fail</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">test_not_reached</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">fail</span><span class="p">(</span><span class="s2">&quot;this should not happen&quot;</span><span class="p">)</span>
 </code></pre></div>
+<h2 id="what-to-learn-next">What to learn next<a class="headerlink" href="#what-to-learn-next" title="Permanent link">&para;</a></h2>
+<p>That's the end of the Incan Book (Basics)! You now know the core language. Here are some directions to explore next:</p>
+<ul>
+<li><a href="../../../../tooling/tutorials/your_first_project/">Your first project</a> — Set up a real project with
+  <code>incan init</code>, Rust crate dependencies, and reproducible builds</li>
+<li><a href="../../../how-to/rust_interop/">Rust interop</a> — Use Rust crates from Incan code</li>
+<li><a href="../../../how-to/async_programming/">Async programming</a> — Write concurrent programs</li>
+<li><a href="../../../reference/testing/">Testing (reference)</a> — Full testing API: fixtures, parametrize, skip, xfail</li>
+</ul>
 
 
 

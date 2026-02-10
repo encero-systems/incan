@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#projects-today-current-reality" class="md-skip">
+        <a href="#projects-today" class="md-skip">
           Skip to content
         </a>
       
@@ -2453,6 +2453,8 @@
       
         
       
+        
+      
     
     
       
@@ -2495,6 +2497,27 @@
   
   <span class="md-ellipsis">
     Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
   </span>
   
 
@@ -2556,6 +2579,8 @@
       
         
       
+        
+      
     
     
       
@@ -2598,6 +2623,27 @@
   
   <span class="md-ellipsis">
     Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
   </span>
   
 
@@ -2866,9 +2912,27 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#dependencies-today" class="md-nav__link">
+  <a href="#dependencies" class="md-nav__link">
     <span class="md-ellipsis">
-      Dependencies (today)
+      Dependencies
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#project-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Project configuration
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lock-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lock files
     </span>
   </a>
   
@@ -2877,7 +2941,7 @@
         <li class="md-nav__item">
   <a href="#whats-planned" class="md-nav__link">
     <span class="md-ellipsis">
-      What’s planned
+      What's planned
     </span>
   </a>
   
@@ -2934,6 +2998,8 @@
       
         
       
+        
+      
     
     
       
@@ -2976,6 +3042,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
   </span>
   
 
@@ -3867,9 +3954,27 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#dependencies-today" class="md-nav__link">
+  <a href="#dependencies" class="md-nav__link">
     <span class="md-ellipsis">
-      Dependencies (today)
+      Dependencies
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#project-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Project configuration
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lock-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lock files
     </span>
   </a>
   
@@ -3878,7 +3983,7 @@
         <li class="md-nav__item">
   <a href="#whats-planned" class="md-nav__link">
     <span class="md-ellipsis">
-      What’s planned
+      What's planned
     </span>
   </a>
   
@@ -3902,8 +4007,8 @@
   
 
 
-<h1 id="projects-today-current-reality">Projects today (current reality)<a class="headerlink" href="#projects-today-current-reality" title="Permanent link">&para;</a></h1>
-<p>This page explains how “projects” work in Incan today, and what is planned next.</p>
+<h1 id="projects-today">Projects today<a class="headerlink" href="#projects-today" title="Permanent link">&para;</a></h1>
+<p>This page explains how "projects" work in Incan.</p>
 <h2 id="the-current-model">The current model<a class="headerlink" href="#the-current-model" title="Permanent link">&para;</a></h2>
 <p>Incan source files (<code>.incn</code>) are the source of truth.</p>
 <p>When you run:</p>
@@ -3937,19 +4042,40 @@
 <li>It is safe to delete: <code>rm -rf target/incan/</code></li>
 <li>Manual edits inside <code>target/incan/&lt;name&gt;/</code> may be overwritten on the next build</li>
 </ul>
-<h2 id="dependencies-today">Dependencies (today)<a class="headerlink" href="#dependencies-today" title="Permanent link">&para;</a></h2>
+<p>If an <code>incan.lock</code> exists, the embedded <code>Cargo.lock</code> payload is materialized into the generated project directory so
+Cargo resolves the same dependency versions every time.</p>
+<h2 id="dependencies">Dependencies<a class="headerlink" href="#dependencies" title="Permanent link">&para;</a></h2>
+<p>Rust crate dependencies are resolved through a three-tier system:</p>
+<ol>
+<li><strong><code>incan.toml</code></strong> (highest priority): Project manifest declares explicit dependencies with versions, features, and sources.</li>
+<li><strong>Inline annotations</strong>: <code>import rust::foo @ "1.0"</code> specifies versions directly in source files.</li>
+<li><strong>Known-good defaults</strong>: For common crates, the compiler provides tested version/feature defaults.</li>
+</ol>
+<p>If none of these apply, the compiler emits an error.</p>
+<p>See: <a href="../../../language/how-to/rust_interop/">Rust Interop</a> and <a href="../../how-to/dependencies/">Managing dependencies</a>.</p>
+<h2 id="project-configuration">Project configuration<a class="headerlink" href="#project-configuration" title="Permanent link">&para;</a></h2>
+<p>Projects can optionally have an <code>incan.toml</code> manifest at the project root:</p>
+<div class="language-text highlight"><pre><span></span><code>my_project/
+├── src/
+│   └── main.incn
+├── tests/
+│   └── test_main.incn
+├── incan.toml         # Project manifest (optional)
+└── incan.lock         # Lock file (auto-generated, commit to VCS)
+</code></pre></div>
+<p>Create one with <code>incan init</code>. See: <a href="../../reference/project_configuration/">Project configuration reference</a>.</p>
+<h2 id="lock-files">Lock files<a class="headerlink" href="#lock-files" title="Permanent link">&para;</a></h2>
+<p><code>incan.lock</code> stores resolved dependency versions for reproducible builds. It is generated by
+<code>incan lock</code> (or automatically on first build) and should be committed to version control.</p>
+<p>Use <code>--locked</code> or <code>--frozen</code> in CI to enforce that the lock is present and up to date.</p>
+<p>See: <a href="../../how-to/dependencies/#locking-dependencies">Managing dependencies</a>.</p>
+<h2 id="whats-planned">What's planned<a class="headerlink" href="#whats-planned" title="Permanent link">&para;</a></h2>
 <ul>
-<li>For <code>rust::</code> imports, the toolchain uses a curated “known-good” mapping for versions/features.</li>
-<li>If a crate is not in the known-good list, you’ll need to request adding it (issue/PR) until the dependency system is
-  expanded.</li>
+<li>"Project lifecycle" commands (<code>incan new</code>, <code>incan doctor</code>): <a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a></li>
 </ul>
-<p>See: <a href="../../../language/how-to/rust_interop/">Rust Interop</a> and <a href="../../../RFCs/013_rust_crate_dependencies/">RFC 013</a>.</p>
-<h2 id="whats-planned">What’s planned<a class="headerlink" href="#whats-planned" title="Permanent link">&para;</a></h2>
-<p>Future work aims to make the project lifecycle explicit and reproducible:</p>
-<ul>
-<li><code>incan.toml</code> project config + lockfiles: <a href="../../../RFCs/013_rust_crate_dependencies/">RFC 013</a></li>
-<li>“Project lifecycle” commands (<code>incan init/new/doctor</code>): <a href="../../../RFCs/015_hatch_like_tooling/">RFC 015</a></li>
-</ul>
+<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
+
+<!-- RFC reference links for reuse: '[RFC 018]' or '[RFC 018: Title][RFC 018]' -->
 
 
 

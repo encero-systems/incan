@@ -2451,6 +2451,8 @@
       
         
       
+        
+      
     
     
       
@@ -2493,6 +2495,27 @@
   
   <span class="md-ellipsis">
     Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
   </span>
   
 
@@ -2554,6 +2577,8 @@
       
         
       
+        
+      
     
     
       
@@ -2596,6 +2621,27 @@
   
   <span class="md-ellipsis">
     Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
   </span>
   
 
@@ -2845,6 +2891,8 @@
       
         
       
+        
+      
     
     
       
@@ -2887,6 +2935,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
   </span>
   
 
@@ -4029,13 +4098,32 @@ The compiler will suggest the correct import if you use a stdlib type without im
   decorator (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>, <a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Compiler</strong>: Reserved root namespaces — <code>std</code> and <code>rust</code> cannot be used as user declaration names.</li>
 <li><strong>Compiler</strong>: Stdlib types require explicit imports with actionable error messages when used without import.</li>
+<li><strong>Compiler</strong>: <code>from rust import &lt;crate&gt;</code> syntax for importing Rust crates — the compiler validates imports against
+  <code>[dependencies]</code> in <code>incan.toml</code> and emits the correct <code>use</code> statements in generated Rust (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
+<li><strong>Compiler</strong>: Rust crate dependency management with inline version annotations, manifest-based configuration,
+  version validation (semver), and lock files for reproducible builds (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
+<li><strong>Compiler</strong>: Convention-based source root resolution — the compiler and test runner resolve user module imports
+  against <code>src/</code> (or an explicit <code>[build] source-root</code>) so imports are uniform across source and test files (<a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a>).</li>
 <li><strong>Web</strong>: Compiler-to-stdlib routing handoff via <code>incan_stdlib</code> macros (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>).</li>
+<li><strong>Tooling</strong>: <code>incan init</code> scaffolds a full project: <code>src/main.incn</code>, <code>tests/test_main.incn</code>, and <code>incan.toml</code>
+  with <code>[project.scripts] main</code> set (<a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a>).</li>
+<li><strong>Tooling</strong>: <code>incan lock</code> generates <code>incan.lock</code> for reproducible builds; <code>--locked</code> and <code>--frozen</code> flags enforce lock
+  freshness in CI (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
+<li><strong>Tooling</strong>: Test runner resolves imports against the project source root, enabling tests to import directly from
+  source modules (e.g., <code>from greet import greet</code>) without duplication (<a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a>).</li>
 <li><strong>Tooling</strong>: Test runner detects <code>from std.testing import ...</code> for test framework integration.</li>
 <li><strong>Parser</strong>: <code>async</code> is allowed as a module path segment in imports (e.g., <code>from std.async.time import sleep</code>).</li>
 <li><strong>Diagnostics</strong>: Clearer error messages for unknown decorators and reserved namespace violations.</li>
+<li><strong>Diagnostics</strong>: Enhanced lock-out-of-date error with expected vs actual fingerprint for easier debugging.</li>
+<li><strong>Docs</strong>: "Your first Incan project" tutorial covering <code>incan init</code>, modules, and testing.</li>
+<li><strong>Codegen</strong>: String literals passed to external Rust type methods now emit <code>.into()</code> instead of <code>.to_string()</code>,
+  letting the Rust compiler resolve custom string types (e.g. Polars' <code>PlSmallStr</code>) via the <code>Into</code> trait.</li>
+<li><strong>Compiler</strong>: MSRV bumped from 1.85 to 1.88 (required by <code>time</code> crate v0.3.47).</li>
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Compiler</strong>: Fixed project root resolving to empty string when running <code>incan run src/main.incn</code> from the
+  project directory, causing "No such file or directory" errors.</li>
 <li><strong>Docs</strong>: Web tutorial examples updated to <code>std.web</code> imports and namespaced decorators.</li>
 <li><strong>Docs</strong>: Derives and traits explanation updated to use <code>@rust.extern</code>.</li>
 </ul>
@@ -4045,10 +4133,14 @@ The compiler will suggest the correct import if you use a stdlib type without im
   function signatures are still partially hardcoded in the typechecker.</li>
 <li>Multi-line parenthesized imports are not yet supported (#116).</li>
 <li>Web route handlers and their request models must be declared <code>pub</code> for cross-module wrapper generation (#117).</li>
+<li>Rust macro syntax (e.g., <code>serde_json::json!(...)</code>) is not supported in Incan source — use Rust crate functions
+  and types directly instead.</li>
 </ul>
 <h2 id="rfcs-implemented">RFCs implemented<a class="headerlink" href="#rfcs-implemented" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Namespaced stdlib modules and compiler-to-stdlib handoff: <a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a></li>
+<li>Rust crate dependency management: <a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a></li>
+<li>Hatch-like tooling (partial — <code>incan init</code>, project discovery, source root resolution): <a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a></li>
 </ul>
 <!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
 

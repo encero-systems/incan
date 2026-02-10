@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../install_and_run/">
+        <link rel="prev" href="../dependencies/">
       
       
         <link rel="next" href="../troubleshooting/">
@@ -2453,6 +2453,8 @@
       
         
       
+        
+      
     
     
       
@@ -2495,6 +2497,27 @@
   
   <span class="md-ellipsis">
     Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
   </span>
   
 
@@ -2558,6 +2581,8 @@
       
         
       
+        
+      
     
     
       
@@ -2600,6 +2625,27 @@
   
   <span class="md-ellipsis">
     Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
   </span>
   
 
@@ -2709,6 +2755,15 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reproducible-builds-with-locked-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reproducible builds with locked dependencies
+    </span>
+  </a>
   
 </li>
       
@@ -2949,6 +3004,8 @@
       
         
       
+        
+      
     
     
       
@@ -2991,6 +3048,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
   </span>
   
 
@@ -3906,6 +3984,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#reproducible-builds-with-locked-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reproducible builds with locked dependencies
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#github-actions-example" class="md-nav__link">
     <span class="md-ellipsis">
       GitHub Actions example
@@ -3954,6 +4041,24 @@
 <p>Run a program and use its exit code as the CI result:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run<span class="w"> </span>path/to/main.incn
 </code></pre></div>
+<h2 id="reproducible-builds-with-locked-dependencies">Reproducible builds with locked dependencies<a class="headerlink" href="#reproducible-builds-with-locked-dependencies" title="Permanent link">&para;</a></h2>
+<p>If your project uses <code>incan.toml</code> and has an <code>incan.lock</code> committed to version control, use <code>--locked</code> or <code>--frozen</code> in
+CI to ensure builds use exactly the locked dependency versions:</p>
+<div class="language-bash highlight"><pre><span></span><code><span class="c1"># Require incan.lock to exist and be up to date</span>
+incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--locked
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--locked
+
+<span class="c1"># Same as --locked, plus Cargo runs in offline/frozen mode (no network)</span>
+incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--frozen
+</code></pre></div>
+<p>If the lock file is missing or stale, the command fails immediately — no silent re-resolution.</p>
+<p><strong>Recommended workflow</strong>:</p>
+<ol>
+<li>Developers run <code>incan lock</code> after changing dependencies (locally).</li>
+<li>Commit both <code>incan.toml</code> and <code>incan.lock</code> to version control.</li>
+<li>CI uses <code>--locked</code> to catch stale lock files.</li>
+</ol>
+<p>See: <a href="../dependencies/">Managing dependencies</a> for more details.</p>
 <h2 id="github-actions-example">GitHub Actions example<a class="headerlink" href="#github-actions-example" title="Permanent link">&para;</a></h2>
 <div class="language-yaml highlight"><pre><span></span><code><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Type check</span>
 <span class="w">  </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">incan path/to/main.incn</span>
@@ -3961,8 +4066,11 @@
 <span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Format (CI)</span>
 <span class="w">  </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">incan fmt --check .</span>
 
-<span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Tests</span>
-<span class="w">  </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">incan test .</span>
+<span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Tests (locked)</span>
+<span class="w">  </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">incan test --locked</span>
+
+<span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Build (locked)</span>
+<span class="w">  </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">incan build src/main.incn --locked</span>
 </code></pre></div>
 
 

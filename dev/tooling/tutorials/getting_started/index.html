@@ -14,7 +14,7 @@
         <link rel="prev" href="../../">
       
       
-        <link rel="next" href="../pipeline_mini_project/">
+        <link rel="next" href="../your_first_project/">
       
       
       <link rel="icon" href="../../../assets/images/favicon.png">
@@ -2455,6 +2455,8 @@
       
         
       
+        
+      
     
     
       
@@ -2598,6 +2600,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../pipeline_mini_project/" class="md-nav__link">
         
   
@@ -2628,6 +2651,8 @@
   
     
     
+      
+        
       
         
       
@@ -2685,6 +2710,27 @@
   
   <span class="md-ellipsis">
     Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
   </span>
   
 
@@ -2934,6 +2980,8 @@
       
         
       
+        
+      
     
     
       
@@ -2976,6 +3024,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
   </span>
   
 
@@ -3928,18 +3997,28 @@
 <div class="language-bash highlight"><pre><span></span><code>./target/release/incan<span class="w"> </span>run<span class="w"> </span>hello.incn
 </code></pre></div>
 <h2 id="project-structure">Project Structure<a class="headerlink" href="#project-structure" title="Permanent link">&para;</a></h2>
-<p>A typical Incan project is just a folder of <code>.incn</code> files (and optionally <code>tests/</code>):</p>
+<p>To scaffold a full project with an entry point, test file, and manifest:</p>
+<div class="language-bash highlight"><pre><span></span><code>mkdir<span class="w"> </span>my_project<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>my_project
+incan<span class="w"> </span>init
+</code></pre></div>
+<p>This creates a ready-to-run layout:</p>
 <div class="language-text highlight"><pre><span></span><code>my_project/
 ├── src/
-│   ├── main.incn      # Entry point
-│   └── utils.incn     # Additional modules
+│   └── main.incn          # Entry point (&quot;Hello from my_project!&quot;)
 ├── tests/
-│   └── test_utils.incn
-└── incan.toml         # Project config (planned)
+│   └── test_main.incn     # Starter test
+└── incan.toml             # Project manifest
 </code></pre></div>
-<p>Note: <code>incan.toml</code> is <strong>planned</strong> and not required to get started today.</p>
+<p>You can run it immediately:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run<span class="w"> </span>src/main.incn
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests/
+</code></pre></div>
+<p>For the full walkthrough — adding modules, Rust crate dependencies, and lock files — see:
+<a href="../your_first_project/">Your first project</a>.</p>
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <ul>
+<li><a href="../your_first_project/">Your first project</a> - Set up a real project with modules, dependencies, tests, and
+  lock files</li>
 <li><a href="../../how-to/formatting/">Formatting Guide</a> - Code style and <code>incan fmt</code></li>
 <li><a href="../../reference/cli_reference/">CLI Reference</a> - Commands, flags, and environment variables</li>
 <li><a href="../../explanation/projects_today/">Projects today</a> - Where builds go, what is regenerated, and what’s planned</li>

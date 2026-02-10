@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../getting_started/">
+        <link rel="prev" href="../your_first_project/">
       
       
         <link rel="next" href="../../how-to/install_and_run/">
@@ -2455,6 +2455,8 @@
       
         
       
+        
+      
     
     
       
@@ -2497,6 +2499,27 @@
   
   <span class="md-ellipsis">
     Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
   </span>
   
 
@@ -2643,6 +2666,8 @@
       
         
       
+        
+      
     
     
       
@@ -2685,6 +2710,27 @@
   
   <span class="md-ellipsis">
     Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
   </span>
   
 
@@ -2934,6 +2980,8 @@
       
         
       
+        
+      
     
     
       
@@ -2976,6 +3024,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
   </span>
   
 
@@ -3957,7 +4026,7 @@
 <h2 id="step-3-test-it">Step 3: Test it<a class="headerlink" href="#step-3-test-it" title="Permanent link">&para;</a></h2>
 <p>Create <code>tests/test_pipeline_step.incn</code>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">..pipeline_step</span><span class="w"> </span><span class="kn">import</span> <span class="n">normalize_name</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">test_normalize_name_ok</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="nf">assert_eq</span><span class="p">(</span><span class="n">normalize_name</span><span class="p">(</span><span class="s2">&quot;  Alice  &quot;</span><span class="p">),</span> <span class="nb">Ok</span><span class="p">(</span><span class="s2">&quot;alice&quot;</span><span class="p">))</span>

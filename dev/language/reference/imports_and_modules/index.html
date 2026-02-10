@@ -1676,6 +1676,21 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Rust crates vs Incan modules (important)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#version-and-feature-annotations-rust-crates-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      Version and feature annotations (Rust crates only)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2732,6 +2747,8 @@
       
         
       
+        
+      
     
     
       
@@ -2774,6 +2791,27 @@
   
   <span class="md-ellipsis">
     Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/tutorials/your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
   </span>
   
 
@@ -2835,6 +2873,8 @@
       
         
       
+        
+      
     
     
       
@@ -2877,6 +2917,27 @@
   
   <span class="md-ellipsis">
     Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/how-to/dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
   </span>
   
 
@@ -3126,6 +3187,8 @@
       
         
       
+        
+      
     
     
       
@@ -3168,6 +3231,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/reference/project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
   </span>
   
 
@@ -4257,6 +4341,21 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Rust crates vs Incan modules (important)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#version-and-feature-annotations-rust-crates-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      Version and feature annotations (Rust crates only)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4678,6 +4777,29 @@ etc.) where available.</p>
   the current crate and are emitted as <code>crate::db::schema::Database</code> in generated Rust so they compile reliably from
   submodules.</li>
 </ul>
+<h3 id="version-and-feature-annotations-rust-crates-only">Version and feature annotations (Rust crates only)<a class="headerlink" href="#version-and-feature-annotations-rust-crates-only" title="Permanent link">&para;</a></h3>
+<p>Rust crate imports support optional version and feature annotations using <code>@</code> and <code>with</code>:</p>
+<div class="language-text highlight"><pre><span></span><code>import rust::CRATE [@ &quot;VERSION&quot;] [with [&quot;FEATURE&quot;, ...]]
+from rust::CRATE [@ &quot;VERSION&quot;] [with [&quot;FEATURE&quot;, ...]] import ITEMS
+</code></pre></div>
+<p>Examples:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Version only</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">my_crate</span> <span class="o">@</span> <span class="s2">&quot;1.0&quot;</span>
+
+<span class="c1"># Version with features</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">tokio</span> <span class="o">@</span> <span class="s2">&quot;1.0&quot;</span> <span class="k">with</span> <span class="p">[</span><span class="s2">&quot;full&quot;</span><span class="p">]</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">sqlx</span> <span class="o">@</span> <span class="s2">&quot;0.7&quot;</span> <span class="k">with</span> <span class="p">[</span><span class="s2">&quot;runtime-tokio&quot;</span><span class="p">,</span> <span class="s2">&quot;postgres&quot;</span><span class="p">]</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Pool</span>
+</code></pre></div>
+<p>Rules:</p>
+<ul>
+<li><code>@ "VERSION"</code> uses <a href="https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html">Cargo SemVer syntax</a>.</li>
+<li><code>with [...]</code> requires <code>@</code> (you cannot specify features without a version).</li>
+<li>If the crate is configured in <code>incan.toml</code>, inline annotations are <strong>not allowed</strong>.</li>
+<li>When the same crate is imported in multiple files, versions must match and features are unioned.</li>
+</ul>
+<p>These annotations only apply to <code>rust::</code> imports. Incan module imports (<code>from models import User</code>) do not support version
+or feature annotations.</p>
+<p>See: <a href="../../how-to/rust_interop/">Rust interop</a> for practical guidance and examples.</p>
 <h2 id="current-status-and-limitations">Current status and limitations<a class="headerlink" href="#current-status-and-limitations" title="Permanent link">&para;</a></h2>
 <p>Supported:</p>
 <ul>
