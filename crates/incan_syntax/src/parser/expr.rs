@@ -588,12 +588,12 @@ impl<'a> Parser<'a> {
         let start = self.current_span().start;
 
         // Wildcard
-        if let TokenKind::Ident(name) = &self.peek().kind {
-            if name == "_" {
-                self.advance();
-                let end = self.tokens[self.pos - 1].span.end;
-                return Ok(Spanned::new(Pattern::Wildcard, Span::new(start, end)));
-            }
+        if let TokenKind::Ident(name) = &self.peek().kind
+            && name == "_"
+        {
+            self.advance();
+            let end = self.tokens[self.pos - 1].span.end;
+            return Ok(Spanned::new(Pattern::Wildcard, Span::new(start, end)));
         }
 
         // Literal patterns

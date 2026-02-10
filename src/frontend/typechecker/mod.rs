@@ -287,10 +287,10 @@ impl TypeChecker {
         if let Some(ty) = requires.get(field) {
             return Some(ty.clone());
         }
-        if let Some(seen) = self.current_trait_missing_requires_emitted.as_ref() {
-            if seen.contains(field) {
-                return None;
-            }
+        if let Some(seen) = self.current_trait_missing_requires_emitted.as_ref()
+            && seen.contains(field)
+        {
+            return None;
         }
         let trait_name = self.current_trait_name.as_deref().unwrap_or("<trait>");
         self.errors

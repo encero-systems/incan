@@ -35,17 +35,17 @@ impl AstLowering {
                     _ => inner,
                 };
             }
-            if let Some(kind) = info.ident_kind(expr.span) {
-                if let IrExprKind::Var { ref mut ref_kind, .. } = lowered.kind {
-                    *ref_kind = match kind {
-                        IdentKind::Value => VarRefKind::Value,
-                        IdentKind::TypeName => VarRefKind::TypeName,
-                        IdentKind::Variant => VarRefKind::TypeName,
-                        IdentKind::Module => VarRefKind::ExternalName,
-                        IdentKind::RustImport => VarRefKind::ExternalName,
-                        IdentKind::Trait => VarRefKind::TypeName,
-                    };
-                }
+            if let Some(kind) = info.ident_kind(expr.span)
+                && let IrExprKind::Var { ref mut ref_kind, .. } = lowered.kind
+            {
+                *ref_kind = match kind {
+                    IdentKind::Value => VarRefKind::Value,
+                    IdentKind::TypeName => VarRefKind::TypeName,
+                    IdentKind::Variant => VarRefKind::TypeName,
+                    IdentKind::Module => VarRefKind::ExternalName,
+                    IdentKind::RustImport => VarRefKind::ExternalName,
+                    IdentKind::Trait => VarRefKind::TypeName,
+                };
             }
         }
         Ok(lowered)

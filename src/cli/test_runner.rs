@@ -336,10 +336,10 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     let filtered_tests: Vec<TestInfo> = all_tests
         .into_iter()
         .filter(|t| {
-            if let Some(keyword) = filter {
-                if !t.function_name.contains(keyword) {
-                    return false;
-                }
+            if let Some(keyword) = filter
+                && !t.function_name.contains(keyword)
+            {
+                return false;
             }
             if !include_slow && t.markers.contains(&TestMarker::Slow) {
                 return false;
@@ -558,20 +558,20 @@ pub fn discover_test_files(path: &Path) -> Vec<PathBuf> {
         if (name.starts_with("test_") || name.ends_with("_test.incn")) && name.ends_with(".incn") {
             files.push(path.to_path_buf());
         }
-    } else if path.is_dir() {
-        if let Ok(entries) = fs::read_dir(path) {
-            for entry in entries.flatten() {
-                let entry_path = entry.path();
-                if entry_path.is_dir() {
-                    let name = entry_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if !name.starts_with('.') && name != "target" && name != "node_modules" {
-                        files.extend(discover_test_files(&entry_path));
-                    }
-                } else {
-                    let name = entry_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if (name.starts_with("test_") || name.ends_with("_test.incn")) && name.ends_with(".incn") {
-                        files.push(entry_path);
-                    }
+    } else if path.is_dir()
+        && let Ok(entries) = fs::read_dir(path)
+    {
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                let name = entry_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if !name.starts_with('.') && name != "target" && name != "node_modules" {
+                    files.extend(discover_test_files(&entry_path));
+                }
+            } else {
+                let name = entry_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if (name.starts_with("test_") || name.ends_with("_test.incn")) && name.ends_with(".incn") {
+                    files.push(entry_path);
                 }
             }
         }
@@ -598,10 +598,10 @@ pub fn discover_tests_and_fixtures(file_path: &Path) -> Result<DiscoveryResult, 
         .declarations
         .iter()
         .filter_map(|decl| {
-            if let crate::frontend::ast::Declaration::Function(func) = &decl.node {
-                if has_fixture_decorator(&func.decorators, &import_aliases) {
-                    return Some(func.name.clone());
-                }
+            if let crate::frontend::ast::Declaration::Function(func) = &decl.node
+                && has_fixture_decorator(&func.decorators, &import_aliases)
+            {
+                return Some(func.name.clone());
             }
             None
         })
@@ -680,26 +680,22 @@ fn extract_fixture_args(
             for arg in &dec.node.args {
                 if let crate::frontend::ast::DecoratorArg::Named(name, value) = arg {
                     if name == decorators::FIXTURE_SCOPE_ARG {
-                        if let crate::frontend::ast::DecoratorArgValue::Expr(expr) = value {
-                            if let crate::frontend::ast::Expr::Literal(crate::frontend::ast::Literal::String(s)) =
+                        if let crate::frontend::ast::DecoratorArgValue::Expr(expr) = value
+                            && let crate::frontend::ast::Expr::Literal(crate::frontend::ast::Literal::String(s)) =
                                 &expr.node
-                            {
-                                scope = match s.as_str() {
-                                    decorators::FIXTURE_SCOPE_FUNCTION => FixtureScope::Function,
-                                    decorators::FIXTURE_SCOPE_MODULE => FixtureScope::Module,
-                                    decorators::FIXTURE_SCOPE_SESSION => FixtureScope::Session,
-                                    _ => FixtureScope::Function,
-                                };
-                            }
+                        {
+                            scope = match s.as_str() {
+                                decorators::FIXTURE_SCOPE_FUNCTION => FixtureScope::Function,
+                                decorators::FIXTURE_SCOPE_MODULE => FixtureScope::Module,
+                                decorators::FIXTURE_SCOPE_SESSION => FixtureScope::Session,
+                                _ => FixtureScope::Function,
+                            };
                         }
-                    } else if name == decorators::FIXTURE_AUTOUSE_ARG {
-                        if let crate::frontend::ast::DecoratorArgValue::Expr(expr) = value {
-                            if let crate::frontend::ast::Expr::Literal(crate::frontend::ast::Literal::Bool(b)) =
-                                &expr.node
-                            {
-                                autouse = *b;
-                            }
-                        }
+                    } else if name == decorators::FIXTURE_AUTOUSE_ARG
+                        && let crate::frontend::ast::DecoratorArgValue::Expr(expr) = value
+                        && let crate::frontend::ast::Expr::Literal(crate::frontend::ast::Literal::Bool(b)) = &expr.node
+                    {
+                        autouse = *b;
                     }
                 }
             }
@@ -805,10 +801,10 @@ fn extract_test_markers(
 }
 
 fn extract_string_arg(args: &[crate::frontend::ast::DecoratorArg]) -> Option<String> {
-    if let Some(crate::frontend::ast::DecoratorArg::Positional(expr)) = args.first() {
-        if let crate::frontend::ast::Expr::Literal(crate::frontend::ast::Literal::String(s)) = &expr.node {
-            return Some(s.clone());
-        }
+    if let Some(crate::frontend::ast::DecoratorArg::Positional(expr)) = args.first()
+        && let crate::frontend::ast::Expr::Literal(crate::frontend::ast::Literal::String(s)) = &expr.node
+    {
+        return Some(s.clone());
     }
     None
 }

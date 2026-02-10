@@ -110,10 +110,10 @@ fn stmt_has_call(stmt: &Spanned<Statement>, target: BuiltinFnId) -> bool {
 fn expr_has_call(expr: &Expr, target: BuiltinFnId) -> bool {
     match expr {
         Expr::Call(f, args) => {
-            if let Expr::Ident(name) = &f.node {
-                if builtins::from_str(name.as_str()) == Some(target) {
-                    return true;
-                }
+            if let Expr::Ident(name) = &f.node
+                && builtins::from_str(name.as_str()) == Some(target)
+            {
+                return true;
             }
             expr_has_call(&f.node, target) || args.iter().any(|a| call_arg_has(a, target))
         }

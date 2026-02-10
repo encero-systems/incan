@@ -88,10 +88,10 @@ impl ModuleCollector {
 
         // Find and load dependencies
         for decl in &ast.declarations {
-            if let Declaration::Import(import) = &decl.node {
-                if let Some(dep_path) = self.resolve_import(import) {
-                    self.load_module(&dep_path)?;
-                }
+            if let Declaration::Import(import) = &decl.node
+                && let Some(dep_path) = self.resolve_import(import)
+            {
+                self.load_module(&dep_path)?;
             }
         }
 
@@ -139,10 +139,10 @@ pub fn resolve_import_path(base_dir: &Path, import: &ImportDecl) -> Option<PathB
     };
 
     // Skip standard library imports (std::*)
-    if let Some(first) = path.first() {
-        if first == stdlib::STDLIB_ROOT {
-            return None;
-        }
+    if let Some(first) = path.first()
+        && first == stdlib::STDLIB_ROOT
+    {
+        return None;
     }
 
     // Calculate base directory based on relative path

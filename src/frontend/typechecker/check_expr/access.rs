@@ -68,14 +68,14 @@ impl TypeChecker {
                 None
             };
 
-            if let Some((arg_ty, arg_span)) = arg {
-                if !self.types_compatible(arg_ty, param_ty) {
-                    self.errors.push(errors::type_mismatch(
-                        &param_ty.to_string(),
-                        &arg_ty.to_string(),
-                        *arg_span,
-                    ));
-                }
+            if let Some((arg_ty, arg_span)) = arg
+                && !self.types_compatible(arg_ty, param_ty)
+            {
+                self.errors.push(errors::type_mismatch(
+                    &param_ty.to_string(),
+                    &arg_ty.to_string(),
+                    *arg_span,
+                ));
             }
         }
     }
@@ -325,14 +325,14 @@ impl TypeChecker {
         span: Span,
     ) -> ResolvedType {
         // Handle builtin math module
-        if let Expr::Ident(name) = &base.node {
-            if name == incan_core::lang::surface::math::MATH_MODULE_NAME {
-                match field {
-                    _ if incan_core::lang::surface::math::const_from_str(field).is_some() => {
-                        return ResolvedType::Float;
-                    }
-                    _ => {}
+        if let Expr::Ident(name) = &base.node
+            && name == incan_core::lang::surface::math::MATH_MODULE_NAME
+        {
+            match field {
+                _ if incan_core::lang::surface::math::const_from_str(field).is_some() => {
+                    return ResolvedType::Float;
                 }
+                _ => {}
             }
         }
 
@@ -352,10 +352,10 @@ impl TypeChecker {
                     .trait_required_field_type(field, span)
                     .unwrap_or(ResolvedType::Unknown),
                 ResolvedType::Tuple(elements) => {
-                    if let Ok(idx) = field.parse::<usize>() {
-                        if idx < elements.len() {
-                            return elements[idx].clone();
-                        }
+                    if let Ok(idx) = field.parse::<usize>()
+                        && idx < elements.len()
+                    {
+                        return elements[idx].clone();
                     }
                     checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
                     ResolvedType::Unknown
@@ -406,17 +406,17 @@ impl TypeChecker {
             }
         };
 
-        if let ResolvedType::Generic(name, args) = &base_ty {
-            if matches!(
+        if let ResolvedType::Generic(name, args) = &base_ty
+            && matches!(
                 surface_types::from_str(name.as_str()),
                 Some(SurfaceTypeId::Json | SurfaceTypeId::Query)
-            ) && args.len() == 1
-            {
-                if field == "value" {
-                    return args[0].clone();
-                }
-                return resolve_on(self, &args[0]);
+            )
+            && args.len() == 1
+        {
+            if field == "value" {
+                return args[0].clone();
             }
+            return resolve_on(self, &args[0]);
         }
 
         resolve_on(self, &base_ty)
@@ -449,52 +449,51 @@ impl TypeChecker {
         }
 
         // Treat Enum.Variant(...) method-style calls as variant constructors
-        if let ResolvedType::Named(enum_name) = &base_ty {
-            if let Some(TypeInfo::Enum(enum_info)) = self.lookup_type_info(enum_name) {
-                if enum_info.variants.iter().any(|v| v == method) {
-                    // Args were checked above; no strict arity enforcement here.
-                    let _ = &arg_types; // keep for potential future validation
-                    return ResolvedType::Named(enum_name.clone());
-                }
-            }
+        if let ResolvedType::Named(enum_name) = &base_ty
+            && let Some(TypeInfo::Enum(enum_info)) = self.lookup_type_info(enum_name)
+            && enum_info.variants.iter().any(|v| v == method)
+        {
+            // Args were checked above; no strict arity enforcement here.
+            let _ = &arg_types; // keep for potential future validation
+            return ResolvedType::Named(enum_name.clone());
         }
 
         // External/runtime-provided concurrency primitives: be permissive
-        if let ResolvedType::Named(name) = &base_ty {
-            if surface_types::from_str(name.as_str()).is_some() {
-                return ResolvedType::Unknown;
-            }
+        if let ResolvedType::Named(name) = &base_ty
+            && surface_types::from_str(name.as_str()).is_some()
+        {
+            return ResolvedType::Unknown;
         }
 
         // Builtin methods for builtin types (so we don't report missing methods).
-        if matches!(base_ty, ResolvedType::Float) {
-            if let Some(id) = float_methods::from_str(method) {
-                use float_methods::FloatMethodId as M;
-                match id {
-                    M::IsNan | M::IsInfinite | M::IsFinite => return ResolvedType::Bool,
-                    _ => return ResolvedType::Float,
-                }
+        if matches!(base_ty, ResolvedType::Float)
+            && let Some(id) = float_methods::from_str(method)
+        {
+            use float_methods::FloatMethodId as M;
+            match id {
+                M::IsNan | M::IsInfinite | M::IsFinite => return ResolvedType::Bool,
+                _ => return ResolvedType::Float,
             }
         }
 
-        if matches!(base_ty, ResolvedType::Str) {
-            if let Some(ret) = string_method_return(method, false) {
-                return ret;
-            }
+        if matches!(base_ty, ResolvedType::Str)
+            && let Some(ret) = string_method_return(method, false)
+        {
+            return ret;
         }
 
-        if is_frozen_str(&base_ty) {
-            if let Some(ret) = string_method_return(method, true) {
-                return ret;
-            }
+        if is_frozen_str(&base_ty)
+            && let Some(ret) = string_method_return(method, true)
+        {
+            return ret;
         }
-        if is_frozen_bytes(&base_ty) {
-            if let Some(id) = frozen_bytes_methods::from_str(method) {
-                use frozen_bytes_methods::FrozenBytesMethodId as M;
-                match id {
-                    M::Len => return ResolvedType::Int,
-                    M::IsEmpty => return ResolvedType::Bool,
-                }
+        if is_frozen_bytes(&base_ty)
+            && let Some(id) = frozen_bytes_methods::from_str(method)
+        {
+            use frozen_bytes_methods::FrozenBytesMethodId as M;
+            match id {
+                M::Len => return ResolvedType::Int,
+                M::IsEmpty => return ResolvedType::Bool,
             }
         }
 
@@ -550,11 +549,11 @@ impl TypeChecker {
                     // Rust: `Option<T>::unwrap_or(default: T) -> T`
                     //
                     // For `Option<&T>`, this is `unwrap_or(default: &T) -> &T`.
-                    if let Some(default_ty) = arg_types.first() {
-                        if !self.types_compatible(default_ty, &inner) {
-                            self.errors
-                                .push(errors::type_mismatch(&inner.to_string(), &default_ty.to_string(), span));
-                        }
+                    if let Some(default_ty) = arg_types.first()
+                        && !self.types_compatible(default_ty, &inner)
+                    {
+                        self.errors
+                            .push(errors::type_mismatch(&inner.to_string(), &default_ty.to_string(), span));
                     }
                     return inner;
                 }
@@ -574,11 +573,11 @@ impl TypeChecker {
                     match id {
                         M::Append => {
                             let clone_ty = arg_types.first().unwrap_or(&elem);
-                            if let Some(arg0) = arg_types.first() {
-                                if !self.types_compatible(arg0, &elem) {
-                                    self.errors
-                                        .push(errors::type_mismatch(&elem.to_string(), &arg0.to_string(), span));
-                                }
+                            if let Some(arg0) = arg_types.first()
+                                && !self.types_compatible(arg0, &elem)
+                            {
+                                self.errors
+                                    .push(errors::type_mismatch(&elem.to_string(), &arg0.to_string(), span));
                             }
                             if !self.is_copy_type(clone_ty) && !self.is_clone_type(clone_ty) {
                                 self.errors
@@ -664,10 +663,10 @@ impl TypeChecker {
 
         // For common external generic types (interop/runtime-provided) that we don't model in
         // the checker, be permissive and do not error on unknown methods.
-        if let ResolvedType::Generic(name, _args) = &base_ty {
-            if surface_types::from_str(name.as_str()).is_some() {
-                return ResolvedType::Unknown;
-            }
+        if let ResolvedType::Generic(name, _args) = &base_ty
+            && surface_types::from_str(name.as_str()).is_some()
+        {
+            return ResolvedType::Unknown;
         }
 
         // Guardrail: don't silently return Unknown for missing methods on known user types.

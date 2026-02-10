@@ -118,10 +118,8 @@ pub(crate) fn resolve_lock_payload(
     );
 
     let strict = locked || frozen;
-    if strict {
-        if let Some(message) = strict_git_source_error(resolved) {
-            return Err(CliError::failure(message));
-        }
+    if strict && let Some(message) = strict_git_source_error(resolved) {
+        return Err(CliError::failure(message));
     }
     if lock_path.exists() {
         let lock = IncanLock::load(&lock_path).map_err(|e| CliError::failure(e.to_string()))?;
@@ -279,13 +277,13 @@ fn collect_test_inline_imports(project_root: &Path) -> CliResult<Vec<InlineRustI
 /// (`--locked` / `--frozen`) mode.
 fn strict_git_source_error(resolved: &ResolvedDependencies) -> Option<String> {
     for spec in resolved.dependencies.iter().chain(resolved.dev_dependencies.iter()) {
-        if let crate::manifest::DependencySource::Git { reference, .. } = &spec.source {
-            if matches!(reference, crate::manifest::GitReference::Branch(_)) {
-                return Some(format!(
-                    "strict mode forbids git branch dependencies (crate `{}`); use tag or rev",
-                    spec.crate_name
-                ));
-            }
+        if let crate::manifest::DependencySource::Git { reference, .. } = &spec.source
+            && matches!(reference, crate::manifest::GitReference::Branch(_))
+        {
+            return Some(format!(
+                "strict mode forbids git branch dependencies (crate `{}`); use tag or rev",
+                spec.crate_name
+            ));
         }
     }
     None

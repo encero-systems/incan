@@ -111,7 +111,7 @@ impl IncanLock {
 /// Compute a stable SHA-256 fingerprint over the effective dependency specs and Cargo feature selection.
 ///
 /// ## Parameters
-/// 
+///
 /// - `project_root`: When provided, `path:` dependency sources are relativized to this directory so the fingerprint is
 ///   portable across machines (RFC 013 Appendix A.2).
 pub fn compute_deps_fingerprint(

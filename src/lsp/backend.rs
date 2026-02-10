@@ -96,14 +96,12 @@ impl IncanLanguageServer {
         // Collect resolved const types for hover display (post-const-freezing).
         let mut const_types: HashMap<String, String> = HashMap::new();
         for decl in &ast.declarations {
-            if let Declaration::Const(konst) = &decl.node {
-                if let Some(id) = checker.symbols.lookup(&konst.name) {
-                    if let Some(sym) = checker.symbols.get(id) {
-                        if let crate::frontend::symbols::SymbolKind::Variable(var) = &sym.kind {
-                            const_types.insert(konst.name.clone(), var.ty.to_string());
-                        }
-                    }
-                }
+            if let Declaration::Const(konst) = &decl.node
+                && let Some(id) = checker.symbols.lookup(&konst.name)
+                && let Some(sym) = checker.symbols.get(id)
+                && let crate::frontend::symbols::SymbolKind::Variable(var) = &sym.kind
+            {
+                const_types.insert(konst.name.clone(), var.ty.to_string());
             }
         }
 
@@ -152,11 +150,11 @@ impl IncanLanguageServer {
 
         // Seed stack with direct imports from the entry AST
         for decl in &ast.declarations {
-            if let Declaration::Import(import) = &decl.node {
-                if let Some(dep_path) = resolve_import_path(&entry_base, import) {
-                    let base = dep_path.parent().unwrap_or(&entry_base).to_path_buf();
-                    stack.push((dep_path, base, decl.span));
-                }
+            if let Declaration::Import(import) = &decl.node
+                && let Some(dep_path) = resolve_import_path(&entry_base, import)
+            {
+                let base = dep_path.parent().unwrap_or(&entry_base).to_path_buf();
+                stack.push((dep_path, base, decl.span));
             }
         }
 
@@ -250,11 +248,11 @@ impl IncanLanguageServer {
 
             // Queue nested dependencies
             for decl in &dep_ast.declarations {
-                if let Declaration::Import(import) = &decl.node {
-                    if let Some(nested_path) = resolve_import_path(&base_dir, import) {
-                        let nested_base = nested_path.parent().unwrap_or(&base_dir).to_path_buf();
-                        stack.push((nested_path, nested_base, Span::default()));
-                    }
+                if let Declaration::Import(import) = &decl.node
+                    && let Some(nested_path) = resolve_import_path(&base_dir, import)
+                {
+                    let nested_base = nested_path.parent().unwrap_or(&base_dir).to_path_buf();
+                    stack.push((nested_path, nested_base, Span::default()));
                 }
             }
 
@@ -753,10 +751,10 @@ impl LanguageServer for IncanLanguageServer {
         let Some(offset) = position_to_offset(&doc.source, position) else {
             return Ok(None);
         };
-        if let Some(path) = find_stdlib_import_path(ast, offset) {
-            if let Some(location) = stdlib_location_for_path(&path) {
-                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
-            }
+        if let Some(path) = find_stdlib_import_path(ast, offset)
+            && let Some(location) = stdlib_location_for_path(&path)
+        {
+            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
         }
         let aliases = collect_import_aliases(ast);
         // Decorator go-to-definition: navigate to the owning module's stdlib stub (if any)
@@ -909,18 +907,18 @@ impl LanguageServer for IncanLanguageServer {
                                 Some(format!("field on model {}", model.name)),
                                 Some(format!("1_{}", canonical)),
                             );
-                            if let Some(alias) = field.node.metadata.alias.as_deref() {
-                                if alias != canonical {
-                                    // RFC 021: show mapping detail (e.g. `type → type_`)
-                                    push_completion(
-                                        &mut items,
-                                        &mut seen,
-                                        alias,
-                                        CompletionItemKind::FIELD,
-                                        Some(format!("{} → {} ({})", alias, canonical, model.name)),
-                                        Some(format!("0_{}", alias)),
-                                    );
-                                }
+                            if let Some(alias) = field.node.metadata.alias.as_deref()
+                                && alias != canonical
+                            {
+                                // RFC 021: show mapping detail (e.g. `type → type_`)
+                                push_completion(
+                                    &mut items,
+                                    &mut seen,
+                                    alias,
+                                    CompletionItemKind::FIELD,
+                                    Some(format!("{} → {} ({})", alias, canonical, model.name)),
+                                    Some(format!("0_{}", alias)),
+                                );
                             }
                         }
                     }
@@ -943,18 +941,18 @@ impl LanguageServer for IncanLanguageServer {
                                 Some(format!("field on class {}", class.name)),
                                 Some(format!("1_{}", canonical)),
                             );
-                            if let Some(alias) = field.node.metadata.alias.as_deref() {
-                                if alias != canonical {
-                                    // RFC 021: show mapping detail (e.g. `type → type_`)
-                                    push_completion(
-                                        &mut items,
-                                        &mut seen,
-                                        alias,
-                                        CompletionItemKind::FIELD,
-                                        Some(format!("{} → {} ({})", alias, canonical, class.name)),
-                                        Some(format!("0_{}", alias)),
-                                    );
-                                }
+                            if let Some(alias) = field.node.metadata.alias.as_deref()
+                                && alias != canonical
+                            {
+                                // RFC 021: show mapping detail (e.g. `type → type_`)
+                                push_completion(
+                                    &mut items,
+                                    &mut seen,
+                                    alias,
+                                    CompletionItemKind::FIELD,
+                                    Some(format!("{} → {} ({})", alias, canonical, class.name)),
+                                    Some(format!("0_{}", alias)),
+                                );
                             }
                         }
                     }

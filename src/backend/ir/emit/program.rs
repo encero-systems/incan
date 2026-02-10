@@ -222,10 +222,10 @@ impl<'a> IrEmitter<'a> {
                 }
             }
             // Collect static-str const initializer expressions for later resolution.
-            if let IrDeclKind::Const { name, ty, value, .. } = &decl.kind {
-                if matches!(ty, IrType::StaticStr) {
-                    static_str_const_exprs.insert(name.clone(), value.clone());
-                }
+            if let IrDeclKind::Const { name, ty, value, .. } = &decl.kind
+                && matches!(ty, IrType::StaticStr)
+            {
+                static_str_const_exprs.insert(name.clone(), value.clone());
             }
         }
 

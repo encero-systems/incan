@@ -49,11 +49,11 @@ impl<'a> Lexer<'a> {
             is_float = true;
             value.push('e');
             self.advance();
-            if let Some(sign) = self.peek() {
-                if sign == '+' || sign == '-' {
-                    value.push(sign);
-                    self.advance();
-                }
+            if let Some(sign) = self.peek()
+                && (sign == '+' || sign == '-')
+            {
+                value.push(sign);
+                self.advance();
             }
             while let Some(c) = self.peek() {
                 if c.is_ascii_digit() {

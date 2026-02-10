@@ -452,6 +452,9 @@ def main() -> None:
 | Html | `Html` |  | Named | HTML response wrapper for web handlers. | RFC 000 | 0.1 | Stable |
 | Json | `Json` |  | Generic | JSON response/extractor wrapper for web handlers. | RFC 000 | 0.1 | Stable |
 | Query | `Query` |  | Generic | Query-string extractor wrapper for web handlers. | RFC 000 | 0.1 | Stable |
+| Path | `Path` |  | Generic | Path-parameter extractor wrapper for web handlers. | RFC 000 | 0.1 | Stable |
+| Body | `Body` |  | Generic | Request body extractor wrapper for web handlers. | RFC 000 | 0.1 | Stable |
+| Request | `Request` |  | Named | Full HTTP request access for web handlers. | RFC 000 | 0.1 | Stable |
 | FieldInfo | `FieldInfo` |  | Named | Field metadata record returned by __fields__(). | RFC 021 | 0.1 | Stable |
 
 ## Surface methods

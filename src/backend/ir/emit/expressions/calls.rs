@@ -141,10 +141,10 @@ impl<'a> IrEmitter<'a> {
         right: &TypedExpr,
     ) -> Result<TokenStream, EmitError> {
         // Special-case: const-fold string additions using literals/known consts
-        if matches!(op, BinOp::Add) {
-            if let Some(tokens) = self.try_emit_static_str_add(left, right)? {
-                return Ok(tokens);
-            }
+        if matches!(op, BinOp::Add)
+            && let Some(tokens) = self.try_emit_static_str_add(left, right)?
+        {
+            return Ok(tokens);
         }
 
         let l_raw = self.emit_expr(left)?;

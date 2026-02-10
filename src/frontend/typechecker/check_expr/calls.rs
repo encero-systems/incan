@@ -335,16 +335,15 @@ impl TypeChecker {
                     let mut inner_ty = ResolvedType::Unknown;
                     if let Some(arg) = args.first() {
                         let iter_ty = self.check_expr(Self::call_arg_expr(arg));
-                        if let ResolvedType::Generic(name, type_args) = &iter_ty {
-                            if (name == surface_types::as_str(SurfaceTypeId::Vec)
+                        if let ResolvedType::Generic(name, type_args) = &iter_ty
+                            && (name == surface_types::as_str(SurfaceTypeId::Vec)
                                 || matches!(
                                     collection_type_id(name.as_str()),
                                     Some(CollectionTypeId::List | CollectionTypeId::FrozenList)
                                 ))
-                                && !type_args.is_empty()
-                            {
-                                inner_ty = type_args[0].clone();
-                            }
+                            && !type_args.is_empty()
+                        {
+                            inner_ty = type_args[0].clone();
                         }
                     }
                     self.check_call_args(args);
@@ -357,27 +356,25 @@ impl TypeChecker {
                     if args.len() >= 2 {
                         let iter1_ty = self.check_expr(Self::call_arg_expr(&args[0]));
                         let iter2_ty = self.check_expr(Self::call_arg_expr(&args[1]));
-                        if let ResolvedType::Generic(name, type_args) = &iter1_ty {
-                            if (name == surface_types::as_str(SurfaceTypeId::Vec)
+                        if let ResolvedType::Generic(name, type_args) = &iter1_ty
+                            && (name == surface_types::as_str(SurfaceTypeId::Vec)
                                 || matches!(
                                     collection_type_id(name.as_str()),
                                     Some(CollectionTypeId::List | CollectionTypeId::FrozenList)
                                 ))
-                                && !type_args.is_empty()
-                            {
-                                ty1 = type_args[0].clone();
-                            }
+                            && !type_args.is_empty()
+                        {
+                            ty1 = type_args[0].clone();
                         }
-                        if let ResolvedType::Generic(name, type_args) = &iter2_ty {
-                            if (name == surface_types::as_str(SurfaceTypeId::Vec)
+                        if let ResolvedType::Generic(name, type_args) = &iter2_ty
+                            && (name == surface_types::as_str(SurfaceTypeId::Vec)
                                 || matches!(
                                     collection_type_id(name.as_str()),
                                     Some(CollectionTypeId::List | CollectionTypeId::FrozenList)
                                 ))
-                                && !type_args.is_empty()
-                            {
-                                ty2 = type_args[0].clone();
-                            }
+                            && !type_args.is_empty()
+                        {
+                            ty2 = type_args[0].clone();
                         }
                     }
                     self.check_call_args(args);
@@ -677,25 +674,23 @@ impl TypeChecker {
         // return the enum type.
         if let Expr::Field(base, variant_name) = &callee.node {
             let base_ty = self.check_expr(base);
-            if let ResolvedType::Named(enum_name) = &base_ty {
-                if let Some(TypeInfo::Enum(enum_info)) = self.lookup_type_info(enum_name) {
-                    if enum_info.variants.iter().any(|v| v == variant_name) {
-                        self.check_call_args(args);
-                        return ResolvedType::Named(enum_name.clone());
-                    }
-                }
+            if let ResolvedType::Named(enum_name) = &base_ty
+                && let Some(TypeInfo::Enum(enum_info)) = self.lookup_type_info(enum_name)
+                && enum_info.variants.iter().any(|v| v == variant_name)
+            {
+                self.check_call_args(args);
+                return ResolvedType::Named(enum_name.clone());
             }
         }
 
         // Handle math module function calls (math.sqrt, math.sin, etc.)
-        if let Expr::Field(base, method) = &callee.node {
-            if let Expr::Ident(module) = &base.node {
-                if module == math::MATH_MODULE_NAME {
-                    self.check_call_args(args);
-                    if math::fn_from_str(method.as_str()).is_some() {
-                        return ResolvedType::Float;
-                    }
-                }
+        if let Expr::Field(base, method) = &callee.node
+            && let Expr::Ident(module) = &base.node
+            && module == math::MATH_MODULE_NAME
+        {
+            self.check_call_args(args);
+            if math::fn_from_str(method.as_str()).is_some() {
+                return ResolvedType::Float;
             }
         }
 
@@ -705,29 +700,26 @@ impl TypeChecker {
             }
 
             let in_scope = self.symbols.lookup(name).is_some();
-            if in_scope {
-                if let Some(tid) = surface_types::from_str(name) {
-                    if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
-                        return self.check_json_query_constructor_call(tid, args, span);
-                    }
-                    if matches!(tid, SurfaceTypeId::Html) {
-                        return ResolvedType::Named(surface_types::as_str(tid).to_string());
-                    }
+            if in_scope && let Some(tid) = surface_types::from_str(name) {
+                if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
+                    return self.check_json_query_constructor_call(tid, args, span);
+                }
+                if matches!(tid, SurfaceTypeId::Html) {
+                    return ResolvedType::Named(surface_types::as_str(tid).to_string());
                 }
             }
 
             // Strict validated construction: `@derive(Validate)` models must be constructed via `TypeName.new(...)`.
-            if let Some(TypeInfo::Model(m)) = self.lookup_type_info(name) {
-                if m.derives
+            if let Some(TypeInfo::Model(m)) = self.lookup_type_info(name)
+                && m.derives
                     .iter()
                     .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Validate))
-                {
-                    // Still typecheck argument expressions for better downstream errors.
-                    self.check_call_args(args);
-                    self.errors
-                        .push(errors::validate_derive_disallows_raw_construction(name, span));
-                    return ResolvedType::Unknown;
-                }
+            {
+                // Still typecheck argument expressions for better downstream errors.
+                self.check_call_args(args);
+                self.errors
+                    .push(errors::validate_derive_disallows_raw_construction(name, span));
+                return ResolvedType::Unknown;
             }
 
             // Model/class constructor calls: validate field arguments at the Incan level.
@@ -741,14 +733,12 @@ impl TypeChecker {
                 });
             if let Some(fields) = ctor_fields {
                 self.check_model_or_class_constructor_call(name, &fields, args, span);
-                if in_scope {
-                    if let Some(tid) = surface_types::from_str(name) {
-                        if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
-                            return self.check_json_query_constructor_call(tid, args, span);
-                        }
-                        if matches!(tid, SurfaceTypeId::Html) {
-                            return ResolvedType::Named(surface_types::as_str(tid).to_string());
-                        }
+                if in_scope && let Some(tid) = surface_types::from_str(name) {
+                    if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
+                        return self.check_json_query_constructor_call(tid, args, span);
+                    }
+                    if matches!(tid, SurfaceTypeId::Html) {
+                        return ResolvedType::Named(surface_types::as_str(tid).to_string());
                     }
                 }
                 return ResolvedType::Named(name.to_string());
@@ -778,14 +768,14 @@ impl TypeChecker {
     ) -> ResolvedType {
         self.check_call_args(args);
 
-        if self.symbols.lookup(name).is_some() {
-            if let Some(tid) = surface_types::from_str(name) {
-                if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
-                    return self.check_json_query_constructor_call(tid, args, span);
-                }
-                if matches!(tid, SurfaceTypeId::Html) {
-                    return ResolvedType::Named(surface_types::as_str(tid).to_string());
-                }
+        if self.symbols.lookup(name).is_some()
+            && let Some(tid) = surface_types::from_str(name)
+        {
+            if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
+                return self.check_json_query_constructor_call(tid, args, span);
+            }
+            if matches!(tid, SurfaceTypeId::Html) {
+                return ResolvedType::Named(surface_types::as_str(tid).to_string());
             }
         }
 

@@ -96,8 +96,8 @@ impl TypeChecker {
                 for item in items {
                     // Stdlib-scoped surface types: define them as builtin types only when imported from their owning
                     // module.
-                    if let Some(id) = surface_types::from_str(item.name.as_str()) {
-                        if let Some(expected_module_path) = surface_types::stdlib_module_path(id) {
+                    if let Some(id) = surface_types::from_str(item.name.as_str())
+                        && let Some(expected_module_path) = surface_types::stdlib_module_path(id) {
                             let allow = match expected_module_path {
                                 "std.web" => is_std_web,
                                 "std.reflection" => is_std_reflection,
@@ -118,12 +118,11 @@ impl TypeChecker {
                                 continue;
                             }
                         }
-                    }
 
                     // Stdlib async helper functions become available when explicitly imported.
-                    if is_std_async {
-                        if let Some((info, expected_module)) = stdlib_async::async_import_function_info(&item.name) {
-                            if is_async_prelude || std_async_submodule == Some(expected_module) {
+                    if is_std_async
+                        && let Some((info, expected_module)) = stdlib_async::async_import_function_info(&item.name)
+                            && (is_async_prelude || std_async_submodule == Some(expected_module)) {
                                 let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
                                 self.validate_root_namespace(&local_name, span);
                                 self.symbols.define(Symbol {
@@ -134,8 +133,6 @@ impl TypeChecker {
                                 });
                                 continue;
                             }
-                        }
-                    }
                     let aliased_type = item.alias.as_ref().and_then(|alias| {
                         if self.symbols.lookup(alias).is_some() {
                             return None;

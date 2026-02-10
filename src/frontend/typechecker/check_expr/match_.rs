@@ -70,69 +70,72 @@ impl TypeChecker {
                 if let Some(cid) = constructors::from_str(name.as_str()) {
                     match cid {
                         ConstructorId::Ok => {
-                            if let ResolvedType::Generic(type_name, args) = expected_ty {
-                                if type_name == collections::as_str(CollectionTypeId::Result) && !args.is_empty() {
-                                    let mut positional = None;
-                                    for arg in sub_patterns {
-                                        match arg {
-                                            PatternArg::Positional(pat) => {
-                                                positional = Some(pat);
-                                                break;
-                                            }
-                                            PatternArg::Named(_, pat) => {
-                                                self.errors.push(errors::named_pattern_not_supported(name, pat.span));
-                                            }
+                            if let ResolvedType::Generic(type_name, args) = expected_ty
+                                && type_name == collections::as_str(CollectionTypeId::Result)
+                                && !args.is_empty()
+                            {
+                                let mut positional = None;
+                                for arg in sub_patterns {
+                                    match arg {
+                                        PatternArg::Positional(pat) => {
+                                            positional = Some(pat);
+                                            break;
+                                        }
+                                        PatternArg::Named(_, pat) => {
+                                            self.errors.push(errors::named_pattern_not_supported(name, pat.span));
                                         }
                                     }
-                                    if let Some(pat) = positional {
-                                        self.check_pattern(pat, &args[0]);
-                                    }
-                                    return;
                                 }
+                                if let Some(pat) = positional {
+                                    self.check_pattern(pat, &args[0]);
+                                }
+                                return;
                             }
                         }
                         ConstructorId::Err => {
-                            if let ResolvedType::Generic(type_name, args) = expected_ty {
-                                if type_name == collections::as_str(CollectionTypeId::Result) && args.len() >= 2 {
-                                    let mut positional = None;
-                                    for arg in sub_patterns {
-                                        match arg {
-                                            PatternArg::Positional(pat) => {
-                                                positional = Some(pat);
-                                                break;
-                                            }
-                                            PatternArg::Named(_, pat) => {
-                                                self.errors.push(errors::named_pattern_not_supported(name, pat.span));
-                                            }
+                            if let ResolvedType::Generic(type_name, args) = expected_ty
+                                && type_name == collections::as_str(CollectionTypeId::Result)
+                                && args.len() >= 2
+                            {
+                                let mut positional = None;
+                                for arg in sub_patterns {
+                                    match arg {
+                                        PatternArg::Positional(pat) => {
+                                            positional = Some(pat);
+                                            break;
+                                        }
+                                        PatternArg::Named(_, pat) => {
+                                            self.errors.push(errors::named_pattern_not_supported(name, pat.span));
                                         }
                                     }
-                                    if let Some(pat) = positional {
-                                        self.check_pattern(pat, &args[1]);
-                                    }
-                                    return;
                                 }
+                                if let Some(pat) = positional {
+                                    self.check_pattern(pat, &args[1]);
+                                }
+                                return;
                             }
                         }
                         ConstructorId::Some => {
-                            if let ResolvedType::Generic(type_name, args) = expected_ty {
-                                if type_name == collections::as_str(CollectionTypeId::Option) && !args.is_empty() {
-                                    let mut positional = None;
-                                    for arg in sub_patterns {
-                                        match arg {
-                                            PatternArg::Positional(pat) => {
-                                                positional = Some(pat);
-                                                break;
-                                            }
-                                            PatternArg::Named(_, pat) => {
-                                                self.errors.push(errors::named_pattern_not_supported(name, pat.span));
-                                            }
+                            if let ResolvedType::Generic(type_name, args) = expected_ty
+                                && type_name == collections::as_str(CollectionTypeId::Option)
+                                && !args.is_empty()
+                            {
+                                let mut positional = None;
+                                for arg in sub_patterns {
+                                    match arg {
+                                        PatternArg::Positional(pat) => {
+                                            positional = Some(pat);
+                                            break;
+                                        }
+                                        PatternArg::Named(_, pat) => {
+                                            self.errors.push(errors::named_pattern_not_supported(name, pat.span));
                                         }
                                     }
-                                    if let Some(pat) = positional {
-                                        self.check_pattern(pat, &args[0]);
-                                    }
-                                    return;
                                 }
+                                if let Some(pat) = positional {
+                                    self.check_pattern(pat, &args[0]);
+                                }
+                                return;
                             }
                         }
                         ConstructorId::None => {

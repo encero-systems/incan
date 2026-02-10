@@ -455,10 +455,10 @@ impl AstLowering {
                     // Regular declaration lowering
                     match self.lower_declaration(&decl.node) {
                         Ok(ir_decl) => {
-                            if let IrDeclKind::Function(ref func) = ir_decl.kind {
-                                if func.name == conventions::ENTRYPOINT_NAME {
-                                    ir_program.entry_point = Some(conventions::ENTRYPOINT_NAME.to_string());
-                                }
+                            if let IrDeclKind::Function(ref func) = ir_decl.kind
+                                && func.name == conventions::ENTRYPOINT_NAME
+                            {
+                                ir_program.entry_point = Some(conventions::ENTRYPOINT_NAME.to_string());
                             }
                             ir_program.declarations.push(ir_decl);
                         }
@@ -502,10 +502,11 @@ impl AstLowering {
         let mut newtype_names: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut enum_names: std::collections::HashSet<String> = std::collections::HashSet::new();
         for decl in &ir_program.declarations {
-            if let IrDeclKind::Struct(s) = &decl.kind {
-                if s.fields.len() == 1 && s.fields[0].name == "0" {
-                    newtype_names.insert(s.name.clone());
-                }
+            if let IrDeclKind::Struct(s) = &decl.kind
+                && s.fields.len() == 1
+                && s.fields[0].name == "0"
+            {
+                newtype_names.insert(s.name.clone());
             }
             if let IrDeclKind::Enum(e) = &decl.kind {
                 enum_names.insert(e.name.clone());
@@ -560,14 +561,14 @@ impl AstLowering {
                     e.derives.push(deserialize.to_string());
                 }
             }
-            if let IrDeclKind::Struct(s) = &mut decl.kind {
-                if newtype_names.contains(&s.name) {
-                    if structs_need_serialize.contains(&s.name) && !s.derives.iter().any(|d| d == serialize) {
-                        s.derives.push(serialize.to_string());
-                    }
-                    if structs_need_deserialize.contains(&s.name) && !s.derives.iter().any(|d| d == deserialize) {
-                        s.derives.push(deserialize.to_string());
-                    }
+            if let IrDeclKind::Struct(s) = &mut decl.kind
+                && newtype_names.contains(&s.name)
+            {
+                if structs_need_serialize.contains(&s.name) && !s.derives.iter().any(|d| d == serialize) {
+                    s.derives.push(serialize.to_string());
+                }
+                if structs_need_deserialize.contains(&s.name) && !s.derives.iter().any(|d| d == deserialize) {
+                    s.derives.push(deserialize.to_string());
                 }
             }
         }

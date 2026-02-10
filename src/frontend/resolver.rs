@@ -152,12 +152,11 @@ impl ModuleResolver {
 
             // Find imports and add them to process queue
             for decl in &ast.declarations {
-                if let Declaration::Import(import) = &decl.node {
-                    if let Some(dep_info) = self.resolve_import(&import.kind, base_dir) {
-                        if !self.processed.contains(&dep_info.0) {
-                            to_process.push(dep_info);
-                        }
-                    }
+                if let Declaration::Import(import) = &decl.node
+                    && let Some(dep_info) = self.resolve_import(&import.kind, base_dir)
+                    && !self.processed.contains(&dep_info.0)
+                {
+                    to_process.push(dep_info);
                 }
             }
 

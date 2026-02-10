@@ -40,14 +40,14 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
 
-        if let (Some(inner_err), Some(expected_err)) = (inner_ty.result_err_type(), &self.current_return_error_type) {
-            if !self.types_compatible(inner_err, expected_err) {
-                self.errors.push(errors::incompatible_error_type(
-                    &expected_err.to_string(),
-                    &inner_err.to_string(),
-                    span,
-                ));
-            }
+        if let (Some(inner_err), Some(expected_err)) = (inner_ty.result_err_type(), &self.current_return_error_type)
+            && !self.types_compatible(inner_err, expected_err)
+        {
+            self.errors.push(errors::incompatible_error_type(
+                &expected_err.to_string(),
+                &inner_err.to_string(),
+                span,
+            ));
         }
 
         inner_ty.result_ok_type().cloned().unwrap_or(ResolvedType::Unknown)

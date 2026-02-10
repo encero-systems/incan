@@ -168,10 +168,10 @@ impl TypeChecker {
                     match &target.node {
                         Expr::Ident(name) => {
                             // Check that the variable is mutable
-                            if let Some(var_info) = self.lookup_local_variable_info(name) {
-                                if !var_info.is_mutable {
-                                    self.errors.push(errors::mutation_without_mut(name, target.span));
-                                }
+                            if let Some(var_info) = self.lookup_local_variable_info(name)
+                                && !var_info.is_mutable
+                            {
+                                self.errors.push(errors::mutation_without_mut(name, target.span));
                             }
                         }
                         Expr::Index(_, _) | Expr::Field(_, _) => {
@@ -234,15 +234,15 @@ impl TypeChecker {
         // Verify field exists on object and value type matches field type
         match &obj_ty {
             ResolvedType::SelfType => {
-                if let Some(expected_ty) = self.trait_required_field_type(field, field_assign.target_span) {
-                    if !self.types_compatible(&value_ty, &expected_ty) {
-                        self.errors.push(errors::field_type_mismatch(
-                            field,
-                            &expected_ty.to_string(),
-                            &value_ty.to_string(),
-                            field_assign.value.span,
-                        ));
-                    }
+                if let Some(expected_ty) = self.trait_required_field_type(field, field_assign.target_span)
+                    && !self.types_compatible(&value_ty, &expected_ty)
+                {
+                    self.errors.push(errors::field_type_mismatch(
+                        field,
+                        &expected_ty.to_string(),
+                        &value_ty.to_string(),
+                        field_assign.value.span,
+                    ));
                 }
             }
             ResolvedType::Named(type_name) => {
@@ -304,35 +304,35 @@ impl TypeChecker {
                             index_assign.index.span,
                         ));
                     }
-                    if let Some(elem_ty) = args.first() {
-                        if !self.types_compatible(&value_ty, elem_ty) {
-                            self.errors.push(errors::index_value_type_mismatch(
-                                &elem_ty.to_string(),
-                                &value_ty.to_string(),
-                                index_assign.value.span,
-                            ));
-                        }
+                    if let Some(elem_ty) = args.first()
+                        && !self.types_compatible(&value_ty, elem_ty)
+                    {
+                        self.errors.push(errors::index_value_type_mismatch(
+                            &elem_ty.to_string(),
+                            &value_ty.to_string(),
+                            index_assign.value.span,
+                        ));
                     }
                 }
                 Some(CollectionTypeId::Dict) => {
                     // Dict[K, V] - index must be K, value must be V
-                    if let Some(key_ty) = args.first() {
-                        if !self.types_compatible(&index_ty, key_ty) {
-                            self.errors.push(errors::index_type_mismatch(
-                                &key_ty.to_string(),
-                                &index_ty.to_string(),
-                                index_assign.index.span,
-                            ));
-                        }
+                    if let Some(key_ty) = args.first()
+                        && !self.types_compatible(&index_ty, key_ty)
+                    {
+                        self.errors.push(errors::index_type_mismatch(
+                            &key_ty.to_string(),
+                            &index_ty.to_string(),
+                            index_assign.index.span,
+                        ));
                     }
-                    if let Some(val_ty) = args.get(1) {
-                        if !self.types_compatible(&value_ty, val_ty) {
-                            self.errors.push(errors::index_value_type_mismatch(
-                                &val_ty.to_string(),
-                                &value_ty.to_string(),
-                                index_assign.value.span,
-                            ));
-                        }
+                    if let Some(val_ty) = args.get(1)
+                        && !self.types_compatible(&value_ty, val_ty)
+                    {
+                        self.errors.push(errors::index_value_type_mismatch(
+                            &val_ty.to_string(),
+                            &value_ty.to_string(),
+                            index_assign.value.span,
+                        ));
                     }
                 }
                 _ => {
@@ -423,14 +423,14 @@ impl TypeChecker {
             ResolvedType::Unit
         };
 
-        if let Some(expected) = self.symbols.current_return_type() {
-            if !self.types_compatible(&return_ty, expected) {
-                self.errors.push(errors::type_mismatch(
-                    &expected.to_string(),
-                    &return_ty.to_string(),
-                    span,
-                ));
-            }
+        if let Some(expected) = self.symbols.current_return_type()
+            && !self.types_compatible(&return_ty, expected)
+        {
+            self.errors.push(errors::type_mismatch(
+                &expected.to_string(),
+                &return_ty.to_string(),
+                span,
+            ));
         }
     }
 

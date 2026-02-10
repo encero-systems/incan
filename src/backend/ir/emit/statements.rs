@@ -112,13 +112,13 @@ impl<'a> IrEmitter<'a> {
             IrStmtKind::Assign { target, value } => {
                 // For Dict index assignment, use .insert() instead of []=
                 // because HashMap's IndexMut doesn't work with owned keys
-                if let AssignTarget::Index { object, index } = target {
-                    if matches!(&object.ty, IrType::Dict(_, _) | IrType::Unknown) {
-                        let o = self.emit_expr(object)?;
-                        let k = self.emit_expr(index)?;
-                        let v = self.emit_expr(value)?;
-                        return Ok(quote! { #o.insert(#k, #v); });
-                    }
+                if let AssignTarget::Index { object, index } = target
+                    && matches!(&object.ty, IrType::Dict(_, _) | IrType::Unknown)
+                {
+                    let o = self.emit_expr(object)?;
+                    let k = self.emit_expr(index)?;
+                    let v = self.emit_expr(value)?;
+                    return Ok(quote! { #o.insert(#k, #v); });
                 }
                 let t = self.emit_assign_target(target)?;
                 let v = self.emit_expr(value)?;

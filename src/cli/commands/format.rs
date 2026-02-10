@@ -101,18 +101,18 @@ fn collect_incn_files(path: &Path) -> Vec<PathBuf> {
         if path.extension().is_some_and(|ext| ext == "incn") {
             files.push(path.to_path_buf());
         }
-    } else if path.is_dir() {
-        if let Ok(entries) = fs::read_dir(path) {
-            for entry in entries.flatten() {
-                let entry_path = entry.path();
-                if entry_path.is_dir() {
-                    let name = entry_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if !name.starts_with('.') && name != "target" && name != "node_modules" {
-                        files.extend(collect_incn_files(&entry_path));
-                    }
-                } else if entry_path.extension().is_some_and(|ext| ext == "incn") {
-                    files.push(entry_path);
+    } else if path.is_dir()
+        && let Ok(entries) = fs::read_dir(path)
+    {
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                let name = entry_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if !name.starts_with('.') && name != "target" && name != "node_modules" {
+                    files.extend(collect_incn_files(&entry_path));
                 }
+            } else if entry_path.extension().is_some_and(|ext| ext == "incn") {
+                files.push(entry_path);
             }
         }
     }

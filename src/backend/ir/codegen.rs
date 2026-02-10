@@ -177,14 +177,15 @@ fn add_serde_to_newtypes(ir_program: &mut super::IrProgram, add_serialize: bool,
     let deserialize = derives::as_str(DeriveId::Deserialize);
 
     for decl in &mut ir_program.declarations {
-        if let IrDeclKind::Struct(s) = &mut decl.kind {
-            if s.fields.len() == 1 && s.fields[0].name == "0" {
-                if add_serialize && !s.derives.iter().any(|d| d == serialize) {
-                    s.derives.push(serialize.to_string());
-                }
-                if add_deserialize && !s.derives.iter().any(|d| d == deserialize) {
-                    s.derives.push(deserialize.to_string());
-                }
+        if let IrDeclKind::Struct(s) = &mut decl.kind
+            && s.fields.len() == 1
+            && s.fields[0].name == "0"
+        {
+            if add_serialize && !s.derives.iter().any(|d| d == serialize) {
+                s.derives.push(serialize.to_string());
+            }
+            if add_deserialize && !s.derives.iter().any(|d| d == deserialize) {
+                s.derives.push(deserialize.to_string());
             }
         }
     }
@@ -379,10 +380,9 @@ impl<'a> IrCodegen<'a> {
             .dependency_modules
             .iter_mut()
             .find(|(name, _, _)| *name == module_name)
+            && segs.is_none()
         {
-            if segs.is_none() {
-                *segs = Some(path_segments);
-            }
+            *segs = Some(path_segments);
         }
     }
 
@@ -842,10 +842,9 @@ impl<'a> IrCodegen<'a> {
                 .dependency_modules
                 .iter_mut()
                 .find(|(name, _, _)| *name == flat.as_str())
+                && segs.is_none()
             {
-                if segs.is_none() {
-                    *segs = Some(path.clone());
-                }
+                *segs = Some(path.clone());
             }
         }
 

@@ -13,19 +13,19 @@ pub fn detect_list_helpers_usage(program: &Program) -> bool {
             }
             Declaration::Model(model) => {
                 for method in &model.methods {
-                    if let Some(body) = &method.node.body {
-                        if body_uses_list_helpers(body) {
-                            return true;
-                        }
+                    if let Some(body) = &method.node.body
+                        && body_uses_list_helpers(body)
+                    {
+                        return true;
                     }
                 }
             }
             Declaration::Class(class) => {
                 for method in &class.methods {
-                    if let Some(body) = &method.node.body {
-                        if body_uses_list_helpers(body) {
-                            return true;
-                        }
+                    if let Some(body) = &method.node.body
+                        && body_uses_list_helpers(body)
+                    {
+                        return true;
                     }
                 }
             }

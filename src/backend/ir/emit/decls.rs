@@ -153,10 +153,10 @@ impl<'a> IrEmitter<'a> {
                 }
             }
             IrExprKind::MethodCall { receiver, method, args } => {
-                if let Some(name) = self.expr_is_param_var(receiver, param_names) {
-                    if Self::is_mutating_method_name(method) {
-                        mutated.insert(name);
-                    }
+                if let Some(name) = self.expr_is_param_var(receiver, param_names)
+                    && Self::is_mutating_method_name(method)
+                {
+                    mutated.insert(name);
                 }
                 self.scan_expr_for_param_writes(receiver, param_names, mutated);
                 for arg in args {
@@ -166,10 +166,10 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::KnownMethodCall {
                 receiver, kind, args, ..
             } => {
-                if let Some(name) = self.expr_is_param_var(receiver, param_names) {
-                    if Self::is_mutating_method_kind(kind) {
-                        mutated.insert(name);
-                    }
+                if let Some(name) = self.expr_is_param_var(receiver, param_names)
+                    && Self::is_mutating_method_kind(kind)
+                {
+                    mutated.insert(name);
                 }
                 self.scan_expr_for_param_writes(receiver, param_names, mutated);
                 for arg in args {
@@ -309,10 +309,10 @@ impl<'a> IrEmitter<'a> {
 
     /// Check if an expression is a function parameter.
     fn expr_is_param_var(&self, expr: &IrExpr, param_names: &HashSet<String>) -> Option<String> {
-        if let IrExprKind::Var { name, .. } = &expr.kind {
-            if param_names.contains(name) {
-                return Some(name.clone());
-            }
+        if let IrExprKind::Var { name, .. } = &expr.kind
+            && param_names.contains(name)
+        {
+            return Some(name.clone());
         }
         None
     }
@@ -665,99 +665,100 @@ impl<'a> IrEmitter<'a> {
         }
 
         let has_fields_method = impl_block.methods.iter().any(|m| m.name == "__fields__");
-        if impl_block.trait_name.is_none() && !has_fields_method {
-            if let Some(fields_method) = self.emit_fields_method(&impl_block.target_type)? {
-                regular_methods.push(fields_method);
-            }
+        if impl_block.trait_name.is_none()
+            && !has_fields_method
+            && let Some(fields_method) = self.emit_fields_method(&impl_block.target_type)?
+        {
+            regular_methods.push(fields_method);
         }
 
         // serde-derived convenience methods (legacy behavior)
-        if impl_block.trait_name.is_none() {
-            if let Some(derives) = self.struct_derives.get(&impl_block.target_type) {
-                let has_serialize = derives
-                    .iter()
-                    .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Serialize));
-                let has_deserialize = derives
-                    .iter()
-                    .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Deserialize));
+        if impl_block.trait_name.is_none()
+            && let Some(derives) = self.struct_derives.get(&impl_block.target_type)
+        {
+            let has_serialize = derives
+                .iter()
+                .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Serialize));
+            let has_deserialize = derives
+                .iter()
+                .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Deserialize));
 
-                if has_serialize {
-                    regular_methods.push(quote! {
-                        /// Serialize this model to a JSON string
-                        pub fn to_json(&self) -> String {
-                            serde_json::to_string(self).unwrap_or_else(|_| {
-                                incan_stdlib::errors::raise_json_serialization_error(stringify!(#target_type))
-                            })
-                        }
-                    });
-                }
-                if has_deserialize {
-                    regular_methods.push(quote! {
-                        /// Deserialize a JSON string into this model
-                        pub fn from_json(json_str: String) -> Result<Self, String> {
-                            serde_json::from_str(&json_str)
-                                .map_err(|e| incan_stdlib::errors::json_decode_error_string(e))
-                        }
-                    });
-                }
+            if has_serialize {
+                regular_methods.push(quote! {
+                    /// Serialize this model to a JSON string
+                    pub fn to_json(&self) -> String {
+                        serde_json::to_string(self).unwrap_or_else(|_| {
+                            incan_stdlib::errors::raise_json_serialization_error(stringify!(#target_type))
+                        })
+                    }
+                });
+            }
+            if has_deserialize {
+                regular_methods.push(quote! {
+                    /// Deserialize a JSON string into this model
+                    pub fn from_json(json_str: String) -> Result<Self, String> {
+                        serde_json::from_str(&json_str)
+                            .map_err(|e| incan_stdlib::errors::json_decode_error_string(e))
+                    }
+                });
             }
         }
 
         // @derive(Validate): generate `TypeName::new(...) -> Result[TypeName, E]` that calls `validate()`.
         //
         // The typechecker injects the method signature; the backend generates the actual Rust implementation here.
-        if impl_block.trait_name.is_none() {
-            if let Some(derives) = self.struct_derives.get(&impl_block.target_type) {
-                let has_validate = derives
+        if impl_block.trait_name.is_none()
+            && let Some(derives) = self.struct_derives.get(&impl_block.target_type)
+        {
+            let has_validate = derives
+                .iter()
+                .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Validate));
+            if has_validate
+                && !impl_block.methods.iter().any(|m| m.name == conventions::NEW_METHOD)
+                && let Some(validate_fn) = impl_block
+                    .methods
                     .iter()
-                    .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Validate));
-                if has_validate && !impl_block.methods.iter().any(|m| m.name == conventions::NEW_METHOD) {
-                    if let Some(validate_fn) = impl_block
-                        .methods
-                        .iter()
-                        .find(|m| m.name == conventions::VALIDATE_METHOD)
+                    .find(|m| m.name == conventions::VALIDATE_METHOD)
+            {
+                let ret_ty = self.emit_type(&validate_fn.return_type);
+
+                // Required fields are those without defaults; defaults are in `struct_field_defaults`.
+                let field_names = self
+                    .struct_field_names
+                    .get(&impl_block.target_type)
+                    .cloned()
+                    .unwrap_or_default();
+
+                let mut params: Vec<TokenStream> = Vec::new();
+                let mut init_fields: Vec<TokenStream> = Vec::new();
+
+                for fname in field_names {
+                    let f_ident = format_ident!("{}", fname);
+                    if let Some(default_expr) = self
+                        .struct_field_defaults
+                        .get(&(impl_block.target_type.clone(), fname.clone()))
                     {
-                        let ret_ty = self.emit_type(&validate_fn.return_type);
-
-                        // Required fields are those without defaults; defaults are in `struct_field_defaults`.
-                        let field_names = self
-                            .struct_field_names
-                            .get(&impl_block.target_type)
+                        let default_tokens = self.emit_expr(default_expr)?;
+                        init_fields.push(quote! { #f_ident: #default_tokens });
+                    } else {
+                        let f_ty = self
+                            .struct_field_types
+                            .get(&(impl_block.target_type.clone(), fname.clone()))
                             .cloned()
-                            .unwrap_or_default();
-
-                        let mut params: Vec<TokenStream> = Vec::new();
-                        let mut init_fields: Vec<TokenStream> = Vec::new();
-
-                        for fname in field_names {
-                            let f_ident = format_ident!("{}", fname);
-                            if let Some(default_expr) = self
-                                .struct_field_defaults
-                                .get(&(impl_block.target_type.clone(), fname.clone()))
-                            {
-                                let default_tokens = self.emit_expr(default_expr)?;
-                                init_fields.push(quote! { #f_ident: #default_tokens });
-                            } else {
-                                let f_ty = self
-                                    .struct_field_types
-                                    .get(&(impl_block.target_type.clone(), fname.clone()))
-                                    .cloned()
-                                    .unwrap_or(IrType::Unknown);
-                                let f_ty_tokens = self.emit_type(&f_ty);
-                                params.push(quote! { #f_ident: #f_ty_tokens });
-                                init_fields.push(quote! { #f_ident });
-                            }
-                        }
-
-                        regular_methods.push(quote! {
-                            /// Construct a validated instance of this model.
-                            pub fn new(#(#params),*) -> #ret_ty {
-                                let tmp = Self { #(#init_fields),* };
-                                tmp.validate()
-                            }
-                        });
+                            .unwrap_or(IrType::Unknown);
+                        let f_ty_tokens = self.emit_type(&f_ty);
+                        params.push(quote! { #f_ident: #f_ty_tokens });
+                        init_fields.push(quote! { #f_ident });
                     }
                 }
+
+                regular_methods.push(quote! {
+                    /// Construct a validated instance of this model.
+                    pub fn new(#(#params),*) -> #ret_ty {
+                        let tmp = Self { #(#init_fields),* };
+                        tmp.validate()
+                    }
+                });
             }
         }
 

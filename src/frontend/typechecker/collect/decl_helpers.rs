@@ -123,10 +123,10 @@ pub(super) fn inject_validate_methods(
     // Prefer required fields only (no defaults). This keeps the signature stable and avoids needing default args.
     let mut params: Vec<(String, ResolvedType)> = Vec::new();
     for field_name in field_order {
-        if let Some(info) = fields.get(field_name) {
-            if !info.has_default {
-                params.push((field_name.clone(), info.ty.clone()));
-            }
+        if let Some(info) = fields.get(field_name)
+            && !info.has_default
+        {
+            params.push((field_name.clone(), info.ty.clone()));
         }
     }
 

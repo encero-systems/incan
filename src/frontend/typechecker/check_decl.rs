@@ -352,10 +352,10 @@ impl TypeChecker {
         self.validate_derives(&class.decorators);
 
         // Check base class exists
-        if let Some(base) = &class.extends {
-            if self.symbols.lookup(base).is_none() {
-                self.errors.push(errors::unknown_symbol(base, Span::default()));
-            }
+        if let Some(base) = &class.extends
+            && self.symbols.lookup(base).is_none()
+        {
+            self.errors.push(errors::unknown_symbol(base, Span::default()));
         }
 
         // Check traits exist and are satisfied

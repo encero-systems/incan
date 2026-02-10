@@ -135,10 +135,10 @@ impl<'a> IrEmitter<'a> {
 
     /// Check if a full module path is known internally.
     pub(crate) fn is_internal_module_path(&self, segments: &[String]) -> bool {
-        if let Some(first) = segments.first() {
-            if self.is_internal_module_root(first) {
-                return true;
-            }
+        if let Some(first) = segments.first()
+            && self.is_internal_module_root(first)
+        {
+            return true;
         }
         if segments.is_empty() {
             return false;

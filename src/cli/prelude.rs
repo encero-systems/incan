@@ -60,25 +60,25 @@ pub fn find_stdlib_dir() -> Option<PathBuf> {
     }
 
     // Try relative to executable location
-    if let Ok(exe_path) = env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            // Check exe_dir/stdlib
-            let stdlib = exe_dir.join("stdlib");
+    if let Ok(exe_path) = env::current_exe()
+        && let Some(exe_dir) = exe_path.parent()
+    {
+        // Check exe_dir/stdlib
+        let stdlib = exe_dir.join("stdlib");
+        if stdlib.exists() && stdlib.is_dir() {
+            return Some(stdlib);
+        }
+        // Check exe_dir/../stdlib (for target/debug or target/release)
+        if let Some(parent) = exe_dir.parent() {
+            let stdlib = parent.join("stdlib");
             if stdlib.exists() && stdlib.is_dir() {
                 return Some(stdlib);
             }
-            // Check exe_dir/../stdlib (for target/debug or target/release)
-            if let Some(parent) = exe_dir.parent() {
-                let stdlib = parent.join("stdlib");
+            // Check exe_dir/../../stdlib (for target/debug -> project root)
+            if let Some(grandparent) = parent.parent() {
+                let stdlib = grandparent.join("stdlib");
                 if stdlib.exists() && stdlib.is_dir() {
                     return Some(stdlib);
-                }
-                // Check exe_dir/../../stdlib (for target/debug -> project root)
-                if let Some(grandparent) = parent.parent() {
-                    let stdlib = grandparent.join("stdlib");
-                    if stdlib.exists() && stdlib.is_dir() {
-                        return Some(stdlib);
-                    }
                 }
             }
         }
