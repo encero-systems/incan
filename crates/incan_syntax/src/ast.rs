@@ -41,10 +41,15 @@ impl<T> Spanned<T> {
 /// Identifier (interned string index in practice, String for simplicity here)
 pub type Ident = String;
 
-/// A program is a sequence of declarations
+/// A program is a sequence of declarations, optionally with a `rust.module()` directive (RFC 023).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub declarations: Vec<Spanned<Declaration>>,
+    /// The `rust.module("path::to::module")` directive, if present.
+    ///
+    /// Declares that `@rust.extern` items in this module are backed by Rust functions at the given Rust module path.
+    /// See RFC 023 for the full semantic design.
+    pub rust_module_path: Option<Spanned<String>>,
 }
 
 /// Top-level declarations

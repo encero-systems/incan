@@ -1,0 +1,16 @@
+# cargo-nextest configuration for the Incan compiler workspace.
+# See https://nexte.st/docs/configuration/ for full reference.
+
+[store]
+dir = "target/nextest"
+
+[profile.default]
+# Fail fast: stop after the first test failure during local development.
+fail-fast = true
+# Status bar style for local terminal.
+status-level = "pass"
+
+[profile.ci]
+# In CI, run all tests even after a failure to collect the full picture.
+fail-fast = false
+status-level = "fail"

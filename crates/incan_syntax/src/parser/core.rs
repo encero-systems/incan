@@ -1,8 +1,7 @@
 /// Parser core types and entrypoint.
 ///
 /// This chunk defines the [`Parser`] type and its top-level `parse()` entrypoint.
-/// It also contains a few small internal helper types shared across the other
-/// parser chunks.
+/// It also contains a few small internal helper types shared across the other parser chunks.
 ///
 /// ## Notes
 /// - This file is `include!`'d into `crate::parser` to keep all parser methods in a
@@ -43,10 +42,11 @@ impl<'a> Parser<'a> {
     /// Parse the entire token stream into a [`Program`].
     ///
     /// ## Errors
-    /// Returns a list of [`CompileError`]s if parsing fails. The parser attempts
-    /// to recover and continue after an error to report multiple issues in one pass.
+    /// Returns a list of [`CompileError`]s if parsing fails. The parser attempts to recover and continue after an error
+    /// to report multiple issues in one pass.
     pub fn parse(mut self) -> Result<Program, Vec<CompileError>> {
         let mut declarations = Vec::new();
+        let mut rust_module_path: Option<Spanned<String>> = None;
 
         // Skip leading newlines
         self.skip_newlines();
@@ -55,6 +55,29 @@ impl<'a> Parser<'a> {
         self.skip_dedents();
 
         while !self.is_at_end() {
+            // ---- Context: `rust.module("...")` directive (RFC 023) ----
+            if self.check_keyword(KeywordId::Rust)
+                && self.peek_next().kind == TokenKind::Punctuation(PunctuationId::Dot)
+            {
+                match self.rust_module_directive() {
+                    Ok(directive) => {
+                        if rust_module_path.is_some() {
+                            self.errors.push(errors::duplicate_rust_module(directive.span));
+                        } else {
+                            rust_module_path = Some(directive);
+                        }
+                    }
+                    Err(e) => {
+                        self.errors.push(e);
+                        self.synchronize();
+                    }
+                }
+                self.skip_newlines();
+                self.skip_dedents();
+                continue;
+            }
+
+            // ---- Context: normal declarations ----
             match self.declaration() {
                 Ok(decl) => declarations.push(decl),
                 Err(e) => {
@@ -69,9 +92,43 @@ impl<'a> Parser<'a> {
         }
 
         if self.errors.is_empty() {
-            Ok(Program { declarations })
+            Ok(Program {
+                declarations,
+                rust_module_path,
+            })
         } else {
             Err(self.errors)
         }
+    }
+
+    /// Parse a `rust.module("path::to::module")` directive.
+    ///
+    /// Expects the current token to be `Keyword(Rust)`. Consumes `rust . module ( "..." )`.
+    fn rust_module_directive(&mut self) -> Result<Spanned<String>, CompileError> {
+        let start = self.current_span().start;
+
+        // Consume `rust`
+        self.expect_keyword(KeywordId::Rust, "Expected 'rust'")?;
+
+        // Consume `.`
+        self.expect_punct(PunctuationId::Dot, "Expected '.' after 'rust'")?;
+
+        // Consume `module` (an identifier, not a keyword)
+        let name = self.identifier_spanned()?;
+        if name.node != "module" {
+            return Err(errors::expected_token_message(
+                "Expected 'module' after 'rust.'",
+                &name.node,
+                name.span,
+            ));
+        }
+
+        // Consume `(` string_literal `)`
+        self.expect_punct(PunctuationId::LParen, "Expected '(' after 'rust.module'")?;
+        let path = self.string_literal()?;
+        self.expect_punct(PunctuationId::RParen, "Expected ')' after rust.module path")?;
+
+        let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+        Ok(Spanned::new(path, Span::new(start, end)))
     }
 }

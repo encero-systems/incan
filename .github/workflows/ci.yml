@@ -50,8 +50,9 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
       - name: Run tests
-        run: cargo test --all --verbose
+        run: cargo nextest run --all --profile ci
 
   msrv:
     name: MSRV Build/Test (1.88.0)
@@ -64,10 +65,11 @@ jobs:
           toolchain: 1.88.0
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
       - name: Cargo build (locked)
         run: cargo build --locked
       - name: Cargo test (locked)
-        run: cargo test --locked
+        run: cargo nextest run --locked --profile ci
 
   audit:
     name: Security Audit
@@ -115,6 +117,7 @@ jobs:
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
       - name: Install make
         run: sudo apt-get update && sudo apt-get install -y make
       - name: Run full smoke test

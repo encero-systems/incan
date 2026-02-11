@@ -19,7 +19,10 @@ pub(super) fn resolve_decorator_path(dec: &Decorator, symbols: &SymbolTable) -> 
 }
 
 /// Resolve a decorator path to a decorator id.
-pub(super) fn resolve_decorator_id(dec: &Decorator, symbols: &SymbolTable) -> Option<DecoratorId> {
+pub(in crate::frontend::typechecker) fn resolve_decorator_id(
+    dec: &Decorator,
+    symbols: &SymbolTable,
+) -> Option<DecoratorId> {
     let resolved = resolve_decorator_path(dec, symbols);
     decorators::from_segments(&resolved)
 }

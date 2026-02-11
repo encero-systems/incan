@@ -660,4 +660,47 @@ const ANSWER: int = 42
             _ => panic!("Expected enum"),
         }
     }
+
+    // ========================================
+    // RFC 023: rust.module() directive parsing
+    // ========================================
+
+    #[test]
+    fn test_rust_module_directive_basic() -> Result<(), Vec<CompileError>> {
+        let source = "rust.module(\"incan_stdlib::testing\")\n\ndef foo() -> int:\n    return 1\n";
+        let program = parse_str(source)?;
+        assert_eq!(program.declarations.len(), 1);
+        let rmp = program.rust_module_path.as_ref();
+        assert!(rmp.is_some(), "rust_module_path should be set");
+        assert_eq!(rmp.map(|s| s.node.as_str()), Some("incan_stdlib::testing"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_rust_module_directive_with_docstring() -> Result<(), Vec<CompileError>> {
+        let source = "\"Module docstring\"\nrust.module(\"my_crate::sub\")\n\ndef bar() -> str:\n    return \"hi\"\n";
+        let program = parse_str(source)?;
+        assert_eq!(program.declarations.len(), 2); // docstring + function
+        assert_eq!(
+            program.rust_module_path.as_ref().map(|s| s.node.as_str()),
+            Some("my_crate::sub")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_rust_module_directive_absent() -> Result<(), Vec<CompileError>> {
+        let source = "def foo() -> int:\n    return 1\n";
+        let program = parse_str(source)?;
+        assert!(program.rust_module_path.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_rust_module_directive_duplicate_is_error() {
+        let source = "rust.module(\"crate_a\")\nrust.module(\"crate_b\")\n\ndef foo() -> int:\n    return 1\n";
+        let err = parse_str(source).expect_err("Duplicate rust.module() should fail");
+        let has_duplicate_msg = err.iter().any(|e| e.message.contains("Duplicate"));
+        assert!(has_duplicate_msg, "Should report duplicate rust.module(); errors: {:?}", err.iter().map(|e| &e.message).collect::<Vec<_>>());
+    }
 }

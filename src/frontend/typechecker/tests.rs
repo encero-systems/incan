@@ -74,7 +74,10 @@ import std.web as rust
 #[test]
 fn test_rust_extern_accepted_in_user_code() {
     // @rust.extern (formerly @std.builtin) is allowed everywhere per RFC 023.
+    // A rust.module() directive is required when @rust.extern items are present.
     let source = r#"
+rust.module("my_crate::my_module")
+
 @rust.extern
 def foo() -> None:
   pass
@@ -1786,5 +1789,161 @@ def bad_query() -> None:
     assert!(
         errs.iter()
             .any(|e| e.message.contains("Query() expects exactly one argument"))
+    );
+}
+
+// ========================================
+// RFC 023: rust.module() and @rust.extern
+// ========================================
+
+#[test]
+fn test_rust_module_with_rust_extern_ok() {
+    let source = r#"
+rust.module("incan_stdlib::testing")
+
+@rust.extern
+def fail(msg: str) -> None:
+    ...
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rust_extern_missing_rust_module() {
+    let source = r#"
+@rust.extern
+def fail(msg: str) -> None:
+    ...
+"#;
+    let errs = check_str(source).expect_err("should fail: missing rust.module()");
+    assert!(
+        errs.iter().any(|e| e.message.contains("no Rust backing path")),
+        "Expected missing-rust-module error; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rust_extern_non_trivial_body() {
+    let source = r#"
+rust.module("incan_stdlib::testing")
+
+@rust.extern
+def fail(msg: str) -> None:
+    return
+"#;
+    let errs = check_str(source).expect_err("should fail: non-trivial body");
+    assert!(
+        errs.iter().any(|e| e.message.contains("must have a `...` body")),
+        "Expected non-trivial-body error; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rust_extern_on_instance_method() {
+    let source = r#"
+rust.module("incan_stdlib::web")
+
+class App:
+    @rust.extern
+    def run(self) -> None:
+        ...
+"#;
+    let errs = check_str(source).expect_err("should fail: instance method");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("not allowed on instance method")),
+        "Expected instance-method error; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_unused_rust_module_warning() {
+    let source = r#"
+rust.module("incan_stdlib::utils")
+
+def pure_incan() -> int:
+    return 42
+"#;
+    let errs = check_str(source).expect_err("should warn: unused rust.module()");
+    assert!(
+        errs.iter().any(|e| e.message.contains("no effect")),
+        "Expected unused-rust-module warning; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_invalid_rust_module_path_syntax() {
+    let source = "rust.module(\"my crate; bad\")\n\n@rust.extern\ndef foo() -> None:\n    ...\n";
+    let errs = check_str(source).expect_err("should fail: invalid path");
+    assert!(
+        errs.iter().any(|e| e.message.contains("invalid characters")),
+        "Expected invalid-path error; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rust_module_unresolved_crate_with_manifest() -> Result<(), Vec<CompileError>> {
+    // When declared_crate_names is set, unknown crates should error.
+    // This test uses the TypeChecker directly to set declared_crate_names.
+    let source = r#"
+rust.module("unknown_crate::module")
+
+@rust.extern
+def foo() -> None:
+    ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut tc = TypeChecker::new();
+    tc.set_declared_crate_names(std::collections::HashSet::new());
+    let errs = tc.check_program(&ast).expect_err("should fail: unresolved crate");
+    assert!(
+        errs.iter().any(|e| e.message.contains("unknown crate")),
+        "Expected unresolved-crate error; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn test_rust_module_incan_stdlib_always_allowed() -> Result<(), Vec<CompileError>> {
+    // incan_stdlib is always allowed even without a manifest.
+    let source = r#"
+rust.module("incan_stdlib::testing")
+
+@rust.extern
+def fail(msg: str) -> None:
+    ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut tc = TypeChecker::new();
+    tc.set_declared_crate_names(std::collections::HashSet::new());
+    let result = tc.check_program(&ast);
+    assert!(result.is_ok(), "incan_stdlib should always be allowed");
+    Ok(())
+}
+
+#[test]
+fn test_rust_extern_on_newtype_instance_method() {
+    let source = r#"
+rust.module("my_crate::stuff")
+
+newtype Wrapper = int:
+    @rust.extern
+    def doubled(self) -> int:
+        ...
+"#;
+    let errs = check_str(source).expect_err("should fail: instance method on newtype");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("not allowed on instance method")),
+        "Expected instance-method error for newtype; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }
