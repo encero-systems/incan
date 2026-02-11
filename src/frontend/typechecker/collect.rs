@@ -9,7 +9,7 @@ use crate::frontend::typechecker::helpers::freeze_const_type;
 use super::TypeChecker;
 
 mod decl_helpers;
-mod decorators;
+pub(super) mod decorators;
 mod stdlib_async;
 mod stdlib_imports;
 mod stdlib_testing;

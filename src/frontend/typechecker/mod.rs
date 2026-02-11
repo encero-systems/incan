@@ -48,6 +48,7 @@ mod check_stmt;
 mod collect;
 mod const_eval;
 mod helpers;
+mod validate_rust_module;
 
 pub use const_eval::ConstValue;
 #[cfg(test)]
@@ -166,6 +167,11 @@ pub struct TypeChecker {
     pub(crate) dependency_exports: HashMap<String, Vec<ExportedSymbol>>,
     /// Module path for the program being checked (if known).
     pub(crate) current_module_path: Option<Vec<String>>,
+    /// Declared Rust crate names from `incan.toml [dependencies]` (RFC 023 / RFC 013).
+    ///
+    /// Used to validate that `rust.module()` paths reference known crates. When `None`, crate validation is skipped
+    /// (e.g. single-file mode without a manifest).
+    pub(crate) declared_crate_names: Option<HashSet<String>>,
 }
 
 impl TypeChecker {
@@ -184,7 +190,16 @@ impl TypeChecker {
             type_info: TypeCheckInfo::default(),
             dependency_exports: HashMap::new(),
             current_module_path: None,
+            declared_crate_names: None,
         }
+    }
+
+    /// Set the declared Rust crate names from `incan.toml [dependencies]`.
+    ///
+    /// When set, `rust.module()` path validation will check that the first segment of the path is either `incan_stdlib`
+    /// or a crate declared here.
+    pub fn set_declared_crate_names(&mut self, names: HashSet<String>) {
+        self.declared_crate_names = Some(names);
     }
 
     pub fn set_current_module_path(&mut self, path: Option<Vec<String>>) {
@@ -385,6 +400,9 @@ impl TypeChecker {
                 self.check_declaration(decl);
             }
         }
+
+        // ---- RFC 023: validate rust.module() and @rust.extern rules ----
+        self.validate_rust_module_and_extern(program);
 
         if self.errors.is_empty() {
             Ok(())

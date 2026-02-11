@@ -85,13 +85,19 @@ udeps:
 	@echo "\033[1mChecking for unused dependencies...\033[0m"
 	@cargo +nightly udeps --quiet 2>/dev/null || echo "\033[33m⚠ cargo-udeps skipped (requires cargo-udeps + nightly rustc 1.85+. Run `rustup update nightly` if needed.)\033[0m"
 
-.PHONY: pre-commit  ## quality - Full CI check: fmt, lint, udeps, test, and build
-pre-commit: fmt lint udeps
+.PHONY: pre-commit  ## quality - Fast pre-commit: fmt, lint, and test (no release build, no udeps)
+pre-commit: fmt lint
 	@echo "\033[1mRunning tests...\033[0m"
-	@cargo test --all --quiet
+	@cargo nextest run --all 2>/dev/null || cargo test --all --quiet
+	@echo "\033[32m✓ Pre-commit checks passed\033[0m"
+
+.PHONY: pre-commit-full  ## quality - Full CI check: fmt, lint, udeps, test, and release build
+pre-commit-full: fmt lint udeps
+	@echo "\033[1mRunning tests...\033[0m"
+	@cargo nextest run --all 2>/dev/null || cargo test --all --quiet
 	@echo "\033[1mBuilding release...\033[0m"
 	@cargo build --release --quiet
-	@echo "\033[32m✓ Pre-commit checks passed\033[0m"
+	@echo "\033[32m✓ Full pre-commit checks passed\033[0m"
 
 # =============================================================================
 # Testing
@@ -100,7 +106,7 @@ pre-commit: fmt lint udeps
 .PHONY: test  ## test - Run all tests
 test:
 	@echo "\033[1mRunning tests...\033[0m"
-	@cargo test --all --verbose
+	@cargo nextest run --all 2>/dev/null || cargo test --all --verbose
 
 .PHONY: examples  ## test - Smoke test examples (check all, run entrypoints with timeout)
 examples: release
@@ -125,25 +131,33 @@ benchmarks-incan: release
 .PHONY: smoke-test  ## test - Smoke test: build + test + examples + benchmarks-incan
 smoke-test:
 	@echo "\033[1mRunning smoke-test...\033[0m"
-	@$(MAKE) build
 	@$(MAKE) test
-	@$(MAKE) test-incan-canary
-	@$(MAKE) examples-web-build
-	@$(MAKE) examples-nested-project-build
-	@$(MAKE) examples
-	@$(MAKE) benchmarks-incan
+	@$(MAKE) release
+	@echo "\033[1mRunning Incan assertion canary...\033[0m"
+	@INCAN_NO_BANNER=1 ./target/release/incan test tests/fixtures/test_assert_canary.incn
+	@echo "\033[32m✓ Incan assertion canary passed\033[0m"
+	@echo "\033[1mBuilding web example (build-only)...\033[0m"
+	@INCAN_NO_BANNER=1 ./target/release/incan build examples/web/hello_web.incn
+	@echo "\033[32m✓ Web example built\033[0m"
+	@echo "\033[1mBuilding nested_project example (build-only)...\033[0m"
+	@INCAN_NO_BANNER=1 ./target/release/incan build examples/advanced/nested_project/src/main.incn
+	@echo "\033[32m✓ Nested project example built\033[0m"
+	@echo "\033[1mRunning examples...\033[0m"
+	@INCAN_NO_BANNER=1 INCAN_EXAMPLES_TIMEOUT=$${INCAN_EXAMPLES_TIMEOUT:-5} bash scripts/run_examples.sh
+	@echo "\033[1mChecking benchmarks (Incan build only)...\033[0m"
+	@INCAN_NO_BANNER=1 bash benchmarks/check_incan.sh
 	@echo "\033[32m✓ Smoke-test passed\033[0m"
 
 .PHONY: test-verbose  ## test - Run tests with output
 test-verbose:
 	@echo "\033[1mRunning tests (verbose)...\033[0m"
-	@cargo test -- --nocapture
+	@cargo nextest run --all --no-capture 2>/dev/null || cargo test -- --nocapture
 
 .PHONY: test-one  ## test - Run specific test (TEST=name)
 test-one:
 ifdef TEST
 	@echo "\033[1mRunning test: $(TEST)\033[0m"
-	@cargo test $(TEST) -- --nocapture
+	@cargo nextest run -E "test($(TEST))" --no-capture 2>/dev/null || cargo test $(TEST) -- --nocapture
 else
 	@echo "Usage: \033[36mmake test-one TEST=test_name\033[0m"
 	@echo "Example: make test-one TEST=test_run_c_import_this"
