@@ -155,6 +155,9 @@ impl AstLowering {
         let body = self.lower_statements(&f.body)?;
         self.scopes.pop();
 
+        // RFC 023: detect @rust.extern decorator to mark this function as externally-backed.
+        let is_extern = Self::has_rust_extern_decorator(&f.decorators);
+
         Ok(IrFunction {
             name: f.name.clone(),
             params,
@@ -163,13 +166,25 @@ impl AstLowering {
             is_async: f.is_async,
             visibility: Self::map_visibility(f.visibility),
             type_params: f.type_params.clone(),
+            is_extern,
         })
+    }
+
+    /// RFC 023: Check if a decorator list contains `@rust.extern`.
+    ///
+    /// Used during lowering to mark functions whose body is provided by a Rust backing module.
+    /// Uses `from_segments` on the full decorator path (e.g. `["rust", "extern"]`) since the `name` field only stores
+    /// the last segment.
+    fn has_rust_extern_decorator(decorators_list: &[Spanned<ast::Decorator>]) -> bool {
+        decorators_list
+            .iter()
+            .any(|d| decorators::from_segments(&d.node.path.segments) == Some(DecoratorId::RustExtern))
     }
 
     /// Extract derives from decorators.
     ///
-    /// Parses `@derive(Serialize, Deserialize)` decorators and returns the list
-    /// of derive names. Also adds prerequisite derives (e.g., Eq requires PartialEq).
+    /// Parses `@derive(Serialize, Deserialize)` decorators and returns the list of derive names. Also adds prerequisite
+    /// derives (e.g., Eq requires PartialEq).
     pub(super) fn extract_derives(&self, decorators: &[Spanned<ast::Decorator>]) -> Vec<String> {
         let mut derives = Vec::new();
 
@@ -409,9 +424,9 @@ impl AstLowering {
         if underlying_ty.is_copy() {
             derives.push(derives::as_str(DeriveId::Copy).to_string());
         }
-        // Note: Serialize/Deserialize derives for newtypes are added post-lowering by
-        // `add_serde_to_newtypes` in codegen.rs, which selectively adds only the derives
-        // that are actually needed (Serialize, Deserialize, or both).
+        // Note: Serialize/Deserialize derives for newtypes are added post-lowering by `add_serde_to_newtypes` in
+        // codegen.rs, which selectively adds only the derives that are actually needed (Serialize, Deserialize, or
+        // both).
         Ok(IrStruct {
             name: n.name.clone(),
             fields,
@@ -553,6 +568,7 @@ impl AstLowering {
             is_async: m.is_async,
             visibility: Visibility::Private,
             type_params: vec![],
+            is_extern: false,
         })
     }
 
@@ -654,6 +670,7 @@ impl AstLowering {
             is_async: m.is_async,
             visibility: Visibility::Private,
             type_params: vec![],
+            is_extern: false,
         })
     }
 
@@ -717,6 +734,7 @@ impl AstLowering {
                     is_async: m.node.is_async,
                     visibility: Visibility::Private,
                     type_params: vec![],
+                    is_extern: false,
                 })
             })
             .collect::<Result<Vec<_>, LoweringError>>()?;

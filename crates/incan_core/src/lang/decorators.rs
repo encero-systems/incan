@@ -2,6 +2,17 @@
 //!
 //! This module centralizes recognized decorator spellings so downstream code
 //! doesn't need stringly-typed comparisons.
+//!
+//! ## Namespaces
+//!
+//! Decorators are organized into namespaces separated by `.`:
+//!
+//! - `rust.*` — Rust interop decorators (`@rust.extern`, future `@rust.function`, etc.)
+//! - `std.*` — Standard library decorators (`@std.web.route`, `@std.testing.fixture`)
+//! - Top-level — `@derive`, `@requires`
+//!
+//! Known namespace prefixes are registered in [`DECORATOR_NAMESPACES`] so that the validator can distinguish "unknown
+//! decorator in the `rust` namespace" from "completely unknown decorator".
 
 use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
 
@@ -13,6 +24,38 @@ pub enum DecoratorId {
     Route,
     Fixture,
     Requires,
+}
+
+// ---- Decorator namespace constants ----
+
+/// The `rust` decorator namespace — covers all `@rust.*` decorators.
+///
+/// Current members: `@rust.extern`. Future: `@rust.function`, etc.
+pub const RUST_NAMESPACE: &str = "rust";
+
+/// Known decorator namespace prefixes.
+///
+/// The validator uses this list to give targeted errors when a user writes e.g. `@rust.blah` instead of "unknown
+/// decorator `rust.blah`", it says "unknown decorator `blah` in namespace `rust`".
+///
+/// Each entry is a top-level namespace root; nested namespaces like `std.web` are handled by matching `std`.
+pub const DECORATOR_NAMESPACES: &[&str] = &[RUST_NAMESPACE, "std"];
+
+/// Check whether a leading segment is a known decorator namespace prefix.
+pub fn is_known_decorator_namespace(prefix: &str) -> bool {
+    DECORATOR_NAMESPACES.contains(&prefix)
+}
+
+/// Return all known decorators under a given namespace prefix.
+///
+/// For example, `decorators_in_namespace("rust")` returns `["rust.extern"]`.
+pub fn decorators_in_namespace(prefix: &str) -> Vec<&'static str> {
+    let prefix_dot = format!("{}.", prefix);
+    DECORATORS
+        .iter()
+        .filter(|d| d.canonical.starts_with(&prefix_dot))
+        .map(|d| d.canonical)
+        .collect()
 }
 
 /// Named argument for `@route(methods=[...])`.

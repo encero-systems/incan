@@ -90,6 +90,11 @@ pub struct IrEmitter<'a> {
     ///
     /// Used to disambiguate crate-internal module imports vs external crate imports when emitting `use` paths.
     internal_module_roots: HashSet<String>,
+    /// RFC 023: The `rust.module("path::to::module")` Rust backing path, if declared.
+    ///
+    /// When set, `@rust.extern` functions emit delegation calls to `<rust_module_path>::<fn_name>()` instead of
+    /// compiling their Incan bodies.
+    rust_module_path: Option<String>,
 }
 
 impl<'a> IrEmitter<'a> {
@@ -120,6 +125,7 @@ impl<'a> IrEmitter<'a> {
             type_module_paths: HashMap::new(),
             ambiguous_type_names: HashSet::new(),
             internal_module_roots: HashSet::new(),
+            rust_module_path: None,
         }
     }
 
@@ -179,6 +185,13 @@ impl<'a> IrEmitter<'a> {
             return format!("r#{}", name);
         }
         name.to_string()
+    }
+
+    /// RFC 023: Set the `rust.module()` Rust backing path for this program.
+    ///
+    /// When set, `@rust.extern` functions delegate to `<path>::<fn_name>()`.
+    pub fn set_rust_module_path(&mut self, path: Option<String>) {
+        self.rust_module_path = path;
     }
 
     /// Disable clippy allows (for strict warning-free codegen).

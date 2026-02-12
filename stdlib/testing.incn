@@ -1,3 +1,5 @@
+rust.module("incan_stdlib::testing")
+
 """
 Incan Testing Framework
 

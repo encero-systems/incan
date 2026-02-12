@@ -54,6 +54,11 @@ pub(super) fn positional_idents(args: &[DecoratorArg]) -> impl Iterator<Item = (
 
 impl TypeChecker {
     /// Validate decorator paths.
+    ///
+    /// When a decorator doesn't resolve to a known `DecoratorId`, the error message is contextual:
+    /// - If the leading segment is a known namespace (e.g. `rust`, `std`), the error mentions the namespace and lists
+    ///   available decorators within it.
+    /// - Otherwise, a generic "unknown decorator" error is emitted.
     pub(crate) fn validate_decorators(&mut self, decorators: &[Spanned<Decorator>]) {
         for dec in decorators {
             let resolved = resolve_decorator_path(&dec.node, &self.symbols);
@@ -63,7 +68,23 @@ impl TypeChecker {
                 } else {
                     resolved.join(".")
                 };
-                self.errors.push(errors::unknown_decorator(path.as_str(), dec.span));
+
+                // ---- Namespace-aware error (e.g. "@rust.blah" → "unknown in `rust` namespace") ----
+                if let Some(first) = resolved.first()
+                    && decorators::is_known_decorator_namespace(first)
+                {
+                    let known = decorators::decorators_in_namespace(first);
+                    let known_display: Vec<_> = known.iter().map(|d| format!("@{d}")).collect();
+                    let hint = if known_display.is_empty() {
+                        format!("No decorators are currently defined in the `{first}` namespace")
+                    } else {
+                        format!("Known `{first}` decorators: {}", known_display.join(", "))
+                    };
+                    self.errors
+                        .push(errors::unknown_decorator(&path, dec.span).with_hint(&hint));
+                } else {
+                    self.errors.push(errors::unknown_decorator(&path, dec.span));
+                }
                 continue;
             };
         }

@@ -97,6 +97,11 @@ pub struct IrProgram {
     pub entry_point: Option<String>,
     /// Function signature registry for call-site type checking
     pub function_registry: FunctionRegistry,
+    /// RFC 023: The `rust.module("path::to::module")` Rust backing path, if declared.
+    ///
+    /// When present, `@rust.extern` functions in this program emit delegation calls to this Rust module path instead
+    /// of compiling their Incan bodies. See RFC 023 for full design.
+    pub rust_module_path: Option<String>,
 }
 
 impl IrProgram {
@@ -105,6 +110,7 @@ impl IrProgram {
             declarations: Vec::new(),
             entry_point: None,
             function_registry: FunctionRegistry::new(),
+            rust_module_path: None,
         }
     }
 }

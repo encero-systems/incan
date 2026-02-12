@@ -1,0 +1,213 @@
+//! Struct and enum emission.
+
+use proc_macro2::TokenStream;
+use quote::{format_ident, quote};
+
+use incan_core::lang::derives::{self, DeriveId};
+
+use super::super::{EmitError, IrEmitter};
+
+impl<'a> IrEmitter<'a> {
+    pub(in crate::backend::ir::emit) fn emit_struct(
+        &self,
+        s: &super::super::super::decl::IrStruct,
+    ) -> Result<TokenStream, EmitError> {
+        let name = format_ident!("{}", Self::escape_keyword(&s.name));
+        let vis = self.emit_visibility(&s.visibility);
+
+        let derives: Vec<TokenStream> = s
+            .derives
+            .iter()
+            // `Validate` is an Incan semantic derive (not a Rust derive macro).
+            .filter(|d| derives::from_str(d.as_str()) != Some(DeriveId::Validate))
+            .map(|d| match derives::from_str(d.as_str()) {
+                Some(DeriveId::Serialize) => quote! { serde::Serialize },
+                Some(DeriveId::Deserialize) => quote! { serde::Deserialize },
+                _ => {
+                    let d_ident = format_ident!("{}", d);
+                    quote! { #d_ident }
+                }
+            })
+            .collect();
+
+        let derive_attr = if derives.is_empty() {
+            quote! {}
+        } else {
+            quote! { #[derive(#(#derives),*)] }
+        };
+
+        let has_serde = s.derives.iter().any(|d| {
+            matches!(
+                derives::from_str(d.as_str()),
+                Some(DeriveId::Serialize) | Some(DeriveId::Deserialize)
+            )
+        });
+
+        let is_tuple_struct =
+            !s.fields.is_empty() && s.fields.iter().all(|f| f.name.chars().all(|c| c.is_ascii_digit()));
+
+        if is_tuple_struct {
+            let tuple_fields: Vec<TokenStream> = s
+                .fields
+                .iter()
+                .map(|f| {
+                    let fty = self.emit_type(&f.ty);
+                    let fvis = self.emit_visibility(&f.visibility);
+                    quote! { #fvis #fty }
+                })
+                .collect();
+            Ok(quote! {
+                #derive_attr
+                #vis struct #name(#(#tuple_fields),*);
+            })
+        } else {
+            let fields: Vec<TokenStream> = s
+                .fields
+                .iter()
+                .map(|f| {
+                    let fname = format_ident!("{}", &f.name);
+                    let fty = self.emit_type(&f.ty);
+                    let fvis = self.emit_visibility(&f.visibility);
+                    let serde_attr = if has_serde {
+                        f.alias
+                            .as_ref()
+                            .map(|alias| quote! { #[serde(rename = #alias)] })
+                            .unwrap_or_else(|| quote! {})
+                    } else {
+                        quote! {}
+                    };
+                    quote! { #serde_attr #fvis #fname: #fty }
+                })
+                .collect();
+
+            let constructor = if !s.fields.is_empty() {
+                let param_tokens: Vec<TokenStream> = s
+                    .fields
+                    .iter()
+                    .map(|f| {
+                        let fname = format_ident!("{}", &f.name);
+                        let fty = self.emit_type(&f.ty);
+                        quote! { #fname: #fty }
+                    })
+                    .collect();
+                let field_assigns: Vec<TokenStream> = s
+                    .fields
+                    .iter()
+                    .map(|f| {
+                        let fname = format_ident!("{}", &f.name);
+                        quote! { #fname }
+                    })
+                    .collect();
+
+                quote! {
+                    #[allow(non_snake_case, clippy::too_many_arguments)]
+                    #vis fn #name(#(#param_tokens),*) -> #name {
+                        #name {
+                            #(#field_assigns),*
+                        }
+                    }
+                }
+            } else {
+                quote! {}
+            };
+
+            Ok(quote! {
+                #derive_attr
+                #vis struct #name {
+                    #(#fields),*
+                }
+
+                #constructor
+            })
+        }
+    }
+
+    pub(in crate::backend::ir::emit) fn emit_enum(
+        &self,
+        e: &super::super::super::decl::IrEnum,
+    ) -> Result<TokenStream, EmitError> {
+        let name = format_ident!("{}", &e.name);
+        let vis = self.emit_visibility(&e.visibility);
+
+        let variants: Vec<TokenStream> = e
+            .variants
+            .iter()
+            .map(|v| {
+                let vname = format_ident!("{}", &v.name);
+                match &v.fields {
+                    super::super::super::decl::VariantFields::Unit => quote! { #vname },
+                    super::super::super::decl::VariantFields::Tuple(types) => {
+                        let type_tokens: Vec<_> = types.iter().map(|t| self.emit_type(t)).collect();
+                        quote! { #vname(#(#type_tokens),*) }
+                    }
+                    super::super::super::decl::VariantFields::Struct(fields) => {
+                        let field_tokens: Vec<_> = fields
+                            .iter()
+                            .map(|f| {
+                                let fname = format_ident!("{}", &f.name);
+                                let fty = self.emit_type(&f.ty);
+                                quote! { #fname: #fty }
+                            })
+                            .collect();
+                        quote! { #vname { #(#field_tokens),* } }
+                    }
+                }
+            })
+            .collect();
+
+        let derives: Vec<TokenStream> = e
+            .derives
+            .iter()
+            .map(|d| match derives::from_str(d.as_str()) {
+                Some(DeriveId::Serialize) => quote! { serde::Serialize },
+                Some(DeriveId::Deserialize) => quote! { serde::Deserialize },
+                _ => {
+                    let d_ident = format_ident!("{}", d);
+                    quote! { #d_ident }
+                }
+            })
+            .collect();
+
+        let derive_attr = if derives.is_empty() {
+            quote! {}
+        } else {
+            quote! { #[derive(#(#derives),*)] }
+        };
+
+        let variant_match_arms: Vec<TokenStream> = e
+            .variants
+            .iter()
+            .map(|v| {
+                let vname = format_ident!("{}", &v.name);
+                let vname_str = &v.name;
+                match &v.fields {
+                    super::super::super::decl::VariantFields::Unit => {
+                        quote! { Self::#vname => #vname_str.to_string() }
+                    }
+                    super::super::super::decl::VariantFields::Tuple(types) => {
+                        let wildcards: Vec<_> = (0..types.len()).map(|_| quote! { _ }).collect();
+                        quote! { Self::#vname(#(#wildcards),*) => #vname_str.to_string() }
+                    }
+                    super::super::super::decl::VariantFields::Struct(_) => {
+                        quote! { Self::#vname { .. } => #vname_str.to_string() }
+                    }
+                }
+            })
+            .collect();
+
+        Ok(quote! {
+            #derive_attr
+            #vis enum #name {
+                #(#variants),*
+            }
+
+            impl #name {
+                pub fn message(&self) -> String {
+                    match self {
+                        #(#variant_match_arms),*
+                    }
+                }
+            }
+        })
+    }
+}

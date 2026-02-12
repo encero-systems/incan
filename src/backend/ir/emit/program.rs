@@ -193,6 +193,11 @@ impl<'a> IrEmitter<'a> {
     /// Emit a complete IR program to formatted Rust code.
     #[tracing::instrument(skip_all, fields(decl_count = program.declarations.len()))]
     pub fn emit_program(&mut self, program: &IrProgram) -> Result<String, EmitError> {
+        // RFC 023: propagate rust.module() path from IR to emitter for @rust.extern delegation.
+        if self.rust_module_path.is_none() {
+            self.rust_module_path = program.rust_module_path.clone();
+        }
+
         // First pass: collect struct derives, struct field types, and enum variant typing
         let mut static_str_const_exprs: HashMap<String, TypedExpr> = HashMap::new();
         for decl in &program.declarations {

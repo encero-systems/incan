@@ -442,6 +442,17 @@ fn test_newtype_checked_construction_codegen() {
     insta::assert_snapshot!("newtype_checked_construction", rust_code);
 }
 
+/// RFC 023: `rust.module()` + `@rust.extern` delegation codegen.
+///
+/// Verifies that `@rust.extern` functions emit delegation calls to the declared Rust module path,
+/// while pure Incan functions in the same module compile normally.
+#[test]
+fn test_rust_extern_delegation_codegen() {
+    let source = load_test_file("rust_extern_delegation");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rust_extern_delegation", rust_code);
+}
+
 // Glob-based test that auto-discovers all .incn files
 // To enable: uncomment the test below and run `cargo test --test codegen_snapshot_tests`
 //

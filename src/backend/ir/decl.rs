@@ -65,10 +65,10 @@ pub enum IrDeclKind {
 /// How an import path should be qualified in generated Rust.
 ///
 /// ## Background (why this exists)
-/// In Rust 2018+ module paths in `use ...` are **not implicitly crate-rooted** when emitted inside a submodule.
-/// For example, inside `store::json_store`, `use db::schema::Database;` resolves as `store::json_store::db::...`
-/// (or an external crate), not `crate::db::...`. For multi-file Incan projects this commonly needs an explicit
-/// `crate::` (or `super::`) prefix for correctness.
+/// In Rust 2018+ module paths in `use ...` are **not implicitly crate-rooted** when emitted inside a submodule. For
+/// example, inside `store::json_store`, `use db::schema::Database;` resolves as `store::json_store::db::...` (or an
+/// external crate), not `crate::db::...`. For multi-file Incan projects this commonly needs an explicit `crate::` (or
+/// `super::`) prefix for correctness.
 ///
 /// We preserve the required qualification intent in IR so codegen can emit correct `use` paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +126,11 @@ pub struct IrFunction {
     pub visibility: Visibility,
     /// Type parameters for generics
     pub type_params: Vec<String>,
+    /// RFC 023: Whether this function is `@rust.extern` — its body is provided by a Rust backing module.
+    ///
+    /// When `true`, emission should generate a delegation call to `<rust_module_path>::<name>()` instead of compiling
+    /// the Incan body. The `rust_module_path` is stored on `IrProgram`.
+    pub is_extern: bool,
 }
 
 /// Function parameter

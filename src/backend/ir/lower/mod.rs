@@ -286,6 +286,9 @@ impl AstLowering {
         let mut ir_program = IrProgram::new();
         let mut errors: Vec<LoweringError> = Vec::new();
 
+        // RFC 023: propagate rust.module() path from AST to IR.
+        ir_program.rust_module_path = program.rust_module_path.as_ref().map(|sp| sp.node.clone());
+
         // Seed alias maps for imported model aliases before lowering expressions.
         self.register_imported_struct_aliases(program);
 
@@ -468,8 +471,8 @@ impl AstLowering {
             }
         }
         // Propagate Serialize/Deserialize derives from structs to their field types (enums).
-        // This allows users to only annotate the top-level model with @derive(Serialize, Deserialize)
-        // and have it automatically apply to nested user-defined enums.
+        // This allows users to only annotate the top-level model with @derive(Serialize, Deserialize) and have it
+        // automatically apply to nested user-defined enums.
         Self::propagate_serde_derives(&mut ir_program);
 
         if errors.is_empty() {
@@ -482,10 +485,9 @@ impl AstLowering {
 
     /// Propagate Serialize/Deserialize derives from structs to enum/newtype field types.
     ///
-    /// When a struct has Serialize or Deserialize derives and contains fields of enum types,
-    /// those enums also need the same derives for the generated Rust code to compile.
-    /// This function automatically adds those derives to avoid requiring users to manually
-    /// annotate every nested enum.
+    /// When a struct has Serialize or Deserialize derives and contains fields of enum types, those enums also need the
+    /// same derives for the generated Rust code to compile. This function automatically adds those derives to avoid
+    /// requiring users to manually annotate every nested enum.
     fn propagate_serde_derives(ir_program: &mut IrProgram) {
         use super::decl::IrDeclKind;
         use incan_core::lang::derives::{self, DeriveId};

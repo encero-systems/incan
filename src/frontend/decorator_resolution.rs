@@ -16,6 +16,7 @@ use std::collections::HashMap;
 
 use crate::frontend::ast::{Declaration, Decorator, ImportKind, ImportPath, Program};
 use crate::frontend::symbols::{SymbolKind, SymbolTable};
+use incan_core::lang::decorators;
 use incan_core::lang::stdlib;
 
 /// A lookup source for resolving the first decorator path segment as an import alias.
@@ -91,7 +92,7 @@ pub fn collect_import_aliases(program: &Program) -> HashMap<String, Vec<String>>
 ///
 /// Rules:
 /// - absolute/parented paths keep their `crate`/`super` prefix
-/// - `std.*` paths are treated as already-canonical and returned as-is
+/// - known decorator namespace roots (`std`, `rust`) are already-canonical and returned as-is
 /// - otherwise, if the leading segment is an alias, it is substituted and the remaining segments are appended
 pub fn resolve_decorator_path(dec: &Decorator, lookup: &impl DecoratorPrefixLookup) -> Vec<String> {
     if dec.path.is_absolute || dec.path.parent_levels > 0 {
@@ -103,7 +104,8 @@ pub fn resolve_decorator_path(dec: &Decorator, lookup: &impl DecoratorPrefixLook
         return segments;
     }
 
-    if segments[0] == stdlib::STDLIB_ROOT {
+    // Known decorator namespace roots (`std`, `rust`) are already canonical — don't rewrite them.
+    if segments[0] == stdlib::STDLIB_ROOT || decorators::is_known_decorator_namespace(&segments[0]) {
         return segments;
     }
 

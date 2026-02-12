@@ -48,6 +48,7 @@ mod check_stmt;
 mod collect;
 mod const_eval;
 mod helpers;
+pub(crate) mod stdlib_loader;
 mod validate_rust_module;
 
 pub use const_eval::ConstValue;
@@ -172,6 +173,11 @@ pub struct TypeChecker {
     /// Used to validate that `rust.module()` paths reference known crates. When `None`, crate validation is skipped
     /// (e.g. single-file mode without a manifest).
     pub(crate) declared_crate_names: Option<HashSet<String>>,
+    /// RFC 023: Cached stdlib function signatures loaded from `.incn` files.
+    ///
+    /// Used by `collect_import` to derive function signatures from parsed stdlib source instead of hardcoded
+    /// registries. See [`stdlib_loader::StdlibAstCache`] for details.
+    pub(crate) stdlib_cache: stdlib_loader::StdlibAstCache,
 }
 
 impl TypeChecker {
@@ -191,6 +197,7 @@ impl TypeChecker {
             dependency_exports: HashMap::new(),
             current_module_path: None,
             declared_crate_names: None,
+            stdlib_cache: stdlib_loader::StdlibAstCache::new(),
         }
     }
 
@@ -441,8 +448,8 @@ impl TypeChecker {
 
     /// Check a program that may have dependencies on other modules.
     ///
-    /// Convenience wrapper that calls [`import_module`](Self::import_module) for each dependency,
-    /// then [`check_program`](Self::check_program).
+    /// Convenience wrapper that calls [`import_module`](Self::import_module) for each dependency, then
+    /// [`check_program`](Self::check_program).
     ///
     /// ## Parameters
     ///
@@ -475,8 +482,8 @@ impl TypeChecker {
 
     /// Check a program with dependencies, but allow importing private items.
     ///
-    /// This is intended for internal compiler stages (like IR codegen) where we need
-    /// type information across modules without enforcing visibility restrictions.
+    /// This is intended for internal compiler stages (like IR codegen) where we need type information across modules
+    /// without enforcing visibility restrictions.
     pub fn check_with_imports_allow_private(
         &mut self,
         program: &Program,
@@ -496,9 +503,8 @@ impl TypeChecker {
 
     /// Check if two types are compatible for assignment or comparison.
     ///
-    /// Returns `true` if `actual` can be used where `expected` is required.
-    /// Handles `Unknown` (error recovery), type variables (generics), and
-    /// recursive checks for generics, functions, and tuples.
+    /// Returns `true` if `actual` can be used where `expected` is required. Handles `Unknown` (error recovery), type
+    /// variables (generics), and recursive checks for generics, functions, and tuples.
     #[allow(clippy::only_used_in_recursion)]
     pub(crate) fn types_compatible(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
         if actual == expected {

@@ -3,6 +3,12 @@
 /// Root stdlib namespace (e.g. `import std::...`).
 pub const STDLIB_ROOT: &str = "std";
 
+/// RFC 023: Rust module namespace for compiled `std.*` modules.
+///
+/// Compiled stdlib `.incn` files are emitted as submodules under `crate::__incan_std::*` to avoid shadowing Rust's
+/// `std` crate. For example, `std.testing` compiles to `crate::__incan_std::testing`.
+pub const INCAN_STD_NAMESPACE: &str = "__incan_std";
+
 /// `std.web` module name.
 pub const STDLIB_WEB: &str = "web";
 

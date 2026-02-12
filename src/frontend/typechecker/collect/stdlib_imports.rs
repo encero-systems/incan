@@ -1,7 +1,7 @@
 //! Stdlib-aware import collection and namespace validation.
 //!
-//! This keeps stdlib import enforcement (RFC 022) separate from general declaration
-//! collection while preserving the existing behavior.
+//! This keeps stdlib import enforcement (RFC 022) separate from general declaration collection while preserving the
+//! existing behavior.
 
 use std::collections::HashSet;
 
@@ -32,8 +32,7 @@ impl TypeChecker {
                     .alias
                     .clone()
                     .unwrap_or_else(|| path.segments.last().cloned().unwrap_or_else(|| "module".to_string()));
-                // Allow `import std.web as std` (alias matches source root), but
-                // reject `import std.web as rust` (alias is a different reserved root).
+                // Allow `import std.web as std` (alias matches source root), but reject `import std.web as rust` (alias is a different reserved root).
                 let same_root = path.segments.first().map(|s| s.as_str()) == Some(&name);
                 if !same_root {
                     self.validate_root_namespace(&name, span);
@@ -75,7 +74,14 @@ impl TypeChecker {
                     for item in items {
                         let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
                         self.validate_root_namespace(&local_name, span);
-                        if let Some(info) = stdlib_testing::testing_import_function_info(&item.name) {
+
+                        // RFC 023: try AST-derived signatures first, fall back to hardcoded.
+                        let info = self
+                            .stdlib_cache
+                            .lookup_function(&module.segments, &item.name)
+                            .or_else(|| stdlib_testing::testing_import_function_info(&item.name));
+
+                        if let Some(info) = info {
                             self.symbols.define(Symbol {
                                 name: local_name,
                                 kind: SymbolKind::Function(info),
