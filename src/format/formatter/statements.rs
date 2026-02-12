@@ -1,0 +1,193 @@
+//! Statement formatting: assignments, control flow (if/elif/else, while, for), and compound statements.
+
+use crate::frontend::ast::*;
+
+use super::Formatter;
+
+impl Formatter {
+    pub(super) fn format_statement(&mut self, stmt: &Statement) {
+        match stmt {
+            Statement::Expr(expr) => {
+                self.format_expr(&expr.node);
+                self.writer.newline();
+            }
+            Statement::Assignment(assign) => {
+                self.format_assignment(assign);
+            }
+            Statement::FieldAssignment(assign) => {
+                self.format_expr(&assign.object.node);
+                self.writer.write(".");
+                self.writer.write(&assign.field);
+                self.writer.write(" = ");
+                self.format_expr(&assign.value.node);
+                self.writer.newline();
+            }
+            Statement::IndexAssignment(assign) => {
+                self.format_expr(&assign.object.node);
+                self.writer.write("[");
+                self.format_expr(&assign.index.node);
+                self.writer.write("] = ");
+                self.format_expr(&assign.value.node);
+                self.writer.newline();
+            }
+            Statement::CompoundAssignment(assign) => {
+                self.writer.write(&assign.name);
+                self.writer.write(" ");
+                self.writer.write(match assign.op {
+                    CompoundOp::Add => "+=",
+                    CompoundOp::Sub => "-=",
+                    CompoundOp::Mul => "*=",
+                    CompoundOp::Div => "/=",
+                    CompoundOp::FloorDiv => "//=",
+                    CompoundOp::Mod => "%=",
+                });
+                self.writer.write(" ");
+                self.format_expr(&assign.value.node);
+                self.writer.newline();
+            }
+            Statement::Return(expr) => {
+                self.writer.write("return");
+                if let Some(e) = expr {
+                    self.writer.write(" ");
+                    self.format_expr(&e.node);
+                }
+                self.writer.newline();
+            }
+            Statement::If(if_stmt) => self.format_if(if_stmt),
+            Statement::While(while_stmt) => self.format_while(while_stmt),
+            Statement::For(for_stmt) => self.format_for(for_stmt),
+            Statement::Pass => self.writer.writeln("pass"),
+            Statement::Break => self.writer.writeln("break"),
+            Statement::Continue => self.writer.writeln("continue"),
+            Statement::TupleUnpack(unpack) => {
+                match unpack.binding {
+                    BindingKind::Let => self.writer.write("let "),
+                    BindingKind::Mutable => self.writer.write("mut "),
+                    BindingKind::Inferred | BindingKind::Reassign => {}
+                }
+                for (i, name) in unpack.names.iter().enumerate() {
+                    if i > 0 {
+                        self.writer.write(", ");
+                    }
+                    self.writer.write(name);
+                }
+                self.writer.write(" = ");
+                self.format_expr(&unpack.value.node);
+                self.writer.newline();
+            }
+            Statement::TupleAssign(assign) => {
+                for (i, target) in assign.targets.iter().enumerate() {
+                    if i > 0 {
+                        self.writer.write(", ");
+                    }
+                    self.format_expr(&target.node);
+                }
+                self.writer.write(" = ");
+                self.format_expr(&assign.value.node);
+                self.writer.newline();
+            }
+            Statement::ChainedAssignment(ca) => {
+                match ca.binding {
+                    BindingKind::Let => self.writer.write("let "),
+                    BindingKind::Mutable => self.writer.write("mut "),
+                    BindingKind::Inferred | BindingKind::Reassign => {}
+                }
+                for (i, target) in ca.targets.iter().enumerate() {
+                    if i > 0 {
+                        self.writer.write(" = ");
+                    }
+                    self.writer.write(target);
+                }
+                self.writer.write(" = ");
+                self.format_expr(&ca.value.node);
+                self.writer.newline();
+            }
+        }
+    }
+
+    fn format_assignment(&mut self, assign: &AssignmentStmt) {
+        match assign.binding {
+            BindingKind::Let => self.writer.write("let "),
+            BindingKind::Mutable => self.writer.write("mut "),
+            BindingKind::Inferred | BindingKind::Reassign => {}
+        }
+        self.writer.write(&assign.name);
+        if let Some(ty) = &assign.ty {
+            self.writer.write(": ");
+            self.format_type(&ty.node);
+        }
+        self.writer.write(" = ");
+        self.format_expr(&assign.value.node);
+        self.writer.newline();
+    }
+
+    fn format_if(&mut self, if_stmt: &IfStmt) {
+        self.writer.write("if ");
+        self.format_expr(&if_stmt.condition.node);
+        self.writer.writeln(":");
+        self.writer.indent();
+        for stmt in &if_stmt.then_body {
+            self.format_statement(&stmt.node);
+        }
+        if if_stmt.then_body.is_empty() {
+            self.writer.writeln("pass");
+        }
+        self.writer.dedent();
+
+        for (elif_cond, elif_body) in &if_stmt.elif_branches {
+            self.writer.write("elif ");
+            self.format_expr(&elif_cond.node);
+            self.writer.writeln(":");
+            self.writer.indent();
+            for stmt in elif_body {
+                self.format_statement(&stmt.node);
+            }
+            if elif_body.is_empty() {
+                self.writer.writeln("pass");
+            }
+            self.writer.dedent();
+        }
+
+        if let Some(else_body) = &if_stmt.else_body {
+            self.writer.writeln("else:");
+            self.writer.indent();
+            for stmt in else_body {
+                self.format_statement(&stmt.node);
+            }
+            if else_body.is_empty() {
+                self.writer.writeln("pass");
+            }
+            self.writer.dedent();
+        }
+    }
+
+    fn format_while(&mut self, while_stmt: &WhileStmt) {
+        self.writer.write("while ");
+        self.format_expr(&while_stmt.condition.node);
+        self.writer.writeln(":");
+        self.writer.indent();
+        for stmt in &while_stmt.body {
+            self.format_statement(&stmt.node);
+        }
+        if while_stmt.body.is_empty() {
+            self.writer.writeln("pass");
+        }
+        self.writer.dedent();
+    }
+
+    fn format_for(&mut self, for_stmt: &ForStmt) {
+        self.writer.write("for ");
+        self.writer.write(&for_stmt.var);
+        self.writer.write(" in ");
+        self.format_expr(&for_stmt.iter.node);
+        self.writer.writeln(":");
+        self.writer.indent();
+        for stmt in &for_stmt.body {
+            self.format_statement(&stmt.node);
+        }
+        if for_stmt.body.is_empty() {
+            self.writer.writeln("pass");
+        }
+        self.writer.dedent();
+    }
+}

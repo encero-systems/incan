@@ -207,7 +207,7 @@ pub struct ModelDecl {
     pub visibility: Visibility,
     pub decorators: Vec<Spanned<Decorator>>,
     pub name: Ident,
-    pub type_params: Vec<Ident>,
+    pub type_params: Vec<TypeParam>,
     // Traits adopted by this model via `with TraitA, TraitB`.
     pub traits: Vec<Spanned<Ident>>,
     pub fields: Vec<Spanned<FieldDecl>>,
@@ -238,7 +238,7 @@ pub struct ClassDecl {
     pub visibility: Visibility,
     pub decorators: Vec<Spanned<Decorator>>,
     pub name: Ident,
-    pub type_params: Vec<Ident>,
+    pub type_params: Vec<TypeParam>,
     pub extends: Option<Ident>,
     pub traits: Vec<Spanned<Ident>>,
     pub fields: Vec<Spanned<FieldDecl>>,
@@ -254,7 +254,7 @@ pub struct TraitDecl {
     pub visibility: Visibility,
     pub decorators: Vec<Spanned<Decorator>>,
     pub name: Ident,
-    pub type_params: Vec<Ident>,
+    pub type_params: Vec<TypeParam>,
     pub methods: Vec<Spanned<MethodDecl>>,
 }
 
@@ -279,7 +279,7 @@ pub struct EnumDecl {
     pub visibility: Visibility,
     pub decorators: Vec<Spanned<Decorator>>,
     pub name: Ident,
-    pub type_params: Vec<Ident>,
+    pub type_params: Vec<TypeParam>,
     pub variants: Vec<Spanned<VariantDecl>>,
 }
 
@@ -299,7 +299,7 @@ pub struct FunctionDecl {
     pub decorators: Vec<Spanned<Decorator>>,
     pub is_async: bool,
     pub name: Ident,
-    pub type_params: Vec<Ident>,
+    pub type_params: Vec<TypeParam>,
     pub params: Vec<Spanned<Param>>,
     pub return_type: Spanned<Type>,
     pub body: Vec<Spanned<Statement>>,
@@ -355,6 +355,47 @@ pub enum DecoratorArg {
 pub enum DecoratorArgValue {
     Type(Spanned<Type>),
     Expr(Spanned<Expr>),
+}
+
+// ============================================================================
+// Type Parameters and Trait Bounds (RFC 023)
+// ============================================================================
+
+/// A type parameter declaration with optional trait bounds.
+///
+/// RFC 023: Supports the `[T with (Eq, Debug)]` syntax.
+///
+/// ## Examples
+/// - `T` — bare type parameter (no bounds)
+/// - `T with Clone` — single bound
+/// - `T with (Eq, Debug)` — multiple bounds
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeParam {
+    pub name: Ident,
+    pub bounds: Vec<TraitBound>,
+}
+
+impl TypeParam {
+    /// Create a type parameter with no bounds (most common case).
+    pub fn bare(name: Ident) -> Self {
+        Self {
+            name,
+            bounds: Vec::new(),
+        }
+    }
+}
+
+/// A trait bound in a type parameter's `with` clause.
+///
+/// RFC 023: Maps to Rust trait bounds during emission.
+///
+/// ## Examples
+/// - `Eq` — simple bound
+/// - `From[U]` — bound with type arguments
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitBound {
+    pub name: Ident,
+    pub type_args: Vec<Spanned<Type>>,
 }
 
 // ============================================================================

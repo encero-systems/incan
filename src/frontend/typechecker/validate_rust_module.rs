@@ -117,18 +117,17 @@ impl TypeChecker {
                 Declaration::Trait(tr) => {
                     for method in &tr.methods {
                         if self.has_rust_extern_decorator(&method.node.decorators) {
-                            // ---- Rule 3: @rust.extern on instance method ----
-                            if method.node.receiver.is_some() {
-                                self.errors
-                                    .push(errors::rust_extern_on_instance_method(&method.node.name, method.span));
-                            } else {
-                                items.push(RustExternItem {
-                                    name: method.node.name.clone(),
-                                    span: method.span,
-                                });
-                            }
+                            // RFC 023: `@rust.extern` is allowed on trait default methods.
+                            // (It is disallowed on instance methods for classes/models/newtypes.)
+                            items.push(RustExternItem {
+                                name: method.node.name.clone(),
+                                span: method.span,
+                            });
 
                             // ---- Rule 2: non-trivial body ----
+                            //
+                            // Trait methods may be abstract (`body == None`), which is treated like a `...` stub.
+                            // Only a *non-trivial* body is rejected for @rust.extern.
                             if let Some(body) = &method.node.body
                                 && !is_trivial_body(body)
                             {

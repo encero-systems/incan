@@ -703,4 +703,16 @@ const ANSWER: int = 42
         let has_duplicate_msg = err.iter().any(|e| e.message.contains("Duplicate"));
         assert!(has_duplicate_msg, "Should report duplicate rust.module(); errors: {:?}", err.iter().map(|e| &e.message).collect::<Vec<_>>());
     }
+
+    #[test]
+    fn test_rust_module_directive_not_at_top_is_error() {
+        let source = "def foo() -> int:\n    return 1\n\nrust.module(\"incan_stdlib::testing\")\n";
+        let err = parse_str(source).expect_err("rust.module() after declarations should fail");
+        let has_msg = err.iter().any(|e| e.message.contains("must appear at the top"));
+        assert!(
+            has_msg,
+            "Should report rust.module() placement error; errors: {:?}",
+            err.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+    }
 }

@@ -1867,11 +1867,15 @@ rust.module("incan_stdlib::utils")
 def pure_incan() -> int:
     return 42
 "#;
-    let errs = check_str(source).expect_err("should warn: unused rust.module()");
+    let tokens = lexer::lex(source).expect("lex failed");
+    let ast = parser::parse(&tokens).expect("parse failed");
+    let mut tc = TypeChecker::new();
+    let result = tc.check_program(&ast);
+    assert!(result.is_ok(), "warnings should not fail typechecking");
     assert!(
-        errs.iter().any(|e| e.message.contains("no effect")),
+        tc.warnings().iter().any(|e| e.message.contains("no effect")),
         "Expected unused-rust-module warning; got: {:?}",
-        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+        tc.warnings().iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }
 

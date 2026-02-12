@@ -147,7 +147,7 @@ impl TypeChecker {
         // Define type parameters
         for param in &model.type_params {
             self.symbols.define(Symbol {
-                name: param.clone(),
+                name: param.name.clone(),
                 kind: SymbolKind::Type(TypeInfo::Builtin), // Type var placeholder
                 span: Span::default(),
                 scope: 0,
@@ -516,9 +516,9 @@ impl TypeChecker {
             if method.node.body.is_some() {
                 let prev_method_seen = self.current_trait_missing_requires_emitted.take();
                 self.current_trait_missing_requires_emitted = Some(std::collections::HashSet::new());
-                // Trait default methods are checked against `Self` (the eventual adopter type),
-                // not against the trait name itself. This allows default bodies to reference
-                // adopter fields (validated at adoption sites via `@requires`).
+                // Trait default methods are checked against `Self` (the eventual adopter type), not against the trait
+                // name itself. This allows default bodies to reference adopter fields (validated at adoption sites via
+                // `@requires`).
                 self.check_method_with_self_ty(&method.node, ResolvedType::SelfType);
                 self.current_trait_missing_requires_emitted = prev_method_seen;
             }

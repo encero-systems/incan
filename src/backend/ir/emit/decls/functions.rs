@@ -87,11 +87,14 @@ impl<'a> IrEmitter<'a> {
             quote! {}
         };
 
+        // RFC 023: emit generic type parameters with inferred/explicit trait bounds.
+        let generics = self.emit_type_params(&func.type_params);
+
         let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
         if is_main || ret_ty_is_unit {
             Ok(quote! {
                 #tokio_main_attr
-                #vis #async_kw fn #name(#(#params),*) {
+                #vis #async_kw fn #name #generics (#(#params),*) {
                     #zen_stmt
                     #web_stmt
                     #(#body_stmts)*
@@ -101,7 +104,7 @@ impl<'a> IrEmitter<'a> {
             let ret_ty = self.emit_type(&func.return_type);
             Ok(quote! {
                 #tokio_main_attr
-                #vis #async_kw fn #name(#(#params),*) -> #ret_ty {
+                #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
                     #(#body_stmts)*
                 }
             })
@@ -173,18 +176,36 @@ impl<'a> IrEmitter<'a> {
             quote! {}
         };
 
+        // RFC 023: emit generic type parameters with trait bounds.
+        let generics = self.emit_type_params(&func.type_params);
+
+        // Build turbofish (Rust's name for the ::< > syntax) for the delegation call if there are type params.
+        let turbofish = if func.type_params.is_empty() {
+            quote! {}
+        } else {
+            let tp_idents: Vec<TokenStream> = func
+                .type_params
+                .iter()
+                .map(|tp| {
+                    let ident = format_ident!("{}", &tp.name);
+                    quote! { #ident }
+                })
+                .collect();
+            quote! { :: < #(#tp_idents),* > }
+        };
+
         let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
         if ret_ty_is_unit {
             Ok(quote! {
-                #vis #async_kw fn #name(#(#params),*) {
-                    #call_path(#(#args),*) #await_kw
+                #vis #async_kw fn #name #generics (#(#params),*) {
+                    #call_path #turbofish (#(#args),*) #await_kw
                 }
             })
         } else {
             let ret_ty = self.emit_type(&func.return_type);
             Ok(quote! {
-                #vis #async_kw fn #name(#(#params),*) -> #ret_ty {
-                    #call_path(#(#args),*) #await_kw
+                #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
+                    #call_path #turbofish (#(#args),*) #await_kw
                 }
             })
         }
@@ -194,6 +215,11 @@ impl<'a> IrEmitter<'a> {
         &self,
         func: &super::super::super::decl::IrFunction,
     ) -> Result<TokenStream, EmitError> {
+        // RFC 023: @rust.extern delegation for methods (used for trait default methods expanded into impl blocks).
+        if func.is_extern {
+            return self.emit_extern_method(func);
+        }
+
         let name = format_ident!("{}", &func.name);
         let vis = self.emit_visibility(&func.visibility);
         let mutated_params = self.collect_mutated_params(func);
@@ -232,15 +258,130 @@ impl<'a> IrEmitter<'a> {
             }
         };
 
+        // RFC 023: emit generic type parameters with trait bounds.
+        let generics = self.emit_type_params(&func.type_params);
+
         *self.current_function_return_type.borrow_mut() = Some(func.return_type.clone());
         let body_stmts: Vec<TokenStream> = func.body.iter().map(|s| self.emit_stmt(s)).collect::<Result<_, _>>()?;
         *self.current_function_return_type.borrow_mut() = None;
 
         Ok(quote! {
-            #vis fn #name(#(#params),*) #ret {
+            #vis fn #name #generics (#(#params),*) #ret {
                 #(#body_stmts)*
             }
         })
+    }
+
+    /// RFC 023: Emit a `@rust.extern` method as a thin wrapper delegating to the Rust backing module.
+    ///
+    /// This is primarily used for trait default methods that are expanded into `impl Trait for Type` blocks during
+    /// lowering (RFC 000). Instance methods on classes/models/newtypes are rejected by the typechecker.
+    fn emit_extern_method(&self, func: &super::super::super::decl::IrFunction) -> Result<TokenStream, EmitError> {
+        let Some(ref module_path) = self.rust_module_path else {
+            return Err(EmitError::Unsupported(format!(
+                "@rust.extern method '{}' has no rust.module() path — cannot emit delegation call",
+                func.name
+            )));
+        };
+
+        let name = format_ident!("{}", Self::escape_keyword(&func.name));
+        let vis = self.emit_visibility(&func.visibility);
+        let mutated_params = self.collect_mutated_params(func);
+
+        let params: Vec<TokenStream> = func
+            .params
+            .iter()
+            .map(|p| {
+                if p.is_self {
+                    match p.mutability {
+                        super::super::super::types::Mutability::Mutable => quote! { &mut self },
+                        super::super::super::types::Mutability::Immutable => quote! { &self },
+                    }
+                } else {
+                    let pname = format_ident!("{}", Self::escape_keyword(&p.name));
+                    let pty = self.emit_type(&p.ty);
+                    let needs_mut = mutated_params.contains(&p.name)
+                        || matches!(p.mutability, super::super::super::types::Mutability::Mutable);
+                    if needs_mut {
+                        match &p.ty {
+                            IrType::Int | IrType::Float | IrType::Bool => quote! { mut #pname: #pty },
+                            _ => quote! { #pname: &mut #pty },
+                        }
+                    } else {
+                        quote! { #pname: #pty }
+                    }
+                }
+            })
+            .collect();
+
+        // Build the fully-qualified call path: `<rust.module path>::<method_name>`.
+        let path_segments: Vec<_> = module_path.split("::").collect();
+        let mut call_path_tokens: Vec<TokenStream> = path_segments
+            .iter()
+            .map(|seg| {
+                let ident = format_ident!("{}", Self::escape_keyword(seg));
+                quote! { #ident }
+            })
+            .collect();
+        call_path_tokens.push(quote! { #name });
+        let call_path = join_path_tokens(&call_path_tokens);
+
+        // Forward all params, including `self`.
+        let args: Vec<TokenStream> = func
+            .params
+            .iter()
+            .map(|p| {
+                if p.is_self {
+                    quote! { self }
+                } else {
+                    let pname = format_ident!("{}", Self::escape_keyword(&p.name));
+                    quote! { #pname }
+                }
+            })
+            .collect();
+
+        let async_kw = if func.is_async {
+            quote! { async }
+        } else {
+            quote! {}
+        };
+        let await_kw = if func.is_async {
+            quote! { .await }
+        } else {
+            quote! {}
+        };
+
+        // RFC 023: emit generic type parameters with trait bounds.
+        let generics = self.emit_type_params(&func.type_params);
+        let turbofish = if func.type_params.is_empty() {
+            quote! {}
+        } else {
+            let tp_idents: Vec<TokenStream> = func
+                .type_params
+                .iter()
+                .map(|tp| {
+                    let ident = format_ident!("{}", &tp.name);
+                    quote! { #ident }
+                })
+                .collect();
+            quote! { :: < #(#tp_idents),* > }
+        };
+
+        let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
+        if ret_ty_is_unit {
+            Ok(quote! {
+                #vis #async_kw fn #name #generics (#(#params),*) {
+                    #call_path #turbofish (#(#args),*) #await_kw
+                }
+            })
+        } else {
+            let ret_ty = self.emit_type(&func.return_type);
+            Ok(quote! {
+                #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
+                    #call_path #turbofish (#(#args),*) #await_kw
+                }
+            })
+        }
     }
 
     pub(in crate::backend::ir::emit) fn emit_trait(

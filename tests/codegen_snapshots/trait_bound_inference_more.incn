@@ -1,0 +1,25 @@
+# RFC 023: Trait bound inference - additional cases
+#
+# Covers:
+# - f-string interpolation -> Display
+# - Dict literal with generic key -> Eq + Hash
+# - arithmetic on generic type -> Add<Output = T>
+# - transitive inference across generic function calls
+
+def show[T](x: T) -> str:
+    return f"{x}"
+
+def make_dict[T](k: T) -> Dict[T, int]:
+    return {k: 1}
+
+def add[T](a: T, b: T) -> T:
+    return a + b
+
+def are_equal[T](left: T, right: T) -> bool:
+    return left == right
+
+def wrapper[T](a: T, b: T) -> bool:
+    return are_equal(a, b)
+
+def main() -> None:
+    pass

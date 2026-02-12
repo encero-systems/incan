@@ -47,6 +47,7 @@ impl<'a> Parser<'a> {
     pub fn parse(mut self) -> Result<Program, Vec<CompileError>> {
         let mut declarations = Vec::new();
         let mut rust_module_path: Option<Spanned<String>> = None;
+        let mut seen_non_doc_decl = false;
 
         // Skip leading newlines
         self.skip_newlines();
@@ -61,6 +62,9 @@ impl<'a> Parser<'a> {
             {
                 match self.rust_module_directive() {
                     Ok(directive) => {
+                        if seen_non_doc_decl {
+                            self.errors.push(errors::rust_module_not_at_top(directive.span));
+                        }
                         if rust_module_path.is_some() {
                             self.errors.push(errors::duplicate_rust_module(directive.span));
                         } else {
@@ -79,7 +83,12 @@ impl<'a> Parser<'a> {
 
             // ---- Context: normal declarations ----
             match self.declaration() {
-                Ok(decl) => declarations.push(decl),
+                Ok(decl) => {
+                    if !matches!(decl.node, Declaration::Docstring(_)) {
+                        seen_non_doc_decl = true;
+                    }
+                    declarations.push(decl)
+                }
                 Err(e) => {
                     self.errors.push(e);
                     self.synchronize();

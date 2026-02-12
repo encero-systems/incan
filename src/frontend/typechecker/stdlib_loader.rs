@@ -140,24 +140,22 @@ fn extract_function_signatures(program: &ast::Program) -> Vec<(String, FunctionI
 
 /// Convert an AST `FunctionDecl` to a typechecker `FunctionInfo`.
 fn function_decl_to_info(func: &ast::FunctionDecl) -> FunctionInfo {
+    // Extract just the type parameter names for type resolution.
+    let tp_names: Vec<String> = func.type_params.iter().map(|tp| tp.name.clone()).collect();
+
     let params: Vec<(String, ResolvedType)> = func
         .params
         .iter()
-        .map(|p| {
-            (
-                p.node.name.clone(),
-                ast_type_to_resolved(&p.node.ty.node, &func.type_params),
-            )
-        })
+        .map(|p| (p.node.name.clone(), ast_type_to_resolved(&p.node.ty.node, &tp_names)))
         .collect();
 
-    let return_type = ast_type_to_resolved(&func.return_type.node, &func.type_params);
+    let return_type = ast_type_to_resolved(&func.return_type.node, &tp_names);
 
     FunctionInfo {
         params,
         return_type,
         is_async: func.is_async,
-        type_params: func.type_params.clone(),
+        type_params: tp_names,
     }
 }
 

@@ -1,11 +1,10 @@
 //! Incan language vocabulary registries.
 //!
-//! This module is the “front door” for language-level vocabulary: reserved keywords, operators,
-//! builtin functions, builtin types, and punctuation.
+//! This module is the “front door” for language-level vocabulary: reserved keywords, operators, builtin functions,
+//! builtin types, and punctuation.
 //!
-//! The design goal is to avoid stringly-typed checks scattered across the compiler/tooling.
-//! Instead, callers work with **stable IDs** (e.g. `KeywordId`, `OperatorId`) and look up
-//! spellings/metadata via registry tables.
+//! The design goal is to avoid stringly-typed checks scattered across the compiler/tooling. Instead, callers work with
+//! **stable IDs** (e.g. `KeywordId`, `OperatorId`) and look up spellings/metadata via registry tables.
 //!
 //! ## Notes
 //! - Registries are intentionally **pure**: no AST types, no IO, no side effects.
@@ -39,5 +38,6 @@ pub mod registry;
 pub mod rust_keywords;
 pub mod stdlib;
 pub mod surface;
+pub mod trait_bounds;
 pub mod traits;
 pub mod types;

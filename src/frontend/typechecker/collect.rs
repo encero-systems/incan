@@ -106,7 +106,7 @@ impl TypeChecker {
         self.symbols.define(Symbol {
             name: model.name.clone(),
             kind: SymbolKind::Type(TypeInfo::Model(ModelInfo {
-                type_params: model.type_params.clone(),
+                type_params: model.type_params.iter().map(|tp| tp.name.clone()).collect(),
                 traits: model.traits.iter().map(|t| t.node.clone()).collect(),
                 derives,
                 fields,
@@ -134,7 +134,7 @@ impl TypeChecker {
         self.symbols.define(Symbol {
             name: class.name.clone(),
             kind: SymbolKind::Type(TypeInfo::Class(ClassInfo {
-                type_params: class.type_params.clone(),
+                type_params: class.type_params.iter().map(|tp| tp.name.clone()).collect(),
                 extends: class.extends.clone(),
                 traits: class.traits.iter().map(|t| t.node.clone()).collect(),
                 derives,
@@ -168,7 +168,7 @@ impl TypeChecker {
         self.symbols.define(Symbol {
             name: tr.name.clone(),
             kind: SymbolKind::Trait(TraitInfo {
-                type_params: tr.type_params.clone(),
+                type_params: tr.type_params.iter().map(|tp| tp.name.clone()).collect(),
                 methods,
                 requires,
             }),
@@ -197,7 +197,7 @@ impl TypeChecker {
         self.symbols.define(Symbol {
             name: en.name.clone(),
             kind: SymbolKind::Type(TypeInfo::Enum(EnumInfo {
-                type_params: en.type_params.clone(),
+                type_params: en.type_params.iter().map(|tp| tp.name.clone()).collect(),
                 variants: variants.clone(),
             })),
             span,

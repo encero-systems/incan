@@ -294,6 +294,11 @@ pub struct IrCodegen<'a> {
     needs_list_helpers: bool,
     /// Functions imported from external Rust crates (name -> true for external)
     external_rust_functions: HashSet<String>,
+    /// Declared Rust crate names from `incan.toml [dependencies]` (RFC 013 / RFC 023).
+    ///
+    /// When set, internal typechecking (used to obtain `TypeCheckInfo` for lowering) will validate `rust.module()`
+    /// crate segments against this set.
+    declared_crate_names: Option<HashSet<String>>,
 }
 
 impl<'a> IrCodegen<'a> {
@@ -313,7 +318,15 @@ impl<'a> IrCodegen<'a> {
             rust_crates: HashSet::new(),
             emit_zen_in_main: false,
             needs_list_helpers: false,
+            declared_crate_names: None,
         }
+    }
+
+    /// Set declared Rust crate names from `incan.toml [dependencies]`.
+    ///
+    /// This is used for validating `rust.module()` paths during the internal typechecking that precedes IR lowering.
+    pub fn set_declared_crate_names(&mut self, names: HashSet<String>) {
+        self.declared_crate_names = Some(names);
     }
 
     /// Get the Rust crates imported via `import rust::` or `from rust::`
@@ -584,6 +597,9 @@ impl<'a> IrCodegen<'a> {
         let type_info_opt = {
             use crate::frontend::typechecker::TypeChecker;
             let mut tc = TypeChecker::new();
+            if let Some(names) = self.declared_crate_names.clone() {
+                tc.set_declared_crate_names(names);
+            }
             match tc.check_with_imports(program, &deps) {
                 Ok(()) => tc.type_info().clone(),
                 Err(errs) => return Err(GenerationError::TypeCheck(errs)),
@@ -597,6 +613,9 @@ impl<'a> IrCodegen<'a> {
         if self.needs_serde {
             add_serde_to_newtypes(&mut ir_program, needs_serialize, needs_deserialize);
         }
+
+        // RFC 023: Infer trait bounds for generic functions.
+        super::trait_bound_inference::infer_trait_bounds(&mut ir_program);
 
         // Build unified function registry including imported module functions
         let mut unified_registry = ir_program.function_registry.clone();
@@ -662,7 +681,10 @@ impl<'a> IrCodegen<'a> {
     pub fn try_generate_module(&mut self, _module_name: &str, program: &Program) -> Result<String, GenerationError> {
         // Use the IR pipeline for module generation too
         let mut lowering = AstLowering::new();
-        let ir_program = lowering.lower_program(program)?;
+        let mut ir_program = lowering.lower_program(program)?;
+
+        // RFC 023: Infer trait bounds for generic functions.
+        super::trait_bound_inference::infer_trait_bounds(&mut ir_program);
 
         // Best-effort: treat registered dependency module names as internal roots.
         // (This is most relevant for the non-nested multi-file API.)
@@ -764,6 +786,9 @@ impl<'a> IrCodegen<'a> {
                 let module_type_info = {
                     use crate::frontend::typechecker::TypeChecker;
                     let mut tc = TypeChecker::new();
+                    if let Some(names) = self.declared_crate_names.clone() {
+                        tc.set_declared_crate_names(names);
+                    }
                     match tc.check_with_imports_allow_private(ast, &deps) {
                         Ok(()) => tc.type_info().clone(),
                         Err(errs) => return Err(GenerationError::TypeCheck(errs)),
@@ -775,6 +800,8 @@ impl<'a> IrCodegen<'a> {
                 if self.needs_serde {
                     add_serde_to_newtypes(&mut ir, needs_serialize, needs_deserialize);
                 }
+                // RFC 023: Infer trait bounds for generic functions.
+                super::trait_bound_inference::infer_trait_bounds(&mut ir);
                 let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
                 let module_code = if use_emit_service {
                     let mut svc = EmitService::new_from_program(&ir);
@@ -890,6 +917,9 @@ impl<'a> IrCodegen<'a> {
                     let module_type_info = {
                         use crate::frontend::typechecker::TypeChecker;
                         let mut tc = TypeChecker::new();
+                        if let Some(names) = self.declared_crate_names.clone() {
+                            tc.set_declared_crate_names(names);
+                        }
                         match tc.check_with_imports_allow_private(ast, &deps) {
                             Ok(()) => tc.type_info().clone(),
                             Err(errs) => return Err(GenerationError::TypeCheck(errs)),
@@ -901,6 +931,8 @@ impl<'a> IrCodegen<'a> {
                     if self.needs_serde {
                         add_serde_to_newtypes(&mut ir, needs_serialize, needs_deserialize);
                     }
+                    // RFC 023: Infer trait bounds for generic functions.
+                    super::trait_bound_inference::infer_trait_bounds(&mut ir);
                     let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
                     let module_code = if use_emit_service {
                         let mut svc = EmitService::new_from_program(&ir);

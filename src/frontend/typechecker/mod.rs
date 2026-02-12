@@ -58,7 +58,7 @@ mod tests;
 use std::collections::{HashMap, HashSet};
 
 use crate::frontend::ast::*;
-use crate::frontend::diagnostics::{CompileError, errors};
+use crate::frontend::diagnostics::{CompileError, ErrorKind, errors};
 use crate::frontend::module::{ExportedSymbol, exported_symbols};
 use crate::frontend::symbols::*;
 use helpers::{collection_type_id, stringlike_type_id};
@@ -146,6 +146,10 @@ pub struct TypeChecker {
     pub(crate) symbols: SymbolTable,
     /// Accumulated compile errors (non-fatal).
     pub(crate) errors: Vec<CompileError>,
+    /// Accumulated non-fatal diagnostics (warnings/lints).
+    ///
+    /// These are produced during typechecking but do not cause `check_*` to fail.
+    pub(crate) warnings: Vec<CompileError>,
     /// Track which bindings are mutable for mutation checks.
     pub(crate) mutable_bindings: HashSet<String>,
     /// Current function's error type for `?` operator compatibility.
@@ -185,6 +189,7 @@ impl TypeChecker {
         Self {
             symbols: SymbolTable::new(),
             errors: Vec::new(),
+            warnings: Vec::new(),
             mutable_bindings: HashSet::new(),
             current_return_error_type: None,
             current_trait_requires: None,
@@ -211,6 +216,16 @@ impl TypeChecker {
 
     pub fn set_current_module_path(&mut self, path: Option<Vec<String>>) {
         self.current_module_path = path;
+    }
+
+    /// Return accumulated non-fatal diagnostics (warnings/lints) from the last check.
+    pub fn warnings(&self) -> &[CompileError] {
+        &self.warnings
+    }
+
+    /// Take accumulated non-fatal diagnostics (warnings/lints) from the last check.
+    pub fn take_warnings(&mut self) -> Vec<CompileError> {
+        std::mem::take(&mut self.warnings)
     }
 
     /// Return accumulated type information for reuse by later stages (lowering/codegen).
@@ -390,6 +405,8 @@ impl TypeChecker {
         self.const_eval_state.clear();
         self.const_eval_cache.clear();
         self.type_info = TypeCheckInfo::default();
+        self.warnings.clear();
+        self.errors.clear();
 
         // First pass: collect type declarations
         for decl in &program.declarations {
@@ -411,11 +428,14 @@ impl TypeChecker {
         // ---- RFC 023: validate rust.module() and @rust.extern rules ----
         self.validate_rust_module_and_extern(program);
 
-        if self.errors.is_empty() {
-            Ok(())
-        } else {
-            Err(std::mem::take(&mut self.errors))
-        }
+        // Split fatal errors from non-fatal diagnostics.
+        let all = std::mem::take(&mut self.errors);
+        let (fatal, non_fatal): (Vec<_>, Vec<_>) = all
+            .into_iter()
+            .partition(|e| !matches!(e.kind, ErrorKind::Warning | ErrorKind::Lint));
+        self.warnings.extend(non_fatal);
+
+        if fatal.is_empty() { Ok(()) } else { Err(fatal) }
     }
 
     /// Import symbols from another module's AST into the symbol table.

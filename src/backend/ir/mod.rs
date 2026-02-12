@@ -32,6 +32,7 @@ pub mod facade;
 pub mod lower;
 pub mod scanners;
 pub mod stmt;
+pub mod trait_bound_inference;
 pub mod types;
 
 pub use codegen::{GenerationError, IrCodegen};

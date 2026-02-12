@@ -14,6 +14,7 @@ use crate::frontend::ast::{Declaration, Program, Span, Type};
 use crate::frontend::module::resolve_import_path;
 use crate::frontend::{lexer, parser, typechecker};
 use crate::lsp::diagnostics::{compile_error_to_diagnostic, position_to_offset, span_to_range};
+use crate::manifest::ProjectManifest;
 use incan_core::lang::decorators;
 use incan_core::lang::keywords;
 use incan_core::lang::stdlib;
@@ -83,6 +84,14 @@ impl IncanLanguageServer {
 
         // Step 3: Type check (with multi-file import resolution)
         let mut checker = typechecker::TypeChecker::new();
+        // RFC 023: if a project manifest exists, use it to validate `rust.module()` crate segments.
+        if let Ok(entry_path) = uri.to_file_path()
+            && let Some(start_dir) = entry_path.parent()
+            && let Ok(manifest) = ProjectManifest::discover(start_dir)
+            && let Some(m) = manifest
+        {
+            checker.set_declared_crate_names(m.declared_crate_names());
+        }
         let (deps, mut dep_summary_diags) = self.collect_dependency_modules(uri, &ast, source, version).await;
         let dep_refs: Vec<(&str, &Program)> = deps.iter().map(|(name, program)| (name.as_str(), program)).collect();
 
@@ -90,6 +99,10 @@ impl IncanLanguageServer {
             for error in &errors {
                 diagnostics.push(compile_error_to_diagnostic(error, source, uri));
             }
+        }
+        // Always include non-fatal diagnostics (warnings/lints) in LSP output.
+        for warn in checker.warnings() {
+            diagnostics.push(compile_error_to_diagnostic(warn, source, uri));
         }
         diagnostics.append(&mut dep_summary_diags);
 

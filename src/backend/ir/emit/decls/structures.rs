@@ -46,6 +46,10 @@ impl<'a> IrEmitter<'a> {
         let is_tuple_struct =
             !s.fields.is_empty() && s.fields.iter().all(|f| f.name.chars().all(|c| c.is_ascii_digit()));
 
+        // RFC 023: emit generic type parameters with trait bounds (declaration) and bare names (type positions).
+        let generics = self.emit_type_params(&s.type_params);
+        let generics_bare = self.emit_type_params_bare(&s.type_params);
+
         if is_tuple_struct {
             let tuple_fields: Vec<TokenStream> = s
                 .fields
@@ -58,7 +62,7 @@ impl<'a> IrEmitter<'a> {
                 .collect();
             Ok(quote! {
                 #derive_attr
-                #vis struct #name(#(#tuple_fields),*);
+                #vis struct #name #generics (#(#tuple_fields),*);
             })
         } else {
             let fields: Vec<TokenStream> = s
@@ -101,7 +105,7 @@ impl<'a> IrEmitter<'a> {
 
                 quote! {
                     #[allow(non_snake_case, clippy::too_many_arguments)]
-                    #vis fn #name(#(#param_tokens),*) -> #name {
+                    #vis fn #name #generics (#(#param_tokens),*) -> #name #generics_bare {
                         #name {
                             #(#field_assigns),*
                         }
@@ -113,7 +117,7 @@ impl<'a> IrEmitter<'a> {
 
             Ok(quote! {
                 #derive_attr
-                #vis struct #name {
+                #vis struct #name #generics {
                     #(#fields),*
                 }
 
@@ -195,13 +199,17 @@ impl<'a> IrEmitter<'a> {
             })
             .collect();
 
+        // RFC 023: emit generic type parameters with trait bounds (declaration) and bare names (type positions).
+        let generics = self.emit_type_params(&e.type_params);
+        let generics_bare = self.emit_type_params_bare(&e.type_params);
+
         Ok(quote! {
             #derive_attr
-            #vis enum #name {
+            #vis enum #name #generics {
                 #(#variants),*
             }
 
-            impl #name {
+            impl #generics #name #generics_bare {
                 pub fn message(&self) -> String {
                     match self {
                         #(#variant_match_arms),*

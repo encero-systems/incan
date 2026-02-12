@@ -17,6 +17,15 @@ pub fn duplicate_rust_module(span: Span) -> CompileError {
     .with_hint("Remove the duplicate directive; each file can declare at most one Rust backing module")
 }
 
+/// `rust.module()` directive appears after other declarations (must be at top of file).
+pub fn rust_module_not_at_top(span: Span) -> CompileError {
+    CompileError::new(
+        "`rust.module()` directive must appear at the top of the file (before any declarations)".to_string(),
+        span,
+    )
+    .with_hint("Move `rust.module(\"...\")` to the top of the file (module docstring is allowed before it)")
+}
+
 /// `rust.module()` path contains invalid characters (not a well-formed Rust module path).
 pub fn invalid_rust_module_path(path: &str, span: Span) -> CompileError {
     CompileError::new(

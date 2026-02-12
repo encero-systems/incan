@@ -89,6 +89,87 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    // ========================================================================
+    // RFC 023: Type parameter emission with trait bounds
+    // ========================================================================
+
+    /// Emit generic type parameter list with trait bounds: `<T: Bound1 + Bound2, E>`.
+    ///
+    /// Returns empty tokens if there are no type parameters.
+    pub(super) fn emit_type_params(&self, type_params: &[super::super::decl::IrTypeParam]) -> TokenStream {
+        if type_params.is_empty() {
+            return quote! {};
+        }
+
+        let params: Vec<TokenStream> = type_params
+            .iter()
+            .map(|tp| {
+                let name = format_ident!("{}", &tp.name);
+                if tp.bounds.is_empty() {
+                    quote! { #name }
+                } else {
+                    let bounds: Vec<TokenStream> = tp.bounds.iter().map(|b| self.emit_trait_bound(b)).collect();
+                    quote! { #name: #(#bounds)+* }
+                }
+            })
+            .collect();
+
+        quote! { < #(#params),* > }
+    }
+
+    /// Emit bare type parameter names without bounds: `<T, E>`.
+    ///
+    /// Used in type-application positions (return types, `impl Foo<T>`) where Rust does not allow trait bounds — only
+    /// declaration positions (`fn foo<T: Clone>`, `impl<T: Clone>`) allow them.
+    ///
+    /// Returns empty tokens if there are no type parameters.
+    pub(super) fn emit_type_params_bare(&self, type_params: &[super::super::decl::IrTypeParam]) -> TokenStream {
+        if type_params.is_empty() {
+            return quote! {};
+        }
+
+        let names: Vec<TokenStream> = type_params
+            .iter()
+            .map(|tp| {
+                let name = format_ident!("{}", &tp.name);
+                quote! { #name }
+            })
+            .collect();
+
+        quote! { < #(#names),* > }
+    }
+
+    /// Emit a single trait bound as Rust tokens.
+    ///
+    /// Handles simple bounds like `PartialEq` and bounds with associated types like `std::ops::Add<Output = T>`.
+    fn emit_trait_bound(&self, bound: &super::super::decl::IrTraitBound) -> TokenStream {
+        // Parse the trait path into segments.
+        let segments: Vec<_> = bound.trait_path.split("::").collect();
+        let path_tokens: Vec<TokenStream> = segments
+            .iter()
+            .map(|seg| {
+                let ident = format_ident!("{}", Self::escape_keyword(seg));
+                quote! { #ident }
+            })
+            .collect();
+        let path = super::decls::join_path_tokens(&path_tokens);
+
+        if bound.assoc_types.is_empty() {
+            path
+        } else {
+            let assocs: Vec<TokenStream> = bound
+                .assoc_types
+                .iter()
+                .map(|(name, ty)| {
+                    let name_ident = format_ident!("{}", name);
+                    let ty_tokens = self.emit_type(ty);
+                    quote! { #name_ident = #ty_tokens }
+                })
+                .collect();
+            quote! { #path < #(#assocs),* > }
+        }
+    }
+
     /// Emit visibility modifier.
     pub(super) fn emit_visibility(&self, vis: &Visibility) -> TokenStream {
         match vis {

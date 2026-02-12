@@ -1,0 +1,11 @@
+# RFC 023: Trait bound inference from usage
+# Uses simple comparison operations on generic types to test inference.
+
+def are_equal[T](left: T, right: T) -> bool:
+    return left == right
+
+def is_greater[T](a: T, b: T) -> bool:
+    return a > b
+
+def main() -> None:
+    pass

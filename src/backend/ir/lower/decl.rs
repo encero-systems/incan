@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 
 use super::super::decl::{
-    EnumVariant, FunctionParam, IrDecl, IrDeclKind, IrEnum, IrFunction, IrImpl, IrStruct, IrTrait, StructField,
-    VariantFields, Visibility,
+    EnumVariant, FunctionParam, IrDecl, IrDeclKind, IrEnum, IrFunction, IrImpl, IrStruct, IrTrait, IrTraitBound,
+    IrTypeParam, StructField, VariantFields, Visibility,
 };
 use super::super::types::IrType;
 use super::super::{IrSpan, Mutability};
@@ -17,6 +17,7 @@ use crate::frontend::ast::{self, Spanned};
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::keywords::{self, KeywordId};
+use incan_core::lang::trait_bounds;
 
 impl AstLowering {
     /// Map frontend visibility (`pub` / private) to IR visibility for Rust emission.
@@ -120,11 +121,21 @@ impl AstLowering {
     pub(super) fn lower_function(&mut self, f: &ast::FunctionDecl) -> Result<IrFunction, LoweringError> {
         self.scopes.push(HashMap::new());
 
+        let type_param_names: std::collections::HashSet<&str> =
+            f.type_params.iter().map(|tp| tp.name.as_str()).collect();
+
         let params: Vec<FunctionParam> = f
             .params
             .iter()
             .map(|p| {
-                let base_ty = self.lower_type(&p.node.ty.node);
+                // Preserve generic type variables (`T`) as `IrType::Generic("T")` so trait-bound inference can
+                // reason about operations on them without relying on typechecker span annotations.
+                let base_ty = match &p.node.ty.node {
+                    ast::Type::Simple(name) if type_param_names.contains(name.as_str()) => {
+                        IrType::Generic(name.clone())
+                    }
+                    _ => self.lower_type(&p.node.ty.node),
+                };
                 // For mutable parameters, wrap in RefMut to track that it's a &mut reference
                 let ty = if p.node.is_mut {
                     IrType::RefMut(Box::new(base_ty.clone()))
@@ -151,7 +162,10 @@ impl AstLowering {
             })
             .collect();
 
-        let return_type = self.lower_type(&f.return_type.node);
+        let return_type = match &f.return_type.node {
+            ast::Type::Simple(name) if type_param_names.contains(name.as_str()) => IrType::Generic(name.clone()),
+            _ => self.lower_type(&f.return_type.node),
+        };
         let body = self.lower_statements(&f.body)?;
         self.scopes.pop();
 
@@ -165,7 +179,7 @@ impl AstLowering {
             body,
             is_async: f.is_async,
             visibility: Self::map_visibility(f.visibility),
-            type_params: f.type_params.clone(),
+            type_params: Self::lower_type_params(&f.type_params),
             is_extern,
         })
     }
@@ -179,6 +193,39 @@ impl AstLowering {
         decorators_list
             .iter()
             .any(|d| decorators::from_segments(&d.node.path.segments) == Some(DecoratorId::RustExtern))
+    }
+
+    // ========================================================================
+    // RFC 023: Type parameter lowering with trait bounds
+    // ========================================================================
+
+    /// Lower AST type parameters to IR type parameters, mapping explicit `with` bounds to Rust trait paths.
+    ///
+    /// RFC 023: Incan trait names (e.g., `Eq`) are mapped to their Rust equivalents (e.g., `PartialEq`).
+    /// Inferred bounds from body scanning are added later during emission.
+    fn lower_type_params(ast_params: &[ast::TypeParam]) -> Vec<IrTypeParam> {
+        ast_params.iter().map(Self::lower_type_param).collect()
+    }
+
+    /// Lower a single AST type parameter to its IR representation.
+    fn lower_type_param(tp: &ast::TypeParam) -> IrTypeParam {
+        let bounds = tp.bounds.iter().map(Self::lower_trait_bound).collect();
+        IrTypeParam {
+            name: tp.name.clone(),
+            bounds,
+        }
+    }
+
+    /// Map an Incan trait bound to the corresponding Rust trait bound.
+    ///
+    /// Uses the `incan_core::lang::trait_bounds` registry to resolve known Incan names to their Rust trait paths (e.g.,
+    /// Incan `Eq` → Rust `PartialEq`). Unknown names are passed through as-is, allowing user-defined trait bounds.
+    fn lower_trait_bound(bound: &ast::TraitBound) -> IrTraitBound {
+        let trait_path = trait_bounds::incan_to_rust(&bound.name)
+            .map(str::to_string)
+            .unwrap_or_else(|| bound.name.clone());
+        // TODO: handle type_args for bounds like `From[U]` once generic bound lowering is needed.
+        IrTraitBound::simple(trait_path)
     }
 
     /// Extract derives from decorators.
@@ -279,7 +326,7 @@ impl AstLowering {
             fields,
             derives,
             visibility: Self::map_visibility(m.visibility),
-            type_params: m.type_params.clone(),
+            type_params: Self::lower_type_params(&m.type_params),
         })
     }
 
@@ -335,7 +382,7 @@ impl AstLowering {
             fields,
             derives,
             visibility: Self::map_visibility(c.visibility),
-            type_params: c.type_params.clone(),
+            type_params: Self::lower_type_params(&c.type_params),
         })
     }
 
@@ -558,6 +605,9 @@ impl AstLowering {
             vec![]
         };
 
+        // RFC 023: detect @rust.extern decorator to mark this method as externally-backed.
+        let is_extern = Self::has_rust_extern_decorator(&m.decorators);
+
         self.scopes.pop();
 
         Ok(IrFunction {
@@ -568,7 +618,7 @@ impl AstLowering {
             is_async: m.is_async,
             visibility: Visibility::Private,
             type_params: vec![],
-            is_extern: false,
+            is_extern,
         })
     }
 
@@ -719,9 +769,9 @@ impl AstLowering {
 
                 let return_type = self.lower_type(&m.node.return_type.node);
                 // IMPORTANT: We intentionally do NOT emit trait method bodies into the Rust trait itself.
-                // Default methods are expanded into each adopting `impl Trait for Type` block during lowering,
-                // which allows bodies to assume adopter fields (RFC 000) without generating invalid Rust
-                // trait default methods like `self.name`.
+                // Default methods are expanded into each adopting `impl Trait for Type` block during lowering, which
+                // allows bodies to assume adopter fields (RFC 000) without generating invalid Rust trait default
+                // methods like `self.name`.
                 let body = vec![];
 
                 self.scopes.pop();
@@ -786,7 +836,7 @@ impl AstLowering {
             variants,
             derives,
             visibility: Self::map_visibility(e.visibility),
-            type_params: e.type_params.clone(),
+            type_params: Self::lower_type_params(&e.type_params),
         })
     }
 

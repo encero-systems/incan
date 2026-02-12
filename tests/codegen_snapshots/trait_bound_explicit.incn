@@ -1,0 +1,10 @@
+# RFC 023: Explicit `with` bounds on type parameters
+
+def identity[T with Clone](value: T) -> T:
+    return value
+
+def format_pair[T with (Eq, Debug)](a: T, b: T) -> None:
+    pass
+
+def main() -> None:
+    pass

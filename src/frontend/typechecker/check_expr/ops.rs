@@ -57,6 +57,23 @@ impl TypeChecker {
                     }
                 }
 
+                // RFC 023: allow arithmetic on generic type variables.
+                //
+                // The Rust backend will infer and emit the appropriate trait bounds (e.g. `T: Add<Output = T>`).
+                // Here we keep the typechecker permissive so generic stdlib helpers can typecheck.
+                match (&left_ty, &right_ty) {
+                    (ResolvedType::TypeVar(_), ResolvedType::TypeVar(_)) if left_ty == right_ty => {
+                        return left_ty.clone();
+                    }
+                    (ResolvedType::TypeVar(_), ResolvedType::Unknown) => {
+                        return left_ty.clone();
+                    }
+                    (ResolvedType::Unknown, ResolvedType::TypeVar(_)) => {
+                        return right_ty.clone();
+                    }
+                    _ => {}
+                }
+
                 // Check both operands are numeric
                 let lhs_num = numeric_ty_from_resolved(&left_ty);
                 let rhs_num = numeric_ty_from_resolved(&right_ty);

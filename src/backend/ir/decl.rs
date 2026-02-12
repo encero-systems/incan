@@ -124,8 +124,8 @@ pub struct IrFunction {
     pub body: Vec<IrStmt>,
     pub is_async: bool,
     pub visibility: Visibility,
-    /// Type parameters for generics
-    pub type_params: Vec<String>,
+    /// Type parameters for generics, with optional trait bounds (RFC 023).
+    pub type_params: Vec<IrTypeParam>,
     /// RFC 023: Whether this function is `@rust.extern` — its body is provided by a Rust backing module.
     ///
     /// When `true`, emission should generate a delegation call to `<rust_module_path>::<name>()` instead of compiling
@@ -149,8 +149,8 @@ pub struct IrStruct {
     pub fields: Vec<StructField>,
     pub derives: Vec<String>,
     pub visibility: Visibility,
-    /// Type parameters for generics
-    pub type_params: Vec<String>,
+    /// Type parameters for generics, with optional trait bounds (RFC 023).
+    pub type_params: Vec<IrTypeParam>,
 }
 
 /// Struct field
@@ -172,8 +172,8 @@ pub struct IrEnum {
     pub variants: Vec<EnumVariant>,
     pub derives: Vec<String>,
     pub visibility: Visibility,
-    /// Type parameters for generics
-    pub type_params: Vec<String>,
+    /// Type parameters for generics, with optional trait bounds (RFC 023).
+    pub type_params: Vec<IrTypeParam>,
 }
 
 /// Enum variant
@@ -189,6 +189,61 @@ pub enum VariantFields {
     Unit,
     Tuple(Vec<IrType>),
     Struct(Vec<StructField>),
+}
+
+// ============================================================================
+// Type Parameters and Trait Bounds (RFC 023)
+// ============================================================================
+
+/// A Rust trait bound for a generic type parameter.
+///
+/// RFC 023: Represents a single trait bound in the emitted Rust `where` clause or inline bound syntax (e.g.,
+/// `PartialEq`, `std::fmt::Display`, `std::ops::Add<Output = T>`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IrTraitBound {
+    /// Rust trait path (e.g., `"PartialEq"`, `"std::fmt::Display"`, `"std::ops::Add"`).
+    pub trait_path: String,
+    /// Optional associated type constraints (e.g., `Output = T` for `Add<Output = T>`).
+    pub assoc_types: Vec<(String, IrType)>,
+}
+
+impl IrTraitBound {
+    /// Create a simple trait bound with no associated types.
+    pub fn simple(trait_path: impl Into<String>) -> Self {
+        Self {
+            trait_path: trait_path.into(),
+            assoc_types: Vec::new(),
+        }
+    }
+
+    /// Create a trait bound with an `Output = T` associated type constraint.
+    pub fn with_output(trait_path: impl Into<String>, output_type: IrType) -> Self {
+        Self {
+            trait_path: trait_path.into(),
+            assoc_types: vec![("Output".to_string(), output_type)],
+        }
+    }
+}
+
+/// A type parameter with its trait bounds in IR.
+///
+/// RFC 023: Combines explicit `with` bounds from the source with bounds inferred from usage in the function body.
+#[derive(Debug, Clone)]
+pub struct IrTypeParam {
+    /// The type parameter name (e.g., `"T"`, `"E"`).
+    pub name: String,
+    /// Combined trait bounds (explicit + inferred), deduplicated.
+    pub bounds: Vec<IrTraitBound>,
+}
+
+impl IrTypeParam {
+    /// Create a type parameter with no bounds.
+    pub fn bare(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            bounds: Vec::new(),
+        }
+    }
 }
 
 /// Visibility modifier
