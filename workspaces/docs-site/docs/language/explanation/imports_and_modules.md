@@ -15,6 +15,8 @@ For details and tasks, use the split pages:
 - Common types and functions are available without imports via the prelude (see the reference page for the full list).
 - The **standard library** lives under the `std` namespace (e.g. `from std.web import route`). The compiler activates
   features automatically based on which `std.*` modules you import.
+- Some language keywords are **import-activated** (soft keywords), for example `async` / `await` after importing
+  `std.async` (details in the reference page).
 
 <!-- TODO: Add a link to the standard library sections once we create them -->
 

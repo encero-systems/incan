@@ -53,6 +53,7 @@ def foo() -> int:
 
 #[test]
 fn test_reserved_root_namespace_std() {
+    // `std` is a reserved root namespace, so `def std() -> int: return 1` is rejected.
     let source = r#"
 def std() -> int:
   return 1
@@ -73,7 +74,7 @@ import std.web as rust
 
 #[test]
 fn test_rust_extern_accepted_in_user_code() {
-    // @rust.extern (formerly @std.builtin) is allowed everywhere per RFC 023.
+    // @rust.extern is allowed 'everywhere' per RFC 023.
     // A rust.module() directive is required when @rust.extern items are present.
     let source = r#"
 rust.module("my_crate::my_module")
@@ -87,6 +88,7 @@ def foo() -> None:
 
 #[test]
 fn test_std_web_type_requires_import() {
+    // async needs to be imported to use the Query type and asyc keyword.
     let source = r#"
 async def search(params: Query[int]) -> None:
   pass
@@ -97,8 +99,10 @@ async def search(params: Query[int]) -> None:
 
 #[test]
 fn test_std_web_type_import_ok() {
+    // async needs to be imported to use the Query type and asyc keyword.
     let source = r#"
 from std.web import Query
+import std.async
 
 async def search(params: Query[int]) -> None:
   pass
@@ -178,6 +182,7 @@ fn test_decorator_resolution_canonical_path() {
     // Canonical @std.web.route with fully qualified path
     let source = r#"
 from std.web import Response
+import std.async
 
 @std.web.route("/")
 async def index() -> Response:
@@ -192,6 +197,7 @@ fn test_decorator_resolution_module_alias() {
     let source = r#"
 import std.web as web
 from std.web import Response
+import std.async
 
 @web.route("/")
 async def index() -> Response:
@@ -205,6 +211,7 @@ fn test_decorator_resolution_from_import() {
     // Bare @route after `from std.web import route`
     let source = r#"
 from std.web import route, Response
+import std.async
 
 @route("/")
 async def index() -> Response:
@@ -218,6 +225,7 @@ fn test_decorator_resolution_colcolon_path() {
     // `::` separator variant: @std::web::route
     let source = r#"
 from std.web import Response
+import std.async
 
 @std::web::route("/")
 async def index() -> Response:
@@ -487,7 +495,9 @@ model Account:
   a [alias="wire"]: str
   b [alias="wire"]: int
 "#;
-    let err = check_str(source).expect_err("Expected duplicate alias error");
+    let Err(err) = check_str(source) else {
+        panic!("Expected duplicate alias error");
+    };
     assert!(err.iter().any(|e| e.message.contains("Duplicate alias")));
 }
 
@@ -498,7 +508,9 @@ model Account:
   type_: str
   kind [alias="type_"]: str
 "#;
-    let err = check_str(source).expect_err("Expected alias collision error");
+    let Err(err) = check_str(source) else {
+        panic!("Expected alias collision error");
+    };
     assert!(
         err.iter()
             .any(|e| e.message.contains("collides with a canonical field name"))
@@ -514,7 +526,9 @@ model Account:
   def describe(self) -> str:
     return self.type_
 "#;
-    let err = check_str(source).expect_err("Expected alias/method collision error");
+    let Err(err) = check_str(source) else {
+        panic!("Expected alias/method collision error");
+    };
     assert!(err.iter().any(|e| e.message.contains("collides with a method name")));
 }
 
@@ -524,7 +538,9 @@ fn test_empty_alias_error() {
 model Account:
   type_ [alias=""]: str
 "#;
-    let err = check_str(source).expect_err("Expected empty alias error");
+    let Err(err) = check_str(source) else {
+        panic!("Expected empty alias error");
+    };
     assert!(err.iter().any(|e| e.message.contains("non-empty")));
 }
 
@@ -534,7 +550,9 @@ fn test_whitespace_alias_error() {
 model Account:
   type_ [alias="   "]: str
 "#;
-    let err = check_str(source).expect_err("Expected whitespace alias error");
+    let Err(err) = check_str(source) else {
+        panic!("Expected whitespace alias error");
+    };
     assert!(err.iter().any(|e| e.message.contains("non-empty")));
 }
 
@@ -547,7 +565,9 @@ model Account:
 def f() -> Account:
   return Account(type="x", type_="y")
 "#;
-    let err = check_str(source).expect_err("Expected duplicate field error");
+    let Err(err) = check_str(source) else {
+        panic!("Expected duplicate field error");
+    };
     assert!(err.iter().any(|e| e.message.contains("Duplicate constructor argument")));
 }
 
@@ -570,7 +590,9 @@ fn test_alias_not_supported_on_class() {
 class Account:
   type_ [alias="type"]: str
 "#;
-    let err = check_str(source).expect_err("Expected class alias error");
+    let Err(err) = check_str(source) else {
+        panic!("Expected class alias error");
+    };
     assert!(err.iter().any(|e| e.message.contains("not supported on class")));
 }
 
@@ -583,7 +605,9 @@ model Weird:
 def f(w: Weird) -> int:
   return w.1
 "#;
-    let err = check_str(source).expect_err("Expected error for numeric access");
+    let Err(err) = check_str(source) else {
+        panic!("Expected error for numeric access");
+    };
     assert!(err.iter().any(|e| e.message.contains("no field '1'")));
 }
 
@@ -593,7 +617,9 @@ fn test_alias_collides_with_builtin_error() {
 model Account:
   fields_ [alias="__fields__"]: str
 "#;
-    let err = check_str(source).expect_err("Expected builtin collision error");
+    let Err(err) = check_str(source) else {
+        panic!("Expected builtin collision error");
+    };
     assert!(err.iter().any(|e| e.message.contains("builtin member")));
 }
 
@@ -607,7 +633,9 @@ def f(a: Account) -> str:
   match a:
     Account(type="x", type_="y") => return "x"
 "#;
-    let err = check_str(source).expect_err("Expected duplicate pattern field error");
+    let Err(err) = check_str(source) else {
+        panic!("Expected duplicate pattern field error");
+    };
     assert!(err.iter().any(|e| e.message.contains("Duplicate pattern field")));
 }
 
@@ -819,6 +847,8 @@ def main() -> None:
     assert!(check_str(source).is_ok());
 }
 
+// FIXME(#121): `List[Mutex].append(value)` should become valid once implicit ownership
+// inference can choose move/borrow over Clone-by-default for external Rust types.
 #[test]
 fn test_list_append_requires_clone_for_external_type() {
     let source = r#"
@@ -827,7 +857,9 @@ from rust::std::sync import Mutex
 def add(mut xs: List[Mutex], value: Mutex) -> None:
   xs.append(value)
 "#;
-    let errs = check_str(source).expect_err("expected type errors");
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors");
+    };
     assert!(
         errs.iter()
             .any(|e| e.message.contains("List.append requires element type 'Mutex'"))
@@ -1384,9 +1416,9 @@ def foo(t: tuple[int, int]) -> int:
   idx: int = 0
   return t[idx]
 "#;
-    let result = check_str(source);
-    assert!(result.is_err());
-    let errs = result.err().unwrap();
+    let Err(errs) = check_str(source) else {
+        panic!("expected error");
+    };
     assert!(
         errs.iter()
             .any(|e| { e.message.contains("Tuple indices must be an integer literal") })
@@ -1399,9 +1431,9 @@ fn test_unknown_method_errors() {
 def foo() -> int:
   return "hi".nope()
 "#;
-    let result = check_str(source);
-    assert!(result.is_err());
-    let errs = result.err().unwrap();
+    let Err(errs) = check_str(source) else {
+        panic!("expected error");
+    };
     assert!(errs.iter().any(|e| e.message.contains("has no method")));
 }
 
@@ -1431,9 +1463,9 @@ fn test_const_cycle_detected() {
 const A: int = B
 const B: int = A
 "#;
-    let result = check_str(source);
-    assert!(result.is_err());
-    let errs = result.err().unwrap();
+    let Err(errs) = check_str(source) else {
+        panic!("expected error");
+    };
     assert!(errs.iter().any(|e| e.message.contains("Const dependency cycle")));
 }
 
@@ -1477,6 +1509,8 @@ def foo(x: int) -> str:
 #[test]
 fn test_async_function() {
     let source = r#"
+import std.async
+
 async def foo() -> int:
   return 42
 "#;
@@ -1603,9 +1637,9 @@ def helper() -> int:
 
 const BAD: int = helper()
 "#;
-    let result = check_str(source);
-    assert!(result.is_err());
-    let errs = result.err().unwrap();
+    let Err(errs) = check_str(source) else {
+        panic!("expected error");
+    };
     assert!(
         errs.iter()
             .any(|e| e.message.contains("not allowed") || e.message.contains("const initializers"))
@@ -1617,9 +1651,9 @@ fn test_const_empty_list_requires_annotation() {
     let source = r#"
 const EMPTY = []
 "#;
-    let result = check_str(source);
-    assert!(result.is_err());
-    let errs = result.err().unwrap();
+    let Err(errs) = check_str(source) else {
+        panic!("expected error");
+    };
     assert!(
         errs.iter()
             .any(|e| { e.message.contains("Cannot infer type") || e.message.contains("empty const list") })
@@ -1726,9 +1760,9 @@ const NUMS: FrozenList[int] = [1, 2]
 def foo() -> int:
   return NUMS.nonexistent_method()
 "#;
-    let result = check_str(source);
-    assert!(result.is_err());
-    let errs = result.err().unwrap();
+    let Err(errs) = check_str(source) else {
+        panic!("expected error");
+    };
     assert!(errs.iter().any(|e| e.message.contains("has no method")));
 }
 
@@ -1781,7 +1815,9 @@ def bad_json() -> None:
 def bad_query() -> None:
   let b = Query(value=SearchParams(q="x"), other=SearchParams(q="y"))
 "#;
-    let errs = check_str(source).expect_err("expected type errors");
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors");
+    };
     assert!(
         errs.iter()
             .any(|e| e.message.contains("Json() expects exactly one argument"))
@@ -1815,7 +1851,9 @@ fn test_rust_extern_missing_rust_module() {
 def fail(msg: str) -> None:
     ...
 "#;
-    let errs = check_str(source).expect_err("should fail: missing rust.module()");
+    let Err(errs) = check_str(source) else {
+        panic!("should fail: missing rust.module()");
+    };
     assert!(
         errs.iter().any(|e| e.message.contains("no Rust backing path")),
         "Expected missing-rust-module error; got: {:?}",
@@ -1832,7 +1870,9 @@ rust.module("incan_stdlib::testing")
 def fail(msg: str) -> None:
     return
 "#;
-    let errs = check_str(source).expect_err("should fail: non-trivial body");
+    let Err(errs) = check_str(source) else {
+        panic!("should fail: non-trivial body");
+    };
     assert!(
         errs.iter().any(|e| e.message.contains("must have a `...` body")),
         "Expected non-trivial-body error; got: {:?}",
@@ -1850,7 +1890,9 @@ class App:
     def run(self) -> None:
         ...
 "#;
-    let errs = check_str(source).expect_err("should fail: instance method");
+    let Err(errs) = check_str(source) else {
+        panic!("should fail: instance method");
+    };
     assert!(
         errs.iter()
             .any(|e| e.message.contains("not allowed on instance method")),
@@ -1867,8 +1909,12 @@ rust.module("incan_stdlib::utils")
 def pure_incan() -> int:
     return 42
 "#;
-    let tokens = lexer::lex(source).expect("lex failed");
-    let ast = parser::parse(&tokens).expect("parse failed");
+    let Ok(tokens) = lexer::lex(source) else {
+        panic!("lex failed");
+    };
+    let Ok(ast) = parser::parse(&tokens) else {
+        panic!("parse failed");
+    };
     let mut tc = TypeChecker::new();
     let result = tc.check_program(&ast);
     assert!(result.is_ok(), "warnings should not fail typechecking");
@@ -1882,7 +1928,9 @@ def pure_incan() -> int:
 #[test]
 fn test_invalid_rust_module_path_syntax() {
     let source = "rust.module(\"my crate; bad\")\n\n@rust.extern\ndef foo() -> None:\n    ...\n";
-    let errs = check_str(source).expect_err("should fail: invalid path");
+    let Err(errs) = check_str(source) else {
+        panic!("should fail: invalid path");
+    };
     assert!(
         errs.iter().any(|e| e.message.contains("invalid characters")),
         "Expected invalid-path error; got: {:?}",
@@ -1905,7 +1953,9 @@ def foo() -> None:
     let ast = parser::parse(&tokens)?;
     let mut tc = TypeChecker::new();
     tc.set_declared_crate_names(std::collections::HashSet::new());
-    let errs = tc.check_program(&ast).expect_err("should fail: unresolved crate");
+    let Err(errs) = tc.check_program(&ast) else {
+        panic!("should fail: unresolved crate");
+    };
     assert!(
         errs.iter().any(|e| e.message.contains("unknown crate")),
         "Expected unresolved-crate error; got: {:?}",
@@ -1943,11 +1993,97 @@ newtype Wrapper = int:
     def doubled(self) -> int:
         ...
 "#;
-    let errs = check_str(source).expect_err("should fail: instance method on newtype");
+    let Err(errs) = check_str(source) else {
+        panic!("should fail: instance method on newtype");
+    };
     assert!(
         errs.iter()
             .any(|e| e.message.contains("not allowed on instance method")),
         "Expected instance-method error for newtype; got: {:?}",
         errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+// ========================================================================
+// Unknown stdlib module diagnostic
+// ========================================================================
+
+#[test]
+fn test_unknown_stdlib_module_from_import() {
+    // `from std.f64.consts import PI` should be rejected — user meant `from rust::std::f64::consts import PI`.
+    let source = "from std.f64.consts import PI\n";
+    let Err(errs) = check_str(source) else {
+        panic!("should fail: std.f64.consts is not a known Incan stdlib module");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("Unknown stdlib module")),
+        "Expected unknown stdlib module error; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_known_stdlib_module_is_accepted() {
+    // `from std.testing import fail` should not trigger unknown-module diagnostic.
+    let source = "from std.testing import fail\ndef main() -> None:\n    fail(\"oops\")\n";
+    // This may error for other reasons (e.g. fail not found if stdlib stubs aren't available),
+    // but it must NOT error with "Unknown stdlib module".
+    let result = check_str(source);
+    if let Err(errs) = &result {
+        assert!(
+            !errs.iter().any(|e| e.message.contains("Unknown stdlib module")),
+            "std.testing should be recognized; got: {:?}",
+            errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn test_known_stdlib_web_submodule_is_accepted() {
+    let source = "from std.web.app import App\n";
+    let result = check_str(source);
+    if let Err(errs) = &result {
+        assert!(
+            !errs.iter().any(|e| e.message.contains("Unknown stdlib module")),
+            "std.web.app should be recognized; got: {:?}",
+            errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn test_known_stdlib_async_prelude_is_accepted() {
+    let source = "from std.async.prelude import sleep\n";
+    let result = check_str(source);
+    if let Err(errs) = &result {
+        assert!(
+            !errs.iter().any(|e| e.message.contains("Unknown stdlib module")),
+            "std.async.prelude should be recognized; got: {:?}",
+            errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn test_unknown_stdlib_module_hint_includes_registry_entries() {
+    let source = "from std.f64.consts import PI\n";
+    let Err(errs) = check_str(source) else {
+        panic!("should fail: std.f64.consts is not a known Incan stdlib module");
+    };
+    let Some(err) = errs.iter().find(|e| e.message.contains("Unknown stdlib module")) else {
+        panic!(
+            "Expected unknown stdlib module error; got: {:?}",
+            errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+    };
+    assert!(
+        err.hints.iter().any(|h| h.contains("std.derives")),
+        "Expected hint to include std.derives; hints: {:?}",
+        err.hints
+    );
+    assert!(
+        err.hints.iter().any(|h| h.contains("std.web.app")),
+        "Expected hint to include std.web.app; hints: {:?}",
+        err.hints
     );
 }

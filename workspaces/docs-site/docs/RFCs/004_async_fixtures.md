@@ -27,7 +27,8 @@ setup/teardown and participate in fixture dependency injection.
 ### Syntax
 
 ```incan
-from testing import fixture
+import std.async
+from std.testing import fixture
 
 @fixture(scope="function")
 async def http_server() -> ServerHandle:

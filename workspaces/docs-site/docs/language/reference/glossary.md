@@ -31,6 +31,19 @@ See:
 - How-to: [Imports and modules (how-to)](../how-to/imports_and_modules.md)
 - Reference: [Imports and modules (reference)](imports_and_modules.md)
 
+## Keyword
+
+A keyword is a reserved word with special meaning in the language syntax (for example `def`, `return`, `class`).
+
+## Soft keyword
+
+A soft keyword is a keyword that is only reserved in specific contexts (for example after importing a particular stdlib
+namespace).
+
+In Incan, `async` and `await` are soft keywords activated by importing `std.async`.
+
+See: [Imports and modules (reference)](imports_and_modules.md#soft-keywords).
+
 ## Result
 
 `Result[T, E]` represents either success (`Ok(T)`) or failure (`Err(E)`), and is commonly used for typed error handling.
@@ -47,7 +60,12 @@ See: [Error Handling](../explanation/error_handling.md).
 
 Async code lets a program do other work while waiting on I/O (network, disk, timers).
 
-See: [Async Programming](../how-to/async_programming.md).
+In Incan, using `async def` and `await` requires importing `std.async` (they are soft keywords).
+
+See:
+
+- [Async Programming](../how-to/async_programming.md)
+- [Imports and modules (reference)](imports_and_modules.md#soft-keywords)
 
 ## rustup
 

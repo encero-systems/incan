@@ -66,7 +66,7 @@ Everything at top level in a file lives in the **module scope**:
 For example:
 
 ```incan
-from math import sqrt            # module-scope binding
+import std.math                  # module-scope binding
 const PI: float = 3.14159        # module-scope binding
 
 def area(r: float) -> float:     # module-scope binding (function)
@@ -77,7 +77,7 @@ model Circle:                    # module-scope binding (type)
 
 def demo() -> float:
     c = Circle(radius=2.0)
-    return sqrt(area(c.radius))  # `Circle`, `sqrt`, `area` resolved from module scope
+    return math.sqrt(area(c.radius))  # `Circle`, `math`, `area` resolved from module scope
 ```
 
 In this example, the names `sqrt`, `PI`, `area`, and `Circle` are all resolved from the module scope.

@@ -3,8 +3,10 @@
 # Covers:
 # - f-string interpolation -> Display
 # - Dict literal with generic key -> Eq + Hash
-# - arithmetic on generic type -> Add<Output = T>
+# - arithmetic operators: +, -, *, /, % -> Add/Sub/Mul/Div/Rem<Output = T>
+# - clone() method call -> Clone
 # - transitive inference across generic function calls
+# - combined explicit + inferred bounds
 
 def show[T](x: T) -> str:
     return f"{x}"
@@ -15,11 +17,29 @@ def make_dict[T](k: T) -> Dict[T, int]:
 def add[T](a: T, b: T) -> T:
     return a + b
 
+def subtract[T](a: T, b: T) -> T:
+    return a - b
+
+def multiply[T](a: T, b: T) -> T:
+    return a * b
+
+def divide[T](a: T, b: T) -> T:
+    return a / b
+
+def modulo[T](a: T, b: T) -> T:
+    return a % b
+
+def duplicate[T](x: T) -> T:
+    return x.clone()
+
 def are_equal[T](left: T, right: T) -> bool:
     return left == right
 
 def wrapper[T](a: T, b: T) -> bool:
     return are_equal(a, b)
+
+def show_eq[T with Eq](x: T) -> str:
+    return f"{x}"
 
 def main() -> None:
     pass

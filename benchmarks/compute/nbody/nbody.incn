@@ -1,7 +1,10 @@
 # N-Body Benchmark
 # Planetary orbit simulation (from Benchmarks Game)
 
-from std::f64::consts import PI as constPi
+from rust::std::f64::consts import PI
+
+const SOLAR_MASS: float = 4.0 * PI * PI
+const DAYS_PER_YEAR: float = 365.24
 
 model Body:
     x: float
@@ -59,8 +62,6 @@ def energy(bodies: List[Body]) -> float:
     return e
 
 def offset_momentum(mut bodies: List[Body]) -> None:
-    PI: float = 3.141592653589793
-    SOLAR_MASS: float = 4.0 * PI * PI
     mut px = 0.0
     mut py = 0.0
     mut pz = 0.0
@@ -75,10 +76,6 @@ def offset_momentum(mut bodies: List[Body]) -> None:
     bodies[0].vz = -pz / SOLAR_MASS
 
 def main() -> None:
-    PI: float = 3.141592653589793
-    SOLAR_MASS: float = 4.0 * PI * PI
-    DAYS_PER_YEAR: float = 365.24
-
     mut bodies = [
         # Sun
         Body(x=0.0, y=0.0, z=0.0, vx=0.0, vy=0.0, vz=0.0, mass=SOLAR_MASS),

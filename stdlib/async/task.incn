@@ -7,6 +7,8 @@ This module provides task management utilities:
 - JoinHandle: Handle to wait for task completion
 """
 
+import std.async
+
 # JoinHandle represents a running async task
 # Can be awaited to get the result
 model JoinHandle[T]:

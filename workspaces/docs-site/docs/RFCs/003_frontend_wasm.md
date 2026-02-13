@@ -235,6 +235,7 @@ html("""
 
 ```incan
 from incan.ui import component, signal, effect, html, Element
+import std.async
 
 @component
 def dataFetcher(url: str) -> Element:
@@ -659,6 +660,7 @@ custom = ShaderMaterial(
 
 ```incan
 from incan.graphics import load_gltf, load_texture, load_cubemap
+import std.async
 
 # Load 3D model
 model = await load_gltf("model.glb")

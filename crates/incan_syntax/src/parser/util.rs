@@ -86,10 +86,6 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(name)
             }
-            TokenKind::Keyword(KeywordId::Async) => {
-                self.advance();
-                Ok("async".to_string())
-            }
             TokenKind::Keyword(KeywordId::Rust) => {
                 self.advance();
                 Ok("rust".to_string())

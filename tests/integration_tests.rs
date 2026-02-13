@@ -35,7 +35,9 @@ fn make_temp_test_dir() -> std::path::PathBuf {
         .unwrap_or_default()
         .as_nanos();
     dir.push(format!("incan_cli_test_{}", uniq));
-    std::fs::create_dir_all(&dir).expect("failed to create temp test dir");
+    let Ok(()) = std::fs::create_dir_all(&dir) else {
+        panic!("failed to create temp test dir");
+    };
     dir
 }
 
@@ -63,18 +65,22 @@ fn test_valid_fixtures() {
     }
 
     let mut matched = 0usize;
-    for entry in fs::read_dir(fixtures_dir).unwrap() {
-        let entry = entry.unwrap();
+    let Ok(entries) = fs::read_dir(fixtures_dir) else {
+        panic!("failed to read directory {}", fixtures_dir.display());
+    };
+    for entry in entries {
+        let Ok(entry) = entry else { continue };
         let path = entry.path();
         if is_incan_fixture(&path) {
             matched += 1;
             let result = compile_file(&path);
-            assert!(
-                result.is_ok(),
-                "Expected {} to compile successfully, got errors: {:?}",
-                path.display(),
-                result.unwrap_err()
-            );
+            if let Err(errs) = result {
+                panic!(
+                    "Expected {} to compile successfully, got errors: {:?}",
+                    path.display(),
+                    errs
+                );
+            }
         }
     }
     assert!(matched > 0, "No .incn fixtures found in {}", fixtures_dir.display());
@@ -89,8 +95,11 @@ fn test_invalid_fixtures() {
     }
 
     let mut matched = 0usize;
-    for entry in fs::read_dir(fixtures_dir).unwrap() {
-        let entry = entry.unwrap();
+    let Ok(entries) = fs::read_dir(fixtures_dir) else {
+        panic!("failed to read directory {}", fixtures_dir.display());
+    };
+    for entry in entries {
+        let Ok(entry) = entry else { continue };
         let path = entry.path();
         if is_incan_fixture(&path) {
             matched += 1;
@@ -107,10 +116,9 @@ fn test_invalid_fixtures() {
 
 #[test]
 fn test_help_is_banner_free() {
-    let output = Command::new("target/debug/incan")
-        .arg("--help")
-        .output()
-        .expect("failed to run incan --help");
+    let Ok(output) = Command::new("target/debug/incan").arg("--help").output() else {
+        panic!("failed to run incan --help");
+    };
     assert!(
         output.status.success(),
         "incan --help failed: status={:?} stderr={}",
@@ -127,10 +135,9 @@ fn test_help_is_banner_free() {
 
 #[test]
 fn test_version_is_single_line_and_banner_free() {
-    let output = Command::new("target/debug/incan")
-        .arg("--version")
-        .output()
-        .expect("failed to run incan --version");
+    let Ok(output) = Command::new("target/debug/incan").arg("--version").output() else {
+        panic!("failed to run incan --version");
+    };
     assert!(
         output.status.success(),
         "incan --version failed: status={:?} stderr={}",
@@ -148,10 +155,12 @@ fn test_version_is_single_line_and_banner_free() {
 
 #[test]
 fn test_parse_error_is_banner_free() {
-    let output = Command::new("target/debug/incan")
+    let Ok(output) = Command::new("target/debug/incan")
         .arg("--definitely-not-a-flag")
         .output()
-        .expect("failed to run incan with invalid args");
+    else {
+        panic!("failed to run incan with invalid args");
+    };
     assert!(
         !output.status.success(),
         "expected invalid args to fail, status={:?}",
@@ -169,19 +178,22 @@ fn test_parse_error_is_banner_free() {
 fn test_fail_on_empty_collection() {
     let dir = make_temp_test_dir();
     let test_file = dir.join("test_empty.incn");
-    std::fs::write(
+    let Ok(()) = std::fs::write(
         &test_file,
         r#"
 def helper() -> Unit:
   pass
 "#,
-    )
-    .expect("failed to write test file");
+    ) else {
+        panic!("failed to write test file");
+    };
 
-    let output = Command::new("target/debug/incan")
+    let Ok(output) = Command::new("target/debug/incan")
         .args(["test", dir.to_string_lossy().as_ref()])
         .output()
-        .expect("failed to run incan test");
+    else {
+        panic!("failed to run incan test");
+    };
     assert!(
         output.status.success(),
         "expected empty collection to succeed by default: status={:?} stderr={}",
@@ -189,10 +201,12 @@ def helper() -> Unit:
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let output = Command::new("target/debug/incan")
+    let Ok(output) = Command::new("target/debug/incan")
         .args(["test", "--fail-on-empty", dir.to_string_lossy().as_ref()])
         .output()
-        .expect("failed to run incan test --fail-on-empty");
+    else {
+        panic!("failed to run incan test --fail-on-empty");
+    };
     assert!(
         !output.status.success(),
         "expected empty collection to fail with --fail-on-empty: status={:?} stderr={}",
@@ -210,7 +224,9 @@ mod lexer_tests {
 
     #[test]
     fn test_floor_div_tokens() {
-        let tokens = lex("a //= b\nc // d").unwrap();
+        let Ok(tokens) = lex("a //= b\nc // d") else {
+            panic!("lex failed");
+        };
         let has_floor_div_eq = tokens.iter().any(|t| t.kind.is_operator(OperatorId::SlashSlashEq));
         let has_floor_div = tokens.iter().any(|t| t.kind.is_operator(OperatorId::SlashSlash));
         assert!(has_floor_div_eq, "expected to see //= token");
@@ -219,7 +235,9 @@ mod lexer_tests {
 
     #[test]
     fn test_rust_style_imports() {
-        let tokens = lex("import foo::bar::baz as fb").unwrap();
+        let Ok(tokens) = lex("import foo::bar::baz as fb") else {
+            panic!("lex failed");
+        };
         assert!(tokens[0].kind.is_keyword(KeywordId::Import));
         assert!(matches!(&tokens[1].kind, TokenKind::Ident(s) if s == "foo"));
         assert!(tokens[2].kind.is_punctuation(PunctuationId::ColonColon));
@@ -232,52 +250,68 @@ mod lexer_tests {
 
     #[test]
     fn test_try_operator() {
-        let tokens = lex("result?").unwrap();
+        let Ok(tokens) = lex("result?") else {
+            panic!("lex failed");
+        };
         assert!(matches!(&tokens[0].kind, TokenKind::Ident(s) if s == "result"));
         assert!(tokens[1].kind.is_punctuation(PunctuationId::Question));
     }
 
     #[test]
     fn test_fat_arrow() {
-        let tokens = lex("x => y").unwrap();
+        let Ok(tokens) = lex("x => y") else {
+            panic!("lex failed");
+        };
         assert!(tokens[1].kind.is_punctuation(PunctuationId::FatArrow));
     }
 
     #[test]
     fn test_case_keyword() {
-        let tokens = lex("case Some(x):").unwrap();
+        let Ok(tokens) = lex("case Some(x):") else {
+            panic!("lex failed");
+        };
         assert!(tokens[0].kind.is_keyword(KeywordId::Case));
     }
 
     #[test]
     fn test_pass_keyword() {
-        let tokens = lex("pass").unwrap();
+        let Ok(tokens) = lex("pass") else {
+            panic!("lex failed");
+        };
         assert!(tokens[0].kind.is_keyword(KeywordId::Pass));
     }
 
     #[test]
     fn test_mut_self() {
-        let tokens = lex("mut self").unwrap();
+        let Ok(tokens) = lex("mut self") else {
+            panic!("lex failed");
+        };
         assert!(tokens[0].kind.is_keyword(KeywordId::Mut));
         assert!(tokens[1].kind.is_keyword(KeywordId::SelfKw));
     }
 
     #[test]
     fn test_fstring() {
-        let tokens = lex(r#"f"Hello {name}""#).unwrap();
+        let Ok(tokens) = lex(r#"f"Hello {name}""#) else {
+            panic!("lex failed");
+        };
         assert!(matches!(&tokens[0].kind, TokenKind::FString(_)));
     }
 
     #[test]
     fn test_yield_keyword() {
-        let tokens = lex("yield value").unwrap();
+        let Ok(tokens) = lex("yield value") else {
+            panic!("lex failed");
+        };
         assert!(tokens[0].kind.is_keyword(KeywordId::Yield));
         assert!(matches!(&tokens[1].kind, TokenKind::Ident(s) if s == "value"));
     }
 
     #[test]
     fn test_rust_keyword() {
-        let tokens = lex("import rust::serde_json").unwrap();
+        let Ok(tokens) = lex("import rust::serde_json") else {
+            panic!("lex failed");
+        };
         assert!(tokens[0].kind.is_keyword(KeywordId::Import));
         assert!(tokens[1].kind.is_keyword(KeywordId::Rust));
         assert!(tokens[2].kind.is_punctuation(PunctuationId::ColonColon));
@@ -301,9 +335,15 @@ def main() -> None:
   g = f % 2.0
   h = f // 2.0
 "#;
-        let tokens = lexer::lex(source).expect("lexing failed");
-        let ast = parser::parse(&tokens).expect("parse failed");
-        typechecker::check(&ast).expect("typecheck failed");
+        let Ok(tokens) = lexer::lex(source) else {
+            panic!("lexing failed");
+        };
+        let Ok(ast) = parser::parse(&tokens) else {
+            panic!("parse failed");
+        };
+        let Ok(()) = typechecker::check(&ast) else {
+            panic!("typecheck failed");
+        };
     }
 }
 
@@ -318,7 +358,10 @@ mod codegen_tests {
 
     fn rustc_compile_ok(source: &str) -> Result<(), String> {
         let mut dir = std::env::temp_dir();
-        let uniq = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+            panic!("system time before UNIX epoch");
+        };
+        let uniq = duration.as_nanos();
         dir.push(format!("incan_bench_smoke_{}", uniq));
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
@@ -348,11 +391,21 @@ mod codegen_tests {
             return; // Skip if example not present
         }
 
-        let source = fs::read_to_string(path).unwrap();
-        let tokens = lexer::lex(&source).unwrap();
-        let ast = parser::parse(&tokens).unwrap();
-        typechecker::check(&ast).unwrap(); // Verify it type-checks
-        let rust_code = IrCodegen::new().try_generate(&ast).unwrap();
+        let Ok(source) = fs::read_to_string(path) else {
+            panic!("failed to read {}", path.display());
+        };
+        let Ok(tokens) = lexer::lex(&source) else {
+            panic!("lexing failed");
+        };
+        let Ok(ast) = parser::parse(&tokens) else {
+            panic!("parse failed");
+        };
+        let Ok(()) = typechecker::check(&ast) else {
+            panic!("typecheck failed");
+        };
+        let Ok(rust_code) = IrCodegen::new().try_generate(&ast) else {
+            panic!("codegen failed");
+        };
 
         // Verify the generated code contains expected elements
         assert!(rust_code.contains("fn main()"), "Should have main function");
@@ -362,13 +415,15 @@ mod codegen_tests {
 
     #[test]
     fn test_run_c_import_this() {
-        let output = Command::new("target/debug/incan")
+        let Ok(output) = Command::new("target/debug/incan")
             .args(["run", "-c", "import this"])
             // This test should not require network access. We expect the workspace dependencies to already be available
             // (the test suite built them)
             .env("CARGO_NET_OFFLINE", "true")
             .output()
-            .expect("failed to run incan");
+        else {
+            panic!("failed to run incan");
+        };
         assert!(
             output.status.success(),
             "incan run -c import this failed: status={:?} stderr={}",
@@ -385,12 +440,14 @@ mod codegen_tests {
 
     #[test]
     fn test_run_repro_model_traits() {
-        let output = Command::new("target/debug/incan")
+        let Ok(output) = Command::new("target/debug/incan")
             .args(["run", "tests/fixtures/repro_model_traits.incn"])
             // This should not require network access (workspace deps should already be available).
             .env("CARGO_NET_OFFLINE", "true")
             .output()
-            .expect("failed to run incan");
+        else {
+            panic!("failed to run incan");
+        };
 
         assert!(
             output.status.success(),
@@ -410,11 +467,13 @@ mod codegen_tests {
     /// RFC 021: Runtime verification that __fields__() returns correct FieldInfo values
     #[test]
     fn test_run_field_info_reflection() {
-        let output = Command::new("target/debug/incan")
+        let Ok(output) = Command::new("target/debug/incan")
             .args(["run", "tests/fixtures/field_info_reflection.incn"])
             .env("CARGO_NET_OFFLINE", "true")
             .output()
-            .expect("failed to run incan");
+        else {
+            panic!("failed to run incan");
+        };
 
         assert!(
             output.status.success(),
@@ -494,12 +553,22 @@ mod codegen_tests {
             return;
         }
 
-        let source = fs::read_to_string(path).unwrap();
-        let tokens = lexer::lex(&source).unwrap();
-        let ast = parser::parse(&tokens).unwrap();
-        typechecker::check(&ast).unwrap();
+        let Ok(source) = fs::read_to_string(path) else {
+            panic!("failed to read {}", path.display());
+        };
+        let Ok(tokens) = lexer::lex(&source) else {
+            panic!("lexing failed");
+        };
+        let Ok(ast) = parser::parse(&tokens) else {
+            panic!("parse failed");
+        };
+        let Ok(()) = typechecker::check(&ast) else {
+            panic!("typecheck failed");
+        };
 
-        let rust_code = IrCodegen::new().try_generate(&ast).unwrap();
+        let Ok(rust_code) = IrCodegen::new().try_generate(&ast) else {
+            panic!("codegen failed");
+        };
 
         // Regression: Vec::swap indices must be cast to usize.
         let mut ok = true;
@@ -527,12 +596,14 @@ mod codegen_tests {
             return;
         }
 
-        rustc_compile_ok(&rust_code).expect("generated quicksort Rust failed to compile");
+        let Ok(()) = rustc_compile_ok(&rust_code) else {
+            panic!("generated quicksort Rust failed to compile");
+        };
     }
 
     #[test]
     fn test_const_declarations_compile_and_run() {
-        let output = Command::new("target/debug/incan")
+        let Ok(output) = Command::new("target/debug/incan")
             .args([
                 "run",
                 "-c",
@@ -559,7 +630,9 @@ def main() -> None:
             ])
             .env("CARGO_NET_OFFLINE", "true")
             .output()
-            .expect("failed to run incan");
+        else {
+            panic!("failed to run incan");
+        };
 
         assert!(
             output.status.success(),
@@ -581,7 +654,7 @@ def main() -> None:
 
     #[test]
     fn test_mixed_numeric_codegen_runs() {
-        let output = Command::new("target/debug/incan")
+        let Ok(output) = Command::new("target/debug/incan")
             .args([
                 "run",
                 "-c",
@@ -595,7 +668,9 @@ def main() -> None:
             ])
             .env("CARGO_NET_OFFLINE", "true")
             .output()
-            .expect("failed to run incan");
+        else {
+            panic!("failed to run incan");
+        };
 
         assert!(
             output.status.success(),
@@ -630,7 +705,9 @@ mod parser_tests {
 model User:
   name: str
 "#;
-        let program = parse_str(source).unwrap();
+        let Ok(program) = parse_str(source) else {
+            panic!("parse failed");
+        };
         match &program.declarations[0].node {
             Declaration::Model(m) => {
                 assert_eq!(m.decorators.len(), 1);
@@ -646,7 +723,9 @@ model User:
 class Service with Loggable, Serializable:
   name: str
 "#;
-        let program = parse_str(source).unwrap();
+        let Ok(program) = parse_str(source) else {
+            panic!("parse failed");
+        };
         match &program.declarations[0].node {
             Declaration::Class(c) => {
                 assert_eq!(c.traits.len(), 2);
@@ -666,7 +745,9 @@ class Counter:
   def inc(mut self) -> Unit:
     pass
 "#;
-        let program = parse_str(source).unwrap();
+        let Ok(program) = parse_str(source) else {
+            panic!("parse failed");
+        };
         match &program.declarations[0].node {
             Declaration::Class(c) => {
                 assert_eq!(c.methods[0].node.receiver, Some(Receiver::Mutable));
@@ -685,7 +766,9 @@ def foo(x: Option[int]) -> int:
     case None:
       return 0
 "#;
-        let program = parse_str(source).unwrap();
+        let Ok(program) = parse_str(source) else {
+            panic!("parse failed");
+        };
         match &program.declarations[0].node {
             Declaration::Function(f) => {
                 assert_eq!(f.body.len(), 1);
@@ -700,7 +783,9 @@ def foo(x: Option[int]) -> int:
 def squares(nums: List[int]) -> List[int]:
   return [x * x for x in nums if x > 0]
 "#;
-        let program = parse_str(source).unwrap();
+        let Ok(program) = parse_str(source) else {
+            panic!("parse failed");
+        };
         assert_eq!(program.declarations.len(), 1);
     }
 
@@ -710,7 +795,9 @@ def squares(nums: List[int]) -> List[int]:
 def foo() -> Result[int, str]:
   return Ok(42)
 "#;
-        let program = parse_str(source).unwrap();
+        let Ok(program) = parse_str(source) else {
+            panic!("parse failed");
+        };
         match &program.declarations[0].node {
             Declaration::Function(f) => match &f.return_type.node {
                 Type::Generic(name, args) => {
@@ -730,7 +817,9 @@ def fixture() -> str:
   value = "test"
   yield value
 "#;
-        let program = parse_str(source).unwrap();
+        let Ok(program) = parse_str(source) else {
+            panic!("parse failed");
+        };
         match &program.declarations[0].node {
             Declaration::Function(f) => {
                 assert_eq!(f.body.len(), 2);
@@ -759,7 +848,9 @@ def database() -> Database:
   db = connect()
   yield db
 "#;
-        let program = parse_str(source).unwrap();
+        let Ok(program) = parse_str(source) else {
+            panic!("parse failed");
+        };
         // declarations[0] is the import, declarations[1] is the function
         match &program.declarations[1].node {
             Declaration::Function(f) => {
@@ -774,7 +865,9 @@ def database() -> Database:
     #[test]
     fn test_rust_crate_import() {
         let source = r#"import rust::serde_json as json"#;
-        let program = parse_str(source).unwrap();
+        let Ok(program) = parse_str(source) else {
+            panic!("parse failed");
+        };
         match &program.declarations[0].node {
             Declaration::Import(i) => {
                 match &i.kind {
@@ -800,7 +893,9 @@ def database() -> Database:
     #[test]
     fn test_rust_from_import() {
         let source = r#"from rust::time import Instant, Duration"#;
-        let program = parse_str(source).unwrap();
+        let Ok(program) = parse_str(source) else {
+            panic!("parse failed");
+        };
         match &program.declarations[0].node {
             Declaration::Import(i) => match &i.kind {
                 ImportKind::RustFrom {

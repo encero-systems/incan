@@ -8,6 +8,8 @@ Note: Rust's tokio::select! is a powerful macro. We provide a simpler
 function-based interface that covers common use cases.
 """
 
+import std.async
+
 # Either type for select results
 enum Either[A, B]:
     """Result of racing two futures - indicates which completed first"""

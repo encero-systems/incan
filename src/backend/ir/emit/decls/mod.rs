@@ -169,15 +169,23 @@ impl<'a> IrEmitter<'a> {
             }
         }
 
-        // Special-case stdlib shims:
-        // - `std.web` maps to `incan_stdlib::web`
-        // - `std.testing` maps to `incan_stdlib::testing`
-        let is_stdlib_web = stdlib::is_stdlib_module(path, stdlib::STDLIB_WEB);
-        let is_stdlib_testing = stdlib::is_stdlib_module(path, stdlib::STDLIB_TESTING);
-        let mapped_path_tokens: Vec<_> = if is_stdlib_web {
-            vec![quote! { incan_stdlib }, quote! { web }]
-        } else if is_stdlib_testing {
-            vec![quote! { incan_stdlib }, quote! { testing }]
+        // RFC 023: Map Incan `std.*` imports to `incan_stdlib::*` with keyword escaping.
+        //
+        // `std.testing.assert_eq` → `incan_stdlib::testing::assert_eq`
+        // `std.async.time.sleep` → `incan_stdlib::r#async::time::sleep`
+        // `std.web` → `incan_stdlib::web`
+        //
+        // Only Incan stdlib imports (qualifier `Auto`) are mapped. Rust crate imports like
+        // `from rust::std::collections import HashMap` (qualifier `None`) are left as-is.
+        let is_stdlib = !matches!(qualifier, IrImportQualifier::None) && stdlib::is_any_stdlib_path(path);
+        let mapped_path_tokens: Vec<_> = if is_stdlib {
+            let mut tokens = vec![quote! { incan_stdlib }];
+            // Skip the `std` root, map the rest with keyword escaping.
+            for seg in path.iter().skip(1) {
+                let ident = format_ident!("{}", Self::escape_keyword(seg));
+                tokens.push(quote! { #ident });
+            }
+            tokens
         } else {
             path.iter()
                 .map(|s| {
@@ -187,7 +195,7 @@ impl<'a> IrEmitter<'a> {
                 .collect()
         };
         let mut path_tokens: Vec<TokenStream> = Vec::new();
-        let apply_prefix = !(is_stdlib_web || is_stdlib_testing);
+        let apply_prefix = !is_stdlib;
         if apply_prefix {
             match qualifier {
                 IrImportQualifier::Auto => {
@@ -228,7 +236,7 @@ impl<'a> IrEmitter<'a> {
                 })
                 .collect();
             Ok(quote! { #(#item_stmts)* })
-        } else if path.len() == 1 && !is_stdlib_web && !is_stdlib_testing {
+        } else if path.len() == 1 && !is_stdlib {
             Ok(quote! {})
         } else {
             Ok(quote! {

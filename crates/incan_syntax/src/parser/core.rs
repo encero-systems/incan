@@ -24,6 +24,7 @@ pub struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
     errors: Vec<CompileError>,
+    active_soft_keywords: std::collections::HashSet<KeywordId>,
 }
 
 impl<'a> Parser<'a> {
@@ -36,6 +37,7 @@ impl<'a> Parser<'a> {
             tokens,
             pos: 0,
             errors: Vec::new(),
+            active_soft_keywords: std::collections::HashSet::new(),
         }
     }
 
@@ -84,6 +86,7 @@ impl<'a> Parser<'a> {
             // ---- Context: normal declarations ----
             match self.declaration() {
                 Ok(decl) => {
+                    self.activate_soft_keywords_for_declaration(&decl.node);
                     if !matches!(decl.node, Declaration::Docstring(_)) {
                         seen_non_doc_decl = true;
                     }
@@ -139,5 +142,25 @@ impl<'a> Parser<'a> {
 
         let end = self.tokens[self.pos.saturating_sub(1)].span.end;
         Ok(Spanned::new(path, Span::new(start, end)))
+    }
+
+    /// Activate soft keywords introduced by stdlib imports in this declaration.
+    fn activate_soft_keywords_for_declaration(&mut self, decl: &Declaration) {
+        let import_path = match decl {
+            Declaration::Import(import) => match &import.kind {
+                ImportKind::Module(path) => Some(path),
+                ImportKind::From { module, .. } => Some(module),
+                _ => None,
+            },
+            _ => None,
+        };
+
+        let Some(path) = import_path else {
+            return;
+        };
+
+        for kw in incan_core::lang::stdlib::soft_keywords_for_import(&path.segments) {
+            self.active_soft_keywords.insert(*kw);
+        }
     }
 }

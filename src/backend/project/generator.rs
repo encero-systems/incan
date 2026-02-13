@@ -13,6 +13,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::manifest::DependencySpec;
+use incan_core::lang::rust_keywords;
 
 /// Project generator for creating runnable Rust projects from Incan code.
 pub struct ProjectGenerator {
@@ -174,7 +175,10 @@ impl ProjectGenerator {
             // Add mod declarations for each module (sorted for deterministic output)
             let mut module_names: Vec<_> = modules.keys().collect();
             module_names.sort();
-            let mods: String = module_names.iter().map(|m| format!("mod {};\n", m)).collect();
+            let mods: String = module_names
+                .iter()
+                .map(|m| format!("mod {};\n", rust_keywords::escape_keyword(m)))
+                .collect();
 
             // Insert right after the crate-level allow attribute line (if present),
             // otherwise prepend (best-effort).
@@ -259,10 +263,10 @@ impl ProjectGenerator {
             }
             fs::create_dir_all(&dir)?;
 
-            // Create mod.rs with pub mod declarations
+            // Create mod.rs with pub mod declarations (keyword-escaped for Rust).
             let mod_rs_content: String = submodules
                 .iter()
-                .map(|s| format!("pub mod {};", s))
+                .map(|s| format!("pub mod {};", rust_keywords::escape_keyword(s)))
                 .collect::<Vec<_>>()
                 .join("\n");
 
@@ -297,7 +301,10 @@ impl ProjectGenerator {
         let mut sorted_top: Vec<_> = top_level_modules.into_iter().collect();
         sorted_top.sort();
         if !sorted_top.is_empty() {
-            let mods: String = sorted_top.iter().map(|m| format!("mod {};\n", m)).collect();
+            let mods: String = sorted_top
+                .iter()
+                .map(|m| format!("mod {};\n", rust_keywords::escape_keyword(m)))
+                .collect();
 
             if let Some(attr_pos) = full_main.find("#![allow(") {
                 let line_end = full_main[attr_pos..]

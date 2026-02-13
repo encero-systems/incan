@@ -7,6 +7,8 @@ This module provides async timing utilities:
 - Duration: Time duration type
 """
 
+import std.async
+
 # Duration type for time measurements
 # Internally maps to tokio::time::Duration
 model Duration:

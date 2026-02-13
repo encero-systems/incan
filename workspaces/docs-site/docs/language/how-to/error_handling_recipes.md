@@ -90,6 +90,8 @@ def fetch_with_retry(url: str, attempts: int) -> Result[str, NetworkError]:
 Sometimes the error should carry a value that would otherwise be lost (e.g. sending on a closed channel).
 
 ```incan
+import std.async
+
 match await tx.send(msg):
     Ok(_) => println("Sent!")
     Err(e) =>

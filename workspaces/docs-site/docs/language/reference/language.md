@@ -25,51 +25,51 @@
 
 ## Keywords
 
-| Id | Canonical | Aliases | Category | Usage | RFC | Since | Stability |
-|----|---|---|---|---|---|---|---|
-| If | `if` |  | ControlFlow | Statement, Expression | RFC 000 | 0.1 | Stable |
-| Else | `else` |  | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| Elif | `elif` |  | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| Match | `match` |  | ControlFlow | Statement, Expression | RFC 000 | 0.1 | Stable |
-| Case | `case` |  | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| While | `while` |  | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| For | `for` |  | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| Break | `break` |  | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| Continue | `continue` |  | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| Return | `return` |  | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| Yield | `yield` |  | ControlFlow | Statement, Expression | RFC 001 | 0.1 | Stable |
-| Pass | `pass` |  | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| Def | `def` | `fn` | Definition | Statement | RFC 000 | 0.1 | Stable |
-| Async | `async` |  | Definition | Modifier | RFC 000 | 0.1 | Stable |
-| Await | `await` |  | Definition | Expression | RFC 000 | 0.1 | Stable |
-| Class | `class` |  | Definition | Statement | RFC 000 | 0.1 | Stable |
-| Model | `model` |  | Definition | Statement | RFC 000 | 0.1 | Stable |
-| Trait | `trait` |  | Definition | Statement | RFC 000 | 0.1 | Stable |
-| Enum | `enum` |  | Definition | Statement | RFC 000 | 0.1 | Stable |
-| Type | `type` |  | Definition | Statement | RFC 000 | 0.1 | Stable |
-| Newtype | `newtype` |  | Definition | Statement | RFC 000 | 0.1 | Stable |
-| With | `with` |  | Definition | Modifier | RFC 000 | 0.1 | Stable |
-| Extends | `extends` |  | Definition | Modifier | RFC 000 | 0.1 | Stable |
-| Pub | `pub` |  | Definition | Modifier | RFC 000 | 0.1 | Stable |
-| Import | `import` |  | Import | Statement | RFC 000 | 0.1 | Stable |
-| From | `from` |  | Import | Statement | RFC 000 | 0.1 | Stable |
-| As | `as` |  | Import | Modifier | RFC 000 | 0.1 | Stable |
-| Rust | `rust` |  | Import | Modifier | RFC 005 | 0.1 | Stable |
-| Python | `python` |  | Import | Modifier | RFC 000 | 0.1 | Stable |
-| Super | `super` |  | Import | Expression | RFC 000 | 0.1 | Stable |
-| Crate | `crate` |  | Import | Expression | RFC 005 | 0.1 | Stable |
-| Const | `const` |  | Binding | Statement | RFC 008 | 0.1 | Stable |
-| Let | `let` |  | Binding | Statement | RFC 000 | 0.1 | Stable |
-| Mut | `mut` |  | Binding | Modifier | RFC 000 | 0.1 | Stable |
-| SelfKw | `self` |  | Binding | ReceiverOnly | RFC 000 | 0.1 | Stable |
-| True | `true` | `True` | Literal | Expression | RFC 000 | 0.1 | Stable |
-| False | `false` | `False` | Literal | Expression | RFC 000 | 0.1 | Stable |
-| None | `None` |  | Literal | Expression | RFC 000 | 0.1 | Stable |
-| And | `and` |  | Operator | Operator | RFC 000 | 0.1 | Stable |
-| Or | `or` |  | Operator | Operator | RFC 000 | 0.1 | Stable |
-| Not | `not` |  | Operator | Operator | RFC 000 | 0.1 | Stable |
-| In | `in` |  | Operator | Operator | RFC 000 | 0.1 | Stable |
-| Is | `is` |  | Operator | Operator | RFC 000 | 0.1 | Stable |
+| Id | Canonical | Aliases | Activation | Category | Usage | RFC | Since | Stability |
+|----|---|---|---|---|---|---|---|---|
+| If | `if` |  | - | ControlFlow | Statement, Expression | RFC 000 | 0.1 | Stable |
+| Else | `else` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| Elif | `elif` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| Match | `match` |  | - | ControlFlow | Statement, Expression | RFC 000 | 0.1 | Stable |
+| Case | `case` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| While | `while` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| For | `for` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| Break | `break` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| Continue | `continue` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| Return | `return` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| Yield | `yield` |  | - | ControlFlow | Statement, Expression | RFC 001 | 0.1 | Stable |
+| Pass | `pass` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| Def | `def` | `fn` | - | Definition | Statement | RFC 000 | 0.1 | Stable |
+| Async | `async` |  | `std.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
+| Await | `await` |  | `std.async` | Definition | Expression | RFC 000 | 0.1 | Stable |
+| Class | `class` |  | - | Definition | Statement | RFC 000 | 0.1 | Stable |
+| Model | `model` |  | - | Definition | Statement | RFC 000 | 0.1 | Stable |
+| Trait | `trait` |  | - | Definition | Statement | RFC 000 | 0.1 | Stable |
+| Enum | `enum` |  | - | Definition | Statement | RFC 000 | 0.1 | Stable |
+| Type | `type` |  | - | Definition | Statement | RFC 000 | 0.1 | Stable |
+| Newtype | `newtype` |  | - | Definition | Statement | RFC 000 | 0.1 | Stable |
+| With | `with` |  | - | Definition | Modifier | RFC 000 | 0.1 | Stable |
+| Extends | `extends` |  | - | Definition | Modifier | RFC 000 | 0.1 | Stable |
+| Pub | `pub` |  | - | Definition | Modifier | RFC 000 | 0.1 | Stable |
+| Import | `import` |  | - | Import | Statement | RFC 000 | 0.1 | Stable |
+| From | `from` |  | - | Import | Statement | RFC 000 | 0.1 | Stable |
+| As | `as` |  | - | Import | Modifier | RFC 000 | 0.1 | Stable |
+| Rust | `rust` |  | - | Import | Modifier | RFC 005 | 0.1 | Stable |
+| Python | `python` |  | - | Import | Modifier | RFC 000 | 0.1 | Stable |
+| Super | `super` |  | - | Import | Expression | RFC 000 | 0.1 | Stable |
+| Crate | `crate` |  | - | Import | Expression | RFC 005 | 0.1 | Stable |
+| Const | `const` |  | - | Binding | Statement | RFC 008 | 0.1 | Stable |
+| Let | `let` |  | - | Binding | Statement | RFC 000 | 0.1 | Stable |
+| Mut | `mut` |  | - | Binding | Modifier | RFC 000 | 0.1 | Stable |
+| SelfKw | `self` |  | - | Binding | ReceiverOnly | RFC 000 | 0.1 | Stable |
+| True | `true` | `True` | - | Literal | Expression | RFC 000 | 0.1 | Stable |
+| False | `false` | `False` | - | Literal | Expression | RFC 000 | 0.1 | Stable |
+| None | `None` |  | - | Literal | Expression | RFC 000 | 0.1 | Stable |
+| And | `and` |  | - | Operator | Operator | RFC 000 | 0.1 | Stable |
+| Or | `or` |  | - | Operator | Operator | RFC 000 | 0.1 | Stable |
+| Not | `not` |  | - | Operator | Operator | RFC 000 | 0.1 | Stable |
+| In | `in` |  | - | Operator | Operator | RFC 000 | 0.1 | Stable |
+| Is | `is` |  | - | Operator | Operator | RFC 000 | 0.1 | Stable |
 
 ### Examples
 

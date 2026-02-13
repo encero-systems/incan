@@ -10,7 +10,7 @@
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
-use crate::frontend::symbols::ResolvedType;
+use crate::frontend::symbols::{ResolvedType, SymbolKind};
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved, pow_exponent_kind_from_ast};
 use incan_core::strings::{self, StringAccessError};
 use incan_core::{NumericTy, result_numeric_type};
@@ -169,12 +169,26 @@ impl TypeChecker {
         match &expr.node {
             Expr::Literal(lit) => Some(self.eval_const_literal(lit, expected, expr.span, decl_span)),
             Expr::Ident(name) => {
-                // Only other consts are allowed in const initializers.
-                if !self.const_decls.contains_key(name) {
-                    self.errors.push(errors::const_non_const_name(name, expr.span));
-                    return None;
+                // Other Incan consts are resolved by name.
+                if self.const_decls.contains_key(name) {
+                    return self.eval_const_by_name(name, stack);
                 }
-                self.eval_const_by_name(name, stack)
+                // Rust imports (e.g. `from rust::std::f64::consts import PI`) are valid const references — Rust can
+                // evaluate them at compile time. We treat them as opaque `RustNative` values with no known Incan value;
+                // the type is inferred from the enclosing const annotation when available, defaulting to Float (the
+                // common case for Rust numeric consts). Any actual type mismatch is caught by Rust's compiler.
+                if let Some(sym) = self.lookup_symbol(name)
+                    && matches!(sym.kind, SymbolKind::RustModule { .. })
+                {
+                    let ty = expected.cloned().unwrap_or(ResolvedType::Float);
+                    return Some(ConstEvalResult {
+                        ty,
+                        kind: ConstKind::RustNative,
+                        value: None,
+                    });
+                }
+                self.errors.push(errors::const_non_const_name(name, expr.span));
+                None
             }
             Expr::Tuple(items) => {
                 let mut tys = Vec::with_capacity(items.len());

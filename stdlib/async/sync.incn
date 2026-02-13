@@ -8,6 +8,8 @@ This module provides async-aware synchronization primitives:
 - Barrier: Synchronization barrier
 """
 
+import std.async
+
 # ============================================================================
 # Mutex - Mutual Exclusion Lock
 # ============================================================================

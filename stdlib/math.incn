@@ -5,12 +5,12 @@
 # in the compiler's codegen, mapping to Rust's f64 methods.
 #
 # Usage:
-#   import math
+#   import std.math
 #
 #   x = math.sqrt(16.0)  # 4.0
 #   y = math.pi          # 3.14159...
 #
-# Note: Like Python, you must `import math` before using it.
+# Note: Like Python, you must import the module before using it.
 
 # ============================================================================
 # Constants (accessed as math.pi, math.e, etc.)
@@ -57,7 +57,7 @@
 #
 # The math module is implemented as a compiler builtin. When you write:
 #
-#   import math
+#   import std.math
 #   dist = math.sqrt(x * x + y * y)
 #
 # The compiler generates:

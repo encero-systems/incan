@@ -17,7 +17,9 @@ mod tests {
         // We intentionally allow the lexer to emit INDENT/DEDENT tokens at the top-level.
         // The parser should produce a single clear error and avoid cascading failures.
         let source = "  x = 1\n";
-        let err = parse_str(source).expect_err("Top-level indentation should be rejected by the parser");
+        let Err(err) = parse_str(source) else {
+            panic!("Top-level indentation should be rejected by the parser");
+        };
         assert_eq!(err.len(), 1, "Parser should return exactly one error (no cascade)");
         assert!(
             err[0].message.contains("Expected declaration") && err[0].message.contains("Indent"),
@@ -27,13 +29,13 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_model() {
+    fn test_parse_model() -> Result<(), Vec<CompileError>> {
         let source = r#"
 model User:
   name: str
   age: int = 0
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         assert_eq!(program.declarations.len(), 1);
         match &program.declarations[0].node {
             Declaration::Model(m) => {
@@ -43,10 +45,11 @@ model User:
             }
             _ => panic!("Expected model"),
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_class_docstring() {
+    fn test_parse_class_docstring() -> Result<(), Vec<CompileError>> {
         let source = r#"
 class FieldInfo:
   """
@@ -55,7 +58,7 @@ class FieldInfo:
   """
   name: str
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         assert_eq!(program.declarations.len(), 1);
         match &program.declarations[0].node {
             Declaration::Class(c) => {
@@ -65,16 +68,17 @@ class FieldInfo:
             }
             _ => panic!("Expected class"),
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_model_field_metadata() {
+    fn test_parse_model_field_metadata() -> Result<(), Vec<CompileError>> {
         let source = r#"
 model Account:
   type_ [alias="type", description="Account tier"]: str
   balance [description="Balance in cents"]: int
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         let model = match &program.declarations[0].node {
             Declaration::Model(m) => m,
             _ => panic!("Expected model"),
@@ -91,15 +95,16 @@ model Account:
             balance_field.metadata.description.as_deref(),
             Some("Balance in cents")
         );
+        Ok(())
     }
 
     #[test]
-    fn test_parse_model_field_alias_sugar() {
+    fn test_parse_model_field_alias_sugar() -> Result<(), Vec<CompileError>> {
         let source = r#"
 model Account:
   type_ as "type": str
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         let model = match &program.declarations[0].node {
             Declaration::Model(m) => m,
             _ => panic!("Expected model"),
@@ -107,6 +112,7 @@ model Account:
         let field = &model.fields[0].node;
         assert_eq!(field.metadata.alias.as_deref(), Some("type"));
         assert_eq!(field.metadata.description, None);
+        Ok(())
     }
 
     #[test]
@@ -115,7 +121,9 @@ model Account:
 model Account:
   type_ [alias="type"] as "type": str
 "#;
-        let err = parse_str(source).expect_err("Expected alias + as sugar to be rejected");
+        let Err(err) = parse_str(source) else {
+            panic!("Expected alias + as sugar to be rejected");
+        };
         assert!(
             err[0]
                 .message
@@ -126,13 +134,13 @@ model Account:
     }
 
     #[test]
-    fn test_parse_keyword_named_args_and_member_access() {
+    fn test_parse_keyword_named_args_and_member_access() -> Result<(), Vec<CompileError>> {
         let source = r#"
 def f(a: Foo) -> int:
   let x = Foo(type=1, class=2)
   return a.type
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         let func = match &program.declarations[0].node {
             Declaration::Function(func) => func,
             _ => panic!("Expected function"),
@@ -151,16 +159,17 @@ def f(a: Foo) -> int:
             _ => panic!("Expected return"),
         };
         assert!(matches!(&return_expr.node, Expr::Field(_, name) if name == "type"));
+        Ok(())
     }
 
     #[test]
-    fn test_parse_pattern_named_key_keyword() {
+    fn test_parse_pattern_named_key_keyword() -> Result<(), Vec<CompileError>> {
         let source = r#"
 def f(a: Foo) -> int:
   match a:
     Foo(type=x) => return x
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         let func = match &program.declarations[0].node {
             Declaration::Function(func) => func,
             _ => panic!("Expected function"),
@@ -185,10 +194,11 @@ def f(a: Foo) -> int:
             }
             _ => panic!("Expected constructor pattern"),
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_decorator_paths() {
+    fn test_parse_decorator_paths() -> Result<(), Vec<CompileError>> {
         let source = r#"
 import std.web as web
 
@@ -204,7 +214,7 @@ def b() -> None:
 def c() -> None:
   pass
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         let funcs: Vec<_> = program
             .declarations
             .iter()
@@ -226,19 +236,21 @@ def c() -> None:
         let dec_c = &funcs[2].decorators[0].node;
         assert_eq!(dec_c.path.segments, vec!["web", "route"]);
         assert_eq!(dec_c.name, "route");
+        Ok(())
     }
 
     #[test]
-    fn test_parse_namespaced_decorator_with_named_args() {
+    fn test_parse_namespaced_decorator_with_named_args() -> Result<(), Vec<CompileError>> {
         // RFC 022: Namespaced decorators with positional + named arguments
         let source = r#"
 from std.web import POST
+import std.async
 
 @std.web.route("/things", methods=[POST])
 async def create() -> None:
   pass
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         let funcs: Vec<_> = program
             .declarations
             .iter()
@@ -257,17 +269,18 @@ async def create() -> None:
         assert!(matches!(&dec.args[0], DecoratorArg::Positional(_)));
         // Named: methods=[POST]
         assert!(matches!(&dec.args[1], DecoratorArg::Named(name, _) if name == "methods"));
+        Ok(())
     }
 
     #[test]
-    fn test_parse_decorator_with_rust_namespace() {
+    fn test_parse_decorator_with_rust_namespace() -> Result<(), Vec<CompileError>> {
         // RFC 023: @rust.extern decorator must parse correctly (rust is a keyword)
         let source = r#"
 @rust.extern
 def foo() -> None:
   pass
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         let func = match &program.declarations[0].node {
             Declaration::Function(f) => f,
             _ => panic!("Expected function"),
@@ -276,14 +289,15 @@ def foo() -> None:
         let dec = &func.decorators[0].node;
         assert_eq!(dec.path.segments, vec!["rust", "extern"]);
         assert_eq!(dec.name, "extern");
+        Ok(())
     }
 
     #[test]
-    fn test_parse_import_path_with_async_segment() {
+    fn test_parse_import_path_with_async_segment() -> Result<(), Vec<CompileError>> {
         let source = r#"
 from std.async.time import sleep
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         let decl = match &program.declarations[0].node {
             Declaration::Import(import) => import,
             _ => panic!("Expected import declaration"),
@@ -292,16 +306,114 @@ from std.async.time import sleep
             panic!("Expected from-import");
         };
         assert_eq!(module.segments, vec!["std", "async", "time"]);
+        Ok(())
     }
 
     #[test]
-    fn test_parse_trait_with_docstring() {
+    fn test_parse_async_requires_std_async_import() {
+        let source = r#"
+async def foo() -> None:
+  pass
+"#;
+        let Err(err) = parse_str(source) else {
+            panic!("Expected async function without std.async import to fail");
+        };
+        assert!(
+            err[0].message.contains("only available after importing `std.async`"),
+            "Unexpected error: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
+    fn test_parse_async_with_std_async_import_ok() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+import std.async
+
+async def foo() -> None:
+  pass
+"#;
+        let program = parse_str(source)?;
+        let func = match &program.declarations[1].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function declaration"),
+        };
+        assert!(func.is_async);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_await_with_std_async_import_ok() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+from std.async.time import sleep
+
+async def foo() -> None:
+  await sleep(1.0)
+"#;
+        let program = parse_str(source)?;
+        let func = match &program.declarations[1].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function declaration"),
+        };
+        assert!(matches!(
+            &func.body[0].node,
+            Statement::Expr(expr) if matches!(expr.node, Expr::Await(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_async_identifier_without_import_ok() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def value(async: int) -> int:
+  return async
+"#;
+        parse_str(source)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_async_method_requires_std_async_import() {
+        let source = r#"
+class Worker:
+  async def run(self) -> None:
+    pass
+"#;
+        let Err(err) = parse_str(source) else {
+            panic!("Expected async method without std.async import to fail");
+        };
+        assert!(
+            err[0].message.contains("only available after importing `std.async`"),
+            "Unexpected error: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
+    fn test_parse_async_trait_method_requires_std_async_import() {
+        let source = r#"
+trait Worker:
+  async def run(self) -> None:
+    ...
+"#;
+        let Err(err) = parse_str(source) else {
+            panic!("Expected async trait method without std.async import to fail");
+        };
+        assert!(
+            err[0].message.contains("only available after importing `std.async`"),
+            "Unexpected error: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
+    fn test_parse_trait_with_docstring() -> Result<(), Vec<CompileError>> {
         let source = r#"
 trait Debug:
     """Debug representation."""
     def __repr__(self) -> str: ...
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         let tr = match &program.declarations[0].node {
             Declaration::Trait(t) => t,
             _ => panic!("Expected trait declaration"),
@@ -309,21 +421,23 @@ trait Debug:
         assert_eq!(tr.name, "Debug");
         assert_eq!(tr.methods.len(), 1);
         assert_eq!(tr.methods[0].node.name, "__repr__");
+        Ok(())
     }
 
     #[test]
-    fn test_parse_non_identifier_alias() {
+    fn test_parse_non_identifier_alias() -> Result<(), Vec<CompileError>> {
         let source = r#"
 model Weird:
   one_ [alias="1"]: int
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         let model = match &program.declarations[0].node {
             Declaration::Model(m) => m,
             _ => panic!("Expected model"),
         };
         let field = &model.fields[0].node;
         assert_eq!(field.metadata.alias.as_deref(), Some("1"));
+        Ok(())
     }
 
     #[test]
@@ -333,7 +447,9 @@ model Weird:
 model Account:
   type_ [alias="a", alias="b"]: str
 "#;
-        let err = parse_str(source).expect_err("Expected duplicate alias key error");
+        let Err(err) = parse_str(source) else {
+            panic!("Expected duplicate alias key error");
+        };
         assert!(
             err[0].message.contains("Duplicate 'alias'"),
             "Unexpected error: {}",
@@ -348,7 +464,9 @@ model Account:
 model Account:
   type_ [description="a", description="b"]: str
 "#;
-        let err = parse_str(source).expect_err("Expected duplicate description key error");
+        let Err(err) = parse_str(source) else {
+            panic!("Expected duplicate description key error");
+        };
         assert!(
             err[0].message.contains("Duplicate 'description'"),
             "Unexpected error: {}",
@@ -363,7 +481,9 @@ model Account:
 model Account:
   type_ [unknown="value"]: str
 "#;
-        let err = parse_str(source).expect_err("Expected unknown metadata key error");
+        let Err(err) = parse_str(source) else {
+            panic!("Expected unknown metadata key error");
+        };
         assert!(
             err[0].message.contains("Unknown field metadata key"),
             "Unexpected error: {}",
@@ -378,7 +498,9 @@ model Account:
 model Account:
   type_ [alias=123]: str
 "#;
-        let err = parse_str(source).expect_err("Expected non-string metadata value error");
+        let Err(err) = parse_str(source) else {
+            panic!("Expected non-string metadata value error");
+        };
         // Parser should fail because it expects a string literal
         assert!(
             err[0].message.contains("string") || err[0].message.contains("Expected"),
@@ -388,7 +510,7 @@ model Account:
     }
 
     #[test]
-    fn test_parse_model_with_traits() {
+    fn test_parse_model_with_traits() -> Result<(), Vec<CompileError>> {
         let source = r#"
 trait Describable:
   def describe(self) -> str: ...
@@ -396,7 +518,7 @@ trait Describable:
 model User with Describable:
   name: str
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         assert_eq!(program.declarations.len(), 2);
         match &program.declarations[1].node {
             Declaration::Model(m) => {
@@ -406,10 +528,11 @@ model User with Describable:
             }
             _ => panic!("Expected model"),
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_model_with_multiple_traits() {
+    fn test_parse_model_with_multiple_traits() -> Result<(), Vec<CompileError>> {
         let source = r#"
 trait A:
   def a(self) -> int: ...
@@ -420,7 +543,7 @@ trait B:
 model User with A, B:
   x: int
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         assert_eq!(program.declarations.len(), 3);
         match &program.declarations[2].node {
             Declaration::Model(m) => {
@@ -431,15 +554,16 @@ model User with A, B:
             }
             _ => panic!("Expected model"),
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_function() {
+    fn test_parse_function() -> Result<(), Vec<CompileError>> {
         let source = r#"
 def add(a: int, b: int) -> int:
   return a + b
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         assert_eq!(program.declarations.len(), 1);
         match &program.declarations[0].node {
             Declaration::Function(f) => {
@@ -448,12 +572,13 @@ def add(a: int, b: int) -> int:
             }
             _ => panic!("Expected function"),
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_import() {
+    fn test_parse_import() -> Result<(), Vec<CompileError>> {
         let source = "import polars::prelude as pl";
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         assert_eq!(program.declarations.len(), 1);
         match &program.declarations[0].node {
             Declaration::Import(i) => {
@@ -469,12 +594,13 @@ def add(a: int, b: int) -> int:
             }
             _ => panic!("Expected import"),
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_rust_import_with_version_and_features() {
+    fn test_parse_rust_import_with_version_and_features() -> Result<(), Vec<CompileError>> {
         let source = r#"import rust::tokio @ "1.0" with ["full", "macros"] as rt"#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         match &program.declarations[0].node {
             Declaration::Import(i) => match &i.kind {
                 ImportKind::RustCrate {
@@ -493,12 +619,13 @@ def add(a: int, b: int) -> int:
             },
             _ => panic!("Expected import"),
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_rust_from_with_version_and_features() {
+    fn test_parse_rust_from_with_version_and_features() -> Result<(), Vec<CompileError>> {
         let source = r#"from rust::time @ "0.3" with ["formatting"] import Instant"#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         match &program.declarations[0].node {
             Declaration::Import(i) => match &i.kind {
                 ImportKind::RustFrom {
@@ -519,12 +646,15 @@ def add(a: int, b: int) -> int:
             },
             _ => panic!("Expected import"),
         }
+        Ok(())
     }
 
     #[test]
     fn test_parse_rust_import_with_features_requires_version() {
         let source = r#"import rust::tokio with ["full"]"#;
-        let err = parse_str(source).expect_err("Expected rust import features to require version");
+        let Err(err) = parse_str(source) else {
+            panic!("Expected rust import features to require version");
+        };
         assert!(
             err[0].message.contains("features require a version"),
             "Unexpected error: {}",
@@ -533,7 +663,7 @@ def add(a: int, b: int) -> int:
     }
 
     #[test]
-    fn test_parse_match() {
+    fn test_parse_match() -> Result<(), Vec<CompileError>> {
         let source = r#"
 def handle(opt: Option[int]) -> int:
   match opt:
@@ -542,19 +672,20 @@ def handle(opt: Option[int]) -> int:
     case None:
       return 0
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         assert_eq!(program.declarations.len(), 1);
+        Ok(())
     }
 
     #[test]
-    fn test_parse_match_fat_arrow_inline_return() {
+    fn test_parse_match_fat_arrow_inline_return() -> Result<(), Vec<CompileError>> {
         let source = r#"
 def f() -> int:
   match Ok(1):
     Ok(x) => return x
     Err(_) => return 0
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         assert_eq!(program.declarations.len(), 1);
         let func = match &program.declarations[0].node {
             Declaration::Function(func) => func,
@@ -579,14 +710,15 @@ def f() -> int:
                 MatchBody::Expr(_) => panic!("Expected inline return to parse as statement block"),
             }
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_const_decl() {
+    fn test_parse_const_decl() -> Result<(), Vec<CompileError>> {
         let source = r#"
 const ANSWER: int = 42
 "#;
-        let program = parse_str(source).unwrap();
+        let program = parse_str(source)?;
         assert_eq!(program.declarations.len(), 1);
         match &program.declarations[0].node {
             Declaration::Const(c) => {
@@ -594,6 +726,7 @@ const ANSWER: int = 42
             }
             _ => panic!("Expected const"),
         }
+        Ok(())
     }
 
     // ========================================================================
@@ -603,7 +736,9 @@ const ANSWER: int = 42
     #[test]
     fn test_enum_fat_arrow_mapping_rejected_with_hint() {
         let source = "enum Categories:\n    GROCERIES => Category(\"Groceries\")\n";
-        let err = parse_str(source).expect_err("Fat arrow in enum body should be rejected");
+        let Err(err) = parse_str(source) else {
+            panic!("Fat arrow in enum body should be rejected");
+        };
         let msg = format!("{:?}", err);
         assert!(
             msg.contains("mapped values"),
@@ -614,7 +749,9 @@ const ANSWER: int = 42
     #[test]
     fn test_enum_dotted_variant_rejected_with_hint() {
         let source = "enum FlowType:\n    Cash.Inflow\n";
-        let err = parse_str(source).expect_err("Dotted variant in enum body should be rejected");
+        let Err(err) = parse_str(source) else {
+            panic!("Dotted variant in enum body should be rejected");
+        };
         let msg = format!("{:?}", err);
         assert!(
             msg.contains("cannot contain dots"),
@@ -625,7 +762,9 @@ const ANSWER: int = 42
     #[test]
     fn test_enum_assigned_value_rejected_with_hint() {
         let source = "enum Color:\n    Red = 1\n";
-        let err = parse_str(source).expect_err("Assigned value in enum body should be rejected");
+        let Err(err) = parse_str(source) else {
+            panic!("Assigned value in enum body should be rejected");
+        };
         let msg = format!("{:?}", err);
         assert!(
             msg.contains("assigned values"),
@@ -636,7 +775,9 @@ const ANSWER: int = 42
     #[test]
     fn test_enum_colon_annotation_rejected_with_hint() {
         let source = "enum Fields:\n    Name: str\n";
-        let err = parse_str(source).expect_err("Type annotation in enum body should be rejected");
+        let Err(err) = parse_str(source) else {
+            panic!("Type annotation in enum body should be rejected");
+        };
         let msg = format!("{:?}", err);
         assert!(
             msg.contains("type annotations"),
@@ -647,7 +788,9 @@ const ANSWER: int = 42
     #[test]
     fn test_valid_enum_still_parses() {
         let source = "enum Status:\n    Pending\n    Active\n    Done(str)\n";
-        let program = parse_str(source).expect("Valid enum should parse");
+        let Ok(program) = parse_str(source) else {
+            panic!("Valid enum should parse");
+        };
         assert_eq!(program.declarations.len(), 1);
         match &program.declarations[0].node {
             Declaration::Enum(e) => {
@@ -699,7 +842,9 @@ const ANSWER: int = 42
     #[test]
     fn test_rust_module_directive_duplicate_is_error() {
         let source = "rust.module(\"crate_a\")\nrust.module(\"crate_b\")\n\ndef foo() -> int:\n    return 1\n";
-        let err = parse_str(source).expect_err("Duplicate rust.module() should fail");
+        let Err(err) = parse_str(source) else {
+            panic!("Duplicate rust.module() should fail");
+        };
         let has_duplicate_msg = err.iter().any(|e| e.message.contains("Duplicate"));
         assert!(has_duplicate_msg, "Should report duplicate rust.module(); errors: {:?}", err.iter().map(|e| &e.message).collect::<Vec<_>>());
     }
@@ -707,12 +852,49 @@ const ANSWER: int = 42
     #[test]
     fn test_rust_module_directive_not_at_top_is_error() {
         let source = "def foo() -> int:\n    return 1\n\nrust.module(\"incan_stdlib::testing\")\n";
-        let err = parse_str(source).expect_err("rust.module() after declarations should fail");
+        let Err(err) = parse_str(source) else {
+            panic!("rust.module() after declarations should fail");
+        };
         let has_msg = err.iter().any(|e| e.message.contains("must appear at the top"));
         assert!(
             has_msg,
             "Should report rust.module() placement error; errors: {:?}",
             err.iter().map(|e| &e.message).collect::<Vec<_>>()
         );
+    }
+
+    // ---- rust.module() edge case tests ----
+
+    #[test]
+    fn test_rust_module_missing_parens() {
+        // `rust.module "foo"` — missing parentheses should produce a parse error.
+        let source = "rust.module \"foo\"\n\ndef bar() -> int:\n    return 1\n";
+        let result = parse_str(source);
+        assert!(result.is_err(), "rust.module without parens should be an error");
+    }
+
+    #[test]
+    fn test_rust_module_non_string_arg() {
+        // `rust.module(42)` — non-string argument should produce a parse error.
+        let source = "rust.module(42)\n\ndef bar() -> int:\n    return 1\n";
+        let result = parse_str(source);
+        assert!(result.is_err(), "rust.module with non-string arg should be an error");
+    }
+
+    #[test]
+    fn test_rust_module_empty_string() {
+        // `rust.module("")` — empty string should parse fine (validated later by typechecker).
+        let source = "rust.module(\"\")\n\n@rust.extern\ndef bar() -> int:\n    ...\n";
+        let result = parse_str(source);
+        // Should parse OK; the empty path is caught by the typechecker's path validation.
+        assert!(result.is_ok(), "rust.module with empty string should parse; errors: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_rust_module_missing_closing_paren() {
+        // `rust.module("foo"` — missing closing paren should produce a parse error.
+        let source = "rust.module(\"foo\"\n\ndef bar() -> int:\n    return 1\n";
+        let result = parse_str(source);
+        assert!(result.is_err(), "rust.module with missing closing paren should be an error");
     }
 }

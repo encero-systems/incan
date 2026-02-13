@@ -120,8 +120,8 @@ fn write_language_reference(path: &Path) {
 fn render_keywords_section(out: &mut String) {
     start_section(out, "## Keywords");
 
-    out.push_str("| Id | Canonical | Aliases | Category | Usage | RFC | Since | Stability |\n");
-    out.push_str("|----|---|---|---|---|---|---|---|\n");
+    out.push_str("| Id | Canonical | Aliases | Activation | Category | Usage | RFC | Since | Stability |\n");
+    out.push_str("|----|---|---|---|---|---|---|---|---|\n");
 
     for k in keywords::KEYWORDS {
         let id = format!("{:?}", k.id);
@@ -135,6 +135,10 @@ fn render_keywords_section(out: &mut String) {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
+        let activation = k
+            .activation
+            .map(|ns| format!("`std.{}`", ns))
+            .unwrap_or_else(|| "-".to_string());
         let category = format!("{:?}", k.category);
         let usage = if k.usage.is_empty() {
             String::new()
@@ -150,7 +154,7 @@ fn render_keywords_section(out: &mut String) {
         let stability = format!("{:?}", k.stability);
 
         out.push_str(&format!(
-            "| {id} | {canonical} | {aliases} | {category} | {usage} | {rfc} | {since} | {stability} |\n"
+            "| {id} | {canonical} | {aliases} | {activation} | {category} | {usage} | {rfc} | {since} | {stability} |\n"
         ));
     }
     out.push('\n');

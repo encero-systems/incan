@@ -12,7 +12,6 @@ mod decl_helpers;
 pub(super) mod decorators;
 mod stdlib_async;
 mod stdlib_imports;
-mod stdlib_testing;
 
 use self::decl_helpers::{collect_fields, collect_methods, inject_json_methods, inject_validate_methods};
 

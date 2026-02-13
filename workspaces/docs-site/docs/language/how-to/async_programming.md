@@ -3,6 +3,10 @@
 Incan provides full async/await support powered by the Tokio runtime.
 This guide covers all async features available in Incan.
 
+!!! important "Async is import-activated"
+    `async` and `await` are **soft keywords**: they become reserved keywords only after importing `std.async`
+    (for example `import std.async` or `from std.async.time import sleep`).
+
 !!! note "Coming from Python?"
     Incan's async model mirrors Python's `asyncio` — you'll find `async def`, `await`, task spawning, and timeouts all
     work the same way.
@@ -13,6 +17,8 @@ This guide covers all async features available in Incan.
 ## Quick Start
 
 ```incan
+from std.async.time import sleep
+
 async def fetch_data() -> str:
     await sleep(1.0)  # Wait 1 second
     return "data"
@@ -29,6 +35,8 @@ def main() -> None:
 Declare async functions with `async def`:
 
 ```incan
+from std.async.time import sleep
+
 async def do_work() -> int:
     await sleep(0.5)
     return 42
@@ -39,6 +47,8 @@ async def do_work() -> int:
 Use `await` to wait for an async operation:
 
 ```incan
+import std.async
+
 async def process() -> str:
     data = await fetch_data()
     result = await transform(data)
@@ -52,8 +62,11 @@ async def process() -> str:
 Pause execution for a duration:
 
 ```incan
-await sleep(1.5)      # Sleep 1.5 seconds
-await sleep_ms(500)   # Sleep 500 milliseconds
+from std.async.time import sleep, sleep_ms
+
+async def demo() -> None:
+    await sleep(1.5)      # Sleep 1.5 seconds
+    await sleep_ms(500)   # Sleep 500 milliseconds
 ```
 
 ### timeout
@@ -61,10 +74,13 @@ await sleep_ms(500)   # Sleep 500 milliseconds
 Run an operation with a time limit:
 
 ```incan
-result = await timeout(5.0, slow_operation)
-match result:
-    case Ok(value): println(f"Success: {value}")
-    case Err(e): println("Operation timed out")
+from std.async.time import timeout
+
+async def demo() -> None:
+    result = await timeout(5.0, slow_operation)
+    match result:
+        case Ok(value): println(f"Success: {value}")
+        case Err(e): println("Operation timed out")
 ```
 
 ## Task Spawning
@@ -74,6 +90,9 @@ match result:
 Run a task concurrently:
 
 ```incan
+from std.async.task import spawn
+from std.async.time import sleep
+
 async def background_work() -> int:
     await sleep(2.0)
     return 42
@@ -94,6 +113,8 @@ println(f"Background task returned: {result}")
 Run CPU-intensive or blocking code on a dedicated thread:
 
 ```incan
+from std.async.task import spawn_blocking
+
 def heavy_computation() -> int:
     result = 0
     for i in range(1_000_000):
@@ -109,6 +130,8 @@ result = await spawn_blocking(heavy_computation)
 Cooperatively yield to let other tasks run:
 
 ```incan
+from std.async.task import yield_now
+
 async def cooperative_loop() -> None:
     for i in range(10000):
         # Do some work...
@@ -141,6 +164,8 @@ They're the primary way to communicate between async tasks without shared mutabl
 **Bounded channel** (recommended):
 
 ```incan
+from std.async.channel import channel
+
 # Create channel with buffer size 32
 tx, rx = channel[str](32)
 
@@ -160,6 +185,9 @@ async def consumer() -> None:
 **Multiple producers** (clone the sender):
 
 ```incan
+from std.async.channel import channel
+from std.async.task import spawn
+
 tx, rx = channel[int](100)
 
 # Clone sender for each producer
@@ -206,6 +234,8 @@ async def consume() -> None:
 `send` never blocks, but use with caution — if producers outpace consumers, memory grows without limit:
 
 ```incan
+from std.async.channel import unbounded_channel
+
 # No capacity limit - send always succeeds immediately
 tx, rx = unbounded_channel[int]()
 
@@ -244,6 +274,9 @@ This is perfect for "request-response" patterns where you spawn a task and wait 
 **Basic usage:**
 
 ```incan
+from std.async.channel import oneshot
+from std.async.task import spawn
+
 tx, rx = oneshot[int]()
 
 spawn(async () -> None:
@@ -260,6 +293,9 @@ match await rx.recv():
 **Common pattern - returning results from spawned tasks:**
 
 ```incan
+from std.async.channel import oneshot
+from std.async.task import spawn
+
 async def compute_in_background(input: Data) -> Result[Output, ComputeError]:
     # Create oneshot for the result
     tx, rx = oneshot[Result[Output, ComputeError]]()
@@ -319,6 +355,8 @@ Mutual exclusion — ensures only **one task** can access the wrapped value at a
 - Guard auto-releases when it goes out of scope
 
 ```incan
+from std.async.sync import Mutex
+
 shared_counter = Mutex(0)
 
 async def increment() -> None:
@@ -342,6 +380,8 @@ async def increment():
 ```
 
 ```incan
+from std.async.sync import Mutex
+
 # Incan - lock wraps the data
 counter = Mutex(0)
 
@@ -366,6 +406,8 @@ More efficient than Mutex when reads are frequent.
 - `guard.set(new_value)` — Write (only on write guard)
 
 ```incan
+from std.async.sync import RwLock
+
 config = RwLock(Config(debug=False))
 
 async def read_config() -> bool:
@@ -395,6 +437,8 @@ Counting semaphore — limits how many tasks can access a resource concurrently 
 - Permit auto-releases when it goes out of scope
 
 ```incan
+from std.async.sync import Semaphore
+
 # Allow max 3 concurrent connections
 connection_limit = Semaphore(3)
 
@@ -420,6 +464,8 @@ Synchronization point — makes N tasks wait until **all of them** reach the bar
 - `await barrier.wait()` — Wait until all n tasks reach this point
 
 ```incan
+from std.async.sync import Barrier
+
 barrier = Barrier(3)  # Wait for 3 tasks
 
 async def worker(id: int) -> None:
@@ -446,6 +492,9 @@ for a runnable demo of all four primitives.
 Race two futures, get whichever completes first:
 
 ```incan
+from std.async.select import select2
+from std.async.time import sleep
+
 async def fast() -> str:
     await sleep(0.1)
     return "fast"
@@ -464,10 +513,12 @@ match await select2(fast, slow):
 Race three futures:
 
 ```incan
+from std.async.select import select3
+
 result = await select3(op1, op2, op3)
 match result:
     case Either3.First(v): println("op1 won")
-    case Either3.Second(v): println("op2 won")  
+    case Either3.Second(v): println("op2 won")
     case Either3.Third(v): println("op3 won")
 ```
 
@@ -476,6 +527,8 @@ match result:
 Simplified timeout returning Option:
 
 ```incan
+from std.async.select import select_timeout
+
 match await select_timeout(2.0, slow_operation):
     case Some(result): println(f"Got: {result}")
     case None: println("Timed out, using default")
@@ -490,6 +543,8 @@ When your program uses async features, the `main()` function is automatically wr
 Tokio is Rust's async runtime: see the [Tokio project](https://tokio.rs/) for a high-level overview.
 
 ```incan
+import std.async
+
 def main() -> None:
     # This becomes async main() under the hood
     # when async primitives are used
@@ -513,6 +568,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 Avoid blocking operations in async code:
 
 ```incan
+from std.async.time import sleep
+
 # BAD: Blocks the async runtime
 async def bad() -> None:
     std_thread_sleep(1.0)  # Don't do this!
@@ -525,6 +582,8 @@ async def good() -> None:
 ### 2. Use spawn_blocking for CPU Work
 
 ```incan
+from std.async.task import spawn_blocking
+
 # BAD: CPU work on async runtime
 async def bad() -> int:
     return heavy_computation()
@@ -539,6 +598,8 @@ async def good() -> int:
 Prefer bounded channels to prevent memory issues:
 
 ```incan
+from std.async.channel import channel, unbounded_channel
+
 # Prefer this:
 tx, rx = channel[Data](100)
 
@@ -551,6 +612,9 @@ tx, rx = unbounded_channel[Data]()
 Tasks can be cancelled when their handles are dropped:
 
 ```incan
+from std.async.task import spawn
+from std.async.time import sleep
+
 async def cancellable_work() -> str:
     await sleep(10.0)
     return "done"
@@ -566,6 +630,8 @@ _ = handle  # Explicit ignore (task continues)
 ### Timeout Errors
 
 ```incan
+from std.async.time import timeout
+
 result = await timeout(1.0, slow_task)
 match result:
     case Ok(value): process(value)
@@ -578,6 +644,8 @@ When sending fails because the receiver was dropped, `SendError[T]` contains the
 `.value` field:
 
 ```incan
+from std.async.channel import Sender
+
 async def sender(tx: Sender[Message]) -> None:
     msg = Message(id=1, content="important data")
     

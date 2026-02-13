@@ -13,7 +13,7 @@ use crate::frontend::typechecker::TypeChecker;
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::types as surface_types;
 
-use super::{stdlib_async, stdlib_testing};
+use super::stdlib_async;
 
 impl TypeChecker {
     /// Reject names that shadow reserved root namespaces.
@@ -28,6 +28,13 @@ impl TypeChecker {
         self.validate_import_visibility(import, span);
         match &import.kind {
             ImportKind::Module(path) => {
+                // Reject `import std.f64.consts` — unknown stdlib module; suggest `import rust::std::f64::consts`.
+                if stdlib::is_any_stdlib_path(&path.segments)
+                    && !stdlib::is_known_stdlib_module(&path.segments)
+                {
+                    self.errors
+                        .push(errors::unknown_stdlib_module(&path.segments.join("."), span));
+                }
                 let name = import
                     .alias
                     .clone()
@@ -40,6 +47,17 @@ impl TypeChecker {
                 self.define_import_symbol(name, path.segments.clone(), false, span);
             }
             ImportKind::From { module, items } => {
+                // Reject unknown stdlib module, e.g. `from std.f64.consts import PI`;
+                // suggest a correction, e.g.`from rust::std::f64::consts import PI`.
+                if module.parent_levels == 0
+                    && !module.is_absolute
+                    && stdlib::is_any_stdlib_path(&module.segments)
+                    && !stdlib::is_known_stdlib_module(&module.segments)
+                {
+                    self.errors
+                        .push(errors::unknown_stdlib_module(&module.segments.join("."), span));
+                }
+
                 let is_std_web = module.parent_levels == 0
                     && !module.is_absolute
                     && module.segments.len() >= 2
@@ -75,11 +93,10 @@ impl TypeChecker {
                         let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
                         self.validate_root_namespace(&local_name, span);
 
-                        // RFC 023: try AST-derived signatures first, fall back to hardcoded.
+                        // RFC 023: signatures derived from parsed stdlib/testing.incn via StdlibAstCache.
                         let info = self
                             .stdlib_cache
-                            .lookup_function(&module.segments, &item.name)
-                            .or_else(|| stdlib_testing::testing_import_function_info(&item.name));
+                            .lookup_function(&module.segments, &item.name);
 
                         if let Some(info) = info {
                             self.symbols.define(Symbol {
@@ -126,19 +143,38 @@ impl TypeChecker {
                         }
 
                     // Stdlib async helper functions become available when explicitly imported.
-                    if is_std_async
-                        && let Some((info, expected_module)) = stdlib_async::async_import_function_info(&item.name)
-                            && (is_async_prelude || std_async_submodule == Some(expected_module)) {
-                                let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
-                                self.validate_root_namespace(&local_name, span);
-                                self.symbols.define(Symbol {
-                                    name: local_name,
-                                    kind: SymbolKind::Function(info),
-                                    span,
-                                    scope: 0,
-                                });
-                                continue;
-                            }
+                    // RFC 023: try AST-derived signatures first (from the parsed .incn files), fall back to hardcoded async_import_function_info().
+                    if is_std_async {
+                        let ast_info = if is_async_prelude {
+                            // Prelude import: search all async submodules for the function.
+                            None
+                        } else {
+                            // Direct submodule import (e.g. `from std.async.time import sleep`).
+                            self.stdlib_cache.lookup_function(&module.segments, &item.name)
+                        };
+
+                        let resolved = ast_info.map(|info| (info, true)).or_else(|| {
+                            stdlib_async::async_import_function_info(&item.name).and_then(|(info, expected_module)| {
+                                if is_async_prelude || std_async_submodule == Some(expected_module) {
+                                    Some((info, true))
+                                } else {
+                                    None
+                                }
+                            })
+                        });
+
+                        if let Some((info, _)) = resolved {
+                            let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
+                            self.validate_root_namespace(&local_name, span);
+                            self.symbols.define(Symbol {
+                                name: local_name,
+                                kind: SymbolKind::Function(info),
+                                span,
+                                scope: 0,
+                            });
+                            continue;
+                        }
+                    }
                     let aliased_type = item.alias.as_ref().and_then(|alias| {
                         if self.symbols.lookup(alias).is_some() {
                             return None;

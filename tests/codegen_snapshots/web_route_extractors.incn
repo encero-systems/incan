@@ -1,6 +1,7 @@
 """Web route wrapper generation coverage."""
 
 from std.web import route, Json, Query, Response, POST
+import std.async
 
 @derive(Deserialize)
 model SearchParams:

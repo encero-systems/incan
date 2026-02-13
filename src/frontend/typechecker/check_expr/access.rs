@@ -1,7 +1,7 @@
 //! Check indexing, slicing, field access, and method calls.
 //!
-//! These helpers validate access patterns like `xs[i]`, `xs[a:b]`, `obj.field`, and
-//! `obj.method(...)`, emitting diagnostics for missing fields/methods and incompatible uses.
+//! These helpers validate access patterns like `xs[i]`, `xs[a:b]`, `obj.field`, and `obj.method(...)`, emitting
+//! diagnostics for missing fields/methods and incompatible uses.
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
@@ -616,8 +616,8 @@ impl TypeChecker {
         }
 
         // Named types: look up methods from the type definition.
-        // If the symbol doesn't exist or isn't a type (e.g., Module/RustModule placeholder),
-        // treat it as external and be permissive.
+        // If the symbol doesn't exist or isn't a type (e.g., Module/RustModule placeholder), treat it as external and
+        // be permissive.
         if let ResolvedType::Named(type_name) = &base_ty {
             match self.lookup_type_info(type_name).cloned() {
                 None => {
@@ -655,18 +655,26 @@ impl TypeChecker {
             }
         }
 
-        // For magic helpers that codegen injects (e.g., __class_name__, __fields__),
-        // be permissive at typecheck time since they are backend-provided.
+        // For magic helpers that codegen injects (e.g., __class_name__, __fields__), be permissive at typecheck time
+        // since they are backend-provided.
         if magic_methods::from_str(method).is_some() {
             return ResolvedType::Unknown;
         }
 
-        // For common external generic types (interop/runtime-provided) that we don't model in
-        // the checker, be permissive and do not error on unknown methods.
+        // For common external generic types (interop/runtime-provided) that we don't model in the checker, be
+        // permissive and do not error on unknown methods.
         if let ResolvedType::Generic(name, _args) = &base_ty
             && surface_types::from_str(name.as_str()).is_some()
         {
             return ResolvedType::Unknown;
+        }
+
+        // RFC 023: Method calls on generic type variables are permissive.
+        //
+        // The Rust backend infers the required trait bounds (e.g., `x.clone()` → `T: Clone`).
+        // At the Incan typechecker level we allow the call and return the same type variable.
+        if matches!(base_ty, ResolvedType::TypeVar(_)) {
+            return base_ty.clone();
         }
 
         // Guardrail: don't silently return Unknown for missing methods on known user types.

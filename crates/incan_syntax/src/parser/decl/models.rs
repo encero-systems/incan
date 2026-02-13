@@ -117,6 +117,9 @@ impl<'a> Parser<'a> {
         } else {
             while !self.check(&TokenKind::Dedent) && !self.is_at_end() {
                 let method_decorators = self.decorators()?;
+                if let Some(err) = self.inactive_soft_keyword_error() {
+                    return Err(err);
+                }
                 methods.push(self.method_decl(method_decorators)?);
                 self.skip_newlines();
             }
@@ -148,6 +151,9 @@ impl<'a> Parser<'a> {
                 continue;
             }
             let decorators = self.decorators()?;
+            if let Some(err) = self.inactive_soft_keyword_error() {
+                return Err(err);
+            }
 
             // Check if it's a method (starts with def or async def)
             if self.check_keyword(KeywordId::Def) || self.check_keyword(KeywordId::Async) {

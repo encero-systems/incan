@@ -9,6 +9,7 @@ giving you Flask/FastAPI-like syntax with native Rust performance.
 
 ```incan
 from std.web import App, route, Response, Json
+import std.async
 
 @derive(Serialize)
 model Greeting:
@@ -42,6 +43,7 @@ Define routes using the `@route` decorator:
 
 ```incan
 from std.web import route, Response, GET, POST
+import std.async
 
 @route("/path")
 async def handler() -> Response:
@@ -62,6 +64,7 @@ Use `{name}` syntax for path parameters:
 
 ```incan
 from std.web import route, Json
+import std.async
 
 @route("/users/{id}")
 async def get_user(id: int) -> Json[User]:
@@ -82,6 +85,7 @@ Supported methods are `GET`, `POST`, `PUT`, `DELETE`, and `PATCH`.
 
 ```incan
 from std.web import route, Json, Response, GET, POST, PUT, DELETE
+import std.async
 
 @route("/items/ping", methods=[GET, POST])
 async def ping_items() -> Response:
@@ -112,6 +116,7 @@ Use `Json[T]` for JSON responses. The inner type must have `@derive(Serialize)`:
 
 ```incan
 from std.web import route, Json
+import std.async
 
 @derive(Serialize)
 model User:
@@ -131,6 +136,7 @@ Return HTML with `Response.html()`:
 
 ```incan
 from std.web import route, Response
+import std.async
 
 @route("/")
 async def index() -> Response:
@@ -143,6 +149,7 @@ Use `Response` methods for different status codes:
 
 ```incan
 from std.web import route, Response
+import std.async
 
 @route("/health")
 async def health() -> Response:
@@ -177,6 +184,7 @@ Path parameters are automatically extracted into function arguments:
 
 ```incan
 from std.web import route, Json
+import std.async
 
 @route("/users/{user_id}/posts/{post_id}")
 async def get_post(user_id: int, post_id: int) -> Json[Post]:
@@ -189,6 +197,7 @@ Use `Query[T]` for query string parameters:
 
 ```incan
 from std.web import route, Json, Query
+import std.async
 
 @derive(Deserialize)
 model SearchParams:
@@ -207,6 +216,7 @@ Use `Json[T]` as a parameter for JSON request bodies:
 
 ```incan
 from std.web import route, Json, POST
+import std.async
 
 @derive(Deserialize)
 model CreateUser:
@@ -263,6 +273,7 @@ A simple REST API for managing items.
 """
 
 from std.web import App, route, Response, Json, GET, POST, DELETE
+import std.async
 
 
 @derive(Serialize, Deserialize)

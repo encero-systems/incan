@@ -1061,6 +1061,8 @@ model User:
     #[test]
     fn test_async_detection() {
         let source = r#"
+import std.async
+
 async def fetch() -> str:
   return "hello"
 "#;

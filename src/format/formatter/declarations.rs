@@ -374,6 +374,7 @@ impl Formatter {
         }
         self.writer.write("def ");
         self.writer.write(&func.name);
+        self.format_type_params(&func.type_params);
         self.writer.write("(");
         self.format_params(&func.params);
         self.writer.write(") -> ");

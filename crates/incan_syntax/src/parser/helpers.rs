@@ -63,7 +63,29 @@ impl<'a> Parser<'a> {
 
     /// Return `true` if the current token is the given keyword.
     fn check_keyword(&self, id: KeywordId) -> bool {
-        self.peek().kind.is_keyword(id)
+        if self.peek().kind.is_keyword(id) {
+            return true;
+        }
+        if !incan_core::lang::keywords::is_soft(id) || !self.active_soft_keywords.contains(&id) {
+            return false;
+        }
+        matches!(
+            &self.peek().kind,
+            TokenKind::Ident(name) if name == incan_core::lang::keywords::as_str(id)
+        )
+    }
+
+    /// Return a targeted error if the current token is an inactive soft keyword.
+    fn inactive_soft_keyword_error(&self) -> Option<CompileError> {
+        let TokenKind::Ident(name) = &self.peek().kind else {
+            return None;
+        };
+        let id = incan_core::lang::keywords::from_str(name)?;
+        if !incan_core::lang::keywords::is_soft(id) || self.active_soft_keywords.contains(&id) {
+            return None;
+        }
+        let namespace = incan_core::lang::keywords::activation(id)?;
+        Some(errors::soft_keyword_requires_import(name, namespace, self.current_span()))
     }
 
     /// Return `true` if the current token is the given punctuation.

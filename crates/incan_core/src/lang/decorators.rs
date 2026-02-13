@@ -150,7 +150,10 @@ pub fn as_str(id: DecoratorId) -> &'static str {
 
 /// Return the metadata entry for a decorator.
 pub fn info_for(id: DecoratorId) -> &'static DecoratorInfo {
-    DECORATORS.iter().find(|d| d.id == id).expect("decorator info missing")
+    let Some(info) = DECORATORS.iter().find(|d| d.id == id) else {
+        panic!("decorator info missing for {id:?}");
+    };
+    info
 }
 
 const fn info(

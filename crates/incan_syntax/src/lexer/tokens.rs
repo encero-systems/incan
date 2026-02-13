@@ -70,5 +70,5 @@ impl Token {
 
 /// Resolve an identifier spelling to a keyword id, if reserved.
 pub fn keyword_id(name: &str) -> Option<KeywordId> {
-    keywords::from_str(name)
+    keywords::from_str_hard_only(name)
 }

@@ -176,6 +176,7 @@ def measure_operation() -> None:
 ### HTTP Requests (reqwest)
 
 ```incan
+import std.async
 import rust::reqwest
 
 async def fetch_data(url: str) -> str:

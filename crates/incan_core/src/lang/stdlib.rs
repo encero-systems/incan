@@ -1,4 +1,5 @@
 //! Canonical stdlib module names.
+use super::keywords::KeywordId;
 
 /// Root stdlib namespace (e.g. `import std::...`).
 pub const STDLIB_ROOT: &str = "std";
@@ -21,69 +22,237 @@ pub const STDLIB_REFLECTION: &str = "reflection";
 /// `std::this` module name (`import this`).
 pub const STDLIB_THIS: &str = "this";
 
+/// `std.async` module name.
+pub const STDLIB_ASYNC: &str = "async";
+
 /// Check if a module path starts with `std.<module>`.
 pub fn is_stdlib_module(path: &[String], module: &str) -> bool {
     path.len() >= 2 && path[0] == STDLIB_ROOT && path[1] == module
 }
 
-/// Metadata for a stdlib surface module.
-#[derive(Debug, Clone, Copy)]
-pub struct StdlibModuleInfo {
-    pub path: &'static [&'static str],
-    pub feature: Option<&'static str>,
-    pub stub_path: &'static str,
+/// Check if a module path is any `std.*` module.
+///
+/// Any path starting with `std.` is an Incan stdlib import. Rust standard library paths must use the `rust::` prefix
+/// (e.g. `from rust::std::f64::consts import PI`), which routes through `ImportKind::RustFrom` and gets
+/// `IrImportQualifier::None` — bypassing this check entirely.
+pub fn is_any_stdlib_path(path: &[String]) -> bool {
+    path.len() >= 2 && path[0] == STDLIB_ROOT
 }
 
-pub const STDLIB_MODULES: &[StdlibModuleInfo] = &[
-    StdlibModuleInfo {
-        path: &["std", "web"],
+/// A top-level stdlib namespace with optional metadata.
+///
+/// Only top-level namespaces (`std.<name>`) are registered explicitly. Submodule stub paths are derived by convention
+/// (`stdlib/{ns}/{sub}.incn`), so adding a new submodule requires zero changes here — just drop an `.incn` file in the
+/// right directory.
+#[derive(Debug, Clone, Copy)]
+pub struct StdlibNamespace {
+    /// Top-level namespace name (e.g., `"web"`, `"testing"`, `"async"`).
+    pub name: &'static str,
+    /// Optional Cargo feature gate required for this namespace.
+    pub feature: Option<&'static str>,
+    /// Known submodules for validation and LSP completion. Empty for leaf modules.
+    pub submodules: &'static [&'static str],
+    /// Soft keywords activated by importing this namespace.
+    pub soft_keywords: &'static [KeywordId],
+}
+
+/// Registry of top-level stdlib namespaces.
+///
+/// Submodule stub paths are derived by convention, so this list stays compact even as the stdlib grows. Adding a new
+/// submodule (e.g. `std.async.broadcast`) only requires adding the `.incn` file and appending the name to the parent
+/// namespace's `submodules` array.
+pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
+    StdlibNamespace {
+        name: "web",
         feature: Some("web"),
-        stub_path: "stdlib/web/prelude.incn",
+        submodules: &["app", "routing", "request", "response", "prelude"],
+        soft_keywords: &[],
     },
-    StdlibModuleInfo {
-        path: &["std", "testing"],
+    StdlibNamespace {
+        name: "testing",
         feature: None,
-        stub_path: "stdlib/testing.incn",
+        submodules: &[],
+        soft_keywords: &[],
     },
-    StdlibModuleInfo {
-        path: &["std", "async"],
+    StdlibNamespace {
+        name: "async",
         feature: None,
-        stub_path: "stdlib/async/prelude.incn",
+        submodules: &["time", "task", "channel", "select", "sync", "prelude"],
+        soft_keywords: &[KeywordId::Async, KeywordId::Await],
     },
-    StdlibModuleInfo {
-        path: &["std", "serde", "json"],
+    StdlibNamespace {
+        name: "serde",
         feature: Some("json"),
-        stub_path: "stdlib/serde/json.incn",
+        submodules: &["json"],
+        soft_keywords: &[],
     },
-    StdlibModuleInfo {
-        path: &["std", "reflection"],
+    StdlibNamespace {
+        name: "reflection",
         feature: None,
-        stub_path: "stdlib/reflection.incn",
+        submodules: &[],
+        soft_keywords: &[],
+    },
+    StdlibNamespace {
+        name: "derives",
+        feature: None,
+        submodules: &["string", "comparison", "copying", "collection"],
+        soft_keywords: &[],
+    },
+    StdlibNamespace {
+        name: "traits",
+        feature: None,
+        submodules: &["convert", "ops", "error", "indexing", "callable"],
+        soft_keywords: &[],
+    },
+    StdlibNamespace {
+        name: "math",
+        feature: None,
+        submodules: &[],
+        soft_keywords: &[],
     },
 ];
 
-pub fn stdlib_module_info(path: &[String]) -> Option<&'static StdlibModuleInfo> {
-    STDLIB_MODULES
-        .iter()
-        .find(|info| info.path.len() == path.len() && info.path.iter().zip(path.iter()).all(|(a, b)| a == b))
+/// Look up a top-level stdlib namespace by name.
+pub fn find_namespace(name: &str) -> Option<&'static StdlibNamespace> {
+    STDLIB_NAMESPACES.iter().find(|ns| ns.name == name)
 }
 
+/// Resolve soft keywords activated by a stdlib import path.
+///
+/// `path` is expected in canonical segmented form (e.g. `["std", "async", "time"]`).
+/// Returns an empty slice for non-stdlib paths or namespaces without soft keywords.
+pub fn soft_keywords_for_import(path: &[String]) -> &'static [KeywordId] {
+    if path.len() < 2 || path[0] != STDLIB_ROOT {
+        return &[];
+    }
+    find_namespace(&path[1]).map_or(&[], |ns| ns.soft_keywords)
+}
+
+/// Check if a module path matches a known Incan stdlib module.
+///
+/// Unlike [`is_any_stdlib_path`] which accepts anything starting with `"std"`, this validates that the second segment
+/// is a registered namespace and (for depth-3 paths) the third segment is a known submodule.
+///
+/// Use this to reject unknown `std.*` paths with a helpful diagnostic.
+pub fn is_known_stdlib_module(path: &[String]) -> bool {
+    if path.len() < 2 || path[0] != STDLIB_ROOT {
+        return false;
+    }
+    let Some(ns) = find_namespace(&path[1]) else {
+        return false;
+    };
+    if path.len() == 2 {
+        return true;
+    }
+    // Leaf modules (no submodules) don't have children.
+    if ns.submodules.is_empty() {
+        return false;
+    }
+    ns.submodules.contains(&path[2].as_str())
+}
+
+/// Human-friendly list of known stdlib modules for diagnostics.
+///
+/// Includes top-level namespaces and registered direct submodules.
+pub fn known_stdlib_modules_for_hint() -> Vec<String> {
+    let mut known = Vec::new();
+    for ns in STDLIB_NAMESPACES {
+        known.push(format!("std.{}", ns.name));
+        for sub in ns.submodules {
+            known.push(format!("std.{}.{}", ns.name, sub));
+        }
+    }
+    known.sort();
+    known.dedup();
+    known
+}
+
+/// Look up the Cargo feature gate for a stdlib module path.
 pub fn stdlib_feature_for(path: &[String]) -> Option<&'static str> {
-    STDLIB_MODULES
-        .iter()
-        .find(|info| path.len() >= info.path.len() && info.path.iter().zip(path.iter()).all(|(a, b)| a == b))
-        .and_then(|info| info.feature)
+    if path.len() < 2 || path[0] != STDLIB_ROOT {
+        return None;
+    }
+    find_namespace(&path[1]).and_then(|ns| ns.feature)
 }
 
+/// Resolve the stub `.incn` file path for a stdlib module path.
+///
+/// Uses convention-based resolution:
+/// - `std.X` (leaf, no submodules) → `stdlib/X.incn`
+/// - `std.X` (namespace with submodules) → `stdlib/X/prelude.incn`
+/// - `std.X.Y` (and deeper) → `stdlib/X/Y.incn`
 pub fn stdlib_stub_path(path: &[String]) -> Option<String> {
     if path.len() < 2 || path[0] != STDLIB_ROOT {
         return None;
     }
-    if let Some(info) = stdlib_module_info(path) {
-        return Some(info.stub_path.to_string());
+    let ns = find_namespace(&path[1])?;
+    if path.len() == 2 {
+        if ns.submodules.is_empty() {
+            Some(format!("stdlib/{}.incn", ns.name))
+        } else {
+            Some(format!("stdlib/{}/prelude.incn", ns.name))
+        }
+    } else {
+        Some(format!("stdlib/{}.incn", path[1..].join("/")))
     }
-    if path.len() >= 3 {
-        return Some(format!("stdlib/{}.incn", path[1..].join("/")));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn segs(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
     }
-    None
+
+    #[test]
+    fn known_stdlib_modules_cover_existing_surface_paths() {
+        assert!(is_known_stdlib_module(&segs(&["std", "testing"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "web"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "web", "app"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "web", "routing"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "web", "request"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "web", "response"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "async"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "async", "prelude"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "async", "time"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "serde", "json"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "reflection"])));
+    }
+
+    #[test]
+    fn unknown_stdlib_modules_are_rejected() {
+        assert!(!is_known_stdlib_module(&segs(&["std", "f64", "consts"])));
+        assert!(!is_known_stdlib_module(&segs(&["std", "web", "missing"])));
+        assert!(!is_known_stdlib_module(&segs(&["std", "math", "extra"])));
+    }
+
+    #[test]
+    fn stub_paths_follow_namespace_conventions() {
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "testing"])),
+            Some("stdlib/testing.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "web"])),
+            Some("stdlib/web/prelude.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "web", "app"])),
+            Some("stdlib/web/app.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "async", "prelude"])),
+            Some("stdlib/async/prelude.incn".to_string())
+        );
+    }
+
+    #[test]
+    fn known_modules_hint_is_registry_driven_and_sorted() {
+        let hint = known_stdlib_modules_for_hint();
+        assert!(hint.windows(2).all(|w| w[0] <= w[1]));
+        assert!(hint.contains(&"std.derives".to_string()));
+        assert!(hint.contains(&"std.web.app".to_string()));
+        assert!(hint.contains(&"std.async.prelude".to_string()));
+    }
 }

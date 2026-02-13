@@ -18,6 +18,7 @@ Then visit:
 """
 
 from std.web import App, route, Response, Json, GET
+import std.async
 
 
 # Models for JSON responses

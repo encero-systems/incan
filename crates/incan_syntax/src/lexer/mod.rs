@@ -503,7 +503,16 @@ mod tests {
                 k.id,
                 tokens
             );
-            assert!(tokens[0].kind.is_keyword(k.id));
+            if keywords::is_soft(k.id) {
+                assert!(
+                    matches!(&tokens[0].kind, TokenKind::Ident(name) if name == k.canonical),
+                    "soft keyword {:?} should lex as identifier until activated; got {:?}",
+                    k.id,
+                    tokens[0].kind
+                );
+            } else {
+                assert!(tokens[0].kind.is_keyword(k.id));
+            }
         }
     }
 
@@ -553,8 +562,8 @@ mod tests {
     fn test_keywords() {
         let tokens = lex("def async await class model trait").unwrap();
         assert!(matches!(tokens[0].kind, TokenKind::Keyword(KeywordId::Def)));
-        assert!(matches!(tokens[1].kind, TokenKind::Keyword(KeywordId::Async)));
-        assert!(matches!(tokens[2].kind, TokenKind::Keyword(KeywordId::Await)));
+        assert!(matches!(&tokens[1].kind, TokenKind::Ident(name) if name == "async"));
+        assert!(matches!(&tokens[2].kind, TokenKind::Ident(name) if name == "await"));
         assert!(matches!(tokens[3].kind, TokenKind::Keyword(KeywordId::Class)));
         assert!(matches!(tokens[4].kind, TokenKind::Keyword(KeywordId::Model)));
         assert!(matches!(tokens[5].kind, TokenKind::Keyword(KeywordId::Trait)));

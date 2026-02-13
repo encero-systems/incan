@@ -46,6 +46,9 @@ impl<'a> Parser<'a> {
         } else if self.check_keyword(KeywordId::Def) || self.check_keyword(KeywordId::Async) {
             Declaration::Function(self.function_decl(decorators, visibility)?)
         } else {
+            if let Some(err) = self.inactive_soft_keyword_error() {
+                return Err(err);
+            }
             return Err(errors::expected_declaration(
                 &format!("{:?}", self.peek().kind),
                 self.current_span(),

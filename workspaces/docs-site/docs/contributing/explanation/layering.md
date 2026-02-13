@@ -34,12 +34,15 @@ We want one “source of truth” for language behavior so the compiler and runt
 
     - Pure helpers that define *meaning/policy* (e.g., string indexing/slicing rules, numeric promotion, canonical error
       message constants).
+    - Central registries for language vocabulary and stdlib wiring (for example `incan_core::lang::stdlib::STDLIB_NAMESPACES`
+      and keyword metadata used by the lexer/parser).
     - Must be deterministic and side-effect free.
     - Should not depend on compiler internals (AST, spans, lexer/parser state).
 
 **`incan_stdlib`**:
 
     - Runtime helpers used by generated Rust code.
+    - Includes facades that generated code imports (for example `incan_stdlib::r#async` backing the `std.async` namespace).
     - Should delegate behavior to `incan_core` for policy/consistency, and implement runtime-only actions (like
       panicking) using the shared error messages/taxonomy.
 

@@ -175,16 +175,9 @@ impl<'a> IrEmitter<'a> {
 
     /// Escape Rust keywords by adding `r#` prefix.
     ///
-    /// Note: `self` and `Self` cannot be raw identifiers.
+    /// Delegates to [`incan_core::lang::rust_keywords::escape_keyword`].
     fn escape_keyword(name: &str) -> String {
-        if matches!(name, "self" | "Self") {
-            return name.to_string();
-        }
-        // Strict + reserved keywords
-        if rust_keywords::is_keyword(name) {
-            return format!("r#{}", name);
-        }
-        name.to_string()
+        rust_keywords::escape_keyword(name)
     }
 
     /// RFC 023: Set the `rust.module()` Rust backing path for this program.

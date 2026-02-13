@@ -309,6 +309,7 @@ def test_insert(database: Database, key: str, value: str) -> None:
 Support for async test functions and fixtures with Tokio:
 
 ```incan
+import std.async
 from std.testing import fixture
 
 @fixture

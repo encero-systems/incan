@@ -303,6 +303,36 @@ mod tests {
     }
 
     #[test]
+    fn test_load_async_time_module_falls_back() {
+        // stdlib/async/time.incn contains `model Duration:` with methods and `async def`, which the current parser
+        // can't handle in stub extraction mode. The loader returns None and the typechecker uses the hardcoded
+        // async_import_function_info() fallback.
+        let path = vec!["std".to_string(), "async".to_string(), "time".to_string()];
+        let fns = load_stdlib_module_functions(&path);
+        // Currently returns None because the parser can't handle models + async defs in the same file.
+        // This test documents the current behavior; it will start passing once the parser handles these.
+        assert!(
+            fns.is_none(),
+            "async/time.incn parse currently fails; fallback expected"
+        );
+    }
+
+    #[test]
+    fn test_load_async_channel_module() -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "async".to_string(), "channel".to_string()];
+        let fns = load_stdlib_module_functions(&path);
+
+        let fns = fns.ok_or("failed to load stdlib/async/channel.incn")?;
+
+        let channel_fn = fns.iter().find(|(name, _)| name == "channel");
+        assert!(channel_fn.is_some(), "should find 'channel' function");
+        let oneshot_fn = fns.iter().find(|(name, _)| name == "oneshot");
+        assert!(oneshot_fn.is_some(), "should find 'oneshot' function");
+
+        Ok(())
+    }
+
+    #[test]
     fn test_ast_type_conversion() {
         let type_params = vec!["T".to_string()];
 

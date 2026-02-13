@@ -261,10 +261,10 @@ fn scan_expr_for_bounds(
         }
 
         // ---- Dict literal: keys that are generic require Eq + Hash ----
+        // Note: `Eq: PartialEq` in Rust, so we only need `Eq` (not redundant `PartialEq`).
         IrExprKind::Dict(entries) => {
             for (key, value) in entries {
                 if let Some(tp_name) = expr_type_param_name(key, type_params, params) {
-                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::PARTIAL_EQ));
                     add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::EQ));
                     add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::HASH));
                 }
@@ -277,7 +277,6 @@ fn scan_expr_for_bounds(
         IrExprKind::Set(elems) => {
             for elem in elems {
                 if let Some(tp_name) = expr_type_param_name(elem, type_params, params) {
-                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::PARTIAL_EQ));
                     add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::EQ));
                     add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::HASH));
                 }
@@ -632,16 +631,22 @@ fn collect_calls_in_expr(
             {
                 let mut mapping = HashMap::new();
 
-                // Use the callee's parameter types to determine which type parameter each argument position corresponds
-                // to. This is correct even when the callee has non-generic parameters mixed in (e.g., `def foo[T](a:
-                // int, b: T)`).
+                // Use the callee's parameter types to determine which type parameter each argument corresponds to.
+                // Named arguments (`foo(b=x)`) are matched by name; positional arguments by index.
                 if let Some(callee_params) = function_params.get(name.as_str()) {
                     for (i, arg) in args.iter().enumerate() {
-                        if let Some(caller_tp) = expr_type_param_name(&arg.expr, type_params, params)
-                            && let Some(callee_param) = callee_params.get(i)
-                            && let IrType::Generic(ref callee_tp_name) = callee_param.ty
-                        {
-                            mapping.insert(callee_tp_name.clone(), caller_tp);
+                        if let Some(caller_tp) = expr_type_param_name(&arg.expr, type_params, params) {
+                            // Resolve the callee parameter: by name if the arg is named, by position otherwise.
+                            let callee_param = if let Some(arg_name) = &arg.name {
+                                callee_params.iter().find(|p| &p.name == arg_name)
+                            } else {
+                                callee_params.get(i)
+                            };
+                            if let Some(cp) = callee_param
+                                && let IrType::Generic(ref callee_tp_name) = cp.ty
+                            {
+                                mapping.insert(callee_tp_name.clone(), caller_tp);
+                            }
                         }
                     }
                 }

@@ -172,7 +172,7 @@ impl<'a> Parser<'a> {
             let expr = self.unary()?;
             let span = Span::new(start, expr.span.end);
             Ok(Spanned::new(Expr::Unary(UnaryOp::Neg, Box::new(expr)), span))
-        } else if self.match_token(&TokenKind::Keyword(KeywordId::Await)) {
+        } else if self.match_keyword(KeywordId::Await) {
             let start = self.tokens[self.pos - 1].span.start;
             let expr = self.unary()?;
             let span = Span::new(start, expr.span.end);
@@ -304,7 +304,7 @@ impl<'a> Parser<'a> {
         let start = self.current_span().start;
 
         // Await expression
-        if self.match_token(&TokenKind::Keyword(KeywordId::Await)) {
+        if self.match_keyword(KeywordId::Await) {
             let inner = self.expression()?;
             let end = inner.span.end;
             return Ok(Spanned::new(Expr::Await(Box::new(inner)), Span::new(start, end)));

@@ -135,6 +135,10 @@ pub struct KeywordInfo {
     pub id: KeywordId,
     pub canonical: &'static str,
     pub aliases: &'static [&'static str],
+    /// Optional stdlib namespace that activates this keyword as a soft keyword.
+    ///
+    /// `None` means this is a hard keyword that is always reserved.
+    pub activation: Option<&'static str>,
     pub category: KeywordCategory,
     pub usage: &'static [KeywordUsage],
     pub introduced_in_rfc: RfcId,
@@ -267,24 +271,30 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         RFC::_000,
         Since(0, 1),
     ),
-    info(
-        KeywordId::Async,
-        "async",
-        &[],
-        KeywordCategory::Definition,
-        &[KeywordUsage::Modifier],
-        RFC::_000,
-        Since(0, 1),
-    ),
-    info(
-        KeywordId::Await,
-        "await",
-        &[],
-        KeywordCategory::Definition,
-        &[KeywordUsage::Expression],
-        RFC::_000,
-        Since(0, 1),
-    ),
+    KeywordInfo {
+        id: KeywordId::Async,
+        canonical: "async",
+        aliases: &[],
+        activation: Some("async"),
+        category: KeywordCategory::Definition,
+        usage: &[KeywordUsage::Modifier],
+        introduced_in_rfc: RFC::_000,
+        since: Since(0, 1),
+        stability: Stability::Stable,
+        examples: &[],
+    },
+    KeywordInfo {
+        id: KeywordId::Await,
+        canonical: "await",
+        aliases: &[],
+        activation: Some("async"),
+        category: KeywordCategory::Definition,
+        usage: &[KeywordUsage::Expression],
+        introduced_in_rfc: RFC::_000,
+        since: Since(0, 1),
+        stability: Stability::Stable,
+        examples: &[],
+    },
     info(
         KeywordId::Class,
         "class",
@@ -587,6 +597,20 @@ pub fn usage(id: KeywordId) -> &'static [KeywordUsage] {
     info_for(id).usage
 }
 
+/// Activation namespace for soft keywords.
+///
+/// ## Returns
+/// - `Some("namespace")` if this keyword is import-activated.
+/// - `None` if this is a hard keyword.
+pub fn activation(id: KeywordId) -> Option<&'static str> {
+    info_for(id).activation
+}
+
+/// Whether a keyword is soft (import-activated).
+pub fn is_soft(id: KeywordId) -> bool {
+    activation(id).is_some()
+}
+
 /// Full metadata.
 ///
 /// ## Parameters
@@ -625,6 +649,13 @@ pub fn from_str(s: &str) -> Option<KeywordId> {
         .map(|k| k.id)
 }
 
+/// Lookup by spelling, excluding soft keywords.
+///
+/// Used by the lexer to reserve only hard keywords globally.
+pub fn from_str_hard_only(s: &str) -> Option<KeywordId> {
+    from_str(s).filter(|id| !is_soft(*id))
+}
+
 // --- helpers -----------------------------------------------------------------
 
 const fn info(
@@ -640,6 +671,7 @@ const fn info(
         id,
         canonical,
         aliases,
+        activation: None,
         category,
         usage,
         introduced_in_rfc,

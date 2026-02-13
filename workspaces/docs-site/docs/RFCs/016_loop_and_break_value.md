@@ -101,6 +101,8 @@ It does not replace loops.
 You typically combine them:
 
 ```incan
+import std.async
+
 async def wait_until_done() -> None:
     loop:
         if await done():
@@ -110,6 +112,8 @@ async def wait_until_done() -> None:
 If you need polling/backoff, `await` controls waiting between iterations:
 
 ```incan
+from std.async.time import sleep
+
 async def wait_with_backoff() -> None:
     loop:
         if done():

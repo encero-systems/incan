@@ -211,6 +211,8 @@ def safe_save(path: Path, content: str) -> Result[None, IoError]:
 ### Download with Cleanup
 
 ```incan
+import std.async
+
 async def process_download(url: str) -> Result[Data, AppError]:
     temp = TempFile.with_suffix(".zip")?
     

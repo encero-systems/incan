@@ -91,8 +91,8 @@ impl App {
     ///
     /// # Panics
     ///
-    /// Panics if the bind address is invalid, the Tokio runtime cannot be created,
-    /// the TCP listener fails to bind, or the server returns an error.
+    /// Panics if the bind address is invalid, the Tokio runtime cannot be created, the TCP listener fails to bind, or
+    /// the server returns an error.
     pub fn run(&self, host: &str, port: i64) {
         // TODO: return a Result and surface runtime errors without panicking.
         let addr: SocketAddr = format!("{host}:{port}")
@@ -211,14 +211,15 @@ impl Response {
 
     /// Create a 204 No Content response.
     pub fn no_content() -> Self {
-        // Safety: StatusCode::NO_CONTENT and an empty body are always valid inputs to the
-        // response builder, so this cannot fail in practice.
-        Response(
-            AxumResponse::builder()
-                .status(StatusCode::NO_CONTENT)
-                .body(axum::body::Body::empty())
-                .expect("building a 204 No Content response should never fail"),
-        )
+        // Safety: StatusCode::NO_CONTENT and an empty body are always valid inputs to the response builder, so this
+        // cannot fail in practice.
+        let Ok(response) = AxumResponse::builder()
+            .status(StatusCode::NO_CONTENT)
+            .body(axum::body::Body::empty())
+        else {
+            panic!("building a 204 No Content response should never fail");
+        };
+        Response(response)
     }
 
     /// Create a 400 Bad Request response.
@@ -238,9 +239,8 @@ impl Response {
 
     /// Create a response with custom status code.
     ///
-    /// If `code` is not a valid HTTP status code (e.g. negative, > 999, or not a recognized
-    /// status), this falls back to 500 Internal Server Error and includes a diagnostic message
-    /// in the response body.
+    /// If `code` is not a valid HTTP status code (e.g. negative, > 999, or not a recognized status), this falls back to
+    /// 500 Internal Server Error and includes a diagnostic message in the response body.
     pub fn status<S: Into<String>>(code: i64, body: S) -> Self {
         let body = body.into();
         match u16::try_from(code).ok().and_then(|v| StatusCode::from_u16(v).ok()) {
@@ -258,11 +258,13 @@ impl Response {
         let location = location.into();
         // Safety: StatusCode::FOUND and a string Location header are always valid inputs.
         // The only failure mode would be non-ASCII bytes in the location, which is a caller bug.
-        let response = AxumResponse::builder()
+        let Ok(response) = AxumResponse::builder()
             .status(StatusCode::FOUND)
             .header(header::LOCATION, location)
             .body(axum::body::Body::empty())
-            .expect("building a 302 redirect response should never fail");
+        else {
+            panic!("building a 302 redirect response should never fail");
+        };
         Response(response)
     }
 }

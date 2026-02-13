@@ -6,6 +6,8 @@ This module provides MPSC (Multi-Producer, Single-Consumer) channels for async m
 Channels are the primary way to communicate between concurrent tasks safely.
 """
 
+import std.async
+
 # Error types for channel operations
 model SendError[T] with Error:
     """

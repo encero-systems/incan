@@ -162,9 +162,37 @@ import — no manual feature flags needed.
 | ---------------- | --------------------------------------------- | ----------------- |
 | `std.web`        | Web framework (routes, responses, extractors) | `web` (Axum)      |
 | `std.testing`    | Test fixtures and assertions                  | —                 |
-| `std.async`      | Async utilities (tasks, channels, timers)     | —                 |
+| `std.async`      | Async utilities (activates `async`/`await`)   | —                 |
 | `std.serde.json` | JSON serialization/deserialization            | `json`            |
 | `std.reflection` | Reflection helpers (`FieldInfo`, etc.)        | —                 |
+| `std.derives.*`  | Derive helpers (`string`, `comparison`, ...)  | —                 |
+| `std.traits.*`   | Core traits (`ops`, `convert`, `error`, ...)  | —                 |
+| `std.math`       | Math constants and functions                  | —                 |
+
+### Soft keywords
+
+Some language keywords are **import-activated** (soft keywords). They behave like identifiers by default and only become
+reserved keywords after importing a particular `std.*` namespace.
+
+Currently:
+
+- `async` and `await` are activated by importing `std.async` (for example `import std.async` or
+  `from std.async.time import sleep`).
+
+If you forget the import, you’ll get a targeted diagnostic telling you what to add.
+
+Example:
+
+```incan
+async def work() -> None:
+    await sleep(1.0)
+```
+
+```text
+error: `async` is only available after importing `std.async`
+
+hint: Add `import std.async` or `from std.async import ...`
+```
 
 ### Import examples
 
@@ -175,8 +203,14 @@ from std.web import App, route, Response, Json, GET, POST
 # Import test fixtures
 from std.testing import fixture
 
+# Import async time helpers (also activates `async`/`await`)
+from std.async.time import sleep
+
 # Import JSON helpers
 from std.serde.json import json_stringify, json_parse
+
+async def do_work() -> None:
+    await sleep(0.5)
 ```
 
 ### Reserved root namespaces
@@ -188,14 +222,14 @@ The names `std` and `rust` are reserved at the root level. You cannot shadow the
 import models as std
 ```
 
-## Standard library: `math`
+## Stdlib module: `std.math`
 
 <!-- TODO: move this to its own section -->
 
-You must import `math` before use:
+You must import `std.math` before use:
 
 ```incan
-import math
+import std.math
 
 def main() -> None:
     println(f"pi={math.pi}")

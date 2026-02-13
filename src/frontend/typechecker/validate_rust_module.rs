@@ -86,9 +86,10 @@ impl TypeChecker {
         }
 
         // ---- Rule 5: Unused rust.module() (no @rust.extern items) ----
+        // Push directly to `warnings` (not `errors`) since this is a non-fatal diagnostic.
         if rust_module.is_some() && rust_extern_items.is_empty() {
             let directive_span = rust_module.as_ref().map_or(Span::default(), |d| d.span);
-            self.errors.push(errors::unused_rust_module(directive_span));
+            self.warnings.push(errors::unused_rust_module(directive_span));
         }
     }
 

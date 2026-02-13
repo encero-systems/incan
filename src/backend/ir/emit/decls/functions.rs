@@ -433,9 +433,12 @@ impl<'a> IrEmitter<'a> {
             }
         };
 
+        // RFC 023: emit generic type parameters with trait bounds.
+        let generics = self.emit_type_params(&func.type_params);
+
         if func.body.is_empty() {
             Ok(quote! {
-                fn #name(#(#params),*) #ret;
+                fn #name #generics (#(#params),*) #ret;
             })
         } else {
             *self.current_function_return_type.borrow_mut() = Some(func.return_type.clone());
@@ -443,7 +446,7 @@ impl<'a> IrEmitter<'a> {
             *self.current_function_return_type.borrow_mut() = None;
 
             Ok(quote! {
-                fn #name(#(#params),*) #ret {
+                fn #name #generics (#(#params),*) #ret {
                     #(#body_stmts)*
                 }
             })

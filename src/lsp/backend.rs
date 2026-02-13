@@ -311,8 +311,7 @@ impl IncanLanguageServer {
             }
             Declaration::Function(func) => {
                 if span.start <= offset && offset < span.end {
-                    // Check if cursor is on function name
-                    // For now, return the function signature
+                    // Check if cursor is on function name. For now, return the function signature
                     return Some(SymbolInfo {
                         name: func.name.clone(),
                         kind: "function".to_string(),
@@ -1056,34 +1055,37 @@ fn stdlib_module_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
         (completed, *last)
     };
 
-    // Build full prefix: ["std"] + completed segments
-    let depth = completed.len() + 1; // +1 for "std"
-
     let mut items = Vec::new();
     let mut seen = HashSet::new();
 
-    for info in stdlib::STDLIB_MODULES {
-        // Only show modules that match the completed prefix
-        if info.path.len() <= depth {
-            continue;
+    if completed.is_empty() {
+        // Top-level: suggest namespace names (web, testing, async, ...)
+        for ns in stdlib::STDLIB_NAMESPACES {
+            if seen.insert(ns.name.to_string()) {
+                let detail = ns.feature.map(|f| format!("enables {} feature", f));
+                items.push(CompletionItem {
+                    label: ns.name.to_string(),
+                    kind: Some(CompletionItemKind::MODULE),
+                    detail: Some(detail.unwrap_or_else(|| format!("std.{} module", ns.name))),
+                    sort_text: Some(format!("0_{}", ns.name)),
+                    ..Default::default()
+                });
+            }
         }
-        // Check that the first `depth` segments match
-        let prefix_matches = info.path[1..depth].iter().zip(completed.iter()).all(|(a, b)| a == b);
-        if !prefix_matches {
-            continue;
-        }
-        // The next segment to suggest
-        let next_segment = info.path[depth];
-        if seen.insert(next_segment.to_string()) {
-            let full_path: String = info.path.iter().take(depth + 1).copied().collect::<Vec<_>>().join(".");
-            let detail = info.feature.map(|f| format!("enables {} feature", f));
-            items.push(CompletionItem {
-                label: next_segment.to_string(),
-                kind: Some(CompletionItemKind::MODULE),
-                detail: Some(detail.unwrap_or_else(|| format!("{} module", full_path))),
-                sort_text: Some(format!("0_{}", next_segment)),
-                ..Default::default()
-            });
+    } else if completed.len() == 1 {
+        // One level deep: suggest submodules of the namespace (e.g. std.async.time)
+        if let Some(ns) = stdlib::find_namespace(completed[0]) {
+            for sub in ns.submodules {
+                if seen.insert(sub.to_string()) {
+                    items.push(CompletionItem {
+                        label: sub.to_string(),
+                        kind: Some(CompletionItemKind::MODULE),
+                        detail: Some(format!("std.{}.{} module", ns.name, sub)),
+                        sort_text: Some(format!("0_{}", sub)),
+                        ..Default::default()
+                    });
+                }
+            }
         }
     }
 
@@ -1094,8 +1096,8 @@ fn stdlib_module_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
     Some(items)
 }
 
-/// If the cursor is on a decorator line (starts with `@`), return completions
-/// for known decorator names. Returns `None` if not in a decorator context.
+/// If the cursor is on a decorator line (starts with `@`), return completions for known decorator names.
+/// Returns `None` if not in a decorator context.
 fn decorator_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
     let trimmed = line_prefix.trim_start();
     if !trimmed.starts_with('@') {
@@ -1104,8 +1106,7 @@ fn decorator_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
 
     let mut items = Vec::new();
     for info in decorators::DECORATORS {
-        // Show the short name (after the last dot) as the label, with the full
-        // canonical path as detail.
+        // Show the short name (after the last dot) as the label, with the full canonical path as detail.
         let short_name = info.canonical.rsplit('.').next().unwrap_or(info.canonical);
         items.push(CompletionItem {
             label: short_name.to_string(),

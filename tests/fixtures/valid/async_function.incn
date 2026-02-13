@@ -1,5 +1,7 @@
 """Test fixture: valid async function declarations"""
 
+import std.async
+
 async def delay(seconds: float) -> None:
     pass
 

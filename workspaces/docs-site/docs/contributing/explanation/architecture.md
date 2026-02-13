@@ -40,28 +40,29 @@ This diagram shows the compilation pipeline of the Incan compiler in high level.
 
 <!-- markdownlint-disable MD013 MD060 -->
 
-| Term             | Meaning |
-| ---------------- | ------- |
-| Frontend         | Parses `.incn` and typechecks it, producing a typed AST (or diagnostics). |
-| `.incn` source   | The source code of an Incan program. |
-| Lexer            | Tokenizes source text into tokens (used by the parser). It converts source code into a token stream the parser can understand. |
-| Parser           | Parses lexer tokens into an AST. |
-| AST              | The abstract syntax tree (syntax structure + spans for diagnostics). |
-| Typechecker      | Resolves names/imports and checks types, annotating the AST with type information. |
-| Typed AST        | AST after typechecking, with resolved types attached to relevant nodes. |
-| Backend          | Generates Rust code from the typed AST. |
-| Lowering         | Transforms typed AST → IR (including ownership/mutability/conversion decisions). |
-| IR               | A Rust-oriented, ownership-aware intermediate representation used for code generation. |
-| IrEmitter        | Emits IR into a Rust `TokenStream` before final formatting. |
+|       Term       |                                                                     Meaning                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Frontend         | Parses `.incn` and typechecks it, producing a typed AST (or diagnostics).                                                                        |
+| `.incn` source   | The source code of an Incan program.                                                                                                             |
+| Lexer            | Tokenizes source text into tokens (used by the parser). It converts source code into a token stream the parser can understand.                   |
+| Parser           | Parses lexer tokens into an AST.                                                                                                                 |
+| AST              | The abstract syntax tree (syntax structure + spans for diagnostics).                                                                             |
+| Soft keyword     | A keyword that is only reserved after importing a particular stdlib namespace (e.g. `async` / `await` after importing `std.async`).              |
+| Typechecker      | Resolves names/imports and checks types, annotating the AST with type information.                                                               |
+| Typed AST        | AST after typechecking, with resolved types attached to relevant nodes.                                                                          |
+| Backend          | Generates Rust code from the typed AST.                                                                                                          |
+| Lowering         | Transforms typed AST → IR (including ownership/mutability/conversion decisions).                                                                 |
+| IR               | A Rust-oriented, ownership-aware intermediate representation used for code generation.                                                           |
+| IrEmitter        | Emits IR into a Rust `TokenStream` before final formatting.                                                                                      |
 | TokenStream      | Rust `TokenStream` from codegen (`proc_macro2` via `quote`/`syn`). This is the final output of the compiler before being formatted to Rust code. |
-| prettyplease     | Formats Rust syntax/TokenStream into human-readable Rust source code. |
-| Rust source      | The generated Rust code as text. |
-| ProjectGenerator | Writes the generated Rust code into a standalone Cargo project (and can invoke `cargo build/run`). |
-| Cargo project    | Generated Rust project directory (`Cargo.toml`, `src/*`, and build artifacts). |
-| Cargo            | Rust’s build system and package manager. |
-| CLI              | Command-line entrypoint for compile/build/run/fmt/test workflows. |
-| LSP              | IDE server running frontend stages; returns diagnostics/hover/definition via the Language Server Protocol. |
-| Runtime crates   | `incan_stdlib` / `incan_derive` crates used by generated programs (not the compiler). |
+| prettyplease     | Formats Rust syntax/TokenStream into human-readable Rust source code.                                                                            |
+| Rust source      | The generated Rust code as text.                                                                                                                 |
+| ProjectGenerator | Writes the generated Rust code into a standalone Cargo project (and can invoke `cargo build/run`).                                               |
+| Cargo project    | Generated Rust project directory (`Cargo.toml`, `src/*`, and build artifacts).                                                                   |
+| Cargo            | Rust’s build system and package manager.                                                                                                         |
+| CLI              | Command-line entrypoint for compile/build/run/fmt/test workflows.                                                                                |
+| LSP              | IDE server running frontend stages; returns diagnostics/hover/definition via the Language Server Protocol.                                       |
+| Runtime crates   | `incan_stdlib` / `incan_derive` crates used by generated programs (not the compiler).                                                            |
 
 <!-- markdownlint-enable MD013 MD060 -->
 
@@ -157,6 +158,7 @@ LSP (IDE-facing orchestration)
 Runtime crates (used by generated Rust programs, not the compiler)
   ├──▶ incan_stdlib
   │      - Traits + helpers (prelude, reflection, JSON helpers, etc.)
+  │      - `incan_stdlib::r#async`: `std.async` runtime facade backed by Tokio re-exports
   └──▶ incan_derive
         - Proc-macro derives to generate impls for stdlib traits
 ```
@@ -170,6 +172,8 @@ runtime, without creating dependency cycles.
 - **Purpose**: centralize semantic policy and pure helpers so compile-time behavior and runtime behavior cannot drift.
 - **Used by**: compiler (typechecker, const-eval, lowering/codegen decisions) and stdlib/runtime helpers.
 - **Constraints**: pure/deterministic (no IO, no global state) and no dependencies on compiler crates.
+- **Stdlib registry**: `incan_core::lang::stdlib::STDLIB_NAMESPACES` drives stdlib import validation, stub path resolution,
+  unknown-module hints, and import-activated language features (soft keywords like `async`/`await`).
 
 See crate-level documentation in `crates/incan_core` for the contract, extension checklist,
 and drift-prevention expectations; tests in `tests/semantic_core_*` serve as the source of truth
@@ -188,7 +192,7 @@ dependency-light crate suitable for reuse across compiler and tooling.
 
 ### Frontend (`src/frontend/`)
 
-| Module         | Purpose                                                                             |
+|     Module     |                                       Purpose                                       |
 | -------------- | ----------------------------------------------------------------------------------- |
 | `lexer`        | Tokenization (re-exported from `crates/incan_syntax`)                               |
 | `parser`       | Parser (re-exported from `crates/incan_syntax`)                                     |
@@ -201,17 +205,18 @@ dependency-light crate suitable for reuse across compiler and tooling.
 
 #### Typechecker submodules (`typechecker/`)
 
-| File            | Responsibility                                 |
-| --------------- | ---------------------------------------------- |
-| `mod.rs`        | `TypeChecker` API (`check_program`, imports)   |
-| `collect.rs`    | Pass 1: register types/functions/imports       |
-| `check_decl.rs` | Pass 2: validate declarations                  |
-| `check_stmt.rs` | Statement checking (assign/return/control)     |
-| `check_expr/`   | Expression checking (calls/indexing/ops/match) |
+|            File             |                    Responsibility                     |
+| --------------------------- | ----------------------------------------------------- |
+| `mod.rs`                    | `TypeChecker` API (`check_program`, imports)          |
+| `collect.rs`                | Pass 1: register types/functions/imports              |
+| `collect/stdlib_imports.rs` | Stdlib namespace validation + soft keyword activation |
+| `check_decl.rs`             | Pass 2: validate declarations                         |
+| `check_stmt.rs`             | Statement checking (assign/return/control)            |
+| `check_expr/`               | Expression checking (calls/indexing/ops/match)        |
 
 ### Backend (`src/backend/`)
 
-| Module              | Purpose                                         |
+|       Module        |                     Purpose                     |
 | ------------------- | ----------------------------------------------- |
 | `ir/codegen.rs`     | Entry point (`IrCodegen`): lowering + emission  |
 | `ir/lower/`         | AST → IR lowering (types + ownership decisions) |
@@ -228,7 +233,7 @@ dependency-light crate suitable for reuse across compiler and tooling.
 
 The expression emitter is split into focused submodules for maintainability:
 
-| Submodule           | Purpose                                          |
+|      Submodule      |                     Purpose                      |
 | ------------------- | ------------------------------------------------ |
 | `mod.rs`            | `emit_expr` entry point and dispatch             |
 | `builtins.rs`       | Builtin calls (`print`, `len`, `range`, etc.)    |
@@ -247,7 +252,7 @@ This provides compile-time exhaustiveness checking and makes it easier to add ne
 
 ### CLI (`src/cli/`)
 
-| Module           | Purpose                                   |
+|      Module      |                  Purpose                  |
 | ---------------- | ----------------------------------------- |
 | `commands.rs`    | Command handlers (`build`, `run`, `fmt`)  |
 | `test_runner.rs` | pytest-style test discovery and execution |
@@ -255,7 +260,7 @@ This provides compile-time exhaustiveness checking and makes it easier to add ne
 
 ### Tooling
 
-| Module    | Purpose                               |
+|  Module   |                Purpose                |
 | --------- | ------------------------------------- |
 | `format/` | Source formatter                      |
 | `lsp/`    | LSP backend logic (diagnostics/hover) |

@@ -44,6 +44,7 @@ use incan_stdlib::web::Json;
 use incan_stdlib::web::Query;
 use incan_stdlib::web::Response;
 use incan_stdlib::web::POST;
+use incan_stdlib::r#async;
 #[derive(serde::Deserialize, Debug, Clone, FieldInfo, IncanClass)]
 struct SearchParams {
     q: String,
