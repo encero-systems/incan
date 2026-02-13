@@ -4162,7 +4162,7 @@ the current scope).</p>
 <li>top-level function definitions, models/classes/enums, etc.</li>
 </ul>
 <p>For example:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">math</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sqrt</span>            <span class="c1"># module-scope binding</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.math</span>                  <span class="c1"># module-scope binding</span>
 <span class="k">const</span> <span class="nc">PI</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">3.14159</span>        <span class="c1"># module-scope binding</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">area</span><span class="p">(</span><span class="n">r</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>     <span class="c1"># module-scope binding (function)</span>
@@ -4173,7 +4173,7 @@ the current scope).</p>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">demo</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
     <span class="n">c</span> <span class="o">=</span> <span class="nc">Circle</span><span class="p">(</span><span class="n">radius</span><span class="o">=</span><span class="mf">2.0</span><span class="p">)</span>
-    <span class="k">return</span> <span class="nb">sqrt</span><span class="p">(</span><span class="n">area</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">radius</span><span class="p">))</span>  <span class="c1"># `Circle`, `sqrt`, `area` resolved from module scope</span>
+    <span class="k">return</span> <span class="n">math</span><span class="o">.</span><span class="nb">sqrt</span><span class="p">(</span><span class="n">area</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">radius</span><span class="p">))</span>  <span class="c1"># `Circle`, `math`, `area` resolved from module scope</span>
 </code></pre></div>
 <p>In this example, the names <code>sqrt</code>, <code>PI</code>, <code>area</code>, and <code>Circle</code> are all resolved from the module scope.</p>
 <h3 id="function-method-scope">Function / method scope<a class="headerlink" href="#function-method-scope" title="Permanent link">&para;</a></h3>

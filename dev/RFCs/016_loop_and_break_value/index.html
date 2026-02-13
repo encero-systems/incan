@@ -4198,13 +4198,17 @@ source language has no explicit infinite-loop construct and cannot express “br
 <p><code>await</code> is an async suspension point: it pauses an <code>async def</code> until a <code>Future</code> is ready.
 It does not replace loops.</p>
 <p>You typically combine them:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">wait_until_done</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">wait_until_done</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">loop</span><span class="p">:</span>
         <span class="k">if</span> <span class="k">await</span> <span class="n">done</span><span class="p">():</span>
             <span class="k">break</span>
 </code></pre></div>
 <p>If you need polling/backoff, <code>await</code> controls waiting between iterations:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">wait_with_backoff</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">wait_with_backoff</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">loop</span><span class="p">:</span>
         <span class="k">if</span> <span class="n">done</span><span class="p">():</span>
             <span class="k">break</span>

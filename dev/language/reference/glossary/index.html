@@ -1445,6 +1445,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#keyword" class="md-nav__link">
+    <span class="md-ellipsis">
+      Keyword
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#soft-keyword" class="md-nav__link">
+    <span class="md-ellipsis">
+      Soft keyword
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#result" class="md-nav__link">
     <span class="md-ellipsis">
       Result
@@ -4008,6 +4026,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#keyword" class="md-nav__link">
+    <span class="md-ellipsis">
+      Keyword
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#soft-keyword" class="md-nav__link">
+    <span class="md-ellipsis">
+      Soft keyword
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#result" class="md-nav__link">
     <span class="md-ellipsis">
       Result
@@ -4117,6 +4153,13 @@
 <li>How-to: <a href="../../how-to/imports_and_modules/">Imports and modules (how-to)</a></li>
 <li>Reference: <a href="../imports_and_modules/">Imports and modules (reference)</a></li>
 </ul>
+<h2 id="keyword">Keyword<a class="headerlink" href="#keyword" title="Permanent link">&para;</a></h2>
+<p>A keyword is a reserved word with special meaning in the language syntax (for example <code>def</code>, <code>return</code>, <code>class</code>).</p>
+<h2 id="soft-keyword">Soft keyword<a class="headerlink" href="#soft-keyword" title="Permanent link">&para;</a></h2>
+<p>A soft keyword is a keyword that is only reserved in specific contexts (for example after importing a particular stdlib
+namespace).</p>
+<p>In Incan, <code>async</code> and <code>await</code> are soft keywords activated by importing <code>std.async</code>.</p>
+<p>See: <a href="../imports_and_modules/#soft-keywords">Imports and modules (reference)</a>.</p>
 <h2 id="result">Result<a class="headerlink" href="#result" title="Permanent link">&para;</a></h2>
 <p><code>Result[T, E]</code> represents either success (<code>Ok(T)</code>) or failure (<code>Err(E)</code>), and is commonly used for typed error handling.</p>
 <p>See: <a href="../../explanation/error_handling/">Error Handling</a>.</p>
@@ -4125,7 +4168,12 @@
 <p>See: <a href="../../explanation/error_handling/">Error Handling</a>.</p>
 <h2 id="async">Async<a class="headerlink" href="#async" title="Permanent link">&para;</a></h2>
 <p>Async code lets a program do other work while waiting on I/O (network, disk, timers).</p>
-<p>See: <a href="../../how-to/async_programming/">Async Programming</a>.</p>
+<p>In Incan, using <code>async def</code> and <code>await</code> requires importing <code>std.async</code> (they are soft keywords).</p>
+<p>See:</p>
+<ul>
+<li><a href="../../how-to/async_programming/">Async Programming</a></li>
+<li><a href="../imports_and_modules/#soft-keywords">Imports and modules (reference)</a></li>
+</ul>
 <h2 id="rustup">rustup<a class="headerlink" href="#rustup" title="Permanent link">&para;</a></h2>
 <p><code>rustup</code> is the Rust toolchain installer and version manager. It installs <code>rustc</code> and <code>cargo</code>.</p>
 <h2 id="cargo">cargo<a class="headerlink" href="#cargo" title="Permanent link">&para;</a></h2>

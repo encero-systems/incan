@@ -4688,6 +4688,11 @@
 <h1 id="async-programming-in-incan">Async Programming in Incan<a class="headerlink" href="#async-programming-in-incan" title="Permanent link">&para;</a></h1>
 <p>Incan provides full async/await support powered by the Tokio runtime.
 This guide covers all async features available in Incan.</p>
+<div class="admonition important">
+<p class="admonition-title">Async is import-activated</p>
+<p><code>async</code> and <code>await</code> are <strong>soft keywords</strong>: they become reserved keywords only after importing <code>std.async</code>
+(for example <code>import std.async</code> or <code>from std.async.time import sleep</code>).</p>
+</div>
 <div class="admonition note">
 <p class="admonition-title">Coming from Python?</p>
 <p>Incan's async model mirrors Python's <code>asyncio</code> — you'll find <code>async def</code>, <code>await</code>, task spawning, and timeouts all
@@ -4696,7 +4701,9 @@ work the same way.</p>
 with Rust-level async performance.</p>
 </div>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fetch_data</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fetch_data</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">await</span> <span class="nb">sleep</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>  <span class="c1"># Wait 1 second</span>
     <span class="k">return</span> <span class="s2">&quot;data&quot;</span>
 
@@ -4707,13 +4714,17 @@ with Rust-level async performance.</p>
 <h2 id="core-concepts">Core Concepts<a class="headerlink" href="#core-concepts" title="Permanent link">&para;</a></h2>
 <h3 id="async-functions">Async Functions<a class="headerlink" href="#async-functions" title="Permanent link">&para;</a></h3>
 <p>Declare async functions with <code>async def</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">do_work</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">do_work</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">await</span> <span class="nb">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
     <span class="k">return</span> <span class="mi">42</span>
 </code></pre></div>
 <h3 id="await">Await<a class="headerlink" href="#await" title="Permanent link">&para;</a></h3>
 <p>Use <code>await</code> to wait for an async operation:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">data</span> <span class="o">=</span> <span class="k">await</span> <span class="n">fetch_data</span><span class="p">()</span>
     <span class="kt">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">transform</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
     <span class="k">return</span> <span class="kt">result</span>
@@ -4721,20 +4732,29 @@ with Rust-level async performance.</p>
 <h2 id="time-primitives">Time Primitives<a class="headerlink" href="#time-primitives" title="Permanent link">&para;</a></h2>
 <h3 id="sleep">sleep<a class="headerlink" href="#sleep" title="Permanent link">&para;</a></h3>
 <p>Pause execution for a duration:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">await</span> <span class="nb">sleep</span><span class="p">(</span><span class="mf">1.5</span><span class="p">)</span>      <span class="c1"># Sleep 1.5 seconds</span>
-<span class="k">await</span> <span class="n">sleep_ms</span><span class="p">(</span><span class="mi">500</span><span class="p">)</span>   <span class="c1"># Sleep 500 milliseconds</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span><span class="p">,</span> <span class="n">sleep_ms</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">demo</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">await</span> <span class="nb">sleep</span><span class="p">(</span><span class="mf">1.5</span><span class="p">)</span>      <span class="c1"># Sleep 1.5 seconds</span>
+    <span class="k">await</span> <span class="n">sleep_ms</span><span class="p">(</span><span class="mi">500</span><span class="p">)</span>   <span class="c1"># Sleep 500 milliseconds</span>
 </code></pre></div>
 <h3 id="timeout">timeout<a class="headerlink" href="#timeout" title="Permanent link">&para;</a></h3>
 <p>Run an operation with a time limit:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span> <span class="o">=</span> <span class="k">await</span> <span class="nb">timeout</span><span class="p">(</span><span class="mf">5.0</span><span class="p">,</span> <span class="n">slow_operation</span><span class="p">)</span>
-<span class="k">match</span> <span class="kt">result</span><span class="p">:</span>
-    <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">value</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Success: </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Operation timed out&quot;</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">timeout</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">demo</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="kt">result</span> <span class="o">=</span> <span class="k">await</span> <span class="nb">timeout</span><span class="p">(</span><span class="mf">5.0</span><span class="p">,</span> <span class="n">slow_operation</span><span class="p">)</span>
+    <span class="k">match</span> <span class="kt">result</span><span class="p">:</span>
+        <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">value</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Success: </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Operation timed out&quot;</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="task-spawning">Task Spawning<a class="headerlink" href="#task-spawning" title="Permanent link">&para;</a></h2>
 <h3 id="spawn">spawn<a class="headerlink" href="#spawn" title="Permanent link">&para;</a></h3>
 <p>Run a task concurrently:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">background_work</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="nb">spawn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">background_work</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">await</span> <span class="nb">sleep</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span>
     <span class="k">return</span> <span class="mi">42</span>
 
@@ -4750,7 +4770,9 @@ with Rust-level async performance.</p>
 </code></pre></div>
 <h3 id="spawn_blocking">spawn_blocking<a class="headerlink" href="#spawn_blocking" title="Permanent link">&para;</a></h3>
 <p>Run CPU-intensive or blocking code on a dedicated thread:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">heavy_computation</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="nb">spawn_blocking</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">heavy_computation</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="kt">result</span> <span class="o">=</span> <span class="mi">0</span>
     <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1_000_000</span><span class="p">):</span>
         <span class="kt">result</span> <span class="o">=</span> <span class="kt">result</span> <span class="o">+</span> <span class="n">i</span>
@@ -4761,7 +4783,9 @@ with Rust-level async performance.</p>
 </code></pre></div>
 <h3 id="yield_now">yield_now<a class="headerlink" href="#yield_now" title="Permanent link">&para;</a></h3>
 <p>Cooperatively yield to let other tasks run:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">cooperative_loop</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="nb">yield_now</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">cooperative_loop</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10000</span><span class="p">):</span>
         <span class="c1"># Do some work...</span>
         <span class="k">if</span> <span class="n">i</span> <span class="o">%</span> <span class="mi">100</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
@@ -4805,7 +4829,9 @@ They're the primary way to communicate between async tasks without shared mutabl
 </tbody>
 </table>
 <p><strong>Bounded channel</strong> (recommended):</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Create channel with buffer size 32</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="nb">channel</span>
+
+<span class="c1"># Create channel with buffer size 32</span>
 <span class="n">tx</span><span class="p">,</span> <span class="n">rx</span> <span class="o">=</span> <span class="nb">channel</span><span class="p">[</span><span class="nb">str</span><span class="p">](</span><span class="mi">32</span><span class="p">)</span>
 
 <span class="c1"># Sender - blocks if buffer is full (backpressure)</span>
@@ -4821,7 +4847,10 @@ They're the primary way to communicate between async tasks without shared mutabl
             <span class="k">case</span> <span class="kc">None</span><span class="p">:</span> <span class="k">break</span>  <span class="c1"># All senders dropped, channel closed</span>
 </code></pre></div>
 <p><strong>Multiple producers</strong> (clone the sender):</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">tx</span><span class="p">,</span> <span class="n">rx</span> <span class="o">=</span> <span class="nb">channel</span><span class="p">[</span><span class="nb">int</span><span class="p">](</span><span class="mi">100</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="nb">channel</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="nb">spawn</span>
+
+<span class="n">tx</span><span class="p">,</span> <span class="n">rx</span> <span class="o">=</span> <span class="nb">channel</span><span class="p">[</span><span class="nb">int</span><span class="p">](</span><span class="mi">100</span><span class="p">)</span>
 
 <span class="c1"># Clone sender for each producer</span>
 <span class="n">tx1</span> <span class="o">=</span> <span class="n">tx</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
@@ -4882,7 +4911,9 @@ when producers finish.</p>
 </table>
 <h3 id="unbounded-channel">Unbounded Channel<a class="headerlink" href="#unbounded-channel" title="Permanent link">&para;</a></h3>
 <p><code>send</code> never blocks, but use with caution — if producers outpace consumers, memory grows without limit:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># No capacity limit - send always succeeds immediately</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="nb">unbounded_channel</span>
+
+<span class="c1"># No capacity limit - send always succeeds immediately</span>
 <span class="n">tx</span><span class="p">,</span> <span class="n">rx</span> <span class="o">=</span> <span class="nb">unbounded_channel</span><span class="p">[</span><span class="nb">int</span><span class="p">]()</span>
 
 <span class="c1"># These never block</span>
@@ -4933,7 +4964,10 @@ This is perfect for "request-response" patterns where you spawn a task and wait 
 </tbody>
 </table>
 <p><strong>Basic usage:</strong></p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">tx</span><span class="p">,</span> <span class="n">rx</span> <span class="o">=</span> <span class="nb">oneshot</span><span class="p">[</span><span class="nb">int</span><span class="p">]()</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="nb">oneshot</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="nb">spawn</span>
+
+<span class="n">tx</span><span class="p">,</span> <span class="n">rx</span> <span class="o">=</span> <span class="nb">oneshot</span><span class="p">[</span><span class="nb">int</span><span class="p">]()</span>
 
 <span class="nb">spawn</span><span class="p">(</span><span class="k">async</span> <span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="kt">result</span> <span class="o">=</span> <span class="n">expensive_computation</span><span class="p">()</span>
@@ -4946,7 +4980,10 @@ This is perfect for "request-response" patterns where you spawn a task and wait 
     <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Sender dropped without sending&quot;</span><span class="p">)</span>
 </code></pre></div>
 <p><strong>Common pattern - returning results from spawned tasks:</strong></p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">compute_in_background</span><span class="p">(</span><span class="nb">input</span><span class="p">:</span> <span class="nc">Data</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Output</span><span class="p">,</span> <span class="nc">ComputeError</span><span class="p">]:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="nb">oneshot</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="nb">spawn</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">compute_in_background</span><span class="p">(</span><span class="nb">input</span><span class="p">:</span> <span class="nc">Data</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Output</span><span class="p">,</span> <span class="nc">ComputeError</span><span class="p">]:</span>
     <span class="c1"># Create oneshot for the result</span>
     <span class="n">tx</span><span class="p">,</span> <span class="n">rx</span> <span class="o">=</span> <span class="nb">oneshot</span><span class="p">[</span><span class="kt">Result</span><span class="p">[</span><span class="nc">Output</span><span class="p">,</span> <span class="nc">ComputeError</span><span class="p">]]()</span>
 
@@ -5022,7 +5059,9 @@ while Python's Lock is just a lock you use alongside your data.</p>
 <li><code>guard.set(new_value)</code> — Write a new value</li>
 <li>Guard auto-releases when it goes out of scope</li>
 </ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">shared_counter</span> <span class="o">=</span> <span class="kt">Mutex</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.sync</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Mutex</span>
+
+<span class="n">shared_counter</span> <span class="o">=</span> <span class="kt">Mutex</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">increment</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">guard</span> <span class="o">=</span> <span class="k">await</span> <span class="n">shared_counter</span><span class="o">.</span><span class="n">lock</span><span class="p">()</span>  <span class="c1"># Blocks until lock acquired</span>
@@ -5042,7 +5081,9 @@ while Python's Lock is just a lock you use alongside your data.</p>
     <span class="k">async</span> <span class="k">with</span> <span class="n">lock</span><span class="p">:</span>
         <span class="n">counter</span> <span class="o">+=</span> <span class="mi">1</span>
 </code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Incan - lock wraps the data</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.sync</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Mutex</span>
+
+<span class="c1"># Incan - lock wraps the data</span>
 <span class="n">counter</span> <span class="o">=</span> <span class="kt">Mutex</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">increment</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -5061,7 +5102,9 @@ More efficient than Mutex when reads are frequent.</p>
 <li><code>guard.get()</code> — Read the value</li>
 <li><code>guard.set(new_value)</code> — Write (only on write guard)</li>
 </ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">config</span> <span class="o">=</span> <span class="kt">RwLock</span><span class="p">(</span><span class="nc">Config</span><span class="p">(</span><span class="n">debug</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.sync</span><span class="w"> </span><span class="kn">import</span> <span class="kt">RwLock</span>
+
+<span class="n">config</span> <span class="o">=</span> <span class="kt">RwLock</span><span class="p">(</span><span class="nc">Config</span><span class="p">(</span><span class="n">debug</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">read_config</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
     <span class="n">guard</span> <span class="o">=</span> <span class="k">await</span> <span class="n">config</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>  <span class="c1"># Multiple readers allowed simultaneously</span>
@@ -5085,7 +5128,9 @@ More efficient than Mutex when reads are frequent.</p>
 <li><code>await sem.acquire()</code> — Wait for and acquire a permit</li>
 <li>Permit auto-releases when it goes out of scope</li>
 </ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Allow max 3 concurrent connections</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.sync</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Semaphore</span>
+
+<span class="c1"># Allow max 3 concurrent connections</span>
 <span class="n">connection_limit</span> <span class="o">=</span> <span class="kt">Semaphore</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">make_request</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
@@ -5106,7 +5151,9 @@ More efficient than Mutex when reads are frequent.</p>
 <li><code>Barrier(n)</code> — Create barrier for n tasks</li>
 <li><code>await barrier.wait()</code> — Wait until all n tasks reach this point</li>
 </ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">barrier</span> <span class="o">=</span> <span class="kt">Barrier</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>  <span class="c1"># Wait for 3 tasks</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.sync</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Barrier</span>
+
+<span class="n">barrier</span> <span class="o">=</span> <span class="kt">Barrier</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>  <span class="c1"># Wait for 3 tasks</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">worker</span><span class="p">(</span><span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Worker </span><span class="si">{</span><span class="nb">id</span><span class="si">}</span><span class="s2"> starting phase 1&quot;</span><span class="p">)</span>
@@ -5126,7 +5173,10 @@ for a runnable demo of all four primitives.</p>
 <h2 id="select-racing-futures">Select (Racing Futures)<a class="headerlink" href="#select-racing-futures" title="Permanent link">&para;</a></h2>
 <h3 id="select2">select2<a class="headerlink" href="#select2" title="Permanent link">&para;</a></h3>
 <p>Race two futures, get whichever completes first:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fast</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.select</span><span class="w"> </span><span class="kn">import</span> <span class="n">select2</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fast</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">await</span> <span class="nb">sleep</span><span class="p">(</span><span class="mf">0.1</span><span class="p">)</span>
     <span class="k">return</span> <span class="s2">&quot;fast&quot;</span>
 
@@ -5140,15 +5190,19 @@ for a runnable demo of all four primitives.</p>
 </code></pre></div>
 <h3 id="select3">select3<a class="headerlink" href="#select3" title="Permanent link">&para;</a></h3>
 <p>Race three futures:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">select3</span><span class="p">(</span><span class="n">op1</span><span class="p">,</span> <span class="n">op2</span><span class="p">,</span> <span class="n">op3</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.select</span><span class="w"> </span><span class="kn">import</span> <span class="n">select3</span>
+
+<span class="kt">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">select3</span><span class="p">(</span><span class="n">op1</span><span class="p">,</span> <span class="n">op2</span><span class="p">,</span> <span class="n">op3</span><span class="p">)</span>
 <span class="k">match</span> <span class="kt">result</span><span class="p">:</span>
     <span class="k">case</span> <span class="nc">Either3</span><span class="o">.</span><span class="nc">First</span><span class="p">(</span><span class="n">v</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;op1 won&quot;</span><span class="p">)</span>
-    <span class="k">case</span> <span class="nc">Either3</span><span class="o">.</span><span class="nc">Second</span><span class="p">(</span><span class="n">v</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;op2 won&quot;</span><span class="p">)</span>  
+    <span class="k">case</span> <span class="nc">Either3</span><span class="o">.</span><span class="nc">Second</span><span class="p">(</span><span class="n">v</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;op2 won&quot;</span><span class="p">)</span>
     <span class="k">case</span> <span class="nc">Either3</span><span class="o">.</span><span class="nc">Third</span><span class="p">(</span><span class="n">v</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;op3 won&quot;</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="select_timeout">select_timeout<a class="headerlink" href="#select_timeout" title="Permanent link">&para;</a></h3>
 <p>Simplified timeout returning Option:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">match</span> <span class="k">await</span> <span class="nb">select_timeout</span><span class="p">(</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">slow_operation</span><span class="p">):</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.select</span><span class="w"> </span><span class="kn">import</span> <span class="nb">select_timeout</span>
+
+<span class="k">match</span> <span class="k">await</span> <span class="nb">select_timeout</span><span class="p">(</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">slow_operation</span><span class="p">):</span>
     <span class="k">case</span> <span class="nb">Some</span><span class="p">(</span><span class="kt">result</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Got: </span><span class="si">{</span><span class="kt">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
     <span class="k">case</span> <span class="kc">None</span><span class="p">:</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Timed out, using default&quot;</span><span class="p">)</span>
 </code></pre></div>
@@ -5156,7 +5210,9 @@ for a runnable demo of all four primitives.</p>
 <h3 id="automatic-tokio-main">Automatic Tokio Main<a class="headerlink" href="#automatic-tokio-main" title="Permanent link">&para;</a></h3>
 <p>When your program uses async features, the <code>main()</code> function is automatically wrapped with <code>#[tokio::main]</code>:</p>
 <p>Tokio is Rust's async runtime: see the <a href="https://tokio.rs/">Tokio project</a> for a high-level overview.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="c1"># This becomes async main() under the hood</span>
     <span class="c1"># when async primitives are used</span>
     <span class="kt">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">fetch_data</span><span class="p">()</span>
@@ -5170,7 +5226,9 @@ for a runnable demo of all four primitives.</p>
 <h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
 <h3 id="1-dont-block-the-runtime">1. Don't Block the Runtime<a class="headerlink" href="#1-dont-block-the-runtime" title="Permanent link">&para;</a></h3>
 <p>Avoid blocking operations in async code:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># BAD: Blocks the async runtime</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span>
+
+<span class="c1"># BAD: Blocks the async runtime</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">bad</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">std_thread_sleep</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>  <span class="c1"># Don&#39;t do this!</span>
 
@@ -5179,7 +5237,9 @@ for a runnable demo of all four primitives.</p>
     <span class="k">await</span> <span class="nb">sleep</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="2-use-spawn_blocking-for-cpu-work">2. Use spawn_blocking for CPU Work<a class="headerlink" href="#2-use-spawn_blocking-for-cpu-work" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># BAD: CPU work on async runtime</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="nb">spawn_blocking</span>
+
+<span class="c1"># BAD: CPU work on async runtime</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">bad</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">heavy_computation</span><span class="p">()</span>
 
@@ -5189,7 +5249,9 @@ for a runnable demo of all four primitives.</p>
 </code></pre></div>
 <h3 id="3-use-bounded-channels">3. Use Bounded Channels<a class="headerlink" href="#3-use-bounded-channels" title="Permanent link">&para;</a></h3>
 <p>Prefer bounded channels to prevent memory issues:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Prefer this:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="nb">channel</span><span class="p">,</span> <span class="nb">unbounded_channel</span>
+
+<span class="c1"># Prefer this:</span>
 <span class="n">tx</span><span class="p">,</span> <span class="n">rx</span> <span class="o">=</span> <span class="nb">channel</span><span class="p">[</span><span class="nc">Data</span><span class="p">](</span><span class="mi">100</span><span class="p">)</span>
 
 <span class="c1"># Over this (unbounded can grow forever):</span>
@@ -5197,7 +5259,10 @@ for a runnable demo of all four primitives.</p>
 </code></pre></div>
 <h3 id="4-handle-cancellation">4. Handle Cancellation<a class="headerlink" href="#4-handle-cancellation" title="Permanent link">&para;</a></h3>
 <p>Tasks can be cancelled when their handles are dropped:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">cancellable_work</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="nb">spawn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">cancellable_work</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">await</span> <span class="nb">sleep</span><span class="p">(</span><span class="mf">10.0</span><span class="p">)</span>
     <span class="k">return</span> <span class="s2">&quot;done&quot;</span>
 
@@ -5208,7 +5273,9 @@ for a runnable demo of all four primitives.</p>
 </code></pre></div>
 <h2 id="error-handling">Error Handling<a class="headerlink" href="#error-handling" title="Permanent link">&para;</a></h2>
 <h3 id="timeout-errors">Timeout Errors<a class="headerlink" href="#timeout-errors" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span> <span class="o">=</span> <span class="k">await</span> <span class="nb">timeout</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">slow_task</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">timeout</span>
+
+<span class="kt">result</span> <span class="o">=</span> <span class="k">await</span> <span class="nb">timeout</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">slow_task</span><span class="p">)</span>
 <span class="k">match</span> <span class="kt">result</span><span class="p">:</span>
     <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">value</span><span class="p">):</span> <span class="n">process</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
     <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Timed out: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
@@ -5216,7 +5283,9 @@ for a runnable demo of all four primitives.</p>
 <h3 id="channel-closed">Channel Closed<a class="headerlink" href="#channel-closed" title="Permanent link">&para;</a></h3>
 <p>When sending fails because the receiver was dropped, <code>SendError[T]</code> contains the value that couldn't be sent in its
 <code>.value</code> field:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">sender</span><span class="p">(</span><span class="n">tx</span><span class="p">:</span> <span class="kt">Sender</span><span class="p">[</span><span class="nc">Message</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Sender</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">sender</span><span class="p">(</span><span class="n">tx</span><span class="p">:</span> <span class="kt">Sender</span><span class="p">[</span><span class="nc">Message</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">msg</span> <span class="o">=</span> <span class="nc">Message</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">content</span><span class="o">=</span><span class="s2">&quot;important data&quot;</span><span class="p">)</span>
 
     <span class="k">match</span> <span class="k">await</span> <span class="n">tx</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">msg</span><span class="p">):</span>

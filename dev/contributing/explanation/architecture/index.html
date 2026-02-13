@@ -4281,6 +4281,10 @@
 <td>The abstract syntax tree (syntax structure + spans for diagnostics).</td>
 </tr>
 <tr>
+<td>Soft keyword</td>
+<td>A keyword that is only reserved after importing a particular stdlib namespace (e.g. <code>async</code> / <code>await</code> after importing <code>std.async</code>).</td>
+</tr>
+<tr>
 <td>Typechecker</td>
 <td>Resolves names/imports and checks types, annotating the AST with type information.</td>
 </tr>
@@ -4430,6 +4434,7 @@ LSP<span class="w"> </span><span class="o">(</span>IDE-facing<span class="w"> </
 Runtime<span class="w"> </span>crates<span class="w"> </span><span class="o">(</span>used<span class="w"> </span>by<span class="w"> </span>generated<span class="w"> </span>Rust<span class="w"> </span>programs,<span class="w"> </span>not<span class="w"> </span>the<span class="w"> </span>compiler<span class="o">)</span>
 <span class="w">  </span>├──▶<span class="w"> </span>incan_stdlib
 <span class="w">  </span>│<span class="w">      </span>-<span class="w"> </span>Traits<span class="w"> </span>+<span class="w"> </span>helpers<span class="w"> </span><span class="o">(</span>prelude,<span class="w"> </span>reflection,<span class="w"> </span>JSON<span class="w"> </span>helpers,<span class="w"> </span>etc.<span class="o">)</span>
+<span class="w">  </span>│<span class="w">      </span>-<span class="w"> </span><span class="sb">`</span>incan_stdlib::r#async<span class="sb">`</span>:<span class="w"> </span><span class="sb">`</span>std.async<span class="sb">`</span><span class="w"> </span>runtime<span class="w"> </span>facade<span class="w"> </span>backed<span class="w"> </span>by<span class="w"> </span>Tokio<span class="w"> </span>re-exports
 <span class="w">  </span>└──▶<span class="w"> </span>incan_derive
 <span class="w">        </span>-<span class="w"> </span>Proc-macro<span class="w"> </span>derives<span class="w"> </span>to<span class="w"> </span>generate<span class="w"> </span>impls<span class="w"> </span><span class="k">for</span><span class="w"> </span>stdlib<span class="w"> </span>traits
 </code></pre></div>
@@ -4441,6 +4446,8 @@ runtime, without creating dependency cycles.</p>
 <li><strong>Purpose</strong>: centralize semantic policy and pure helpers so compile-time behavior and runtime behavior cannot drift.</li>
 <li><strong>Used by</strong>: compiler (typechecker, const-eval, lowering/codegen decisions) and stdlib/runtime helpers.</li>
 <li><strong>Constraints</strong>: pure/deterministic (no IO, no global state) and no dependencies on compiler crates.</li>
+<li><strong>Stdlib registry</strong>: <code>incan_core::lang::stdlib::STDLIB_NAMESPACES</code> drives stdlib import validation, stub path resolution,
+  unknown-module hints, and import-activated language features (soft keywords like <code>async</code>/<code>await</code>).</li>
 </ul>
 <p>See crate-level documentation in <code>crates/incan_core</code> for the contract, extension checklist,
 and drift-prevention expectations; tests in <code>tests/semantic_core_*</code> serve as the source of truth
@@ -4514,6 +4521,10 @@ dependency-light crate suitable for reuse across compiler and tooling.</p>
 <tr>
 <td><code>collect.rs</code></td>
 <td>Pass 1: register types/functions/imports</td>
+</tr>
+<tr>
+<td><code>collect/stdlib_imports.rs</code></td>
+<td>Stdlib namespace validation + soft keyword activation</td>
 </tr>
 <tr>
 <td><code>check_decl.rs</code></td>

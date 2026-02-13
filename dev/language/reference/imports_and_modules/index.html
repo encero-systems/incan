@@ -1605,6 +1605,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#soft-keywords" class="md-nav__link">
+    <span class="md-ellipsis">
+      Soft keywords
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#import-examples" class="md-nav__link">
     <span class="md-ellipsis">
       Import examples
@@ -1628,13 +1637,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#standard-library-math" class="md-nav__link">
+  <a href="#stdlib-module-stdmath" class="md-nav__link">
     <span class="md-ellipsis">
-      Standard library: math
+      Stdlib module: std.math
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Standard library: math">
+    <nav class="md-nav" aria-label="Stdlib module: std.math">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4270,6 +4279,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#soft-keywords" class="md-nav__link">
+    <span class="md-ellipsis">
+      Soft keywords
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#import-examples" class="md-nav__link">
     <span class="md-ellipsis">
       Import examples
@@ -4293,13 +4311,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#standard-library-math" class="md-nav__link">
+  <a href="#stdlib-module-stdmath" class="md-nav__link">
     <span class="md-ellipsis">
-      Standard library: math
+      Stdlib module: std.math
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Standard library: math">
+    <nav class="md-nav" aria-label="Stdlib module: std.math">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4614,7 +4632,7 @@ import — no manual feature flags needed.</p>
 </tr>
 <tr>
 <td><code>std.async</code></td>
-<td>Async utilities (tasks, channels, timers)</td>
+<td>Async utilities (activates <code>async</code>/<code>await</code>)</td>
 <td>—</td>
 </tr>
 <tr>
@@ -4627,8 +4645,40 @@ import — no manual feature flags needed.</p>
 <td>Reflection helpers (<code>FieldInfo</code>, etc.)</td>
 <td>—</td>
 </tr>
+<tr>
+<td><code>std.derives.*</code></td>
+<td>Derive helpers (<code>string</code>, <code>comparison</code>, ...)</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>std.traits.*</code></td>
+<td>Core traits (<code>ops</code>, <code>convert</code>, <code>error</code>, ...)</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>std.math</code></td>
+<td>Math constants and functions</td>
+<td>—</td>
+</tr>
 </tbody>
 </table>
+<h3 id="soft-keywords">Soft keywords<a class="headerlink" href="#soft-keywords" title="Permanent link">&para;</a></h3>
+<p>Some language keywords are <strong>import-activated</strong> (soft keywords). They behave like identifiers by default and only become
+reserved keywords after importing a particular <code>std.*</code> namespace.</p>
+<p>Currently:</p>
+<ul>
+<li><code>async</code> and <code>await</code> are activated by importing <code>std.async</code> (for example <code>import std.async</code> or
+  <code>from std.async.time import sleep</code>).</li>
+</ul>
+<p>If you forget the import, you’ll get a targeted diagnostic telling you what to add.</p>
+<p>Example:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">work</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">await</span> <span class="nb">sleep</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
+</code></pre></div>
+<div class="language-text highlight"><pre><span></span><code>error: `async` is only available after importing `std.async`
+
+hint: Add `import std.async` or `from std.async import ...`
+</code></pre></div>
 <h3 id="import-examples">Import examples<a class="headerlink" href="#import-examples" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Import items from the web framework</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.web</span><span class="w"> </span><span class="kn">import</span> <span class="kt">App</span><span class="p">,</span> <span class="n">route</span><span class="p">,</span> <span class="kt">Response</span><span class="p">,</span> <span class="kt">Json</span><span class="p">,</span> <span class="nc">GET</span><span class="p">,</span> <span class="nc">POST</span>
@@ -4636,19 +4686,25 @@ import — no manual feature flags needed.</p>
 <span class="c1"># Import test fixtures</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
 
+<span class="c1"># Import async time helpers (also activates `async`/`await`)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span>
+
 <span class="c1"># Import JSON helpers</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nb">json_stringify</span><span class="p">,</span> <span class="n">json_parse</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">do_work</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">await</span> <span class="nb">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="reserved-root-namespaces">Reserved root namespaces<a class="headerlink" href="#reserved-root-namespaces" title="Permanent link">&para;</a></h3>
 <p>The names <code>std</code> and <code>rust</code> are reserved at the root level. You cannot shadow them with local modules or aliases:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># ERROR: &#39;std&#39; is a reserved root namespace</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">models</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">std</span>
 </code></pre></div>
-<h2 id="standard-library-math">Standard library: <code>math</code><a class="headerlink" href="#standard-library-math" title="Permanent link">&para;</a></h2>
+<h2 id="stdlib-module-stdmath">Stdlib module: <code>std.math</code><a class="headerlink" href="#stdlib-module-stdmath" title="Permanent link">&para;</a></h2>
 <!-- TODO: move this to its own section -->
 
-<p>You must import <code>math</code> before use:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<p>You must import <code>std.math</code> before use:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.math</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;pi=</span><span class="si">{</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>

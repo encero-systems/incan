@@ -3998,6 +3998,8 @@
 <li>Common types and functions are available without imports via the prelude (see the reference page for the full list).</li>
 <li>The <strong>standard library</strong> lives under the <code>std</code> namespace (e.g. <code>from std.web import route</code>). The compiler activates
   features automatically based on which <code>std.*</code> modules you import.</li>
+<li>Some language keywords are <strong>import-activated</strong> (soft keywords), for example <code>async</code> / <code>await</code> after importing
+  <code>std.async</code> (details in the reference page).</li>
 </ul>
 <!-- TODO: Add a link to the standard library sections once we create them -->
 

@@ -4328,7 +4328,9 @@ This RFC introduces new surface types and methods, so the canonical spellings sh
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="download-with-cleanup">Download with Cleanup<a class="headerlink" href="#download-with-cleanup" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">process_download</span><span class="p">(</span><span class="n">url</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Data</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">process_download</span><span class="p">(</span><span class="n">url</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Data</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
     <span class="n">temp</span> <span class="o">=</span> <span class="nc">TempFile</span><span class="o">.</span><span class="n">with_suffix</span><span class="p">(</span><span class="s2">&quot;.zip&quot;</span><span class="p">)</span><span class="o">?</span>
 
     <span class="c1"># Download to temp file</span>

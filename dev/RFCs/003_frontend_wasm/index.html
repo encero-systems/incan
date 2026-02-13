@@ -4624,6 +4624,7 @@ Native<span class="w"> </span>binary<span class="w"> </span><span class="o">(</s
 </code></pre></div>
 <h4 id="lifecycle-and-effects">Lifecycle and Effects<a class="headerlink" href="#lifecycle-and-effects" title="Permanent link">&para;</a></h4>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">incan.ui</span><span class="w"> </span><span class="kn">import</span> <span class="n">component</span><span class="p">,</span> <span class="n">signal</span><span class="p">,</span> <span class="n">effect</span><span class="p">,</span> <span class="n">html</span><span class="p">,</span> <span class="nc">Element</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
 
 <span class="nd">@component</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">dataFetcher</span><span class="p">(</span><span class="n">url</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Element</span><span class="p">:</span>
@@ -5032,6 +5033,7 @@ Your IDE sees markup, not a string.</p>
 </code></pre></div>
 <h4 id="asset-loading">Asset Loading<a class="headerlink" href="#asset-loading" title="Permanent link">&para;</a></h4>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">incan.graphics</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_gltf</span><span class="p">,</span> <span class="n">load_texture</span><span class="p">,</span> <span class="n">load_cubemap</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
 
 <span class="c1"># Load 3D model</span>
 <span class="k">model</span> <span class="o">=</span> <span class="k">await</span> <span class="n">load_gltf</span><span class="p">(</span><span class="s2">&quot;model.glb&quot;</span><span class="p">)</span>

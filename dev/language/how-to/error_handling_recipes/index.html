@@ -4090,7 +4090,9 @@ and “what to do when…”.</p>
 </code></pre></div>
 <h2 id="pattern-errors-with-recoverable-payloads">Pattern: Errors with recoverable payloads<a class="headerlink" href="#pattern-errors-with-recoverable-payloads" title="Permanent link">&para;</a></h2>
 <p>Sometimes the error should carry a value that would otherwise be lost (e.g. sending on a closed channel).</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">match</span> <span class="k">await</span> <span class="n">tx</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">msg</span><span class="p">):</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
+
+<span class="k">match</span> <span class="k">await</span> <span class="n">tx</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">msg</span><span class="p">):</span>
     <span class="nb">Ok</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Sent!&quot;</span><span class="p">)</span>
     <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">)</span> <span class="o">=&gt;</span>
         <span class="n">save_for_retry</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>

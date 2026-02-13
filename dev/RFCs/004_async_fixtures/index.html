@@ -3993,7 +3993,8 @@ setup/teardown and participate in fixture dependency injection.</p>
 </ul>
 <h2 id="proposed-design">Proposed Design<a class="headerlink" href="#proposed-design" title="Permanent link">&para;</a></h2>
 <h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
 
 <span class="nd">@fixture</span><span class="p">(</span><span class="n">scope</span><span class="o">=</span><span class="s2">&quot;function&quot;</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">http_server</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">ServerHandle</span><span class="p">:</span>
