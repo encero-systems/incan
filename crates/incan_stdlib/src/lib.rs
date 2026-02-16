@@ -80,6 +80,3 @@ pub use web::{
     App, DELETE, GET, HEAD, HTTP_BAD_REQUEST, HTTP_CREATED, HTTP_FORBIDDEN, HTTP_INTERNAL_ERROR, HTTP_NO_CONTENT,
     HTTP_NOT_FOUND, HTTP_OK, HTTP_UNAUTHORIZED, Json, OPTIONS, PATCH, POST, PUT, Query, Response,
 };
-
-// Testing helpers (always available)
-pub use testing::{assert, assert_eq, assert_false, assert_ne, assert_true, fail};

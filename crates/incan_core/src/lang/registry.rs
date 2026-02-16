@@ -46,6 +46,9 @@ pub const RFC_008: RfcId = "RFC 008";
 /// RFC 009 — sized integers & builtin type registry (builtin type methods; frozen containers).
 pub const RFC_009: RfcId = "RFC 009";
 
+/// RFC 018 — testing stdlib and assertion helpers.
+pub const RFC_018: RfcId = "RFC 018";
+
 /// RFC 021 — model field metadata and aliases.
 pub const RFC_021: RfcId = "RFC 021";
 
@@ -78,6 +81,8 @@ impl RFC {
     pub const _008: RfcId = RFC_008;
     /// RFC 009 — sized integers & builtin type registry (builtin type methods; frozen containers).
     pub const _009: RfcId = RFC_009;
+    /// RFC 018 — testing stdlib and assertion helpers.
+    pub const _018: RfcId = RFC_018;
     /// RFC 021 — model field metadata and aliases.
     pub const _021: RfcId = RFC_021;
     /// RFC 022 — stdlib namespacing and compiler handoff.

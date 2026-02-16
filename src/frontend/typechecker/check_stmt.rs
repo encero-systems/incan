@@ -29,6 +29,7 @@ impl TypeChecker {
             Statement::If(if_stmt) => self.check_if_stmt(if_stmt),
             Statement::While(while_stmt) => self.check_while_stmt(while_stmt),
             Statement::For(for_stmt) => self.check_for_stmt(for_stmt),
+            Statement::Assert(assert_stmt) => self.check_assert_stmt(assert_stmt),
             Statement::Expr(expr) => {
                 self.check_expr(expr);
             }
@@ -71,18 +72,19 @@ impl TypeChecker {
                     let rhs_num = numeric_ty_from_resolved(&value_ty);
 
                     if let (Some(lhs), Some(rhs)) = (lhs_num, rhs_num) {
-                        let num_op = numeric_op_from_ast(&binop).expect("compound op maps to numeric op");
-                        let res_num = result_numeric_type(num_op, lhs, rhs, None);
-                        let res_ty = match res_num {
-                            NumericTy::Int => ResolvedType::Int,
-                            NumericTy::Float => ResolvedType::Float,
-                        };
-                        if !self.types_compatible(&res_ty, &var_ty) {
-                            self.errors.push(errors::type_mismatch(
-                                &var_ty.to_string(),
-                                &res_ty.to_string(),
-                                compound.value.span,
-                            ));
+                        if let Some(num_op) = numeric_op_from_ast(&binop) {
+                            let res_num = result_numeric_type(num_op, lhs, rhs, None);
+                            let res_ty = match res_num {
+                                NumericTy::Int => ResolvedType::Int,
+                                NumericTy::Float => ResolvedType::Float,
+                            };
+                            if !self.types_compatible(&res_ty, &var_ty) {
+                                self.errors.push(errors::type_mismatch(
+                                    &var_ty.to_string(),
+                                    &res_ty.to_string(),
+                                    compound.value.span,
+                                ));
+                            }
                         }
                     } else if !self.types_compatible(&value_ty, &var_ty) {
                         // Non-numeric: fall back to simple compatibility check.
@@ -488,6 +490,23 @@ impl TypeChecker {
             self.check_statement(stmt);
         }
         self.symbols.exit_scope();
+    }
+
+    fn check_assert_stmt(&mut self, assert_stmt: &AssertStmt) {
+        let cond_ty = self.check_expr(&assert_stmt.condition);
+        let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
+        ensure_bool_condition(&cond_ty, assert_stmt.condition.span, is_compatible, &mut self.errors);
+
+        if let Some(message) = &assert_stmt.message {
+            let msg_ty = self.check_expr(message);
+            if !self.types_compatible(&msg_ty, &ResolvedType::Str) {
+                self.errors.push(errors::type_mismatch(
+                    &ResolvedType::Str.to_string(),
+                    &msg_ty.to_string(),
+                    message.span,
+                ));
+            }
+        }
     }
 
     pub(crate) fn infer_iterator_element_type(&self, iter_ty: &ResolvedType) -> ResolvedType {

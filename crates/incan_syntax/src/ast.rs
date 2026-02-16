@@ -478,6 +478,8 @@ pub enum Statement {
     While(WhileStmt),
     /// `for x in expr: ...`
     For(ForStmt),
+    /// `assert cond` or `assert cond, msg`
+    Assert(AssertStmt),
     /// Expression statement
     Expr(Spanned<Expr>),
     /// `pass` or `...`
@@ -592,6 +594,12 @@ pub struct ForStmt {
     pub var: Ident,
     pub iter: Spanned<Expr>,
     pub body: Vec<Spanned<Statement>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssertStmt {
+    pub condition: Spanned<Expr>,
+    pub message: Option<Spanned<Expr>>,
 }
 
 // ============================================================================

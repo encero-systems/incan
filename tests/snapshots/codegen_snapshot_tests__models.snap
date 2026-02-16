@@ -629,7 +629,7 @@ fn main() {
         __parts, & __args) }
     );
     let coord = create_coordinate(3f64, 4f64);
-    let dist = distance_from_origin(coord.clone());
+    let dist = distance_from_origin(coord);
     println!(
         "{}", { let __parts : [& str; 2usize] = ["Distance: ", ""]; let __args : Vec <
         String > = vec![format!("{}", dist)]; incan_stdlib::strings::fstring(& __parts, &

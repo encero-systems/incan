@@ -254,7 +254,7 @@ fn count_items(container: DataContainer) -> i64 {
 }
 fn main() {
     let color = Color::Red;
-    let color_name = get_color_name(color.clone());
+    let color_name = get_color_name(color);
     println!(
         "{}", { let __parts : [& str; 2usize] = ["Color: ", ""]; let __args : Vec <
         String > = vec![format!("{}", color_name)]; incan_stdlib::strings::fstring(&
@@ -262,8 +262,8 @@ fn main() {
     );
     let some_value = Maybe::Some(42);
     let none_value = Maybe::None;
-    let result1 = process_maybe(some_value.clone());
-    let result2 = process_maybe(none_value.clone());
+    let result1 = process_maybe(some_value);
+    let result2 = process_maybe(none_value);
     println!(
         "{}", { let __parts : [& str; 3usize] = ["Some: ", ", None: ", ""]; let __args :
         Vec < String > = vec![format!("{}", result1), format!("{}", result2)];
@@ -271,24 +271,24 @@ fn main() {
     );
     let ok_result = Result::Ok(100);
     let err_result = Result::Err("Something went wrong".to_string());
-    let ok_msg = handle_result(ok_result.clone());
-    let err_msg = handle_result(err_result.clone());
+    let ok_msg = handle_result(ok_result);
+    let err_msg = handle_result(err_result);
     println!("{}", ok_msg);
     println!("{}", err_msg);
     let quit_msg = Message::Quit;
     let move_msg = Message::Move(10, 20);
     let write_msg = Message::Write("Hello".to_string());
     let color_msg = Message::ChangeColor(255, 0, 0);
-    println!("{}", handle_message(quit_msg.clone()));
-    println!("{}", handle_message(move_msg.clone()));
-    println!("{}", handle_message(write_msg.clone()));
-    println!("{}", handle_message(color_msg.clone()));
+    println!("{}", handle_message(quit_msg));
+    println!("{}", handle_message(move_msg));
+    println!("{}", handle_message(write_msg));
+    println!("{}", handle_message(color_msg));
     let circle = Shape::Circle(5f64);
     let rectangle = Shape::Rectangle(4f64, 6f64);
     let triangle = Shape::Triangle(3f64, 8f64);
-    let circle_area = calculate_area(circle.clone());
-    let rect_area = calculate_area(rectangle.clone());
-    let tri_area = calculate_area(triangle.clone());
+    let circle_area = calculate_area(circle);
+    let rect_area = calculate_area(rectangle);
+    let tri_area = calculate_area(triangle);
     println!(
         "{}", { let __parts : [& str; 2usize] = ["Circle area: ", ""]; let __args : Vec <
         String > = vec![format!("{}", circle_area)]; incan_stdlib::strings::fstring(&
@@ -306,7 +306,7 @@ fn main() {
     );
     let status = Status::InProgress;
     let priority = Priority::High;
-    let priority_level = get_priority_level(priority.clone());
+    let priority_level = get_priority_level(priority);
     println!(
         "{}", { let __parts : [& str; 2usize] = ["Priority level: ", ""]; let __args :
         Vec < String > = vec![format!("{}", priority_level)];
@@ -320,22 +320,22 @@ fn main() {
     );
     println!(
         "{}", { let __parts : [& str; 2usize] = ["Empty count: ", ""]; let __args : Vec <
-        String > = vec![format!("{}", count_items(empty.clone()))];
+        String > = vec![format!("{}", count_items(empty))];
         incan_stdlib::strings::fstring(& __parts, & __args) }
     );
     println!(
         "{}", { let __parts : [& str; 2usize] = ["Single count: ", ""]; let __args : Vec
-        < String > = vec![format!("{}", count_items(single.clone()))];
+        < String > = vec![format!("{}", count_items(single))];
         incan_stdlib::strings::fstring(& __parts, & __args) }
     );
     println!(
         "{}", { let __parts : [& str; 2usize] = ["Multiple count: ", ""]; let __args :
-        Vec < String > = vec![format!("{}", count_items(multiple.clone()))];
+        Vec < String > = vec![format!("{}", count_items(multiple))];
         incan_stdlib::strings::fstring(& __parts, & __args) }
     );
     println!(
         "{}", { let __parts : [& str; 2usize] = ["Mapped count: ", ""]; let __args : Vec
-        < String > = vec![format!("{}", count_items(mapped.clone()))];
+        < String > = vec![format!("{}", count_items(mapped))];
         incan_stdlib::strings::fstring(& __parts, & __args) }
     );
 }

@@ -194,11 +194,27 @@ struct RustExternItem {
     span: Span,
 }
 
-/// Check if a function body is "trivial" (`...` or `pass` or empty).
+/// Check if a function body is "trivial" (`...` or `pass` or empty), optionally with a leading docstring.
 ///
-/// A trivial body contains only `Pass` statements (which the parser generates for `...` and `pass`), or is empty.
+/// A trivial body may contain:
+/// - an optional leading string-literal expression statement (function docstring), and
+/// - only `Pass` statements after that (which the parser generates for `...` and `pass`), or be empty.
 fn is_trivial_body(body: &[Spanned<Statement>]) -> bool {
-    body.is_empty() || body.iter().all(|stmt| matches!(stmt.node, Statement::Pass))
+    if body.is_empty() {
+        return true;
+    }
+
+    let mut idx = 0usize;
+    while idx < body.len()
+        && matches!(
+            &body[idx].node,
+            Statement::Expr(expr) if matches!(&expr.node, Expr::Literal(Literal::String(_)))
+        )
+    {
+        idx += 1;
+    }
+
+    body[idx..].iter().all(|stmt| matches!(stmt.node, Statement::Pass))
 }
 
 #[cfg(test)]

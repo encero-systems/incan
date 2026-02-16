@@ -28,7 +28,6 @@
 
 pub mod commands;
 pub mod prelude;
-pub mod test_interfaces;
 pub mod test_runner;
 
 use std::env;
@@ -567,25 +566,31 @@ fn should_print_banner(cli: &Cli, _use_color: bool) -> bool {
 // ============================================================================
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
+    fn must_cli(args: impl IntoIterator<Item = &'static str>) -> Cli {
+        match Cli::try_parse_from(args) {
+            Ok(cli) => cli,
+            Err(err) => panic!("cli parse failed: {err}"),
+        }
+    }
+
     #[test]
     fn test_cli_parse_build() {
-        let cli = Cli::try_parse_from(["incan", "build", "test.incn"]).unwrap();
+        let cli = must_cli(["incan", "build", "test.incn"]);
         assert!(matches!(cli.command, Some(Command::Build { .. })));
     }
 
     #[test]
     fn test_cli_parse_run() {
-        let cli = Cli::try_parse_from(["incan", "run", "test.incn"]).unwrap();
+        let cli = must_cli(["incan", "run", "test.incn"]);
         assert!(matches!(cli.command, Some(Command::Run { .. })));
     }
 
     #[test]
     fn test_cli_parse_run_with_code() {
-        let cli = Cli::try_parse_from(["incan", "run", "-c", "print(1)"]).unwrap();
+        let cli = must_cli(["incan", "run", "-c", "print(1)"]);
         if let Some(Command::Run { command, .. }) = cli.command {
             assert_eq!(command.as_deref(), Some("print(1)"));
         } else {
@@ -595,7 +600,7 @@ mod tests {
 
     #[test]
     fn test_cli_parse_fmt() {
-        let cli = Cli::try_parse_from(["incan", "fmt", "src/", "--check"]).unwrap();
+        let cli = must_cli(["incan", "fmt", "src/", "--check"]);
         if let Some(Command::Fmt { check, .. }) = cli.command {
             assert!(check);
         } else {
@@ -605,7 +610,7 @@ mod tests {
 
     #[test]
     fn test_cli_parse_test() {
-        let cli = Cli::try_parse_from(["incan", "test", "-v", "-x", "-k", "unit"]).unwrap();
+        let cli = must_cli(["incan", "test", "-v", "-x", "-k", "unit"]);
         if let Some(Command::Test {
             verbose,
             stop_on_fail,
@@ -623,16 +628,16 @@ mod tests {
 
     #[test]
     fn test_cli_parse_debug_flags() {
-        let cli = Cli::try_parse_from(["incan", "--lex", "test.incn"]).unwrap();
+        let cli = must_cli(["incan", "--lex", "test.incn"]);
         assert!(cli.lex_file.is_some());
 
-        let cli = Cli::try_parse_from(["incan", "--parse", "test.incn"]).unwrap();
+        let cli = must_cli(["incan", "--parse", "test.incn"]);
         assert!(cli.parse_file.is_some());
 
-        let cli = Cli::try_parse_from(["incan", "--check", "test.incn"]).unwrap();
+        let cli = must_cli(["incan", "--check", "test.incn"]);
         assert!(cli.check_file.is_some());
 
-        let cli = Cli::try_parse_from(["incan", "--emit-rust", "test.incn"]).unwrap();
+        let cli = must_cli(["incan", "--emit-rust", "test.incn"]);
         assert!(cli.emit_rust_file.is_some());
     }
 }

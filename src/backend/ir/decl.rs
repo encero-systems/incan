@@ -140,6 +140,8 @@ pub struct FunctionParam {
     pub ty: IrType,
     pub mutability: Mutability,
     pub is_self: bool,
+    /// Optional default argument expression (used for call-site default filling).
+    pub default: Option<super::IrExpr>,
 }
 
 /// IR struct definition

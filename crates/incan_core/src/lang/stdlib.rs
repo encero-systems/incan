@@ -13,9 +13,6 @@ pub const INCAN_STD_NAMESPACE: &str = "__incan_std";
 /// `std.web` module name.
 pub const STDLIB_WEB: &str = "web";
 
-/// `std.testing` module name.
-pub const STDLIB_TESTING: &str = "testing";
-
 /// `std.reflection` module name.
 pub const STDLIB_REFLECTION: &str = "reflection";
 
@@ -24,6 +21,15 @@ pub const STDLIB_THIS: &str = "this";
 
 /// `std.async` module name.
 pub const STDLIB_ASYNC: &str = "async";
+
+/// How a `std.*` namespace is implemented at runtime/emission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StdlibImplMode {
+    /// Backed by the Rust runtime facade (`incan_stdlib::<ns>::...`).
+    RuntimeFacade,
+    /// Backed by emitted Incan-source modules (`crate::__incan_std::<ns>::...`).
+    IncanSource,
+}
 
 /// Check if a module path starts with `std.<module>`.
 pub fn is_stdlib_module(path: &[String], module: &str) -> bool {
@@ -42,12 +48,14 @@ pub fn is_any_stdlib_path(path: &[String]) -> bool {
 /// A top-level stdlib namespace with optional metadata.
 ///
 /// Only top-level namespaces (`std.<name>`) are registered explicitly. Submodule stub paths are derived by convention
-/// (`stdlib/{ns}/{sub}.incn`), so adding a new submodule requires zero changes here — just drop an `.incn` file in the
-/// right directory.
+/// (`stdlib/{ns}/{sub}.incn`) relative to the active stdlib source root (resolved by loader), so adding a new
+/// submodule requires zero changes here — just drop an `.incn` file in the right directory.
 #[derive(Debug, Clone, Copy)]
 pub struct StdlibNamespace {
     /// Top-level namespace name (e.g., `"web"`, `"testing"`, `"async"`).
     pub name: &'static str,
+    /// How this namespace is materialized in emitted Rust.
+    pub impl_mode: StdlibImplMode,
     /// Optional Cargo feature gate required for this namespace.
     pub feature: Option<&'static str>,
     /// Known submodules for validation and LSP completion. Empty for leaf modules.
@@ -64,48 +72,56 @@ pub struct StdlibNamespace {
 pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     StdlibNamespace {
         name: "web",
+        impl_mode: StdlibImplMode::RuntimeFacade,
         feature: Some("web"),
         submodules: &["app", "routing", "request", "response", "prelude"],
         soft_keywords: &[],
     },
     StdlibNamespace {
         name: "testing",
+        impl_mode: StdlibImplMode::IncanSource,
         feature: None,
         submodules: &[],
-        soft_keywords: &[],
+        soft_keywords: &[KeywordId::Assert],
     },
     StdlibNamespace {
         name: "async",
+        impl_mode: StdlibImplMode::RuntimeFacade,
         feature: None,
         submodules: &["time", "task", "channel", "select", "sync", "prelude"],
         soft_keywords: &[KeywordId::Async, KeywordId::Await],
     },
     StdlibNamespace {
         name: "serde",
+        impl_mode: StdlibImplMode::RuntimeFacade,
         feature: Some("json"),
         submodules: &["json"],
         soft_keywords: &[],
     },
     StdlibNamespace {
         name: "reflection",
+        impl_mode: StdlibImplMode::RuntimeFacade,
         feature: None,
         submodules: &[],
         soft_keywords: &[],
     },
     StdlibNamespace {
         name: "derives",
+        impl_mode: StdlibImplMode::RuntimeFacade,
         feature: None,
         submodules: &["string", "comparison", "copying", "collection"],
         soft_keywords: &[],
     },
     StdlibNamespace {
         name: "traits",
+        impl_mode: StdlibImplMode::RuntimeFacade,
         feature: None,
         submodules: &["convert", "ops", "error", "indexing", "callable"],
         soft_keywords: &[],
     },
     StdlibNamespace {
         name: "math",
+        impl_mode: StdlibImplMode::RuntimeFacade,
         feature: None,
         submodules: &[],
         soft_keywords: &[],
@@ -115,6 +131,14 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
 /// Look up a top-level stdlib namespace by name.
 pub fn find_namespace(name: &str) -> Option<&'static StdlibNamespace> {
     STDLIB_NAMESPACES.iter().find(|ns| ns.name == name)
+}
+
+/// Resolve implementation mode for a stdlib module path (e.g. `["std", "testing"]`).
+pub fn stdlib_impl_mode_for(path: &[String]) -> Option<StdlibImplMode> {
+    if path.len() < 2 || path[0] != STDLIB_ROOT {
+        return None;
+    }
+    find_namespace(&path[1]).map(|ns| ns.impl_mode)
 }
 
 /// Resolve soft keywords activated by a stdlib import path.
@@ -175,7 +199,7 @@ pub fn stdlib_feature_for(path: &[String]) -> Option<&'static str> {
     find_namespace(&path[1]).and_then(|ns| ns.feature)
 }
 
-/// Resolve the stub `.incn` file path for a stdlib module path.
+/// Resolve the relative stub `.incn` file path for a stdlib module path.
 ///
 /// Uses convention-based resolution:
 /// - `std.X` (leaf, no submodules) → `stdlib/X.incn`
@@ -254,5 +278,18 @@ mod tests {
         assert!(hint.contains(&"std.derives".to_string()));
         assert!(hint.contains(&"std.web.app".to_string()));
         assert!(hint.contains(&"std.async.prelude".to_string()));
+    }
+
+    #[test]
+    fn stdlib_impl_modes_are_registry_driven() {
+        assert_eq!(
+            stdlib_impl_mode_for(&segs(&["std", "testing"])),
+            Some(StdlibImplMode::IncanSource)
+        );
+        assert_eq!(
+            stdlib_impl_mode_for(&segs(&["std", "web"])),
+            Some(StdlibImplMode::RuntimeFacade)
+        );
+        assert_eq!(stdlib_impl_mode_for(&segs(&["not_std", "testing"])), None);
     }
 }

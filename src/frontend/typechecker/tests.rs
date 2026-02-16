@@ -1881,6 +1881,19 @@ def fail(msg: str) -> None:
 }
 
 #[test]
+fn test_rust_extern_docstring_plus_ellipsis_is_trivial() {
+    let source = r#"
+rust.module("incan_stdlib::testing")
+
+@rust.extern
+def fail(msg: str) -> None:
+    """Host boundary docstring."""
+    ...
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
 fn test_rust_extern_on_instance_method() {
     let source = r#"
 rust.module("incan_stdlib::web")
@@ -2036,6 +2049,24 @@ fn test_known_stdlib_module_is_accepted() {
             errs.iter().map(|e| &e.message).collect::<Vec<_>>()
         );
     }
+}
+
+#[test]
+fn test_std_testing_marker_runtime_call_is_rejected() {
+    let source = r#"
+from std.testing import skip
+
+def main() -> None:
+    skip("not as runtime call")
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("runtime call to std.testing marker should fail");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("cannot be called at runtime")),
+        "Expected marker runtime-call diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
 }
 
 #[test]

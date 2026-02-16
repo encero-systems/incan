@@ -17,4 +17,5 @@ pub mod decorator_resolution;
 pub mod module;
 pub mod resolver;
 pub mod symbols;
+pub mod testing_markers;
 pub mod typechecker;

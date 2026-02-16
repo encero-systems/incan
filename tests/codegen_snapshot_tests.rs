@@ -482,6 +482,17 @@ fn test_rust_extern_delegation_codegen() {
     insta::assert_snapshot!("rust_extern_delegation", rust_code);
 }
 
+/// RFC 023 Phase 5: compile the real `std.testing` module source.
+#[test]
+fn test_std_testing_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/testing.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_testing_compiled", rust_code);
+}
+
 // ============================================================================
 // RFC 023: Trait Bound Inference and `with` Annotation
 // ============================================================================

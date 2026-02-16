@@ -688,6 +688,260 @@ def main() -> None:
     }
 }
 
+/// End-to-end integration tests for `incan test`.
+///
+/// These tests exercise the full pipeline: write an Incan test file → run `incan test` via the CLI → verify
+/// stdout/stderr/exit code.  They catch integration bugs like missing `fn main()` or broken parametrize expansion that
+/// unit tests cannot detect.
+mod test_runner_e2e {
+    use std::process::Command;
+
+    /// Create a temp directory with a single test file and return the directory path.
+    fn write_test_project(filename: &str, source: &str) -> std::path::PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let mut dir = std::env::temp_dir();
+        let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+            panic!("system time before UNIX epoch");
+        };
+        let uniq = duration.as_nanos();
+        dir.push(format!("incan_e2e_test_{}", uniq));
+        let Ok(()) = std::fs::create_dir_all(&dir) else {
+            panic!("failed to create temp dir");
+        };
+        let Ok(()) = std::fs::write(dir.join(filename), source) else {
+            panic!("failed to write test file");
+        };
+        dir
+    }
+
+    /// Run `incan test` on a directory and return the combined output.
+    fn run_incan_test(dir: &std::path::Path) -> std::process::Output {
+        Command::new("target/debug/incan")
+            .args(["test", dir.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+            .unwrap_or_else(|e| panic!("failed to run `incan test`: {}", e))
+    }
+
+    /// Run `incan test` with extra flags.
+    fn run_incan_test_with_args(dir: &std::path::Path, extra: &[&str]) -> std::process::Output {
+        let mut cmd = Command::new("target/debug/incan");
+        cmd.arg("test");
+        for arg in extra {
+            cmd.arg(arg);
+        }
+        cmd.arg(dir.to_string_lossy().as_ref());
+        cmd.env("CARGO_NET_OFFLINE", "true");
+        cmd.output()
+            .unwrap_or_else(|e| panic!("failed to run `incan test`: {}", e))
+    }
+
+    // ---- Passing test ----
+
+    #[test]
+    fn e2e_passing_test_succeeds() {
+        let dir = write_test_project(
+            "test_math.incn",
+            r#"
+from std.testing import assert_eq
+
+def test_addition() -> None:
+    assert_eq(1 + 1, 2)
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected passing test to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("PASSED") || stdout.contains("passed"),
+            "expected PASSED in output.\nstdout:\n{}",
+            stdout,
+        );
+    }
+
+    #[test]
+    fn e2e_assert_statement_with_module_import_succeeds() {
+        let dir = write_test_project(
+            "test_assert_stmt.incn",
+            r#"
+import std.testing
+
+def test_assert_statement_sugar() -> None:
+    assert 1 + 1 == 2
+    assert 3 != 4
+    assert not False
+    assert True
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected assert-statement test to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("PASSED") || stdout.contains("passed"),
+            "expected PASSED in output.\nstdout:\n{}",
+            stdout,
+        );
+    }
+
+    // ---- Failing test ----
+
+    #[test]
+    fn e2e_failing_test_reports_failure() {
+        let dir = write_test_project(
+            "test_bad.incn",
+            r#"
+from std.testing import assert_eq
+
+def test_wrong() -> None:
+    assert_eq(1 + 1, 99)
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        assert!(
+            !output.status.success(),
+            "expected failing test to exit non-zero.\nstdout:\n{}",
+            stdout,
+        );
+        assert!(
+            stdout.contains("FAILED") || stdout.contains("failed"),
+            "expected FAILED in output.\nstdout:\n{}",
+            stdout,
+        );
+    }
+
+    // ---- Skip marker ----
+
+    #[test]
+    fn e2e_skip_marker_skips_test() {
+        let dir = write_test_project(
+            "test_skip.incn",
+            r#"
+from std.testing import skip
+
+@skip("not implemented yet")
+def test_todo() -> None:
+    pass
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        assert!(
+            output.status.success(),
+            "expected skipped test to succeed overall.\nstdout:\n{}",
+            stdout,
+        );
+        assert!(
+            stdout.contains("SKIPPED") || stdout.contains("skipped"),
+            "expected SKIPPED in output.\nstdout:\n{}",
+            stdout,
+        );
+    }
+
+    // ---- Parametrize expansion ----
+
+    #[test]
+    fn e2e_parametrize_expands_and_runs_all_cases() {
+        let dir = write_test_project(
+            "test_param.incn",
+            r#"
+from std.testing import parametrize, assert_eq
+
+@parametrize("a, b, expected", [(1, 2, 3), (10, 20, 30), (0, 0, 0)])
+def test_add(a: int, b: int, expected: int) -> None:
+    assert_eq(a + b, expected)
+"#,
+        );
+
+        let output = run_incan_test_with_args(&dir, &["--verbose"]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected parametrized test to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+
+        // All three parametrized variants should appear in the output.
+        assert!(
+            stdout.contains("test_add[1-2-3]"),
+            "expected test_add[1-2-3] in output.\nstdout:\n{}",
+            stdout,
+        );
+        assert!(
+            stdout.contains("test_add[10-20-30]"),
+            "expected test_add[10-20-30] in output.\nstdout:\n{}",
+            stdout,
+        );
+        assert!(
+            stdout.contains("test_add[0-0-0]"),
+            "expected test_add[0-0-0] in output.\nstdout:\n{}",
+            stdout,
+        );
+
+        // Should report 3 passed
+        assert!(
+            stdout.contains("3 passed"),
+            "expected '3 passed' in output.\nstdout:\n{}",
+            stdout,
+        );
+    }
+
+    // ---- Parametrize with a failing case ----
+
+    #[test]
+    fn e2e_parametrize_reports_failing_case() {
+        let dir = write_test_project(
+            "test_param_fail.incn",
+            r#"
+from std.testing import parametrize, assert_eq
+
+@parametrize("x, expected", [(2, 4), (3, 7)])
+def test_double(x: int, expected: int) -> None:
+    assert_eq(x * 2, expected)
+"#,
+        );
+
+        let output = run_incan_test_with_args(&dir, &["--verbose"]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // 2*2==4 passes, 3*2==6!=7 fails
+        assert!(
+            !output.status.success(),
+            "expected one failing case to make the run fail.\nstdout:\n{}",
+            stdout,
+        );
+        assert!(
+            stdout.contains("1 passed") && stdout.contains("1 failed"),
+            "expected '1 passed' and '1 failed'.\nstdout:\n{}",
+            stdout,
+        );
+    }
+}
+
 /// Test specific parser behavior
 mod parser_tests {
     use incan::frontend::ast::*;

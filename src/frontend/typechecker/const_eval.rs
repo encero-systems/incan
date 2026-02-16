@@ -322,7 +322,15 @@ impl TypeChecker {
 
                         match (lhs_num, rhs_num) {
                             (Some(lhs), Some(rhs)) => {
-                                let num_op = numeric_op_from_ast(op).expect("INVARIANT: arithmetic op");
+                                let Some(num_op) = numeric_op_from_ast(op) else {
+                                    self.errors.push(errors::const_binary_op_not_supported(
+                                        &op.to_string(),
+                                        &l.ty.to_string(),
+                                        &r.ty.to_string(),
+                                        expr.span,
+                                    ));
+                                    return None;
+                                };
                                 let pow_exp = if matches!(op, BinaryOp::Pow) {
                                     Some(pow_exponent_kind_from_ast(right, &r.ty))
                                 } else {

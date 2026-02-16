@@ -394,10 +394,10 @@ fn main() {
     let doc_serial = doc.serialize();
     println!("{}", doc_str);
     println!("{}", doc_serial);
-    draw_shape(circle.clone());
+    draw_shape(circle);
     draw_shape(square.clone());
-    let area1 = calculate_area(rect.clone());
-    let area2 = calculate_area(square.clone());
+    let area1 = calculate_area(rect);
+    let area2 = calculate_area(square);
     println!(
         "{}", { let __parts : [& str; 3usize] = ["Areas: ", ", ", ""]; let __args : Vec <
         String > = vec![format!("{}", area1), format!("{}", area2)];

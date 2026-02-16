@@ -13,7 +13,6 @@
 //!
 //! Known namespace prefixes are registered in [`DECORATOR_NAMESPACES`] so that the validator can distinguish "unknown
 //! decorator in the `rust` namespace" from "completely unknown decorator".
-
 use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
 
 /// Stable identifier for supported decorators.
@@ -22,7 +21,6 @@ pub enum DecoratorId {
     Derive,
     RustExtern,
     Route,
-    Fixture,
     Requires,
 }
 
@@ -33,13 +31,16 @@ pub enum DecoratorId {
 /// Current members: `@rust.extern`. Future: `@rust.function`, etc.
 pub const RUST_NAMESPACE: &str = "rust";
 
+/// The `std` decorator namespace — covers all `@std.*` decorators.
+pub const STD_NAMESPACE: &str = "std";
+
 /// Known decorator namespace prefixes.
 ///
 /// The validator uses this list to give targeted errors when a user writes e.g. `@rust.blah` instead of "unknown
 /// decorator `rust.blah`", it says "unknown decorator `blah` in namespace `rust`".
 ///
 /// Each entry is a top-level namespace root; nested namespaces like `std.web` are handled by matching `std`.
-pub const DECORATOR_NAMESPACES: &[&str] = &[RUST_NAMESPACE, "std"];
+pub const DECORATOR_NAMESPACES: &[&str] = &[RUST_NAMESPACE, STD_NAMESPACE];
 
 /// Check whether a leading segment is a known decorator namespace prefix.
 pub fn is_known_decorator_namespace(prefix: &str) -> bool {
@@ -60,21 +61,6 @@ pub fn decorators_in_namespace(prefix: &str) -> Vec<&'static str> {
 
 /// Named argument for `@route(methods=[...])`.
 pub const ROUTE_METHODS_ARG: &str = "methods";
-
-/// Named argument for `@fixture(scope=...)`.
-pub const FIXTURE_SCOPE_ARG: &str = "scope";
-
-/// Named argument for `@fixture(autouse=...)`.
-pub const FIXTURE_AUTOUSE_ARG: &str = "autouse";
-
-/// Fixture scope value: per-function.
-pub const FIXTURE_SCOPE_FUNCTION: &str = "function";
-
-/// Fixture scope value: per-module.
-pub const FIXTURE_SCOPE_MODULE: &str = "module";
-
-/// Fixture scope value: per-session.
-pub const FIXTURE_SCOPE_SESSION: &str = "session";
 
 /// Metadata entry for a decorator.
 pub type DecoratorInfo = LangItemInfo<DecoratorId>;
@@ -103,14 +89,6 @@ pub const DECORATORS: &[DecoratorInfo] = &[
         &[],
         "Declare a web route handler.",
         RFC::_000,
-        Since(0, 1),
-    ),
-    info(
-        DecoratorId::Fixture,
-        "std.testing.fixture",
-        &[],
-        "Declare a test fixture.",
-        RFC::_001,
         Since(0, 1),
     ),
     info(

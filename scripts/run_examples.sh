@@ -70,22 +70,9 @@ found_any=0
 while IFS= read -r f; do
   [[ -z "$f" ]] && continue
   found_any=1
-  echo "==> check: $f"
-  if "$INCAN_BIN" --check "$f" >/dev/null; then
-    checked=$((checked + 1))
-  else
-    echo "FAILED: check $f"
-    failed=$((failed + 1))
-    continue
-  fi
-
-  if is_runnable_entrypoint "$f"; then
-    if should_skip_run "$f"; then
-      echo "==> skip:  $f (excluded: long-running)"
-      skipped=$((skipped + 1))
-      continue
-    fi
-
+  if is_runnable_entrypoint "$f" && ! should_skip_run "$f"; then
+    # For runnable entrypoints, `incan run` already performs compile-time validation,
+    # so we avoid a redundant prior `--check`.
     echo "==> run:   $f"
     set +e
     INCAN_EXAMPLES_TIMEOUT="$TIMEOUT_SECS" python_run_with_timeout "$INCAN_BIN" run "$f" >/dev/null
@@ -93,6 +80,7 @@ while IFS= read -r f; do
     set -e
 
     if [[ "$rc" -eq 0 ]]; then
+      checked=$((checked + 1))
       ran=$((ran + 1))
     elif [[ "$rc" -eq 124 ]]; then
       echo "==> skip:  $f (timeout after ${TIMEOUT_SECS}s)"
@@ -101,6 +89,19 @@ while IFS= read -r f; do
       echo "FAILED: run $f (exit $rc)"
       failed=$((failed + 1))
     fi
+    continue
+  fi
+
+  echo "==> check: $f"
+  if "$INCAN_BIN" --check "$f" >/dev/null; then
+    checked=$((checked + 1))
+    if is_runnable_entrypoint "$f" && should_skip_run "$f"; then
+      echo "==> skip:  $f (excluded: long-running)"
+      skipped=$((skipped + 1))
+    fi
+  else
+    echo "FAILED: check $f"
+    failed=$((failed + 1))
   fi
 done < <(
   find examples \

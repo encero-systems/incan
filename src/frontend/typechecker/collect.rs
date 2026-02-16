@@ -225,6 +225,9 @@ impl TypeChecker {
 
     /// Register a top-level function declaration.
     fn collect_function(&mut self, func: &FunctionDecl, span: Span) {
+        // Local declaration shadows any imported marker binding with the same name.
+        self.testing_marker_import_bindings.remove(&func.name);
+
         let params: Vec<_> = func
             .params
             .iter()

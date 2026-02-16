@@ -103,7 +103,7 @@ impl<'a> IrEmitter<'a> {
             }
 
             IrExprKind::Var { name, access: _, .. } => {
-                let n = format_ident!("{}", Self::escape_keyword(name));
+                let n = Self::rust_ident(name);
                 Ok(quote! { #n })
             }
 
@@ -233,7 +233,7 @@ impl<'a> IrEmitter<'a> {
                 let param_tokens: Vec<TokenStream> = params
                     .iter()
                     .map(|(pname, _pty)| {
-                        let n = format_ident!("{}", Self::escape_keyword(pname));
+                        let n = Self::rust_ident(pname);
                         quote! { #n }
                     })
                     .collect();

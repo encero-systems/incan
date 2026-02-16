@@ -9,8 +9,175 @@ use super::super::super::conversions::{BinOpEmitKind, ConversionContext, determi
 use super::super::super::expr::{BinOp, IrCallArg, IrExprKind, TypedExpr, VarAccess, VarRefKind};
 use super::super::super::types::{IrType, Mutability};
 use super::super::{EmitError, IrEmitter};
+use incan_core::lang::surface::constructors::{self, ConstructorId};
 
 impl<'a> IrEmitter<'a> {
+    /// Heuristic: detect whether a type still has unresolved generic parts.
+    ///
+    /// This is used when seeding emitted literals (`None`, `Ok`, `Err`) with explicit Rust type arguments to help
+    /// inference in generic call sites. When a type is still unresolved, callers use conservative placeholders (`_` or
+    /// `()`) instead of over-constraining the generated code.
+    ///
+    /// ## Parameters
+    /// - `ty`: Type to inspect recursively.
+    ///
+    /// ## Returns
+    /// - (`bool`): `true` if `ty` (or any nested component) appears unresolved.
+    fn is_unresolved_type(ty: &IrType) -> bool {
+        fn looks_like_type_param(name: &str) -> bool {
+            // Type parameters in this codebase are typically short upper-case names (`T`, `E`, `K`, `V`).
+            name.len() <= 3
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        }
+
+        match ty {
+            IrType::Unknown | IrType::Generic(_) => true,
+            IrType::Ref(inner) | IrType::RefMut(inner) | IrType::Option(inner) | IrType::List(inner) => {
+                Self::is_unresolved_type(inner)
+            }
+            IrType::Set(inner) => Self::is_unresolved_type(inner),
+            IrType::Dict(k, v) | IrType::Result(k, v) => Self::is_unresolved_type(k) || Self::is_unresolved_type(v),
+            IrType::Tuple(items) => items.iter().any(Self::is_unresolved_type),
+            IrType::NamedGeneric(name, args) => {
+                looks_like_type_param(name) || args.iter().any(Self::is_unresolved_type)
+            }
+            IrType::Function { params, ret } => {
+                params.iter().any(Self::is_unresolved_type) || Self::is_unresolved_type(ret)
+            }
+            IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => looks_like_type_param(name),
+            _ => false,
+        }
+    }
+
+    /// Emit a type-seeded literal argument for `None`/`Ok`/`Err` when possible.
+    ///
+    /// This helper rewrites constructor-shaped arguments into explicit generic forms (for example `None::<T>`, `Ok::<T,
+    /// E>(x)`, `Err::<T, E>(e)`) based on the expected parameter type. It prevents Rust from failing inference in calls
+    /// where the callee alone does not provide enough type context.
+    ///
+    /// If a fully-informed rewrite is not possible, this returns `Ok(None)` and the normal expression emission path is
+    /// used.
+    ///
+    /// ## Parameters
+    /// - `arg`: Source argument expression from IR.
+    /// - `target_ty`: Expected type of the callee parameter at this position.
+    ///
+    /// ## Returns
+    /// - (`Result<Option<TokenStream>, EmitError>`): Seeded token stream when a rewrite applies, otherwise `None`.
+    fn emit_inference_seeded_literal_arg(
+        &self,
+        arg: &TypedExpr,
+        target_ty: &IrType,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        match (&arg.kind, target_ty) {
+            (IrExprKind::None, IrType::Option(inner)) => {
+                let inner_ty = if Self::is_unresolved_type(inner) {
+                    quote! { () }
+                } else {
+                    self.emit_type(inner)
+                };
+                Ok(Some(quote! { None::<#inner_ty> }))
+            }
+
+            (IrExprKind::Call { func, args }, IrType::Result(ok_ty, err_ty)) => {
+                let IrExprKind::Var { name, .. } = &func.kind else {
+                    return Ok(None);
+                };
+                let Some(first_arg) = args.first() else {
+                    return Ok(None);
+                };
+                let inner = self.emit_expr(&first_arg.expr)?;
+
+                if name == constructors::as_str(ConstructorId::Ok) {
+                    // For `Ok`, keep unresolved `T` as `_` so Rust can infer it
+                    // from usage while still stabilizing `E`.
+                    let ok_tokens = if Self::is_unresolved_type(ok_ty) {
+                        quote! { _ }
+                    } else {
+                        self.emit_type(ok_ty)
+                    };
+                    // Default unresolved error type to `()` for deterministic
+                    // fallback in assertion/helper-oriented paths.
+                    let err_tokens = if Self::is_unresolved_type(err_ty) {
+                        quote! { () }
+                    } else {
+                        self.emit_type(err_ty)
+                    };
+                    return Ok(Some(quote! { Ok::<#ok_tokens, #err_tokens>(#inner) }));
+                }
+
+                if name == constructors::as_str(ConstructorId::Err) {
+                    let inner = if matches!(first_arg.expr.kind, IrExprKind::String(_)) {
+                        // `Err("msg")` in Incan maps to owned `String` in Rust.
+                        quote! { (#inner).to_string() }
+                    } else {
+                        inner
+                    };
+                    // Mirror `Ok` strategy: anchor the opposite side with `()`
+                    // and leave the payload side as `_` when unresolved.
+                    let ok_tokens = if Self::is_unresolved_type(ok_ty) {
+                        quote! { () }
+                    } else {
+                        self.emit_type(ok_ty)
+                    };
+                    let err_tokens = if Self::is_unresolved_type(err_ty) {
+                        quote! { _ }
+                    } else {
+                        self.emit_type(err_ty)
+                    };
+                    return Ok(Some(quote! { Err::<#ok_tokens, #err_tokens>(#inner) }));
+                }
+
+                Ok(None)
+            }
+            (IrExprKind::Struct { name, fields }, IrType::Result(ok_ty, err_ty)) => {
+                let Some((_, first_arg)) = fields.first() else {
+                    return Ok(None);
+                };
+                let inner = self.emit_expr(first_arg)?;
+
+                if name == constructors::as_str(ConstructorId::Ok) {
+                    let ok_tokens = if Self::is_unresolved_type(ok_ty) {
+                        quote! { _ }
+                    } else {
+                        self.emit_type(ok_ty)
+                    };
+                    let err_tokens = if Self::is_unresolved_type(err_ty) {
+                        quote! { () }
+                    } else {
+                        self.emit_type(err_ty)
+                    };
+                    return Ok(Some(quote! { Ok::<#ok_tokens, #err_tokens>(#inner) }));
+                }
+
+                if name == constructors::as_str(ConstructorId::Err) {
+                    let inner = if matches!(first_arg.kind, IrExprKind::String(_)) {
+                        // `Err("msg")` in Incan maps to owned `String` in Rust.
+                        quote! { (#inner).to_string() }
+                    } else {
+                        inner
+                    };
+                    let ok_tokens = if Self::is_unresolved_type(ok_ty) {
+                        quote! { () }
+                    } else {
+                        self.emit_type(ok_ty)
+                    };
+                    let err_tokens = if Self::is_unresolved_type(err_ty) {
+                        quote! { _ }
+                    } else {
+                        self.emit_type(err_ty)
+                    };
+                    return Ok(Some(quote! { Err::<#ok_tokens, #err_tokens>(#inner) }));
+                }
+
+                Ok(None)
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Emit a function call expression.
     ///
     /// Handles regular function calls (user-defined functions).
@@ -20,8 +187,14 @@ impl<'a> IrEmitter<'a> {
         func: &TypedExpr,
         args: &[IrCallArg],
     ) -> Result<TokenStream, EmitError> {
+        let callee_name = if let IrExprKind::Var { name, .. } = &func.kind {
+            Some(name.as_str())
+        } else {
+            None
+        };
+
         // Handle builtin functions specially (legacy string-based path)
-        if let IrExprKind::Var { name, .. } = &func.kind {
+        if let Some(name) = callee_name {
             let positional: Vec<TypedExpr> = args.iter().map(|a| a.expr.clone()).collect();
             if let Some(result) = self.try_emit_builtin_call(name, &positional)? {
                 return Ok(result);
@@ -40,34 +213,46 @@ impl<'a> IrEmitter<'a> {
         // Order arguments only when keyword args are present (positional-only calls preserve previous behavior,
         // which is important for snapshots + for default-arg lowering work that happens elsewhere).
         let has_named_args = args.iter().any(|a| a.name.is_some());
-        let ordered_args: Vec<&TypedExpr> = if has_named_args {
+        let ordered_args: Vec<TypedExpr> = if has_named_args {
             if let Some(sig) = function_sig {
-                let mut positional: Vec<&TypedExpr> = Vec::new();
-                let mut named: std::collections::HashMap<&str, &TypedExpr> = std::collections::HashMap::new();
+                let mut positional: Vec<TypedExpr> = Vec::new();
+                let mut named: std::collections::HashMap<&str, TypedExpr> = std::collections::HashMap::new();
                 for a in args {
                     if let Some(name) = a.name.as_deref() {
-                        named.insert(name, &a.expr);
+                        named.insert(name, a.expr.clone());
                     } else {
-                        positional.push(&a.expr);
+                        positional.push(a.expr.clone());
                     }
                 }
 
                 let mut pos_idx = 0usize;
-                let mut out: Vec<&TypedExpr> = Vec::new();
+                let mut out: Vec<TypedExpr> = Vec::new();
                 for p in &sig.params {
                     if let Some(v) = named.get(p.name.as_str()) {
-                        out.push(*v);
+                        out.push(v.clone());
                     } else if pos_idx < positional.len() {
-                        out.push(positional[pos_idx]);
+                        out.push(positional[pos_idx].clone());
                         pos_idx += 1;
+                    } else if let Some(default_arg) = &p.default {
+                        out.push(default_arg.clone());
                     }
                 }
                 out
             } else {
-                args.iter().map(|a| &a.expr).collect()
+                args.iter().map(|a| a.expr.clone()).collect()
             }
         } else {
-            args.iter().map(|a| &a.expr).collect()
+            let mut out: Vec<TypedExpr> = args.iter().map(|a| a.expr.clone()).collect();
+            if let Some(sig) = function_sig {
+                for p in sig.params.iter().skip(out.len()) {
+                    if let Some(default_arg) = &p.default {
+                        out.push(default_arg.clone());
+                    } else {
+                        break;
+                    }
+                }
+            }
+            out
         };
 
         // Handle argument passing with signature-based borrow insertion
@@ -75,7 +260,36 @@ impl<'a> IrEmitter<'a> {
             .iter()
             .enumerate()
             .map(|(idx, a)| {
-                let emitted = self.emit_expr(a)?;
+                let target_ty = function_sig
+                    .and_then(|sig| sig.params.get(idx))
+                    .map(|param| &param.ty)
+                    .or_else(|| match &func.ty {
+                        IrType::Function { params, .. } => params.get(idx),
+                        _ => None,
+                    });
+                let emitted = if let Some(target_ty) = target_ty {
+                    if let Some(seed) = self.emit_inference_seeded_literal_arg(a, target_ty)? {
+                        seed
+                    } else if Self::is_unresolved_type(target_ty) {
+                        // Signature exists but leaves generics unresolved: fallback to the argument's own inferred IR
+                        // type to seed constructor literals.
+                        if let Some(seed) = self.emit_inference_seeded_literal_arg(a, &a.ty)? {
+                            seed
+                        } else {
+                            self.emit_expr(a)?
+                        }
+                    } else {
+                        self.emit_expr(a)?
+                    }
+                } else {
+                    // No parameter type available (e.g. heavily generic paths): use the argument's own type as a
+                    // best-effort inference seed source.
+                    if let Some(seed) = self.emit_inference_seeded_literal_arg(a, &a.ty)? {
+                        seed
+                    } else {
+                        self.emit_expr(a)?
+                    }
+                };
 
                 // Check VarAccess for explicit borrow requirements
                 if let IrExprKind::Var { access, .. } = &a.kind {
@@ -86,8 +300,10 @@ impl<'a> IrEmitter<'a> {
                     }
                 }
 
-                // If we have a function signature, use it to determine borrows
-                if let Some(param) = function_sig.and_then(|sig| sig.params.get(idx)) {
+                // Prefer explicit lowering access decisions, then derive obvious borrow requirements from parameter
+                // typing information.
+                let sig_param = function_sig.and_then(|sig| sig.params.get(idx));
+                if let Some(param) = sig_param {
                     if param.mutability == Mutability::Mutable {
                         match &a.ty {
                             IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
@@ -103,6 +319,24 @@ impl<'a> IrEmitter<'a> {
                                 }
                             }
                         }
+                    }
+                } else if let Some(target_ty) = target_ty {
+                    // Toward #121: when registry metadata is unavailable, use the call expression's function type as a
+                    // borrow hint.
+                    match target_ty {
+                        IrType::RefMut(_) => match &a.ty {
+                            IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
+                            _ => return Ok(quote! { &mut #emitted }),
+                        },
+                        IrType::Ref(_) => match &a.ty {
+                            IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
+                            _ => {
+                                if !a.ty.is_copy() {
+                                    return Ok(quote! { &#emitted });
+                                }
+                            }
+                        },
+                        _ => {}
                     }
                 }
 
@@ -122,8 +356,6 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     ConversionContext::IncanFunctionArg
                 };
-
-                let target_ty = function_sig.and_then(|sig| sig.params.get(idx)).map(|param| &param.ty);
 
                 let conversion = determine_conversion(a, target_ty, context);
                 Ok(conversion.apply(emitted))

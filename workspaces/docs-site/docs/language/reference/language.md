@@ -9,6 +9,8 @@
 ## Contents
 
 - [Keywords](#keywords)
+- [Soft keywords](#soft-keywords)
+- [Standard library namespaces](#standard-library-namespaces)
 - [Builtin exceptions](#builtin-exceptions)
 - [Builtin functions](#builtin-functions)
 - [Derives](#derives)
@@ -25,55 +27,79 @@
 
 ## Keywords
 
-| Id | Canonical | Aliases | Activation | Category | Usage | RFC | Since | Stability |
-|----|---|---|---|---|---|---|---|---|
-| If | `if` |  | - | ControlFlow | Statement, Expression | RFC 000 | 0.1 | Stable |
-| Else | `else` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| Elif | `elif` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| Match | `match` |  | - | ControlFlow | Statement, Expression | RFC 000 | 0.1 | Stable |
-| Case | `case` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| While | `while` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| For | `for` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| Break | `break` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| Continue | `continue` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| Return | `return` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| Yield | `yield` |  | - | ControlFlow | Statement, Expression | RFC 001 | 0.1 | Stable |
-| Pass | `pass` |  | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| Def | `def` | `fn` | - | Definition | Statement | RFC 000 | 0.1 | Stable |
-| Async | `async` |  | `std.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
-| Await | `await` |  | `std.async` | Definition | Expression | RFC 000 | 0.1 | Stable |
-| Class | `class` |  | - | Definition | Statement | RFC 000 | 0.1 | Stable |
-| Model | `model` |  | - | Definition | Statement | RFC 000 | 0.1 | Stable |
-| Trait | `trait` |  | - | Definition | Statement | RFC 000 | 0.1 | Stable |
-| Enum | `enum` |  | - | Definition | Statement | RFC 000 | 0.1 | Stable |
-| Type | `type` |  | - | Definition | Statement | RFC 000 | 0.1 | Stable |
-| Newtype | `newtype` |  | - | Definition | Statement | RFC 000 | 0.1 | Stable |
-| With | `with` |  | - | Definition | Modifier | RFC 000 | 0.1 | Stable |
-| Extends | `extends` |  | - | Definition | Modifier | RFC 000 | 0.1 | Stable |
-| Pub | `pub` |  | - | Definition | Modifier | RFC 000 | 0.1 | Stable |
-| Import | `import` |  | - | Import | Statement | RFC 000 | 0.1 | Stable |
-| From | `from` |  | - | Import | Statement | RFC 000 | 0.1 | Stable |
-| As | `as` |  | - | Import | Modifier | RFC 000 | 0.1 | Stable |
-| Rust | `rust` |  | - | Import | Modifier | RFC 005 | 0.1 | Stable |
-| Python | `python` |  | - | Import | Modifier | RFC 000 | 0.1 | Stable |
-| Super | `super` |  | - | Import | Expression | RFC 000 | 0.1 | Stable |
-| Crate | `crate` |  | - | Import | Expression | RFC 005 | 0.1 | Stable |
-| Const | `const` |  | - | Binding | Statement | RFC 008 | 0.1 | Stable |
-| Let | `let` |  | - | Binding | Statement | RFC 000 | 0.1 | Stable |
-| Mut | `mut` |  | - | Binding | Modifier | RFC 000 | 0.1 | Stable |
-| SelfKw | `self` |  | - | Binding | ReceiverOnly | RFC 000 | 0.1 | Stable |
-| True | `true` | `True` | - | Literal | Expression | RFC 000 | 0.1 | Stable |
-| False | `false` | `False` | - | Literal | Expression | RFC 000 | 0.1 | Stable |
-| None | `None` |  | - | Literal | Expression | RFC 000 | 0.1 | Stable |
-| And | `and` |  | - | Operator | Operator | RFC 000 | 0.1 | Stable |
-| Or | `or` |  | - | Operator | Operator | RFC 000 | 0.1 | Stable |
-| Not | `not` |  | - | Operator | Operator | RFC 000 | 0.1 | Stable |
-| In | `in` |  | - | Operator | Operator | RFC 000 | 0.1 | Stable |
-| Is | `is` |  | - | Operator | Operator | RFC 000 | 0.1 | Stable |
+| Id | Canonical | Aliases | Reservation | Activation | Category | Usage | RFC | Since | Stability |
+|----|---|---|---|---|---|---|---|---|---|
+| If | `if` |  | Hard | - | ControlFlow | Statement, Expression | RFC 000 | 0.1 | Stable |
+| Else | `else` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| Elif | `elif` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| Match | `match` |  | Hard | - | ControlFlow | Statement, Expression | RFC 000 | 0.1 | Stable |
+| Case | `case` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| While | `while` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| For | `for` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| Break | `break` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| Continue | `continue` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| Return | `return` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| Yield | `yield` |  | Hard | - | ControlFlow | Statement, Expression | RFC 001 | 0.1 | Stable |
+| Pass | `pass` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| Assert | `assert` |  | Soft | `std.testing` | ControlFlow | Statement | RFC 018 | 0.2 | Draft |
+| Def | `def` | `fn` | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
+| Async | `async` |  | Soft | `std.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
+| Await | `await` |  | Soft | `std.async` | Definition | Expression | RFC 000 | 0.1 | Stable |
+| Class | `class` |  | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
+| Model | `model` |  | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
+| Trait | `trait` |  | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
+| Enum | `enum` |  | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
+| Type | `type` |  | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
+| Newtype | `newtype` |  | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
+| With | `with` |  | Hard | - | Definition | Modifier | RFC 000 | 0.1 | Stable |
+| Extends | `extends` |  | Hard | - | Definition | Modifier | RFC 000 | 0.1 | Stable |
+| Pub | `pub` |  | Hard | - | Definition | Modifier | RFC 000 | 0.1 | Stable |
+| Import | `import` |  | Hard | - | Import | Statement | RFC 000 | 0.1 | Stable |
+| From | `from` |  | Hard | - | Import | Statement | RFC 000 | 0.1 | Stable |
+| As | `as` |  | Hard | - | Import | Modifier | RFC 000 | 0.1 | Stable |
+| Rust | `rust` |  | Hard | - | Import | Modifier | RFC 005 | 0.1 | Stable |
+| Python | `python` |  | Hard | - | Import | Modifier | RFC 000 | 0.1 | Stable |
+| Super | `super` |  | Hard | - | Import | Expression | RFC 000 | 0.1 | Stable |
+| Crate | `crate` |  | Hard | - | Import | Expression | RFC 005 | 0.1 | Stable |
+| Const | `const` |  | Hard | - | Binding | Statement | RFC 008 | 0.1 | Stable |
+| Let | `let` |  | Hard | - | Binding | Statement | RFC 000 | 0.1 | Stable |
+| Mut | `mut` |  | Hard | - | Binding | Modifier | RFC 000 | 0.1 | Stable |
+| SelfKw | `self` |  | Hard | - | Binding | ReceiverOnly | RFC 000 | 0.1 | Stable |
+| True | `true` | `True` | Hard | - | Literal | Expression | RFC 000 | 0.1 | Stable |
+| False | `false` | `False` | Hard | - | Literal | Expression | RFC 000 | 0.1 | Stable |
+| None | `None` |  | Hard | - | Literal | Expression | RFC 000 | 0.1 | Stable |
+| And | `and` |  | Hard | - | Operator | Operator | RFC 000 | 0.1 | Stable |
+| Or | `or` |  | Hard | - | Operator | Operator | RFC 000 | 0.1 | Stable |
+| Not | `not` |  | Hard | - | Operator | Operator | RFC 000 | 0.1 | Stable |
+| In | `in` |  | Hard | - | Operator | Operator | RFC 000 | 0.1 | Stable |
+| Is | `is` |  | Hard | - | Operator | Operator | RFC 000 | 0.1 | Stable |
 
 ### Examples
 
 Only keywords with examples are listed here.
+
+## Soft keywords
+
+Soft keywords are only reserved when their activating `std.*` namespace is imported.
+
+| Id | Canonical | Activated by | Category | Usage | RFC | Since | Stability |
+|---|---|---|---|---|---|---|---|
+| Assert | `assert` | `std.testing` | ControlFlow | Statement | RFC 018 | 0.2 | Draft |
+| Async | `async` | `std.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
+| Await | `await` | `std.async` | Definition | Expression | RFC 000 | 0.1 | Stable |
+
+## Standard library namespaces
+
+| Namespace | Feature gate | Submodules | Activates soft keywords |
+|---|---|---|---|
+| `std.web` | `web` | `std.web.app`, `std.web.routing`, `std.web.request`, `std.web.response`, `std.web.prelude` | - |
+| `std.testing` | - | - | `assert` |
+| `std.async` | - | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.select`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
+| `std.serde` | `json` | `std.serde.json` | - |
+| `std.reflection` | - | - | - |
+| `std.derives` | - | `std.derives.string`, `std.derives.comparison`, `std.derives.copying`, `std.derives.collection` | - |
+| `std.traits` | - | `std.traits.convert`, `std.traits.ops`, `std.traits.error`, `std.traits.indexing`, `std.traits.callable` | - |
+| `std.math` | - | - | - |
 
 ## Builtin exceptions
 

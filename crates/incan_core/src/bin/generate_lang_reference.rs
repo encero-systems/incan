@@ -21,7 +21,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use incan_core::lang::types::{collections, numerics, stringlike};
-use incan_core::lang::{builtins, derives, errors, keywords, operators, punctuation, surface, traits};
+use incan_core::lang::{builtins, derives, errors, keywords, operators, punctuation, stdlib, surface, traits};
 
 fn trim_trailing_newlines_to_at_most_two(out: &mut String) {
     let mut count = 0usize;
@@ -63,7 +63,9 @@ fn main() {
     let root = workspace_root();
 
     let out_dir = root.join("workspaces/docs-site/docs/language/reference");
-    fs::create_dir_all(&out_dir).expect("create workspaces/docs-site/docs/language/reference/");
+    if let Err(err) = fs::create_dir_all(&out_dir) {
+        panic!("create workspaces/docs-site/docs/language/reference/: {err}");
+    }
 
     write_language_reference(&out_dir.join("language.md"));
 }
@@ -82,6 +84,8 @@ fn write_language_reference(path: &Path) {
 
     out.push_str("## Contents\n\n");
     out.push_str("- [Keywords](#keywords)\n");
+    out.push_str("- [Soft keywords](#soft-keywords)\n");
+    out.push_str("- [Standard library namespaces](#standard-library-namespaces)\n");
     out.push_str("- [Builtin exceptions](#builtin-exceptions)\n");
     out.push_str("- [Builtin functions](#builtin-functions)\n");
     out.push_str("- [Derives](#derives)\n");
@@ -97,6 +101,8 @@ fn write_language_reference(path: &Path) {
     out.push_str("- [Surface methods](#surface-methods)\n\n");
 
     render_keywords_section(&mut out);
+    render_soft_keywords_section(&mut out);
+    render_stdlib_namespaces_section(&mut out);
     render_exceptions_section(&mut out);
     render_builtins_section(&mut out);
     render_derives_section(&mut out);
@@ -114,14 +120,18 @@ fn write_language_reference(path: &Path) {
 
     trim_trailing_newlines_to_at_most_two(&mut out);
     out.push('\n');
-    fs::write(path, out).expect("write language.md");
+    if let Err(err) = fs::write(path, out) {
+        panic!("write language.md: {err}");
+    }
 }
 
 fn render_keywords_section(out: &mut String) {
     start_section(out, "## Keywords");
 
-    out.push_str("| Id | Canonical | Aliases | Activation | Category | Usage | RFC | Since | Stability |\n");
-    out.push_str("|----|---|---|---|---|---|---|---|---|\n");
+    out.push_str(
+        "| Id | Canonical | Aliases | Reservation | Activation | Category | Usage | RFC | Since | Stability |\n",
+    );
+    out.push_str("|----|---|---|---|---|---|---|---|---|---|\n");
 
     for k in keywords::KEYWORDS {
         let id = format!("{:?}", k.id);
@@ -139,6 +149,7 @@ fn render_keywords_section(out: &mut String) {
             .activation
             .map(|ns| format!("`std.{}`", ns))
             .unwrap_or_else(|| "-".to_string());
+        let reservation = if k.activation.is_some() { "Soft" } else { "Hard" };
         let category = format!("{:?}", k.category);
         let usage = if k.usage.is_empty() {
             String::new()
@@ -154,7 +165,7 @@ fn render_keywords_section(out: &mut String) {
         let stability = format!("{:?}", k.stability);
 
         out.push_str(&format!(
-            "| {id} | {canonical} | {aliases} | {activation} | {category} | {usage} | {rfc} | {since} | {stability} |\n"
+            "| {id} | {canonical} | {aliases} | {reservation} | {activation} | {category} | {usage} | {rfc} | {since} | {stability} |\n"
         ));
     }
     out.push('\n');
@@ -176,6 +187,75 @@ fn render_keywords_section(out: &mut String) {
             }
         }
     }
+}
+
+fn render_soft_keywords_section(out: &mut String) {
+    start_section(out, "## Soft keywords");
+    out.push_str("Soft keywords are only reserved when their activating `std.*` namespace is imported.\n\n");
+
+    out.push_str("| Id | Canonical | Activated by | Category | Usage | RFC | Since | Stability |\n");
+    out.push_str("|---|---|---|---|---|---|---|---|\n");
+
+    for k in keywords::KEYWORDS.iter().filter(|k| k.activation.is_some()) {
+        let Some(activation_ns) = k.activation else {
+            continue;
+        };
+        let id = format!("{:?}", k.id);
+        let canonical = format!("`{}`", k.canonical);
+        let activated_by = format!("`std.{activation_ns}`");
+        let category = format!("{:?}", k.category);
+        let usage = if k.usage.is_empty() {
+            String::new()
+        } else {
+            k.usage
+                .iter()
+                .map(|u| format!("{:?}", u))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let rfc = k.introduced_in_rfc;
+        let since = k.since;
+        let stability = format!("{:?}", k.stability);
+
+        out.push_str(&format!(
+            "| {id} | {canonical} | {activated_by} | {category} | {usage} | {rfc} | {since} | {stability} |\n"
+        ));
+    }
+    out.push('\n');
+}
+
+fn render_stdlib_namespaces_section(out: &mut String) {
+    start_section(out, "## Standard library namespaces");
+    out.push_str("| Namespace | Feature gate | Submodules | Activates soft keywords |\n");
+    out.push_str("|---|---|---|---|\n");
+
+    for ns in stdlib::STDLIB_NAMESPACES {
+        let namespace = format!("`std.{}`", ns.name);
+        let feature_gate = ns.feature.map_or_else(|| "-".to_string(), |f| format!("`{f}`"));
+        let submodules = if ns.submodules.is_empty() {
+            "-".to_string()
+        } else {
+            ns.submodules
+                .iter()
+                .map(|sub| format!("`std.{}.{}`", ns.name, sub))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let soft_keywords = if ns.soft_keywords.is_empty() {
+            "-".to_string()
+        } else {
+            ns.soft_keywords
+                .iter()
+                .map(|id| format!("`{}`", keywords::as_str(*id)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+
+        out.push_str(&format!(
+            "| {namespace} | {feature_gate} | {submodules} | {soft_keywords} |\n"
+        ));
+    }
+    out.push('\n');
 }
 
 fn render_exceptions_section(out: &mut String) {
@@ -879,9 +959,8 @@ fn render_surface_methods_section(out: &mut String) {
 fn workspace_root() -> PathBuf {
     // crates/incan_core -> crates -> workspace root
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir
-        .parent()
-        .and_then(|p| p.parent())
-        .map(|p| p.to_path_buf())
-        .expect("workspace root (two levels above crates/incan_core)")
+    match manifest_dir.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()) {
+        Some(path) => path,
+        None => panic!("workspace root (two levels above crates/incan_core)"),
+    }
 }

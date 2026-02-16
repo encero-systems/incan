@@ -12,7 +12,7 @@ impl<'a> IrEmitter<'a> {
         &self,
         s: &super::super::super::decl::IrStruct,
     ) -> Result<TokenStream, EmitError> {
-        let name = format_ident!("{}", Self::escape_keyword(&s.name));
+        let name = Self::rust_ident(&s.name);
         let vis = self.emit_visibility(&s.visibility);
 
         let derives: Vec<TokenStream> = s

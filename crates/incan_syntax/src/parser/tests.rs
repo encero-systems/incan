@@ -373,6 +373,39 @@ def value(async: int) -> int:
     }
 
     #[test]
+    fn test_parse_assert_requires_std_testing_import() {
+        let source = r#"
+def f(x: int) -> None:
+  assert x > 0
+"#;
+        let Err(err) = parse_str(source) else {
+            panic!("Expected assert statement without std.testing import to fail");
+        };
+        assert!(
+            err[0].message.contains("only available after importing `std.testing`"),
+            "Unexpected error: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
+    fn test_parse_assert_with_std_testing_import_ok() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+import std.testing
+
+def f(x: int) -> None:
+  assert x > 0, "x must be positive"
+"#;
+        let program = parse_str(source)?;
+        let func = match &program.declarations[1].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function declaration"),
+        };
+        assert!(matches!(&func.body[0].node, Statement::Assert(_)));
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_async_method_requires_std_async_import() {
         let source = r#"
 class Worker:

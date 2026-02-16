@@ -62,7 +62,7 @@ impl<'a> IrEmitter<'a> {
     pub(in super::super) fn emit_lvalue_expr(&self, expr: &TypedExpr) -> Result<TokenStream, EmitError> {
         match &expr.kind {
             IrExprKind::Var { name, access: _, .. } => {
-                let n = format_ident!("{}", Self::escape_keyword(name));
+                let n = Self::rust_ident(name);
                 Ok(quote! { #n })
             }
             IrExprKind::Index { object, index } => {
@@ -115,7 +115,7 @@ impl<'a> IrEmitter<'a> {
     pub(in super::super) fn emit_assign_target(&self, target: &AssignTarget) -> Result<TokenStream, EmitError> {
         match target {
             AssignTarget::Var(name) => {
-                let n = format_ident!("{}", Self::escape_keyword(name));
+                let n = Self::rust_ident(name);
                 Ok(quote! { #n })
             }
             AssignTarget::Field { object, field } => {

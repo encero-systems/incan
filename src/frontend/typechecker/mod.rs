@@ -58,6 +58,7 @@ mod tests;
 use std::collections::{HashMap, HashSet};
 
 use crate::frontend::ast::*;
+use crate::frontend::decorator_resolution;
 use crate::frontend::diagnostics::{CompileError, ErrorKind, errors};
 use crate::frontend::module::{ExportedSymbol, exported_symbols};
 use crate::frontend::symbols::*;
@@ -182,6 +183,18 @@ pub struct TypeChecker {
     /// Used by `collect_import` to derive function signatures from parsed stdlib source instead of hardcoded
     /// registries. See [`stdlib_loader::StdlibAstCache`] for details.
     pub(crate) stdlib_cache: stdlib_loader::StdlibAstCache,
+    /// Local names bound to `std.testing` marker decorators via imports.
+    ///
+    /// These names are disallowed in runtime call expressions; markers are decorator-only semantics consumed by the
+    /// test runner.
+    pub(crate) testing_marker_import_bindings: HashSet<String>,
+    /// Import aliases collected from `import` / `from ... import` declarations.
+    ///
+    /// Maps each local binding name to the fully qualified module path segments. Used as a fallback in
+    /// [`validate_decorators`](Self::validate_decorators) when the SymbolTable-based
+    /// [`DecoratorPrefixLookup`](crate::frontend::decorator_resolution::DecoratorPrefixLookup) cannot resolve a
+    /// decorator path (e.g. functions imported via `from std.testing import parametrize`).
+    pub(crate) import_aliases: HashMap<String, Vec<String>>,
 }
 
 impl TypeChecker {
@@ -203,6 +216,8 @@ impl TypeChecker {
             current_module_path: None,
             declared_crate_names: None,
             stdlib_cache: stdlib_loader::StdlibAstCache::new(),
+            testing_marker_import_bindings: HashSet::new(),
+            import_aliases: HashMap::new(),
         }
     }
 
@@ -407,6 +422,8 @@ impl TypeChecker {
         self.type_info = TypeCheckInfo::default();
         self.warnings.clear();
         self.errors.clear();
+        self.testing_marker_import_bindings.clear();
+        self.import_aliases = decorator_resolution::collect_import_aliases(program);
 
         // First pass: collect type declarations
         for decl in &program.declarations {

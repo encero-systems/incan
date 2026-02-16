@@ -35,6 +35,7 @@ mod types;
 use std::collections::HashMap;
 
 use super::decl::{FunctionParam, IrDecl, IrDeclKind};
+use super::expr::VarAccess;
 use super::types::IrType;
 use super::{IrProgram, Mutability};
 use crate::frontend::ast;
@@ -92,6 +93,15 @@ pub struct AstLowering {
     /// - Field access: `a.type` → `a.type_`
     /// - Pattern fields: `Account(type=x)` → `Account { type_: x }`
     pub(super) struct_field_aliases: HashMap<String, HashMap<String, String>>,
+    /// Remaining identifier reads for the currently-lowered statement block.
+    ///
+    /// This powers a local last-use heuristic: non-Copy vars are marked as `Move` only on their final read in a
+    /// straight-line block.
+    pub(super) remaining_ident_reads: Vec<HashMap<String, usize>>,
+    /// Depth of non-linear execution contexts (loops/comprehensions/closures).
+    ///
+    /// While in a non-linear context, lowering avoids last-use moves.
+    pub(super) non_linear_context_depth: usize,
 }
 
 impl AstLowering {
@@ -182,6 +192,8 @@ impl AstLowering {
             newtype_checked_ctor: HashMap::new(),
             current_impl_type: None,
             struct_field_aliases: HashMap::new(),
+            remaining_ident_reads: Vec::new(),
+            non_linear_context_depth: 0,
         }
     }
 
@@ -194,12 +206,76 @@ impl AstLowering {
 
     /// Seed alias maps for types that may be referenced from other modules.
     ///
-    /// This is used by multi-file codegen so alias-aware lowering works when a module
-    /// references a `model` defined in a different module (e.g. `a.type` or `Account(type="x")`).
+    /// This is used by multi-file codegen so alias-aware lowering works when a module references a `model` defined in
+    /// a different module (e.g. `a.type` or `Account(type="x")`).
     pub fn seed_struct_field_aliases(&mut self, aliases: HashMap<String, HashMap<String, String>>) {
         for (struct_name, map) in aliases {
             self.struct_field_aliases.entry(struct_name).or_default().extend(map);
         }
+    }
+
+    /// Record one identifier read and report whether this was the last read in the current statement block.
+    pub(super) fn consume_ident_read(&mut self, name: &str) -> bool {
+        if self.remaining_ident_reads.is_empty() {
+            return false;
+        }
+
+        // Keep parent block counters in sync with nested-block reads: counters are precomputed per block and include
+        // nested reads.
+        let last_idx = self.remaining_ident_reads.len() - 1;
+        let mut is_last_in_current_block = false;
+        for (idx, reads) in self.remaining_ident_reads.iter_mut().enumerate() {
+            if let Some(remaining) = reads.get_mut(name) {
+                if *remaining > 0 {
+                    *remaining -= 1;
+                }
+                if idx == last_idx {
+                    is_last_in_current_block = *remaining == 0;
+                }
+            }
+        }
+        is_last_in_current_block
+    }
+
+    /// Choose variable access mode for an identifier read.
+    ///
+    /// This implements a local #121-style heuristic:
+    /// - copy types stay `Copy`,
+    /// - mutable/non-linear/non-tracked reads stay non-consuming (`Read`),
+    /// - immutable last reads in straight-line blocks become `Move`.
+    pub(super) fn select_var_access_for_ident(&mut self, name: &str, ty: &IrType) -> VarAccess {
+        if ty.is_copy() {
+            return VarAccess::Copy;
+        }
+
+        let has_tracking = !self.remaining_ident_reads.is_empty();
+        if !has_tracking {
+            // Outside statement-block tracking (e.g. some declaration lowering), keep the historical move-default
+            // behavior.
+            return VarAccess::Move;
+        }
+
+        // Keep counters in sync even when we intentionally disable moves.
+        let is_last_use_here = self.consume_ident_read(name);
+
+        let is_mutable = self.mutable_vars.get(name).copied().unwrap_or(false);
+        if self.non_linear_context_depth > 0 || is_mutable || !is_last_use_here {
+            return VarAccess::Read;
+        }
+
+        // In nested blocks, only move when every tracked parent block also sees no future reads for this binding.
+        if self.remaining_ident_reads.len() > 1 {
+            let has_future_parent_read = self
+                .remaining_ident_reads
+                .iter()
+                .take(self.remaining_ident_reads.len() - 1)
+                .any(|reads| reads.get(name).is_some_and(|remaining| *remaining > 0));
+            if has_future_parent_read {
+                return VarAccess::Read;
+            }
+        }
+
+        VarAccess::Move
     }
 
     /// RFC 021: Resolve a field name through alias mapping.
@@ -328,11 +404,18 @@ impl AstLowering {
         // Second pass: collect all function signatures
         for decl in &program.declarations {
             if let ast::Declaration::Function(ref f) = decl.node {
+                let type_param_names: std::collections::HashSet<&str> =
+                    f.type_params.iter().map(|tp| tp.name.as_str()).collect();
                 let params: Vec<FunctionParam> = f
                     .params
                     .iter()
                     .map(|p| {
-                        let base_ty = self.lower_type(&p.node.ty.node);
+                        let base_ty = match &p.node.ty.node {
+                            ast::Type::Simple(name) if type_param_names.contains(name.as_str()) => {
+                                IrType::Generic(name.clone())
+                            }
+                            _ => self.lower_type(&p.node.ty.node),
+                        };
                         FunctionParam {
                             name: p.node.name.clone(),
                             ty: base_ty,
@@ -342,10 +425,19 @@ impl AstLowering {
                                 Mutability::Immutable
                             },
                             is_self: false,
+                            default: match &p.node.default {
+                                Some(default_expr) => self.lower_expr_spanned(default_expr).ok(),
+                                None => None,
+                            },
                         }
                     })
                     .collect();
-                let return_type = self.lower_type(&f.return_type.node);
+                let return_type = match &f.return_type.node {
+                    ast::Type::Simple(name) if type_param_names.contains(name.as_str()) => {
+                        IrType::Generic(name.clone())
+                    }
+                    _ => self.lower_type(&f.return_type.node),
+                };
                 ir_program
                     .function_registry
                     .register(f.name.clone(), params, return_type);
@@ -632,11 +724,17 @@ impl Default for AstLowering {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::frontend::{lexer, parser};
     use incan_core::lang::derives::{self, DeriveId};
+
+    fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
+        match result {
+            Ok(value) => value,
+            Err(err) => panic!("unexpected error: {err:?}"),
+        }
+    }
 
     fn lower_source(source: &str) -> Result<IrProgram, LoweringErrors> {
         let tokens = lexer::lex(source).unwrap_or_else(|errs| {
@@ -651,13 +749,12 @@ mod tests {
 
     #[test]
     fn test_lower_simple_function() {
-        let ir = lower_source(
+        let ir = must_ok(lower_source(
             r#"
 def add(a: int, b: int) -> int:
     return a + b
 "#,
-        )
-        .unwrap();
+        ));
         assert_eq!(ir.declarations.len(), 1);
         if let IrDeclKind::Function(f) = &ir.declarations[0].kind {
             assert_eq!(f.name, "add");
@@ -669,14 +766,13 @@ def add(a: int, b: int) -> int:
 
     #[test]
     fn test_lower_model() {
-        let ir = lower_source(
+        let ir = must_ok(lower_source(
             r#"
 model User:
     name: str
     age: int
 "#,
-        )
-        .unwrap();
+        ));
         // Model generates both struct and impl
         assert_eq!(ir.declarations.len(), 2);
         if let IrDeclKind::Struct(s) = &ir.declarations[0].kind {
@@ -689,19 +785,18 @@ model User:
 
     #[test]
     fn test_lower_main_entry() {
-        let ir = lower_source(
+        let ir = must_ok(lower_source(
             r#"
 def main() -> None:
     pass
 "#,
-        )
-        .unwrap();
+        ));
         assert_eq!(ir.entry_point, Some("main".to_string()));
     }
 
     #[test]
     fn test_lower_if_statement() {
-        let ir = lower_source(
+        let ir = must_ok(lower_source(
             r#"
 def check(x: int) -> str:
     if x > 0:
@@ -711,8 +806,7 @@ def check(x: int) -> str:
     else:
         return "zero"
 "#,
-        )
-        .unwrap();
+        ));
         assert_eq!(ir.declarations.len(), 1);
         if let IrDeclKind::Function(f) = &ir.declarations[0].kind {
             assert!(!f.body.is_empty());
@@ -723,20 +817,19 @@ def check(x: int) -> str:
 
     #[test]
     fn test_lower_for_loop() {
-        let ir = lower_source(
+        let ir = must_ok(lower_source(
             r#"
 def count() -> None:
     for i in range(10):
         print(i)
 "#,
-        )
-        .unwrap();
+        ));
         assert_eq!(ir.declarations.len(), 1);
     }
 
     #[test]
     fn test_lower_binary_expressions() {
-        let ir = lower_source(
+        let ir = must_ok(lower_source(
             r#"
 def math(a: int, b: int) -> int:
     x = a + b
@@ -744,34 +837,31 @@ def math(a: int, b: int) -> int:
     z = a - b
     return x + y + z
 "#,
-        )
-        .unwrap();
+        ));
         assert_eq!(ir.declarations.len(), 1);
     }
 
     #[test]
     fn test_lower_list_literal() {
-        let ir = lower_source(
+        let ir = must_ok(lower_source(
             r#"
 def get_list() -> List[int]:
     return [1, 2, 3]
 "#,
-        )
-        .unwrap();
+        ));
         assert_eq!(ir.declarations.len(), 1);
     }
 
     #[test]
     fn test_lower_enum() {
-        let ir = lower_source(
+        let ir = must_ok(lower_source(
             r#"
 enum Color:
     Red
     Green
     Blue
 "#,
-        )
-        .unwrap();
+        ));
         assert_eq!(ir.declarations.len(), 1);
         if let IrDeclKind::Enum(e) = &ir.declarations[0].kind {
             assert_eq!(e.name, "Color");
@@ -790,7 +880,7 @@ def test() -> int:
     x = 2
     return x
 "#;
-        let ir = lower_source(source).unwrap();
+        let ir = must_ok(lower_source(source));
         assert_eq!(ir.declarations.len(), 1);
         if let IrDeclKind::Function(f) = &ir.declarations[0].kind {
             // Expected: Let, Assign, Return (3 statements)
@@ -811,7 +901,10 @@ def test() -> int:
 "#;
         let result = lower_source(source);
         assert!(result.is_err(), "Expected error for immutable reassignment");
-        let errors = result.unwrap_err();
+        let errors = match result {
+            Ok(_) => panic!("Expected lowering error for immutable reassignment"),
+            Err(errs) => errs,
+        };
         assert!(
             errors.0[0].message.contains("immutable"),
             "Error should mention immutable"
@@ -820,7 +913,7 @@ def test() -> int:
 
     #[test]
     fn test_serde_propagation_respects_derives_and_containers() {
-        let ir = lower_source(
+        let ir = must_ok(lower_source(
             r#"
 @derive(Serialize)
 model Payload:
@@ -833,8 +926,7 @@ enum Tag:
 
 type UserId = newtype int
 "#,
-        )
-        .unwrap();
+        ));
 
         let serialize = derives::as_str(DeriveId::Serialize).to_string();
         let deserialize = derives::as_str(DeriveId::Deserialize).to_string();

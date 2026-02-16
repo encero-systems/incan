@@ -275,6 +275,11 @@ pub enum VarAccess {
     /// Move the value (consumes ownership)
     #[default]
     Move,
+    /// Non-consuming read; caller-side conversion policy decides borrow/clone.
+    ///
+    /// Used by lowering when a non-Copy binding is read but may still be used
+    /// later in the same block.
+    Read,
     /// Borrow immutably (&)
     Borrow,
     /// Borrow mutably (&mut)

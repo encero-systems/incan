@@ -31,6 +31,8 @@ impl<'a> Parser<'a> {
             self.while_stmt()?
         } else if self.check_keyword(KeywordId::For) {
             self.for_stmt()?
+        } else if self.check_keyword(KeywordId::Assert) {
+            self.assert_stmt()?
         } else if self.check_keyword(KeywordId::Break) {
             self.advance();
             Statement::Break
@@ -47,6 +49,9 @@ impl<'a> Parser<'a> {
         } else if self.check_keyword(KeywordId::Let) || self.check_keyword(KeywordId::Mut) {
             self.assignment_stmt()?
         } else {
+            if let Some(err) = self.inactive_assert_statement_error() {
+                return Err(err);
+            }
             // Could be assignment or expression
             self.assignment_or_expr_stmt()?
         };
@@ -74,7 +79,12 @@ impl<'a> Parser<'a> {
         } else if self.check_keyword(KeywordId::Pass) || self.check(&TokenKind::Punctuation(PunctuationId::Ellipsis)) {
             self.advance();
             Statement::Pass
+        } else if self.check_keyword(KeywordId::Assert) {
+            self.assert_stmt()?
         } else {
+            if let Some(err) = self.inactive_assert_statement_error() {
+                return Err(err);
+            }
             // Expression statement
             let expr = self.expression()?;
             Statement::Expr(expr)
@@ -171,6 +181,50 @@ impl<'a> Parser<'a> {
         Ok(Statement::For(ForStmt { var, iter, body }))
     }
 
+    fn assert_stmt(&mut self) -> Result<Statement, CompileError> {
+        self.expect_keyword(KeywordId::Assert, "Expected 'assert'")?;
+        let condition = self.expression()?;
+        let message = if self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        Ok(Statement::Assert(AssertStmt { condition, message }))
+    }
+
+    /// Targeted soft-keyword diagnostic for `assert <expr>` when `std.testing` is not imported.
+    ///
+    /// Keep `assert(...)` valid as a normal function call for backwards compatibility.
+    fn inactive_assert_statement_error(&self) -> Option<CompileError> {
+        let TokenKind::Ident(name) = &self.peek().kind else {
+            return None;
+        };
+        if name != incan_core::lang::keywords::as_str(KeywordId::Assert)
+            || self.active_soft_keywords.contains(&KeywordId::Assert)
+        {
+            return None;
+        }
+
+        let looks_like_identifier_usage = matches!(
+            self.peek_next().kind,
+            TokenKind::Punctuation(PunctuationId::LParen)
+                | TokenKind::Operator(OperatorId::Eq)
+                | TokenKind::Punctuation(PunctuationId::Colon)
+                | TokenKind::Punctuation(PunctuationId::Comma)
+                | TokenKind::Operator(OperatorId::PlusEq)
+                | TokenKind::Operator(OperatorId::MinusEq)
+                | TokenKind::Operator(OperatorId::StarEq)
+                | TokenKind::Operator(OperatorId::SlashEq)
+                | TokenKind::Operator(OperatorId::SlashSlashEq)
+                | TokenKind::Operator(OperatorId::PercentEq)
+        );
+        if looks_like_identifier_usage {
+            return None;
+        }
+
+        Some(errors::soft_keyword_requires_import(name, "testing", self.current_span()))
+    }
+
     fn assignment_stmt(&mut self) -> Result<Statement, CompileError> {
         let binding = if self.match_token(&TokenKind::Keyword(KeywordId::Let)) {
             BindingKind::Let
@@ -230,7 +284,7 @@ impl<'a> Parser<'a> {
         } else {
             Ok(Statement::Assignment(AssignmentStmt {
                 binding,
-                name: targets.into_iter().next().unwrap(),
+                name: targets.remove(0),
                 ty,
                 value,
             }))

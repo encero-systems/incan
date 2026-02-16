@@ -160,6 +160,15 @@ pub fn incompatible_error_type(expected: &str, found: &str, span: Span) -> Compi
     .with_hint("Use map_err to convert the error type, or add a From implementation")
 }
 
+pub fn testing_marker_runtime_call_not_supported(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("'{}' is a test marker decorator and cannot be called at runtime", name),
+        span,
+    )
+    .with_hint(format!("Use '@{}(...)' on a test or fixture declaration instead", name))
+    .with_note("Marker semantics are consumed by `incan test` during discovery")
+}
+
 pub fn try_on_non_result(found: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Cannot use '?' on type '{}' - expected Result[T, E]", found),

@@ -281,6 +281,20 @@ mod tests {
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
+    fn must_ok<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
+        match result {
+            Ok(value) => value,
+            Err(err) => panic!("{context}: {err}"),
+        }
+    }
+
+    fn must_some<'a>(value: Option<&'a str>, context: &str) -> &'a str {
+        match value {
+            Some(v) => v,
+            None => panic!("{context}"),
+        }
+    }
+
     fn unique_temp_dir() -> PathBuf {
         let id = COUNTER.fetch_add(1, Ordering::SeqCst);
         let pid = std::process::id();
@@ -294,20 +308,21 @@ mod tests {
     #[test]
     fn test_resolve_single_file() {
         let tmp_dir = unique_temp_dir();
-        std::fs::create_dir_all(&tmp_dir).unwrap();
+        must_ok(std::fs::create_dir_all(&tmp_dir), "create tmp dir");
 
         let main_file = tmp_dir.join("main.incn");
-        let mut f = std::fs::File::create(&main_file).unwrap();
-        writeln!(f, "def main() -> None:").unwrap();
-        writeln!(f, "    pass").unwrap();
+        let mut f = must_ok(std::fs::File::create(&main_file), "create main.incn");
+        must_ok(writeln!(f, "def main() -> None:"), "write test main signature");
+        must_ok(writeln!(f, "    pass"), "write test main body");
 
         let mut resolver = ModuleResolver::new();
-        let modules = resolver.resolve(main_file.to_str().unwrap()).unwrap();
+        let main_file_str = must_some(main_file.to_str(), "main file path should be utf-8");
+        let modules = must_ok(resolver.resolve(main_file_str), "resolve single file module");
 
         assert_eq!(modules.len(), 1);
         assert_eq!(modules[0].name, "main");
 
-        std::fs::remove_dir_all(&tmp_dir).unwrap();
+        must_ok(std::fs::remove_dir_all(&tmp_dir), "cleanup tmp dir");
     }
 
     #[test]

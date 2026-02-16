@@ -52,6 +52,7 @@ pub enum KeywordId {
     Return,
     Yield,
     Pass,
+    Assert,
 
     // Definitions / declarations
     Def,
@@ -261,6 +262,18 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         RFC::_000,
         Since(0, 1),
     ),
+    KeywordInfo {
+        id: KeywordId::Assert,
+        canonical: "assert",
+        aliases: &[],
+        activation: Some("testing"),
+        category: KeywordCategory::ControlFlow,
+        usage: &[KeywordUsage::Statement],
+        introduced_in_rfc: RFC::_018,
+        since: Since(0, 2),
+        stability: Stability::Draft,
+        examples: &[],
+    },
     // Definitions / declarations
     info_with_aliases(
         KeywordId::Def,
@@ -622,7 +635,10 @@ pub fn is_soft(id: KeywordId) -> bool {
 /// ## Panics
 /// - If the registry is missing an entry for `id` (this indicates a programming error).
 pub fn info_for(id: KeywordId) -> &'static KeywordInfo {
-    KEYWORDS.iter().find(|k| k.id == id).expect("keyword info missing")
+    match KEYWORDS.iter().find(|k| k.id == id) {
+        Some(info) => info,
+        None => panic!("keyword info missing for {:?}", id),
+    }
 }
 
 /// Lookup by spelling (canonical or alias).

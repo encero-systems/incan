@@ -56,6 +56,15 @@ impl Formatter {
             Statement::If(if_stmt) => self.format_if(if_stmt),
             Statement::While(while_stmt) => self.format_while(while_stmt),
             Statement::For(for_stmt) => self.format_for(for_stmt),
+            Statement::Assert(assert_stmt) => {
+                self.writer.write("assert ");
+                self.format_expr(&assert_stmt.condition.node);
+                if let Some(message) = &assert_stmt.message {
+                    self.writer.write(", ");
+                    self.format_expr(&message.node);
+                }
+                self.writer.newline();
+            }
             Statement::Pass => self.writer.writeln("pass"),
             Statement::Break => self.writer.writeln("break"),
             Statement::Continue => self.writer.writeln("continue"),

@@ -123,7 +123,7 @@ fn main() {
         & __args) }
     );
     let test_nums = vec![1, 5, 3, 9, 2];
-    let max_num = find_max(test_nums.clone());
+    let max_num = find_max(test_nums);
     println!(
         "{}", { let __parts : [& str; 2usize] = ["max = ", ""]; let __args : Vec < String
         > = vec![format!("{}", max_num)]; incan_stdlib::strings::fstring(& __parts, &

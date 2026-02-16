@@ -80,7 +80,11 @@ impl TypeChecker {
 
                 match (lhs_num, rhs_num) {
                     (Some(lhs), Some(rhs)) => {
-                        let num_op = numeric_op_from_ast(&op).expect("INVARIANT: arithmetic op");
+                        let Some(num_op) = numeric_op_from_ast(&op) else {
+                            self.errors
+                                .push(errors::type_mismatch("numeric operator", &op.to_string(), span));
+                            return ResolvedType::Unknown;
+                        };
                         let pow_exp = if matches!(op, BinaryOp::Pow) {
                             Some(pow_exponent_kind_from_ast(right, &right_ty))
                         } else {

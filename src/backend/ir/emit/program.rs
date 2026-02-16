@@ -352,7 +352,7 @@ impl<'a> IrEmitter<'a> {
         let mut out = Vec::new();
         for r in &self.routes {
             let wrapper_name = format_ident!("__incan_web_{}", r.handler_name);
-            let handler_ident = format_ident!("{}", Self::escape_keyword(&r.handler_name));
+            let handler_ident = Self::rust_ident(&r.handler_name);
 
             // Build fully qualified handler path if in a nested module.
             let handler_call_path: TokenStream = if let Some(mod_segs) = &r.module_path_segments {
@@ -363,11 +363,7 @@ impl<'a> IrEmitter<'a> {
                     proc_macro2::Span::call_site(),
                 )));
                 for s in mod_segs {
-                    let seg = Self::escape_keyword(s);
-                    segs.push(syn::PathSegment::from(syn::Ident::new(
-                        &seg,
-                        proc_macro2::Span::call_site(),
-                    )));
+                    segs.push(syn::PathSegment::from(Self::rust_ident(s)));
                 }
                 segs.push(syn::PathSegment::from(handler_ident.clone()));
                 let full_path = syn::Path {
@@ -406,7 +402,7 @@ impl<'a> IrEmitter<'a> {
                         name
                     )));
                 }
-                path_param_idents.push(format_ident!("{}", Self::escape_keyword(name)));
+                path_param_idents.push(Self::rust_ident(name));
                 let ty = self.emit_type_qualified_for_module(&param.ty, qualify_types)?;
                 path_param_types.push(ty);
             }
@@ -438,14 +434,14 @@ impl<'a> IrEmitter<'a> {
                     continue;
                 }
                 if let Some(inner) = Self::named_generic_arg(&p.ty, "Json") {
-                    let pname = format_ident!("{}", Self::escape_keyword(&p.name));
+                    let pname = Self::rust_ident(&p.name);
                     let pty = self.emit_type_qualified_for_module(inner, qualify_types)?;
                     args_parts.push(quote! {
                         ::incan_stdlib::web::__private::extract::Json(#pname):
                             ::incan_stdlib::web::__private::extract::Json<#pty>
                     });
                 } else if let Some(inner) = Self::named_generic_arg(&p.ty, "Query") {
-                    let pname = format_ident!("{}", Self::escape_keyword(&p.name));
+                    let pname = Self::rust_ident(&p.name);
                     let pty = self.emit_type_qualified_for_module(inner, qualify_types)?;
                     args_parts.push(quote! {
                         ::incan_stdlib::web::__private::extract::Query(#pname):
@@ -462,7 +458,7 @@ impl<'a> IrEmitter<'a> {
             let call_args: Vec<TokenStream> = params
                 .iter()
                 .map(|p| {
-                    let pname = format_ident!("{}", Self::escape_keyword(&p.name));
+                    let pname = Self::rust_ident(&p.name);
                     if path_param_set.contains(p.name.as_str()) {
                         quote! { #pname }
                     } else if Self::named_generic_arg(&p.ty, "Json").is_some() {
@@ -524,7 +520,7 @@ impl<'a> IrEmitter<'a> {
                 let base = if qualify_named {
                     self.emit_qualified_named_type(name)?
                 } else {
-                    let ident = format_ident!("{}", Self::escape_keyword(name));
+                    let ident = Self::rust_ident(name);
                     quote! { #ident }
                 };
                 let inner: Vec<TokenStream> = args
@@ -600,24 +596,16 @@ impl<'a> IrEmitter<'a> {
                 proc_macro2::Span::call_site(),
             )));
             for s in segs {
-                let seg = Self::escape_keyword(s);
-                path_segs.push(syn::PathSegment::from(syn::Ident::new(
-                    &seg,
-                    proc_macro2::Span::call_site(),
-                )));
+                path_segs.push(syn::PathSegment::from(Self::rust_ident(s)));
             }
-            let name = Self::escape_keyword(name);
-            path_segs.push(syn::PathSegment::from(syn::Ident::new(
-                &name,
-                proc_macro2::Span::call_site(),
-            )));
+            path_segs.push(syn::PathSegment::from(Self::rust_ident(name)));
             let full_path = syn::Path {
                 leading_colon: None,
                 segments: path_segs.into_iter().collect(),
             };
             return Ok(quote! { #full_path });
         }
-        let ident = format_ident!("{}", Self::escape_keyword(name));
+        let ident = Self::rust_ident(name);
         Ok(quote! { #ident })
     }
 

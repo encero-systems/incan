@@ -66,9 +66,20 @@ Enables JSON serialization support. Adds dependencies on `serde` and `serde_json
 
 ## Architecture Notes
 
+### Incan stdlib stubs
+
+The Incan-source stdlib stubs live under `crates/incan_stdlib/stdlib/` (for example
+`crates/incan_stdlib/stdlib/testing.incn`).
+
+These files define the user-facing `std.*` API surface and are parsed by the compiler for signature/validation metadata.
+
+For `std.testing`, this also includes marker semantics metadata consumed by `incan test` discovery/execution.
+The Rust runtime in `src/testing.rs` only provides irreducible host boundaries declared via `@rust.extern`.
+
 ### Why a Separate Crate?
 
-Generated Incan programs need access to these traits and utilities, but shouldn't depend on the entire compiler. This crate provides a minimal, stable API surface for compiled code.
+Generated Incan programs need access to these traits and utilities, but shouldn't depend on the entire compiler.
+This crate provides a minimal, stable API surface for compiled code.
 
 ### Relationship with `incan_derive`
 

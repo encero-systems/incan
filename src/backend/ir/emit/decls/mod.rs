@@ -31,7 +31,7 @@ use super::super::expr::IrExprKind;
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
 
-const ZEN_TEXT: &str = include_str!("../../../../../stdlib/zen.txt");
+const ZEN_TEXT: &str = include_str!("../../../../../crates/incan_stdlib/stdlib/zen.txt");
 
 /// Join a slice of `TokenStream` path segments with `::` separators.
 pub(in crate::backend::ir::emit) fn join_path_tokens(segments: &[TokenStream]) -> TokenStream {
@@ -169,54 +169,76 @@ impl<'a> IrEmitter<'a> {
             }
         }
 
-        // RFC 023: Map Incan `std.*` imports to `incan_stdlib::*` with keyword escaping.
+        // RFC 023: map Incan `std.*` imports based on per-namespace implementation mode.
         //
-        // `std.testing.assert_eq` → `incan_stdlib::testing::assert_eq`
+        // `std.testing.assert_eq` (Incan-source mode) → `crate::__incan_std::testing::assert_eq`
         // `std.async.time.sleep` → `incan_stdlib::r#async::time::sleep`
         // `std.web` → `incan_stdlib::web`
+        //
+        // Incan-source stdlib namespaces are emitted under `crate::__incan_std::*`, while runtime-facade namespaces are
+        // emitted under `incan_stdlib::*`.
         //
         // Only Incan stdlib imports (qualifier `Auto`) are mapped. Rust crate imports like
         // `from rust::std::collections import HashMap` (qualifier `None`) are left as-is.
         let is_stdlib = !matches!(qualifier, IrImportQualifier::None) && stdlib::is_any_stdlib_path(path);
-        let mapped_path_tokens: Vec<_> = if is_stdlib {
-            let mut tokens = vec![quote! { incan_stdlib }];
-            // Skip the `std` root, map the rest with keyword escaping.
+        let is_incan_source_stdlib = is_stdlib
+            && matches!(
+                stdlib::stdlib_impl_mode_for(path),
+                Some(stdlib::StdlibImplMode::IncanSource)
+            );
+
+        let path_tokens: Vec<TokenStream> = if is_incan_source_stdlib {
+            let mut tokens = vec![quote! { crate }];
+            let std_namespace = Self::rust_ident(stdlib::INCAN_STD_NAMESPACE);
+            tokens.push(quote! { #std_namespace });
             for seg in path.iter().skip(1) {
-                let ident = format_ident!("{}", Self::escape_keyword(seg));
+                let ident = Self::rust_ident(seg);
                 tokens.push(quote! { #ident });
             }
             tokens
         } else {
-            path.iter()
-                .map(|s| {
-                    let ident = format_ident!("{}", Self::escape_keyword(s));
-                    quote! { #ident }
-                })
-                .collect()
-        };
-        let mut path_tokens: Vec<TokenStream> = Vec::new();
-        let apply_prefix = !is_stdlib;
-        if apply_prefix {
-            match qualifier {
-                IrImportQualifier::Auto => {
-                    if self.is_internal_module_path(path) {
-                        path_tokens.push(quote! { crate });
-                    }
+            let mut tokens: Vec<TokenStream> = Vec::new();
+            let mapped_path_tokens: Vec<_> = if is_stdlib {
+                let mut mapped = vec![quote! { incan_stdlib }];
+                // Skip the `std` root, map the rest with keyword escaping.
+                for seg in path.iter().skip(1) {
+                    let ident = Self::rust_ident(seg);
+                    mapped.push(quote! { #ident });
                 }
-                IrImportQualifier::Crate => path_tokens.push(quote! { crate }),
-                IrImportQualifier::Super(levels) => {
-                    for _ in 0..*levels {
-                        path_tokens.push(quote! { super });
+                mapped
+            } else {
+                path.iter()
+                    .map(|s| {
+                        let ident = Self::rust_ident(s);
+                        quote! { #ident }
+                    })
+                    .collect()
+            };
+            let apply_prefix = !is_stdlib;
+            if apply_prefix {
+                match qualifier {
+                    IrImportQualifier::Auto => {
+                        if self.is_internal_module_path(path) {
+                            tokens.push(quote! { crate });
+                        }
                     }
+                    IrImportQualifier::Crate => tokens.push(quote! { crate }),
+                    IrImportQualifier::Super(levels) => {
+                        for _ in 0..*levels {
+                            tokens.push(quote! { super });
+                        }
+                    }
+                    IrImportQualifier::None => {}
                 }
-                IrImportQualifier::None => {}
             }
-        }
-        path_tokens.extend(mapped_path_tokens);
+            tokens.extend(mapped_path_tokens);
+            tokens
+        };
+
         let path_ts = join_path_tokens(&path_tokens);
 
         if let Some(alias_name) = alias {
-            let alias_ident = format_ident!("{}", Self::escape_keyword(alias_name));
+            let alias_ident = Self::rust_ident(alias_name);
             Ok(quote! {
                 use #path_ts as #alias_ident;
             })
@@ -224,11 +246,11 @@ impl<'a> IrEmitter<'a> {
             let item_stmts: Vec<TokenStream> = items
                 .iter()
                 .map(|item| {
-                    let name_ident = format_ident!("{}", Self::escape_keyword(&item.name));
+                    let name_ident = Self::rust_ident(&item.name);
                     let path_tokens_clone = path_tokens.clone();
                     let path_ts_clone = join_path_tokens(&path_tokens_clone);
                     if let Some(alias) = &item.alias {
-                        let alias_ident = format_ident!("{}", Self::escape_keyword(alias));
+                        let alias_ident = Self::rust_ident(alias);
                         quote! { use #path_ts_clone :: #name_ident as #alias_ident; }
                     } else {
                         quote! { use #path_ts_clone :: #name_ident; }

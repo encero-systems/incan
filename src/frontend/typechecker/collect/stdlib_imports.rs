@@ -9,6 +9,7 @@ use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
 use crate::frontend::module::ExportedSymbol;
 use crate::frontend::symbols::*;
+use crate::frontend::testing_markers::load_testing_marker_semantics;
 use crate::frontend::typechecker::TypeChecker;
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::types as surface_types;
@@ -80,39 +81,28 @@ impl TypeChecker {
                     && module.segments.len() == 2
                     && module.segments[0] == stdlib::STDLIB_ROOT
                     && module.segments[1] == "reflection";
-                let module_path_str = module.segments.join(".");
-
-                // Special-case stdlib testing API:
-                // `from std.testing import assert_eq, ...` should work as normal function imports (LSP/typechecker),
-                // while backend codegen maps these to `incan_stdlib::testing::*`.
-                if module.parent_levels == 0
+                let is_std_testing = module.parent_levels == 0
                     && !module.is_absolute
-                    && module.segments == vec![stdlib::STDLIB_ROOT.to_string(), stdlib::STDLIB_TESTING.to_string()]
-                {
-                    for item in items {
-                        let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
-                        self.validate_root_namespace(&local_name, span);
-
-                        // RFC 023: signatures derived from parsed stdlib/testing.incn via StdlibAstCache.
-                        let info = self
-                            .stdlib_cache
-                            .lookup_function(&module.segments, &item.name);
-
-                        if let Some(info) = info {
-                            self.symbols.define(Symbol {
-                                name: local_name,
-                                kind: SymbolKind::Function(info),
-                                span,
-                                scope: 0,
-                            });
-                        } else {
-                            let mut path = module.segments.clone();
-                            path.push(item.name.clone());
-                            self.define_import_symbol(local_name, path, false, span);
+                    && module.segments.len() == 2
+                    && module.segments[0] == stdlib::STDLIB_ROOT
+                    && module.segments[1] == "testing";
+                let is_known_stdlib_with_stub = module.parent_levels == 0
+                    && !module.is_absolute
+                    && stdlib::is_known_stdlib_module(&module.segments)
+                    && stdlib::stdlib_stub_path(&module.segments).is_some();
+                let module_path_str = module.segments.join(".");
+                let testing_semantics = if is_std_testing {
+                    match load_testing_marker_semantics() {
+                        Ok(semantics) => Some(semantics),
+                        Err(err) => {
+                            self.errors
+                                .push(errors::invalid_std_testing_marker_metadata(&err.to_string(), span));
+                            None
                         }
                     }
-                    return;
-                }
+                } else {
+                    None
+                };
 
                 // For each item in `from module import item1, item2, ...`
                 // create a symbol as if it were `import module::item`
@@ -141,6 +131,31 @@ impl TypeChecker {
                                 continue;
                             }
                         }
+
+                    // RFC 023: for known stdlib modules with `.incn` stubs, prefer AST-derived function signatures.
+                    // Async prelude still resolves via dedicated fallback logic below.
+                    if is_known_stdlib_with_stub && !is_async_prelude {
+                        let ast_info = self.stdlib_cache.lookup_function(&module.segments, &item.name);
+                        if let Some(info) = ast_info {
+                            let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
+                            if is_std_testing
+                                && testing_semantics
+                                    .as_ref()
+                                    .and_then(|semantics| semantics.marker_kind(&item.name))
+                                    .is_some()
+                            {
+                                self.testing_marker_import_bindings.insert(local_name.clone());
+                            }
+                            self.validate_root_namespace(&local_name, span);
+                            self.symbols.define(Symbol {
+                                name: local_name,
+                                kind: SymbolKind::Function(info),
+                                span,
+                                scope: 0,
+                            });
+                            continue;
+                        }
+                    }
 
                     // Stdlib async helper functions become available when explicitly imported.
                     // RFC 023: try AST-derived signatures first (from the parsed .incn files), fall back to hardcoded async_import_function_info().

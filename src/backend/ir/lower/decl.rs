@@ -158,6 +158,10 @@ impl AstLowering {
                         Mutability::Immutable
                     },
                     is_self: false,
+                    default: match &p.node.default {
+                        Some(default_expr) => self.lower_expr_spanned(default_expr).ok(),
+                        None => None,
+                    },
                 }
             })
             .collect();
@@ -575,6 +579,7 @@ impl AstLowering {
                     ast::Receiver::Mutable => Mutability::Mutable,
                 },
                 is_self: true,
+                default: None,
             });
         }
 
@@ -593,6 +598,10 @@ impl AstLowering {
                         Mutability::Immutable
                     },
                     is_self: false,
+                    default: match &p.node.default {
+                        Some(default_expr) => self.lower_expr_spanned(default_expr).ok(),
+                        None => None,
+                    },
                 }
             })
             .collect();
@@ -663,6 +672,7 @@ impl AstLowering {
                     Mutability::Immutable
                 },
                 is_self: true,
+                default: None,
             });
             // Add self to scope
             if let Some(scope) = self.scopes.last_mut() {
@@ -698,6 +708,10 @@ impl AstLowering {
                         Mutability::Immutable
                     },
                     is_self: p.node.name == keywords::as_str(KeywordId::SelfKw),
+                    default: match &p.node.default {
+                        Some(default_expr) => self.lower_expr_spanned(default_expr).ok(),
+                        None => None,
+                    },
                 }
             })
             .collect();
@@ -743,6 +757,7 @@ impl AstLowering {
                             ast::Receiver::Mutable => Mutability::Mutable,
                         },
                         is_self: true,
+                        default: None,
                     });
                 }
 
@@ -762,6 +777,10 @@ impl AstLowering {
                                 Mutability::Immutable
                             },
                             is_self: false,
+                            default: match &p.node.default {
+                                Some(default_expr) => self.lower_expr_spanned(default_expr).ok(),
+                                None => None,
+                            },
                         }
                     })
                     .collect();

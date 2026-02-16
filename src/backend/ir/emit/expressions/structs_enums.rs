@@ -23,7 +23,7 @@ impl<'a> IrEmitter<'a> {
         name: &str,
         fields: &[(String, TypedExpr)],
     ) -> Result<TokenStream, EmitError> {
-        let n = format_ident!("{}", Self::escape_keyword(name));
+        let n = Self::rust_ident(name);
         let all_named = fields.iter().all(|(fname, _)| !fname.is_empty());
 
         if !all_named && !fields.is_empty() {

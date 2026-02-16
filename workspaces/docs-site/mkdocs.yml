@@ -133,6 +133,7 @@ nav:
           - File I/O: language/how-to/file_io.md
           - Imports and modules: language/how-to/imports_and_modules.md
           - Modeling with enums: language/how-to/modeling_with_enums.md
+          - std.testing guide: language/how-to/testing_stdlib.md
           - String processing: language/how-to/string_processing.md
           - Performance: language/how-to/performance.md
           - Rust interop: language/how-to/rust_interop.md
@@ -225,6 +226,7 @@ nav:
           - Architecture: contributing/explanation/architecture.md
           - Layering rules: contributing/explanation/layering.md
           - Readable, maintainable Rust: contributing/explanation/readable-maintainable-rust.md
+          - "std.testing internals": contributing/explanation/stdlib_testing_internals.md
       - RFCs: RFCs/index.md
   - Release notes:
       - Overview: release_notes/index.md

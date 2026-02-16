@@ -695,6 +695,18 @@ impl TypeChecker {
         }
 
         if let Expr::Ident(name) = &callee.node {
+            let marker_binding_in_scope = self
+                .symbols
+                .lookup(name)
+                .and_then(|id| self.symbols.get(id))
+                .is_some_and(|sym| matches!(sym.kind, SymbolKind::Function(_)) && sym.scope == 0);
+            if self.testing_marker_import_bindings.contains(name) && marker_binding_in_scope {
+                self.check_call_args(args);
+                self.errors
+                    .push(errors::testing_marker_runtime_call_not_supported(name, span));
+                return ResolvedType::Unknown;
+            }
+
             if let Some(result) = self.check_builtin_call(name, args, span) {
                 return result;
             }

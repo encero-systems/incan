@@ -184,6 +184,12 @@ fn scan_stmt_for_bounds(
                 scan_stmt_for_bounds(s, type_params, params, bounds_map);
             }
         }
+        IrStmtKind::Assert { condition, message } => {
+            scan_expr_for_bounds(condition, type_params, params, bounds_map);
+            if let Some(message) = message {
+                scan_expr_for_bounds(message, type_params, params, bounds_map);
+            }
+        }
     }
 }
 
@@ -602,6 +608,12 @@ fn collect_calls_in_stmt(
         IrStmtKind::Block(stmts) => {
             for s in stmts {
                 recurse_stmt(s, result);
+            }
+        }
+        IrStmtKind::Assert { condition, message } => {
+            recurse_expr(condition, result);
+            if let Some(message) = message {
+                recurse_expr(message, result);
             }
         }
     }

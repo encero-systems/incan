@@ -280,10 +280,6 @@ pub struct IrCodegen<'a> {
     needs_axum: bool,
     /// Collected routes from @route decorators
     routes: Vec<RouteSpec>,
-    /// Whether generating in test mode (emit #[test] attributes)
-    test_mode: bool,
-    /// Specific test function to mark with #[test] (if any)
-    test_function: Option<String>,
     /// Fixtures available for test functions (name -> (has_teardown, dependencies))
     fixtures: HashMap<String, (bool, Vec<String>)>,
     /// Rust crates imported via `import rust::` or `from rust::`
@@ -312,8 +308,6 @@ impl<'a> IrCodegen<'a> {
             needs_tokio: false,
             needs_axum: false,
             routes: Vec::new(),
-            test_mode: false,
-            test_function: None,
             fixtures: HashMap::new(),
             rust_crates: HashSet::new(),
             emit_zen_in_main: false,
@@ -337,16 +331,6 @@ impl<'a> IrCodegen<'a> {
     /// Register a fixture for test code generation
     pub fn add_fixture(&mut self, name: &str, has_teardown: bool, dependencies: Vec<String>) {
         self.fixtures.insert(name.to_string(), (has_teardown, dependencies));
-    }
-
-    /// Enable test mode (emit #[test] attributes)
-    pub fn set_test_mode(&mut self, enabled: bool) {
-        self.test_mode = enabled;
-    }
-
-    /// Set specific test function to mark with #[test]
-    pub fn set_test_function(&mut self, name: &str) {
-        self.test_function = Some(name.to_string());
     }
 
     /// Check if serde is needed
@@ -963,21 +947,34 @@ impl Default for IrCodegen<'_> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::frontend::{lexer, parser};
 
+    fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
+        match result {
+            Ok(value) => value,
+            Err(err) => panic!("unexpected error: {err:?}"),
+        }
+    }
+
+    fn must_some<T>(value: Option<T>, context: &str) -> T {
+        match value {
+            Some(v) => v,
+            None => panic!("{context}"),
+        }
+    }
+
     fn generate(source: &str) -> String {
-        let tokens = lexer::lex(source).unwrap();
-        let ast = parser::parse(&tokens).unwrap();
-        IrCodegen::new().try_generate(&ast).unwrap()
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+        must_ok(IrCodegen::new().try_generate(&ast))
     }
 
     /// Parse an Incan program into an AST
     fn parse_program(source: &str) -> Program {
-        let tokens = lexer::lex(source).unwrap();
-        parser::parse(&tokens).unwrap()
+        let tokens = must_ok(lexer::lex(source));
+        must_ok(parser::parse(&tokens))
     }
 
     fn db_module_program() -> Program {
@@ -1009,11 +1006,10 @@ def main() -> None:
 
         let db_path = vec!["db".to_string(), "schema".to_string()];
         let store_path = vec!["store".to_string(), "json_store".to_string()];
-        let (_main_code, rust_modules) = codegen
-            .try_generate_multi_file_nested(&main_module, &[db_path.clone(), store_path.clone()])
-            .unwrap();
+        let (_main_code, rust_modules) =
+            must_ok(codegen.try_generate_multi_file_nested(&main_module, &[db_path.clone(), store_path.clone()]));
 
-        rust_modules.get(&store_path).unwrap().to_string()
+        must_some(rust_modules.get(&store_path), "missing generated nested store module").to_string()
     }
 
     fn generate_non_nested_store_code(store_source: &str, db_module_name: &str) -> String {
@@ -1025,11 +1021,9 @@ def main() -> None:
         codegen.add_module(db_module_name, &db_module);
         codegen.add_module("store", &store_module);
 
-        let (_main_code, modules) = codegen
-            .try_generate_multi_file(&main_module, &[db_module_name, "store"])
-            .unwrap();
+        let (_main_code, modules) = must_ok(codegen.try_generate_multi_file(&main_module, &[db_module_name, "store"]));
 
-        modules.get("store").unwrap().to_string()
+        must_some(modules.get("store"), "missing generated non-nested store module").to_string()
     }
 
     #[test]
@@ -1066,8 +1060,8 @@ import std.async
 async def fetch() -> str:
   return "hello"
 "#;
-        let tokens = lexer::lex(source).unwrap();
-        let ast = parser::parse(&tokens).unwrap();
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
         let mut codegen = IrCodegen::new();
         codegen.scan_for_async(&ast);
         assert!(codegen.needs_tokio());
@@ -1080,8 +1074,8 @@ async def fetch() -> str:
 model Config:
   name: str
 "#;
-        let tokens = lexer::lex(source).unwrap();
-        let ast = parser::parse(&tokens).unwrap();
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
         let mut codegen = IrCodegen::new();
         codegen.scan_for_serde(&ast);
         assert!(codegen.needs_serde());
@@ -1094,8 +1088,8 @@ model Config:
 model User:
   id: int
 "#;
-        let tokens = lexer::lex(source).unwrap();
-        let ast = parser::parse(&tokens).unwrap();
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
         let mut codegen = IrCodegen::new();
         codegen.scan_for_serde(&ast);
         assert!(codegen.needs_serde());
@@ -1108,8 +1102,8 @@ model User:
 model User:
   id: int
 "#;
-        let tokens = lexer::lex(source).unwrap();
-        let ast = parser::parse(&tokens).unwrap();
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
         let mut codegen = IrCodegen::new();
         codegen.scan_for_serde(&ast);
         assert!(!codegen.needs_serde());
@@ -1121,8 +1115,8 @@ model User:
 def main() -> None:
   _ = json_stringify(123)
 "#;
-        let tokens = lexer::lex(source).unwrap();
-        let ast = parser::parse(&tokens).unwrap();
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
         let mut codegen = IrCodegen::new();
         codegen.scan_for_serde(&ast);
         assert!(codegen.needs_serde());
@@ -1134,8 +1128,8 @@ def main() -> None:
 def fetch() -> str:
   return "hello"
 "#;
-        let tokens = lexer::lex(source).unwrap();
-        let ast = parser::parse(&tokens).unwrap();
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
         let mut codegen = IrCodegen::new();
         codegen.scan_for_async(&ast);
         assert!(!codegen.needs_tokio());
@@ -1224,10 +1218,9 @@ def make() -> Account:
 
         let db_path = vec!["db".to_string(), "schema".to_string()];
         let store_path = vec!["store".to_string(), "json_store".to_string()];
-        let (_main_code, rust_modules) = codegen
-            .try_generate_multi_file_nested(&main_module, &[db_path.clone(), store_path.clone()])
-            .unwrap();
-        let store_code = rust_modules.get(&store_path).unwrap().to_string();
+        let (_main_code, rust_modules) =
+            must_ok(codegen.try_generate_multi_file_nested(&main_module, &[db_path.clone(), store_path.clone()]));
+        let store_code = must_some(rust_modules.get(&store_path), "missing generated store module").to_string();
 
         assert!(
             store_code.contains(".type_"),
@@ -1274,10 +1267,9 @@ def make() -> A:
 
         let db_path = vec!["db".to_string(), "schema".to_string()];
         let store_path = vec!["store".to_string(), "json_store".to_string()];
-        let (_main_code, rust_modules) = codegen
-            .try_generate_multi_file_nested(&main_module, &[db_path.clone(), store_path.clone()])
-            .unwrap();
-        let store_code = rust_modules.get(&store_path).unwrap().to_string();
+        let (_main_code, rust_modules) =
+            must_ok(codegen.try_generate_multi_file_nested(&main_module, &[db_path.clone(), store_path.clone()]));
+        let store_code = must_some(rust_modules.get(&store_path), "missing generated aliased store module").to_string();
 
         assert!(
             store_code.contains(".type_"),
@@ -1306,10 +1298,9 @@ model Account:
         codegen.add_module("db_schema", &db_module);
 
         let db_path = vec!["db".to_string(), "schema".to_string()];
-        let (_main_code, rust_modules) = codegen
-            .try_generate_multi_file_nested(&main_module, std::slice::from_ref(&db_path))
-            .unwrap();
-        let db_code = rust_modules.get(&db_path).unwrap().to_string();
+        let (_main_code, rust_modules) =
+            must_ok(codegen.try_generate_multi_file_nested(&main_module, std::slice::from_ref(&db_path)));
+        let db_code = must_some(rust_modules.get(&db_path), "missing generated db module").to_string();
 
         assert!(
             db_code.contains("self.type_"),

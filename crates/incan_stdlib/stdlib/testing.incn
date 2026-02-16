@@ -1,0 +1,320 @@
+rust.module("incan_stdlib::testing")
+
+"""
+Incan Testing Framework
+
+A pytest-like testing library for Incan.
+
+Example:
+
+```incan
+from std.testing import fixture, parametrize, skip, xfail
+
+@fixture
+def database() -> Database:
+    db = Database.connect("test.db")
+    yield db
+    db.close()
+
+@parametrize("a, b, expected", [
+    (1, 2, 3),
+    (0, 0, 0),
+])
+def test_add(a: int, b: int, expected: int) -> None:
+    assert_eq(add(a, b), expected)
+
+@skip("not implemented")
+def test_future() -> None:
+    pass
+```
+
+Marker semantics are declared on marker APIs via `@rust.extern(metadata={...})`.
+`incan test` consumes that metadata from this module as the source of truth.
+"""
+
+# =============================================================================
+# Test Utilities
+# =============================================================================
+
+@rust.extern
+pub def fail(msg: str) -> None:
+    """Explicitly fail a test with a message.
+
+    Fail makes the program raise a panic.
+
+    Example:
+    
+    ```incan
+    fail("this test should not reach here")
+    ```
+    """
+    ...
+
+
+@rust.extern
+def fail_t[T](msg: str) -> T:
+    """Generic failure primitive for helper functions returning `T`.
+
+    This always fails by delegating to the host panic boundary, but has a generic return type so assertion helpers -
+    like `assert_is_some()` - can typecheck cleanly.
+
+    Example:
+
+    ```incan
+    return fail_t("assertion failed")
+    ```
+    """
+    ...
+
+# =============================================================================
+# Markers
+# =============================================================================
+
+@rust.extern(metadata={"marker_kind": "skip", "runner_only": true})
+pub def skip(reason: str = "") -> None:
+    """
+    Skip a test unconditionally.
+
+    Example:
+
+    ```incan
+    @skip("not implemented yet")
+    def test_future_feature() -> None:
+        pass
+    ```
+
+    Note: Marker decorators are consumed by `incan test` during discovery.
+          Their runtime implementation is host-provided via `@rust.extern`.
+    """
+    ...
+
+
+@rust.extern(metadata={"marker_kind": "xfail", "runner_only": true})
+pub def xfail(reason: str = "") -> None:
+    """
+    Mark a test as expected to fail.
+
+    The test runs but failure is not reported as an error.
+    If the test passes unexpectedly, it's reported as XPASS.
+
+    Example:
+
+    ```incan
+    @xfail("known bug #123")
+    def test_known_issue() -> None:
+        assert broken_function() == "fixed"
+    ```
+
+    Note: Marker decorators are consumed by `incan test` during discovery.
+          Their runtime implementation is host-provided via `@rust.extern`.
+    """
+    ...
+
+
+@rust.extern(metadata={"marker_kind": "slow", "runner_only": true})
+pub def slow() -> None:
+    """
+    Mark a test as slow.
+
+    Slow tests are excluded by default. Run with --slow to include.
+
+    Example:
+
+    ```incan
+    @slow
+    def test_integration() -> None:
+        # Long-running test
+        pass
+    ```
+
+    Note: Marker decorators are consumed by `incan test` during discovery.
+          Their runtime implementation is host-provided via `@rust.extern`.
+    """
+    ...
+
+
+# =============================================================================
+# Fixtures
+# =============================================================================
+
+@rust.extern(metadata={
+    "marker_kind": "fixture",
+    "runner_only": true,
+    "scope_arg": "scope",
+    "autouse_arg": "autouse",
+    "scopes": ["function", "module", "session"],
+})
+pub def fixture() -> None:
+    """
+    Mark a function as a test fixture.
+
+    Fixtures provide setup/teardown and dependency injection for tests.
+    Use `yield` to separate setup from teardown.
+
+    Example:
+
+    ```incan
+    @fixture
+    def temp_file() -> str:
+        path = create_temp_file()
+        yield path
+        delete_file(path)
+
+    def test_write(temp_file: str) -> None:
+        write_to_file(temp_file, "data")
+        assert read_file(temp_file) == "data"
+    ```
+
+    Note: Fixtures are injected by parameter name matching.
+    """
+    ...
+
+
+# =============================================================================
+# Parametrize
+# =============================================================================
+
+@rust.extern(metadata={"marker_kind": "parametrize", "runner_only": true})
+pub def parametrize[T](argnames: str, argvalues: List[T]) -> None:
+    """
+    Run a test with multiple parameter sets.
+
+    Example:
+
+    ```incan
+    @parametrize("x, y, expected", [
+        (1, 2, 3),
+        (0, 0, 0),
+        (-1, 1, 0),
+        (100, 200, 300),
+    ])
+    def test_add(x: int, y: int, expected: int) -> None:
+        assert add(x, y) == expected
+    ```
+
+    This generates:
+
+    ```bash
+    test_add[1-2-3] ... PASSED
+    test_add[0-0-0] ... PASSED
+    test_add[-1-1-0] ... PASSED
+    test_add[100-200-300] ... PASSED
+    ```
+    """
+    ...
+
+
+# =============================================================================
+# Assertion Helpers (optional, prefer plain assert)
+# =============================================================================
+
+pub def assert(condition: bool, msg: str = "assertion failed") -> None:
+    """Assert condition is true.
+
+    Example:
+
+    ```incan
+    assert(False, "This test will fail with this message")
+    ```
+
+    Note: Prefer plain `assert left == right` for most cases.
+    """
+    if not condition:
+        fail(msg)
+
+
+pub def assert_eq[T](left: T, right: T, msg: str = "assertion failed: left != right") -> None:
+    """
+    Assert two values are equal.
+
+    Prefer plain `assert left == right` for most cases.
+
+    Example:
+
+    ```incan
+    assert_eq(result, expected, "calculation was wrong")
+    ```
+    """
+    if left != right:
+        fail(msg)
+
+
+pub def assert_ne[T](left: T, right: T, msg: str = "assertion failed: left == right") -> None:
+    """Assert two values are not equal."""
+    if left == right:
+        fail(msg)
+
+
+pub def assert_true(condition: bool, msg: str = "") -> None:
+    """Assert condition is true."""
+    assert(condition, msg)
+
+
+pub def assert_false(condition: bool, msg: str = "") -> None:
+    """Assert condition is false."""
+    assert(not condition, msg)
+
+
+pub def assert_is_some[T](option: Option[T], msg: str = "assertion failed: expected Some, got None") -> T:
+    """
+    Assert Option is Some and return the value.
+
+    Example:
+
+    ```incan
+    value = assert_is_some(get_user(id))
+    assert value.name == "Alice"
+    ```
+    """
+    match option:
+        Some(value) => return value
+        None => return fail_t(msg)
+
+
+pub def assert_is_none[T](option: Option[T], msg: str = "assertion failed: expected None, got Some") -> None:
+    """Assert Option is None."""
+    match option:
+        Some(_) => fail(msg)
+        None => return
+
+
+pub def assert_is_ok[T, E](result: Result[T, E], msg: str = "assertion failed: expected Ok, got Err") -> T:
+    """
+    Assert Result is Ok and return the value.
+
+    Example:
+
+    ```incan
+    user = assert_is_ok(fetch_user(id))
+    assert user.active
+    ```
+    """
+    match result:
+        Ok(value) => return value
+        Err(_) =>
+            return fail_t(msg)
+
+
+pub def assert_is_err[T, E](result: Result[T, E], msg: str = "assertion failed: expected Err, got Ok") -> E:
+    """Assert Result is Err and return the error."""
+    match result:
+        Err(err) => return err
+        Ok(_) => return fail_t(msg)
+
+
+# FIXME: not implemented yet
+@rust.extern
+pub def assert_raises[E](block: () -> None, msg: str = "") -> E:
+    """
+    Assert that a block raises/panics with error type E.
+
+    Example:
+
+    ```incan
+    def bad_parse() -> None:
+        int("not a number")
+
+    err = assert_raises[ValueError](bad_parse())
+    ```
+    """
+    ...

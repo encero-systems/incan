@@ -14,11 +14,45 @@ use crate::frontend::ast::ImportKind;
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
+use incan_core::lang::stdlib;
 
 /// Maximum source file size (100 MB)
 ///
 /// Files larger than this are rejected to prevent out-of-memory conditions during compilation.
 const MAX_SOURCE_SIZE: u64 = 100 * 1024 * 1024;
+
+/// Resolve the source path for a stdlib module path (e.g. `["std", "testing"]`).
+pub(crate) fn resolve_stdlib_module_source_path(module_path: &[String]) -> CliResult<PathBuf> {
+    let Some(relative_stub_path) = stdlib::stdlib_stub_path(module_path) else {
+        return Err(CliError::failure(format!(
+            "Cannot resolve source for non-stdlib module path '{}'.",
+            module_path.join(".")
+        )));
+    };
+
+    let stdlib_relative = relative_stub_path
+        .strip_prefix("stdlib/")
+        .unwrap_or(relative_stub_path.as_str());
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Some(stdlib_dir) = crate::cli::prelude::find_stdlib_dir() {
+        candidates.push(stdlib_dir.join(stdlib_relative));
+    }
+    candidates.push(PathBuf::from(&relative_stub_path));
+    candidates.push(PathBuf::from("crates/incan_stdlib").join(&relative_stub_path));
+
+    for candidate in candidates {
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(CliError::failure(format!(
+        "Cannot resolve source file for '{}'; expected '{}' under stdlib search roots.",
+        module_path.join("."),
+        relative_stub_path
+    )))
+}
 
 /// Read source file contents.
 ///
@@ -60,6 +94,7 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
 
     let mut modules = Vec::new();
     let mut processed = HashSet::new();
+    let mut incan_source_stdlib_module_paths: HashMap<String, PathBuf> = HashMap::new();
     // (file_path, module_name, path_segments)
     let mut to_process: Vec<(String, String, Vec<String>)> =
         vec![(entry_path.to_string(), "main".to_string(), vec!["main".to_string()])];
@@ -107,7 +142,33 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
                 };
 
                 if let Some(path) = import_path {
-                    if path.segments.is_empty() || path.segments.first() == Some(&"std".to_string()) {
+                    if path.segments.is_empty() {
+                        continue;
+                    }
+
+                    if path.parent_levels == 0 && !path.is_absolute && stdlib::is_any_stdlib_path(&path.segments) {
+                        if matches!(
+                            stdlib::stdlib_impl_mode_for(&path.segments),
+                            Some(stdlib::StdlibImplMode::IncanSource)
+                        ) {
+                            let stdlib_key = path.segments.join(".");
+                            let source_path =
+                                if let Some(cached_path) = incan_source_stdlib_module_paths.get(&stdlib_key) {
+                                    cached_path.clone()
+                                } else {
+                                    let resolved = resolve_stdlib_module_source_path(&path.segments)?;
+                                    incan_source_stdlib_module_paths.insert(stdlib_key, resolved.clone());
+                                    resolved
+                                };
+
+                            let mut module_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
+                            module_segments.extend(path.segments.iter().skip(1).cloned());
+                            let module_name = module_segments.join("_");
+                            let dep_path_str = source_path.to_string_lossy().to_string();
+                            if !processed.contains(&dep_path_str) {
+                                to_process.push((dep_path_str, module_name, module_segments));
+                            }
+                        }
                         continue;
                     }
 

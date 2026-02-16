@@ -6,7 +6,8 @@
 //!
 //! **The prelude is defined but not yet integrated into the compilation pipeline.**
 //!
-//! The `stdlib/` directory contains trait definitions (Debug, Display, Clone, etc.)
+//! The stdlib source directory (`stdlib/` or `crates/incan_stdlib/stdlib/`) contains trait definitions
+//! (Debug, Display, Clone, etc.)
 //! but codegen currently recognizes these through heuristics rather than actual
 //! trait implementations. The infrastructure here is ready for when prelude
 //! integration is implemented.
@@ -51,44 +52,70 @@ impl fmt::Display for PreludeError {
 
 impl std::error::Error for PreludeError {}
 
-/// Find the stdlib directory relative to the compiler or workspace
+/// Find the stdlib directory relative to the compiler or workspace.
+///
+/// Supports both layouts:
+/// - Workspace-root: `stdlib/`
+/// - Crate-local: `crates/incan_stdlib/stdlib/`
 pub fn find_stdlib_dir() -> Option<PathBuf> {
-    // Try relative to current directory (development mode)
-    let dev_stdlib = Path::new("stdlib");
-    if dev_stdlib.exists() && dev_stdlib.is_dir() {
-        return Some(dev_stdlib.to_path_buf());
+    // Try relative to current directory (development mode).
+    for candidate in ["crates/incan_stdlib/stdlib", "stdlib"] {
+        let path = Path::new(candidate);
+        if path.exists() && path.is_dir() {
+            return Some(path.to_path_buf());
+        }
     }
 
     // Try relative to executable location
     if let Ok(exe_path) = env::current_exe()
         && let Some(exe_dir) = exe_path.parent()
     {
-        // Check exe_dir/stdlib
-        let stdlib = exe_dir.join("stdlib");
-        if stdlib.exists() && stdlib.is_dir() {
-            return Some(stdlib);
-        }
-        // Check exe_dir/../stdlib (for target/debug or target/release)
-        if let Some(parent) = exe_dir.parent() {
-            let stdlib = parent.join("stdlib");
+        // Check exe_dir/{crates/incan_stdlib/stdlib,stdlib}.
+        for rel in ["crates/incan_stdlib/stdlib", "stdlib"] {
+            let stdlib = exe_dir.join(rel);
             if stdlib.exists() && stdlib.is_dir() {
                 return Some(stdlib);
             }
-            // Check exe_dir/../../stdlib (for target/debug -> project root)
-            if let Some(grandparent) = parent.parent() {
-                let stdlib = grandparent.join("stdlib");
+        }
+
+        // Check exe_dir/../{crates/incan_stdlib/stdlib,stdlib} (for target/debug or target/release).
+        if let Some(parent) = exe_dir.parent() {
+            for rel in ["crates/incan_stdlib/stdlib", "stdlib"] {
+                let stdlib = parent.join(rel);
                 if stdlib.exists() && stdlib.is_dir() {
                     return Some(stdlib);
+                }
+            }
+
+            // Check exe_dir/../../{crates/incan_stdlib/stdlib,stdlib} (for target/debug -> project root).
+            if let Some(grandparent) = parent.parent() {
+                for rel in ["crates/incan_stdlib/stdlib", "stdlib"] {
+                    let stdlib = grandparent.join(rel);
+                    if stdlib.exists() && stdlib.is_dir() {
+                        return Some(stdlib);
+                    }
                 }
             }
         }
     }
 
-    // Try INCAN_STDLIB environment variable
+    // Try INCAN_STDLIB environment variable.
     if let Ok(stdlib_path) = env::var("INCAN_STDLIB") {
         let path = PathBuf::from(stdlib_path);
         if path.exists() && path.is_dir() {
             return Some(path);
+        }
+    }
+
+    // Also honor INCAN_STDLIB_DIR used by stdlib stub resolution.
+    if let Ok(stdlib_root) = env::var("INCAN_STDLIB_DIR") {
+        let root = PathBuf::from(stdlib_root);
+        if root.exists() && root.is_dir() {
+            let nested = root.join("stdlib");
+            if nested.exists() && nested.is_dir() {
+                return Some(nested);
+            }
+            return Some(root);
         }
     }
 

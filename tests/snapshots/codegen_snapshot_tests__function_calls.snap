@@ -35,7 +35,7 @@ fn greet_with_title(name: String, title: String) -> String {
 fn test_function_calls() {
     let message = greet("World".to_string());
     let sum = add(5, 3);
-    let greeting1 = greet_with_title("Smith".to_string());
+    let greeting1 = greet_with_title("Smith".to_string(), "Mr.".to_string());
     let greeting2 = greet_with_title("Jones".to_string(), "Dr.".to_string());
     let length = "hello".len() as i64;
     let string_list = vec!["a", "b", "c"];

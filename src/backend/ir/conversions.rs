@@ -165,7 +165,7 @@
 //! let data = std::fs::read_to_string(&content);  // ← borrow applied
 //! ```
 
-use super::expr::BinOp;
+use super::expr::{BinOp, VarAccess};
 use super::{IrExpr, IrExprKind, IrType, TypedExpr};
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ir, pow_exponent_kind_from_ir};
 use incan_core::{NumericOp, NumericTy, needs_float_promotion, result_numeric_type};
@@ -475,6 +475,9 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
             match (&expr.kind, target_ty) {
                 // String literal to String param → .to_string()
                 (IrExprKind::String(_), Some(IrType::String)) => Conversion::ToString,
+                // String literal to generic type param (e.g. assert_eq[T]) → owned String.
+                // Typechecker constrains `T`; this keeps Incan `str` semantics in generic calls.
+                (IrExprKind::String(_), Some(IrType::Generic(_))) => Conversion::ToString,
                 // String literal with unknown target (enum variants, etc.) → .to_string()
                 (IrExprKind::String(_), None) => Conversion::ToString,
 
@@ -487,13 +490,22 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                     }
                 }
 
-                // String variable to String param → .to_string() (might be &str)
-                (IrExprKind::Var { .. }, Some(IrType::String)) if matches!(expr.ty, IrType::String) => {
-                    Conversion::ToString
+                // String variable to String param:
+                // - last-use read can move ownership directly
+                // - non-last-use read materializes owned String without consuming source
+                (IrExprKind::Var { access, .. }, Some(IrType::String)) if matches!(expr.ty, IrType::String) => {
+                    match access {
+                        VarAccess::Move => Conversion::None,
+                        _ => Conversion::ToString,
+                    }
                 }
-                // Variable with non-Copy type (List, Dict, custom structs) → .clone()
-                // This prevents move-after-use errors when the variable is needed later
-                (IrExprKind::Var { .. }, _) if !expr.ty.is_copy() => Conversion::Clone,
+                // Variable with non-Copy type (List, Dict, custom structs):
+                // - last-use read (`Move`) can transfer ownership
+                // - otherwise clone to preserve source usability
+                (IrExprKind::Var { access, .. }, _) if !expr.ty.is_copy() => match access {
+                    VarAccess::Move => Conversion::None,
+                    _ => Conversion::Clone,
+                },
                 // Field access with String type → .clone() to avoid moving from struct
                 (IrExprKind::Field { .. }, _) if matches!(expr.ty, IrType::String) => Conversion::Clone,
                 // Field access with non-Copy type (List, Dict, structs) → .clone()
@@ -510,12 +522,25 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 // String literal → .to_string()
                 (IrExprKind::String(_), _) => Conversion::ToString,
 
-                // String variable to String param → .to_string() (might be &str)
-                (IrExprKind::Var { .. }, Some(IrType::String)) if matches!(expr.ty, IrType::String) => {
-                    Conversion::ToString
+                // String variable to String param:
+                // - last-use read can move ownership directly
+                // - repeated reads in the same return expression must not consume early
+                (IrExprKind::Var { access, .. }, Some(IrType::String)) if matches!(expr.ty, IrType::String) => {
+                    match access {
+                        VarAccess::Move => Conversion::None,
+                        _ => Conversion::ToString,
+                    }
                 }
 
-                // Variables can be moved - no clone needed!
+                // Non-Copy vars in return-context calls follow VarAccess:
+                // - Move => transfer ownership
+                // - Read/Borrow => preserve source via clone/borrow conversion
+                (IrExprKind::Var { access, .. }, _) if !expr.ty.is_copy() => match access {
+                    VarAccess::Move => Conversion::None,
+                    _ => Conversion::Clone,
+                },
+
+                // Copy vars can always pass by value.
                 (IrExprKind::Var { .. }, _) => Conversion::None,
 
                 // Field access still needs clone (we're borrowing from a struct)
@@ -602,6 +627,22 @@ mod tests {
         let target = IrType::String;
 
         let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_incan_function_string_var_read_to_string() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "s".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::String,
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
         assert_eq!(conv, Conversion::ToString);
     }
 
@@ -649,6 +690,38 @@ mod tests {
 
         let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
         assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_incan_function_noncopy_var_last_use_moves() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "user".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("User".to_string()),
+        );
+        let target = IrType::Struct("User".to_string());
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_incan_function_noncopy_var_non_last_use_clones() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "user".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("User".to_string()),
+        );
+        let target = IrType::Struct("User".to_string());
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::Clone);
     }
 
     // === ExternalFunctionArg Tests ===
@@ -758,6 +831,38 @@ mod tests {
         let target = IrType::Int;
 
         let conv = determine_conversion(&expr, Some(&target), ConversionContext::ReturnValue);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_return_call_context_noncopy_var_read_clones() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "user".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("User".to_string()),
+        );
+        let target = IrType::Struct("User".to_string());
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArgInReturn);
+        assert_eq!(conv, Conversion::Clone);
+    }
+
+    #[test]
+    fn test_return_call_context_noncopy_var_move_stays_move() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "user".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("User".to_string()),
+        );
+        let target = IrType::Struct("User".to_string());
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArgInReturn);
         assert_eq!(conv, Conversion::None);
     }
 

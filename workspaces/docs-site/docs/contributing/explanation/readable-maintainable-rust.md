@@ -22,7 +22,7 @@ Incan contributors are expected to follow these principles and patterns when wri
     - [`rustfmt.toml`](#rustfmttoml)
     - [`Cargo.toml`](#cargotoml)
     - [Typical CI Steps](#typical-ci-steps)
-- [Common Pitfalls & Anti-Patterns](#common-pitfalls--anti-patterns)
+- [Common Pitfalls & Anti-Patterns](#common-pitfalls-anti-patterns)
 - [Simple Heuristic](#simple-heuristic)
 
 ---

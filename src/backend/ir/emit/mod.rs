@@ -173,11 +173,21 @@ impl<'a> IrEmitter<'a> {
         self.needs_axum = needs;
     }
 
-    /// Escape Rust keywords by adding `r#` prefix.
+    /// Create a Rust identifier for emission, using raw identifiers for keywords.
     ///
-    /// Delegates to [`incan_core::lang::rust_keywords::escape_keyword`].
-    fn escape_keyword(name: &str) -> String {
-        rust_keywords::escape_keyword(name)
+    /// This is the only safe way to emit segments like `r#async`:
+    /// - `proc_macro2::Ident::new_raw("async", ..)` emits `r#async`
+    /// - string-based escaping + `format_ident!("{}", "r#async")` relies on macro parsing quirks and is easy to misuse
+    ///   (and `syn::Ident::new("r#async", ..)` is invalid and will panic).
+    fn rust_ident(name: &str) -> proc_macro2::Ident {
+        let span = proc_macro2::Span::call_site();
+        if matches!(name, "self" | "Self") {
+            return proc_macro2::Ident::new(name, span);
+        }
+        if rust_keywords::is_keyword(name) {
+            return proc_macro2::Ident::new_raw(name, span);
+        }
+        proc_macro2::Ident::new(name, span)
     }
 
     /// RFC 023: Set the `rust.module()` Rust backing path for this program.
@@ -210,6 +220,18 @@ impl<'a> IrEmitter<'a> {
     pub fn set_type_module_paths(&mut self, paths: HashMap<String, Vec<String>>, ambiguous: HashSet<String>) {
         self.type_module_paths = paths;
         self.ambiguous_type_names = ambiguous;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::IrEmitter;
+
+    #[test]
+    fn rust_ident_uses_raw_idents_for_keywords() {
+        let ident = IrEmitter::rust_ident("async");
+        let rendered = quote::quote! { #ident }.to_string();
+        assert_eq!(rendered, "r#async");
     }
 }
 

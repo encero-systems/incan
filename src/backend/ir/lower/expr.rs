@@ -79,7 +79,7 @@ impl AstLowering {
         let (kind, ty) = match expr {
             ast::Expr::Ident(name) => {
                 let ty = self.lookup_var(name);
-                let access = if ty.is_copy() { VarAccess::Copy } else { VarAccess::Move };
+                let access = self.select_var_access_for_ident(name, &ty);
                 (
                     IrExprKind::Var {
                         name: name.clone(),
@@ -297,7 +297,7 @@ impl AstLowering {
                 }
 
                 // Regular function call (user-defined or unknown)
-                let func = self.lower_expr(&f.node)?;
+                let func = self.lower_expr_spanned(f)?;
                 let args_ir = self.lower_call_args(args)?;
                 let ret_ty = if let IrType::Function { ret, .. } = &func.ty {
                     (**ret).clone()
@@ -399,44 +399,50 @@ impl AstLowering {
             }
 
             ast::Expr::Match(s, arms) => {
-                let scrutinee = self.lower_expr(&s.node)?;
-                let arms_ir = self.lower_match_arms(arms)?;
-                let ty = arms_ir.first().map(|a| a.body.ty.clone()).unwrap_or(IrType::Unknown);
-                (
-                    IrExprKind::Match {
-                        scrutinee: Box::new(scrutinee),
-                        arms: arms_ir,
-                    },
-                    ty,
-                )
+                let lowered_match = (|| -> Result<(IrExprKind, IrType), LoweringError> {
+                    let scrutinee = self.lower_expr(&s.node)?;
+                    let arms_ir = self.lower_match_arms(arms)?;
+                    let ty = arms_ir.first().map(|a| a.body.ty.clone()).unwrap_or(IrType::Unknown);
+                    Ok((
+                        IrExprKind::Match {
+                            scrutinee: Box::new(scrutinee),
+                            arms: arms_ir,
+                        },
+                        ty,
+                    ))
+                })();
+                lowered_match?
             }
 
             ast::Expr::If(i) => {
-                let cond = self.lower_expr(&i.condition.node)?;
-                let then_stmts = self.lower_statements(&i.then_body)?;
-                let then_expr = TypedExpr::new(
-                    IrExprKind::Block {
-                        stmts: then_stmts,
-                        value: None,
-                    },
-                    IrType::Unit,
-                );
-                let else_expr = i
-                    .else_body
-                    .as_ref()
-                    .map(|b| {
-                        self.lower_statements(b)
-                            .map(|stmts| TypedExpr::new(IrExprKind::Block { stmts, value: None }, IrType::Unit))
-                    })
-                    .transpose()?;
-                (
-                    IrExprKind::If {
-                        condition: Box::new(cond),
-                        then_branch: Box::new(then_expr),
-                        else_branch: else_expr.map(Box::new),
-                    },
-                    IrType::Unit,
-                )
+                let lowered_if = (|| -> Result<(IrExprKind, IrType), LoweringError> {
+                    let cond = self.lower_expr(&i.condition.node)?;
+                    let then_stmts = self.lower_statements(&i.then_body)?;
+                    let then_expr = TypedExpr::new(
+                        IrExprKind::Block {
+                            stmts: then_stmts,
+                            value: None,
+                        },
+                        IrType::Unit,
+                    );
+                    let else_expr = i
+                        .else_body
+                        .as_ref()
+                        .map(|b| {
+                            self.lower_statements(b)
+                                .map(|stmts| TypedExpr::new(IrExprKind::Block { stmts, value: None }, IrType::Unit))
+                        })
+                        .transpose()?;
+                    Ok((
+                        IrExprKind::If {
+                            condition: Box::new(cond),
+                            then_branch: Box::new(then_expr),
+                            else_branch: else_expr.map(Box::new),
+                        },
+                        IrType::Unit,
+                    ))
+                })();
+                lowered_if?
             }
 
             ast::Expr::Closure(params, body) => {
@@ -444,7 +450,10 @@ impl AstLowering {
                     .iter()
                     .map(|p| (p.node.name.clone(), self.lower_type(&p.node.ty.node)))
                     .collect();
-                let body_ir = self.lower_expr(&body.node)?;
+                self.non_linear_context_depth += 1;
+                let body_ir_result = self.lower_expr(&body.node);
+                self.non_linear_context_depth -= 1;
+                let body_ir = body_ir_result?;
                 let ret_ty = body_ir.ty.clone();
                 let param_tys: Vec<IrType> = param_pairs.iter().map(|(_, t)| t.clone()).collect();
                 (
@@ -588,14 +597,19 @@ impl AstLowering {
                 let var_name = comp.var.clone();
 
                 // Build the filter predicate if present
-                let filter_tokens = if let Some(filter) = &comp.filter {
-                    Some(Box::new(self.lower_expr(&filter.node)?))
-                } else {
-                    None
-                };
+                self.non_linear_context_depth += 1;
+                let filter_tokens_result: Result<Option<Box<TypedExpr>>, LoweringError> =
+                    if let Some(filter) = &comp.filter {
+                        Ok(Some(Box::new(self.lower_expr(&filter.node)?)))
+                    } else {
+                        Ok(None)
+                    };
 
                 // Build the map expression
-                let map_expr = self.lower_expr(&comp.expr.node)?;
+                let map_expr_result = self.lower_expr(&comp.expr.node);
+                self.non_linear_context_depth -= 1;
+                let filter_tokens = filter_tokens_result?;
+                let map_expr = map_expr_result?;
 
                 // Determine element type from map expression
                 let elem_ty = map_expr.ty.clone();
@@ -616,14 +630,20 @@ impl AstLowering {
                 let iter_expr = self.lower_expr(&comp.iter.node)?;
                 let var_name = comp.var.clone();
 
-                let filter_tokens = if let Some(filter) = &comp.filter {
-                    Some(Box::new(self.lower_expr(&filter.node)?))
-                } else {
-                    None
-                };
+                self.non_linear_context_depth += 1;
+                let filter_tokens_result: Result<Option<Box<TypedExpr>>, LoweringError> =
+                    if let Some(filter) = &comp.filter {
+                        Ok(Some(Box::new(self.lower_expr(&filter.node)?)))
+                    } else {
+                        Ok(None)
+                    };
 
-                let key_expr = self.lower_expr(&comp.key.node)?;
-                let value_expr = self.lower_expr(&comp.value.node)?;
+                let key_expr_result = self.lower_expr(&comp.key.node);
+                let value_expr_result = self.lower_expr(&comp.value.node);
+                self.non_linear_context_depth -= 1;
+                let filter_tokens = filter_tokens_result?;
+                let key_expr = key_expr_result?;
+                let value_expr = value_expr_result?;
 
                 let key_ty = key_expr.ty.clone();
                 let value_ty = value_expr.ty.clone();
@@ -662,11 +682,11 @@ impl AstLowering {
             .map(|a| match a {
                 ast::CallArg::Positional(e) => Ok(IrCallArg {
                     name: None,
-                    expr: self.lower_expr(&e.node)?,
+                    expr: self.lower_expr_spanned(e)?,
                 }),
                 ast::CallArg::Named(name, e) => Ok(IrCallArg {
                     name: Some(name.clone()),
-                    expr: self.lower_expr(&e.node)?,
+                    expr: self.lower_expr_spanned(e)?,
                 }),
             })
             .collect()

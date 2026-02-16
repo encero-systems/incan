@@ -55,21 +55,23 @@ install:
 .PHONY: fmt  ## quality - Format Rust code
 fmt:
 	@echo "\033[1mFormatting code...\033[0m"
-	@cargo +nightly fmt --all 2>/dev/null || ( \
-		echo "\033[33m⚠ rustfmt comment wrapping requires nightly rustfmt.\033[0m"; \
+	@cargo +nightly fmt --version >/dev/null 2>&1 || ( \
+		echo "\033[33m⚠ nightly rustfmt is required for this project formatting config.\033[0m"; \
 		echo "\033[33m  Install it via: rustup toolchain install nightly --component rustfmt\033[0m"; \
 		exit 1; \
 	)
+	@cargo +nightly fmt --all
 	@echo "\033[32m✓ Code formatted\033[0m"
 
 .PHONY: fmt-check  ## quality - Check formatting without changes
 fmt-check:
 	@echo "\033[1mChecking formatting...\033[0m"
-	@cargo +nightly fmt --all -- --check 2>/dev/null || ( \
-		echo "\033[33m⚠ rustfmt comment wrapping requires nightly rustfmt.\033[0m"; \
+	@cargo +nightly fmt --version >/dev/null 2>&1 || ( \
+		echo "\033[33m⚠ nightly rustfmt is required for this project formatting config.\033[0m"; \
 		echo "\033[33m  Install it via: rustup toolchain install nightly --component rustfmt\033[0m"; \
 		exit 1; \
 	)
+	@cargo +nightly fmt --all -- --check
 
 .PHONY: lint  ## quality - Run clippy linter
 lint:
@@ -128,10 +130,8 @@ benchmarks-incan: release
 	@echo "\033[1mChecking benchmarks (Incan build only)...\033[0m"
 	@INCAN_NO_BANNER=1 bash benchmarks/check_incan.sh
 
-.PHONY: smoke-test  ## test - Smoke test: build + test + examples + benchmarks-incan
-smoke-test:
-	@echo "\033[1mRunning smoke-test...\033[0m"
-	@$(MAKE) test
+.PHONY: smoke-test-core
+smoke-test-core:
 	@$(MAKE) release
 	@echo "\033[1mRunning Incan assertion canary...\033[0m"
 	@INCAN_NO_BANNER=1 ./target/release/incan test tests/fixtures/test_assert_canary.incn
@@ -146,7 +146,24 @@ smoke-test:
 	@INCAN_NO_BANNER=1 INCAN_EXAMPLES_TIMEOUT=$${INCAN_EXAMPLES_TIMEOUT:-5} bash scripts/run_examples.sh
 	@echo "\033[1mChecking benchmarks (Incan build only)...\033[0m"
 	@INCAN_NO_BANNER=1 bash benchmarks/check_incan.sh
+
+.PHONY: smoke-test  ## test - Full smoke test: tests + release canary + examples + benchmarks-incan
+smoke-test:
+	@echo "\033[1mRunning smoke-test...\033[0m"
+	@$(MAKE) test
+	@$(MAKE) smoke-test-core
 	@echo "\033[32m✓ Smoke-test passed\033[0m"
+
+.PHONY: smoke-test-fast  ## test - Fast smoke test for after pre-commit (skips duplicate unit test suite)
+smoke-test-fast:
+	@echo "\033[1mRunning smoke-test-fast...\033[0m"
+	@$(MAKE) smoke-test-core
+	@echo "\033[32m✓ Smoke-test-fast passed\033[0m"
+
+.PHONY: verify  ## test - Recommended local gate: pre-commit + smoke-test-fast
+verify:
+	@$(MAKE) pre-commit
+	@$(MAKE) smoke-test-fast
 
 .PHONY: test-verbose  ## test - Run tests with output
 test-verbose:

@@ -40,6 +40,16 @@ pub fn soft_keyword_requires_import(keyword: &str, namespace: &str, span: Span) 
     ))
 }
 
+/// Failed to load `std.testing` marker metadata from `stdlib/testing.incn`.
+pub fn invalid_std_testing_marker_metadata(details: &str, span: Span) -> CompileError {
+    CompileError::new(
+        "Failed to load std.testing marker metadata from `stdlib/testing.incn`".to_string(),
+        span,
+    )
+    .with_hint(format!("Details: {details}"))
+    .with_hint("Fix the std.testing marker metadata instead of relying on fallback defaults")
+}
+
 /// Importing a private or not exported name from a module.
 pub fn import_not_exported(name: &str, module_path: &str, exported_names: &[String], span: Span) -> CompileError {
     let mut names = exported_names.to_vec();

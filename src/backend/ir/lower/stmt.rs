@@ -28,12 +28,23 @@ impl AstLowering {
     ///
     /// Returns `LoweringError` if any statement cannot be lowered.
     pub(super) fn lower_statements(&mut self, stmts: &[Spanned<ast::Statement>]) -> Result<Vec<IrStmt>, LoweringError> {
-        let mut result = Vec::new();
+        let mut read_counts = HashMap::new();
         for s in stmts {
-            let stmt = self.lower_statement(&s.node)?;
-            result.push(stmt);
+            self.count_statement_ident_reads(&s.node, &mut read_counts);
         }
-        Ok(result)
+        self.remaining_ident_reads.push(read_counts);
+
+        let lowered = (|| -> Result<Vec<IrStmt>, LoweringError> {
+            let mut result = Vec::new();
+            for s in stmts {
+                let stmt = self.lower_statement(&s.node)?;
+                result.push(stmt);
+            }
+            Ok(result)
+        })();
+
+        let _ = self.remaining_ident_reads.pop();
+        lowered
     }
 
     /// Lower a single statement to IR.
@@ -156,50 +167,59 @@ impl AstLowering {
             }
 
             ast::Statement::If(i) => {
-                // Lower elif branches as nested if-else in the else branch
-                // Each branch gets its own scope
-                let mut else_branch = i
-                    .else_body
-                    .as_ref()
-                    .map(|b| {
+                let lowered_if = (|| -> Result<IrStmtKind, LoweringError> {
+                    // Lower elif branches as nested if-else in the else branch.
+                    // Each branch gets its own scope.
+                    let mut else_branch = i
+                        .else_body
+                        .as_ref()
+                        .map(|b| {
+                            self.scopes.push(HashMap::new());
+                            let result = self.lower_statements(b);
+                            self.scopes.pop();
+                            result
+                        })
+                        .transpose()?;
+
+                    // Build elif chain from end to start.
+                    for (elif_cond, elif_body) in i.elif_branches.iter().rev() {
                         self.scopes.push(HashMap::new());
-                        let result = self.lower_statements(b);
+                        let elif_then = self.lower_statements(elif_body)?;
                         self.scopes.pop();
-                        result
-                    })
-                    .transpose()?;
+                        let elif_stmt = IrStmtKind::If {
+                            condition: self.lower_expr_spanned(elif_cond)?,
+                            then_branch: elif_then,
+                            else_branch,
+                        };
+                        else_branch = Some(vec![IrStmt::new(elif_stmt)]);
+                    }
 
-                // Build elif chain from end to start
-                for (elif_cond, elif_body) in i.elif_branches.iter().rev() {
+                    let condition = self.lower_expr_spanned(&i.condition)?;
                     self.scopes.push(HashMap::new());
-                    let elif_then = self.lower_statements(elif_body)?;
+                    let then_branch = self.lower_statements(&i.then_body)?;
                     self.scopes.pop();
-                    let elif_stmt = IrStmtKind::If {
-                        condition: self.lower_expr_spanned(elif_cond)?,
-                        then_branch: elif_then,
+
+                    Ok(IrStmtKind::If {
+                        condition,
+                        then_branch,
                         else_branch,
-                    };
-                    else_branch = Some(vec![IrStmt::new(elif_stmt)]);
-                }
-
-                let condition = self.lower_expr_spanned(&i.condition)?;
-                self.scopes.push(HashMap::new());
-                let then_branch = self.lower_statements(&i.then_body)?;
-                self.scopes.pop();
-
-                IrStmtKind::If {
-                    condition,
-                    then_branch,
-                    else_branch,
-                }
+                    })
+                })();
+                lowered_if?
             }
 
             ast::Statement::While(w) => {
                 // Push a new scope for the while-loop body
                 self.scopes.push(HashMap::new());
-                let condition = self.lower_expr_spanned(&w.condition)?;
-                let body = self.lower_statements(&w.body)?;
+                self.non_linear_context_depth += 1;
+                let loop_parts = (|| -> Result<(TypedExpr, Vec<IrStmt>), LoweringError> {
+                    let condition = self.lower_expr_spanned(&w.condition)?;
+                    let body = self.lower_statements(&w.body)?;
+                    Ok((condition, body))
+                })();
+                self.non_linear_context_depth -= 1;
                 self.scopes.pop();
+                let (condition, body) = loop_parts?;
                 IrStmtKind::While {
                     label: None,
                     condition,
@@ -225,7 +245,10 @@ impl AstLowering {
                     scope.insert(f.var.clone(), loop_var_ty);
                 }
 
-                let body = self.lower_statements(&f.body)?;
+                self.non_linear_context_depth += 1;
+                let body_result = self.lower_statements(&f.body);
+                self.non_linear_context_depth -= 1;
+                let body = body_result?;
                 self.scopes.pop();
 
                 IrStmtKind::For {
@@ -234,6 +257,12 @@ impl AstLowering {
                     iterable,
                     body,
                 }
+            }
+
+            ast::Statement::Assert(a) => {
+                let condition = self.lower_expr_spanned(&a.condition)?;
+                let message = a.message.as_ref().map(|m| self.lower_expr_spanned(m)).transpose()?;
+                IrStmtKind::Assert { condition, message }
             }
 
             ast::Statement::Pass => IrStmtKind::Expr(TypedExpr::new(IrExprKind::Unit, IrType::Unit)),
@@ -368,5 +397,199 @@ impl AstLowering {
             }
         };
         Ok(IrStmt::new(kind))
+    }
+
+    fn bump_ident_read(counts: &mut HashMap<String, usize>, name: &str) {
+        let entry = counts.entry(name.to_string()).or_insert(0);
+        *entry += 1;
+    }
+
+    fn count_call_args_ident_reads(&self, args: &[ast::CallArg], counts: &mut HashMap<String, usize>) {
+        for arg in args {
+            match arg {
+                ast::CallArg::Positional(expr) => self.count_expr_ident_reads(&expr.node, counts),
+                ast::CallArg::Named(_, expr) => self.count_expr_ident_reads(&expr.node, counts),
+            }
+        }
+    }
+
+    fn count_statement_ident_reads(&self, stmt: &ast::Statement, counts: &mut HashMap<String, usize>) {
+        match stmt {
+            ast::Statement::Assignment(a) => self.count_expr_ident_reads(&a.value.node, counts),
+            ast::Statement::FieldAssignment(fa) => {
+                self.count_expr_ident_reads(&fa.object.node, counts);
+                self.count_expr_ident_reads(&fa.value.node, counts);
+            }
+            ast::Statement::IndexAssignment(ia) => {
+                self.count_expr_ident_reads(&ia.object.node, counts);
+                self.count_expr_ident_reads(&ia.index.node, counts);
+                self.count_expr_ident_reads(&ia.value.node, counts);
+            }
+            ast::Statement::Return(expr) => {
+                if let Some(expr) = expr {
+                    self.count_expr_ident_reads(&expr.node, counts);
+                }
+            }
+            ast::Statement::If(i) => {
+                self.count_expr_ident_reads(&i.condition.node, counts);
+                for stmt in &i.then_body {
+                    self.count_statement_ident_reads(&stmt.node, counts);
+                }
+                for (cond, body) in &i.elif_branches {
+                    self.count_expr_ident_reads(&cond.node, counts);
+                    for stmt in body {
+                        self.count_statement_ident_reads(&stmt.node, counts);
+                    }
+                }
+                if let Some(body) = &i.else_body {
+                    for stmt in body {
+                        self.count_statement_ident_reads(&stmt.node, counts);
+                    }
+                }
+            }
+            ast::Statement::While(w) => {
+                self.count_expr_ident_reads(&w.condition.node, counts);
+                for stmt in &w.body {
+                    self.count_statement_ident_reads(&stmt.node, counts);
+                }
+            }
+            ast::Statement::For(f) => {
+                self.count_expr_ident_reads(&f.iter.node, counts);
+                for stmt in &f.body {
+                    self.count_statement_ident_reads(&stmt.node, counts);
+                }
+            }
+            ast::Statement::Assert(a) => {
+                self.count_expr_ident_reads(&a.condition.node, counts);
+                if let Some(message) = &a.message {
+                    self.count_expr_ident_reads(&message.node, counts);
+                }
+            }
+            ast::Statement::Expr(expr) => self.count_expr_ident_reads(&expr.node, counts),
+            ast::Statement::Pass | ast::Statement::Break | ast::Statement::Continue => {}
+            ast::Statement::CompoundAssignment(ca) => {
+                Self::bump_ident_read(counts, &ca.name);
+                self.count_expr_ident_reads(&ca.value.node, counts);
+            }
+            ast::Statement::TupleUnpack(tu) => self.count_expr_ident_reads(&tu.value.node, counts),
+            ast::Statement::TupleAssign(ta) => {
+                for target in &ta.targets {
+                    self.count_expr_ident_reads(&target.node, counts);
+                }
+                self.count_expr_ident_reads(&ta.value.node, counts);
+            }
+            ast::Statement::ChainedAssignment(ca) => self.count_expr_ident_reads(&ca.value.node, counts),
+        }
+    }
+
+    fn count_expr_ident_reads(&self, expr: &ast::Expr, counts: &mut HashMap<String, usize>) {
+        match expr {
+            ast::Expr::Ident(name) => Self::bump_ident_read(counts, name),
+            ast::Expr::Literal(_) | ast::Expr::SelfExpr => {}
+            ast::Expr::Binary(left, _, right) => {
+                self.count_expr_ident_reads(&left.node, counts);
+                self.count_expr_ident_reads(&right.node, counts);
+            }
+            ast::Expr::Unary(_, inner) => self.count_expr_ident_reads(&inner.node, counts),
+            ast::Expr::Call(func, args) => {
+                self.count_expr_ident_reads(&func.node, counts);
+                self.count_call_args_ident_reads(args, counts);
+            }
+            ast::Expr::Index(object, index) => {
+                self.count_expr_ident_reads(&object.node, counts);
+                self.count_expr_ident_reads(&index.node, counts);
+            }
+            ast::Expr::Slice(target, slice) => {
+                self.count_expr_ident_reads(&target.node, counts);
+                if let Some(start) = &slice.start {
+                    self.count_expr_ident_reads(&start.node, counts);
+                }
+                if let Some(end) = &slice.end {
+                    self.count_expr_ident_reads(&end.node, counts);
+                }
+                if let Some(step) = &slice.step {
+                    self.count_expr_ident_reads(&step.node, counts);
+                }
+            }
+            ast::Expr::Field(object, _) => self.count_expr_ident_reads(&object.node, counts),
+            ast::Expr::MethodCall(receiver, _, args) => {
+                self.count_expr_ident_reads(&receiver.node, counts);
+                self.count_call_args_ident_reads(args, counts);
+            }
+            ast::Expr::Await(inner) | ast::Expr::Try(inner) | ast::Expr::Paren(inner) => {
+                self.count_expr_ident_reads(&inner.node, counts);
+            }
+            ast::Expr::Match(scrutinee, arms) => {
+                self.count_expr_ident_reads(&scrutinee.node, counts);
+                for arm in arms {
+                    if let Some(guard) = &arm.node.guard {
+                        self.count_expr_ident_reads(&guard.node, counts);
+                    }
+                    match &arm.node.body {
+                        ast::MatchBody::Expr(expr) => self.count_expr_ident_reads(&expr.node, counts),
+                        ast::MatchBody::Block(stmts) => {
+                            for stmt in stmts {
+                                self.count_statement_ident_reads(&stmt.node, counts);
+                            }
+                        }
+                    }
+                }
+            }
+            ast::Expr::If(if_expr) => {
+                self.count_expr_ident_reads(&if_expr.condition.node, counts);
+                for stmt in &if_expr.then_body {
+                    self.count_statement_ident_reads(&stmt.node, counts);
+                }
+                if let Some(else_body) = &if_expr.else_body {
+                    for stmt in else_body {
+                        self.count_statement_ident_reads(&stmt.node, counts);
+                    }
+                }
+            }
+            ast::Expr::ListComp(comp) => {
+                self.count_expr_ident_reads(&comp.iter.node, counts);
+                self.count_expr_ident_reads(&comp.expr.node, counts);
+                if let Some(filter) = &comp.filter {
+                    self.count_expr_ident_reads(&filter.node, counts);
+                }
+            }
+            ast::Expr::DictComp(comp) => {
+                self.count_expr_ident_reads(&comp.iter.node, counts);
+                self.count_expr_ident_reads(&comp.key.node, counts);
+                self.count_expr_ident_reads(&comp.value.node, counts);
+                if let Some(filter) = &comp.filter {
+                    self.count_expr_ident_reads(&filter.node, counts);
+                }
+            }
+            ast::Expr::Closure(_, body) => self.count_expr_ident_reads(&body.node, counts),
+            ast::Expr::Tuple(items) | ast::Expr::List(items) | ast::Expr::Set(items) => {
+                for item in items {
+                    self.count_expr_ident_reads(&item.node, counts);
+                }
+            }
+            ast::Expr::Dict(pairs) => {
+                for (key, value) in pairs {
+                    self.count_expr_ident_reads(&key.node, counts);
+                    self.count_expr_ident_reads(&value.node, counts);
+                }
+            }
+            ast::Expr::Constructor(_, args) => self.count_call_args_ident_reads(args, counts),
+            ast::Expr::FString(parts) => {
+                for part in parts {
+                    if let ast::FStringPart::Expr(expr) = part {
+                        self.count_expr_ident_reads(&expr.node, counts);
+                    }
+                }
+            }
+            ast::Expr::Yield(expr) => {
+                if let Some(expr) = expr {
+                    self.count_expr_ident_reads(&expr.node, counts);
+                }
+            }
+            ast::Expr::Range { start, end, .. } => {
+                self.count_expr_ident_reads(&start.node, counts);
+                self.count_expr_ident_reads(&end.node, counts);
+            }
+        }
     }
 }

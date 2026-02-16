@@ -50,6 +50,13 @@ fn stmt_uses_list_helpers(stmt: &Statement) -> bool {
         Statement::IndexAssignment(assign) => expr_uses_list_helpers(&assign.value.node),
         Statement::TupleUnpack(unpack) => expr_uses_list_helpers(&unpack.value.node),
         Statement::TupleAssign(assign) => expr_uses_list_helpers(&assign.value.node),
+        Statement::Assert(assert_stmt) => {
+            expr_uses_list_helpers(&assert_stmt.condition.node)
+                || assert_stmt
+                    .message
+                    .as_ref()
+                    .is_some_and(|msg| expr_uses_list_helpers(&msg.node))
+        }
         Statement::Return(Some(expr)) => expr_uses_list_helpers(&expr.node),
         Statement::If(if_stmt) => {
             body_uses_list_helpers(&if_stmt.then_body)

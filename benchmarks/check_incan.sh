@@ -14,8 +14,10 @@ echo "  root:  $PROJECT_ROOT"
 echo ""
 
 cd "$PROJECT_ROOT"
-cargo build --release --quiet
 INCAN="$PROJECT_ROOT/target/release/incan"
+if [[ ! -x "$INCAN" ]]; then
+  cargo build --release --quiet
+fi
 
 failures=0
 checked=0

@@ -57,11 +57,11 @@ impl<'a> IrEmitter<'a> {
                 if name == surface_types::as_str(SurfaceTypeId::FieldInfo) {
                     return quote! { incan_stdlib::reflection::FieldInfo };
                 }
-                let n = format_ident!("{}", Self::escape_keyword(name));
+                let n = Self::rust_ident(name);
                 quote! { #n }
             }
             IrType::NamedGeneric(name, args) => {
-                let n = format_ident!("{}", Self::escape_keyword(name));
+                let n = Self::rust_ident(name);
                 let ts: Vec<_> = args.iter().map(|t| self.emit_type(t)).collect();
                 quote! { #n < #(#ts),* > }
             }
@@ -148,7 +148,7 @@ impl<'a> IrEmitter<'a> {
         let path_tokens: Vec<TokenStream> = segments
             .iter()
             .map(|seg| {
-                let ident = format_ident!("{}", Self::escape_keyword(seg));
+                let ident = Self::rust_ident(seg);
                 quote! { #ident }
             })
             .collect();
@@ -184,7 +184,7 @@ impl<'a> IrEmitter<'a> {
         match pattern {
             Pattern::Wildcard => quote! { _ },
             Pattern::Var(name) => {
-                let n = format_ident!("{}", Self::escape_keyword(name));
+                let n = Self::rust_ident(name);
                 quote! { #n }
             }
             Pattern::Literal(lit) => {

@@ -35,7 +35,7 @@ impl<'a> IrEmitter<'a> {
             .params
             .iter()
             .map(|p| {
-                let pname = format_ident!("{}", Self::escape_keyword(&p.name));
+                let pname = Self::rust_ident(&p.name);
                 let pty = self.emit_type(&p.ty);
                 if p.is_self {
                     if matches!(p.mutability, super::super::super::types::Mutability::Mutable) {
@@ -128,7 +128,7 @@ impl<'a> IrEmitter<'a> {
             )));
         };
 
-        let name = format_ident!("{}", Self::escape_keyword(&func.name));
+        let name = Self::rust_ident(&func.name);
         let vis = self.emit_visibility(&func.visibility);
 
         // Build parameter list (same as normal functions, but simpler: no mutation tracking needed).
@@ -136,7 +136,7 @@ impl<'a> IrEmitter<'a> {
             .params
             .iter()
             .map(|p| {
-                let pname = format_ident!("{}", Self::escape_keyword(&p.name));
+                let pname = Self::rust_ident(&p.name);
                 let pty = self.emit_type(&p.ty);
                 quote! { #pname: #pty }
             })
@@ -147,7 +147,7 @@ impl<'a> IrEmitter<'a> {
         let mut call_path_tokens: Vec<TokenStream> = path_segments
             .iter()
             .map(|seg| {
-                let ident = format_ident!("{}", Self::escape_keyword(seg));
+                let ident = Self::rust_ident(seg);
                 quote! { #ident }
             })
             .collect();
@@ -159,7 +159,7 @@ impl<'a> IrEmitter<'a> {
             .params
             .iter()
             .map(|p| {
-                let pname = format_ident!("{}", Self::escape_keyword(&p.name));
+                let pname = Self::rust_ident(&p.name);
                 quote! { #pname }
             })
             .collect();
@@ -284,7 +284,7 @@ impl<'a> IrEmitter<'a> {
             )));
         };
 
-        let name = format_ident!("{}", Self::escape_keyword(&func.name));
+        let name = Self::rust_ident(&func.name);
         let vis = self.emit_visibility(&func.visibility);
         let mutated_params = self.collect_mutated_params(func);
 
@@ -298,7 +298,7 @@ impl<'a> IrEmitter<'a> {
                         super::super::super::types::Mutability::Immutable => quote! { &self },
                     }
                 } else {
-                    let pname = format_ident!("{}", Self::escape_keyword(&p.name));
+                    let pname = Self::rust_ident(&p.name);
                     let pty = self.emit_type(&p.ty);
                     let needs_mut = mutated_params.contains(&p.name)
                         || matches!(p.mutability, super::super::super::types::Mutability::Mutable);
@@ -319,7 +319,7 @@ impl<'a> IrEmitter<'a> {
         let mut call_path_tokens: Vec<TokenStream> = path_segments
             .iter()
             .map(|seg| {
-                let ident = format_ident!("{}", Self::escape_keyword(seg));
+                let ident = Self::rust_ident(seg);
                 quote! { #ident }
             })
             .collect();
@@ -334,7 +334,7 @@ impl<'a> IrEmitter<'a> {
                 if p.is_self {
                     quote! { self }
                 } else {
-                    let pname = format_ident!("{}", Self::escape_keyword(&p.name));
+                    let pname = Self::rust_ident(&p.name);
                     quote! { #pname }
                 }
             })

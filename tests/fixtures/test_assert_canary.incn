@@ -2,18 +2,19 @@
 Canary file to exercise assertion codegen end-to-end via `incan test`.
 """
 
-from std.testing import assert, assert_eq, assert_ne, assert_true, assert_false, fail
+from std.testing import assert, assert_eq, assert_ne, assert_true, assert_false, assert_is_some, assert_is_none, assert_is_ok, assert_is_err, fail
 
 
 def test_assertions_work() -> None:
     # Boolean assertions
     assert(True)
-    assert_true(True)
-    assert_false(False)
+    assert True, "assert statement with message should compile"
+    assert_true(True, "assert_true with message")
+    assert_false(False, "assert_false with message")
 
     # Equality/inequality (ints)
-    assert_eq(1, 1)
-    assert_ne(2, 3)
+    assert_eq(1, 1, "ints should match")
+    assert_ne(2, 3, "ints should differ")
     assert_eq(1 + 2 * 3, 7)
 
     # Equality/inequality (bools)
@@ -23,6 +24,17 @@ def test_assertions_work() -> None:
     # Equality/inequality (strings)
     assert_eq("a", "a")
     assert_ne("a", "b")
+
+    # Option/Result helpers
+    some_value = assert_is_some(Some("ok"), "expected Some for canary")
+    assert_eq(some_value, "ok")
+    assert_is_none(None, "expected None for canary")
+
+    ok_value = assert_is_ok(Ok(42), "expected Ok for canary")
+    assert_eq(ok_value, 42)
+
+    err_value = assert_is_err(Err("boom"), "expected Err for canary")
+    assert_eq(err_value, "boom")
 
     # Existence/typecheck guard: keep fail in the surface API without triggering it.
     if False:

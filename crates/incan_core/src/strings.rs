@@ -67,41 +67,6 @@ pub fn str_cmp(lhs: &str, rhs: &str) -> Ordering {
     lhs.cmp(rhs)
 }
 
-pub fn str_eq(lhs: &str, rhs: &str) -> bool {
-    lhs == rhs
-}
-
-pub fn str_ne(lhs: &str, rhs: &str) -> bool {
-    lhs != rhs
-}
-
-pub fn str_lt(lhs: &str, rhs: &str) -> bool {
-    lhs < rhs
-}
-
-pub fn str_le(lhs: &str, rhs: &str) -> bool {
-    lhs <= rhs
-}
-
-pub fn str_gt(lhs: &str, rhs: &str) -> bool {
-    lhs > rhs
-}
-
-pub fn str_ge(lhs: &str, rhs: &str) -> bool {
-    lhs >= rhs
-}
-
-/// Return the string length in Unicode scalars (Rust `char`).
-///
-/// ## Parameters
-/// - `s`: the string to measure.
-///
-/// ## Returns
-/// - (`usize`): number of Unicode scalar values in `s`.
-pub fn str_len(s: &str) -> usize {
-    s.chars().count()
-}
-
 /// Normalize an index (supports negatives). Returns `None` if out of range.
 fn normalize_index(len: usize, idx: i64) -> Option<usize> {
     if len == 0 {
@@ -125,11 +90,13 @@ fn normalize_index(len: usize, idx: i64) -> Option<usize> {
 /// - `Ok(String)`: Single-character string (one Unicode scalar).
 /// - `Err(StringAccessError)`: If the index is out of range.
 pub fn str_char_at(s: &str, idx: i64) -> Result<String, StringAccessError> {
-    let len = str_len(s);
+    let len = s.chars().count();
     let Some(pos) = normalize_index(len, idx) else {
         return Err(StringAccessError::IndexOutOfRange);
     };
-    let ch = s.chars().nth(pos).expect("index normalized to bounds");
+    let Some(ch) = s.chars().nth(pos) else {
+        return Err(StringAccessError::IndexOutOfRange);
+    };
     Ok(ch.to_string())
 }
 

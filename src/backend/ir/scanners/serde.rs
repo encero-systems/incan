@@ -96,6 +96,10 @@ fn stmt_has_call(stmt: &Spanned<Statement>, target: BuiltinFnId) -> bool {
         Statement::IndexAssignment(a) => expr_has_call(&a.value.node, target),
         Statement::TupleUnpack(u) => expr_has_call(&u.value.node, target),
         Statement::TupleAssign(a) => expr_has_call(&a.value.node, target),
+        Statement::Assert(a) => {
+            expr_has_call(&a.condition.node, target)
+                || a.message.as_ref().is_some_and(|m| expr_has_call(&m.node, target))
+        }
         Statement::If(s) => {
             body_has_call_named(&s.then_body, target)
                 || s.else_body.as_ref().is_some_and(|b| body_has_call_named(b, target))

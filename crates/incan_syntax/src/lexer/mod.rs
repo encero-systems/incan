@@ -271,16 +271,16 @@ impl<'a> Lexer<'a> {
 
             // f-strings
             'f' if self.peek() == Some('"') || self.peek() == Some('\'') => {
-                // Safe: we just checked peek() is Some quote char
-                let quote = self.advance().expect("f-string quote after peek check");
-                self.scan_fstring(start, quote);
+                if let Some(quote) = self.advance() {
+                    self.scan_fstring(start, quote);
+                }
             }
 
             // b-strings (byte strings)
             'b' if self.peek() == Some('"') || self.peek() == Some('\'') => {
-                // Safe: we just checked peek() is Some quote char
-                let quote = self.advance().expect("b-string quote after peek check");
-                self.scan_byte_string(start, quote);
+                if let Some(quote) = self.advance() {
+                    self.scan_byte_string(start, quote);
+                }
             }
 
             // Numbers
@@ -424,6 +424,20 @@ mod tests {
     use incan_core::lang::keywords::KeywordId;
     use incan_core::lang::operators::OperatorId;
 
+    fn lex_ok(source: &str) -> Vec<Token> {
+        match lex(source) {
+            Ok(tokens) => tokens,
+            Err(errs) => panic!("lex failed for {:?}: {:?}", source, errs),
+        }
+    }
+
+    fn lex_err(source: &str) -> Vec<CompileError> {
+        match lex(source) {
+            Ok(tokens) => panic!("expected lex error for {:?}, got tokens: {:?}", source, tokens),
+            Err(errs) => errs,
+        }
+    }
+
     #[test]
     fn test_punctuation_registry_parity() {
         use incan_core::lang::punctuation::{self, PunctuationId};
@@ -432,17 +446,17 @@ mod tests {
             match p.id {
                 // Closing delimiters error when unmatched; use a matching pair.
                 PunctuationId::LParen | PunctuationId::RParen => {
-                    let tokens = lex("()").unwrap();
+                    let tokens = lex_ok("()");
                     assert!(tokens[0].kind.is_punctuation(PunctuationId::LParen));
                     assert!(tokens[1].kind.is_punctuation(PunctuationId::RParen));
                 }
                 PunctuationId::LBracket | PunctuationId::RBracket => {
-                    let tokens = lex("[]").unwrap();
+                    let tokens = lex_ok("[]");
                     assert!(tokens[0].kind.is_punctuation(PunctuationId::LBracket));
                     assert!(tokens[1].kind.is_punctuation(PunctuationId::RBracket));
                 }
                 PunctuationId::LBrace | PunctuationId::RBrace => {
-                    let tokens = lex("{}").unwrap();
+                    let tokens = lex_ok("{}");
                     assert!(tokens[0].kind.is_punctuation(PunctuationId::LBrace));
                     assert!(tokens[1].kind.is_punctuation(PunctuationId::RBrace));
                 }
@@ -560,7 +574,7 @@ mod tests {
 
     #[test]
     fn test_keywords() {
-        let tokens = lex("def async await class model trait").unwrap();
+        let tokens = lex_ok("def async await class model trait");
         assert!(matches!(tokens[0].kind, TokenKind::Keyword(KeywordId::Def)));
         assert!(matches!(&tokens[1].kind, TokenKind::Ident(name) if name == "async"));
         assert!(matches!(&tokens[2].kind, TokenKind::Ident(name) if name == "await"));
@@ -571,7 +585,7 @@ mod tests {
 
     #[test]
     fn test_operators() {
-        let tokens = lex("+ - * / :: => -> ? @ == !=").unwrap();
+        let tokens = lex_ok("+ - * / :: => -> ? @ == !=");
         assert!(matches!(tokens[0].kind, TokenKind::Operator(OperatorId::Plus)));
         assert!(matches!(tokens[1].kind, TokenKind::Operator(OperatorId::Minus)));
         assert!(matches!(tokens[2].kind, TokenKind::Operator(OperatorId::Star)));
@@ -597,7 +611,7 @@ mod tests {
     #[test]
     #[allow(clippy::approx_constant)]
     fn test_numbers() {
-        let tokens = lex("42 3.14 1_000_000 1e10").unwrap();
+        let tokens = lex_ok("42 3.14 1_000_000 1e10");
         assert!(matches!(tokens[0].kind, TokenKind::Int(42)));
         assert!(matches!(tokens[1].kind, TokenKind::Float(f) if (f - 3.14).abs() < 0.001));
         assert!(matches!(tokens[2].kind, TokenKind::Int(1000000)));
@@ -606,7 +620,7 @@ mod tests {
 
     #[test]
     fn test_strings() {
-        let tokens = lex(r#""hello" 'world'"#).unwrap();
+        let tokens = lex_ok(r#""hello" 'world'"#);
         assert!(matches!(&tokens[0].kind, TokenKind::String(s) if s == "hello"));
         assert!(matches!(&tokens[1].kind, TokenKind::String(s) if s == "world"));
     }
@@ -614,7 +628,7 @@ mod tests {
     #[test]
     fn test_indentation() {
         let source = "def foo():\n  x = 1\n  y = 2\nx = 3";
-        let tokens = lex(source).unwrap();
+        let tokens = lex_ok(source);
 
         // Find indent and dedent tokens
         let indent_count = tokens.iter().filter(|t| matches!(t.kind, TokenKind::Indent)).count();
@@ -626,7 +640,7 @@ mod tests {
 
     #[test]
     fn test_import_path() {
-        let tokens = lex("import polars::prelude as pl").unwrap();
+        let tokens = lex_ok("import polars::prelude as pl");
         assert!(matches!(tokens[0].kind, TokenKind::Keyword(KeywordId::Import)));
         assert!(matches!(&tokens[1].kind, TokenKind::Ident(s) if s == "polars"));
         assert!(matches!(
@@ -640,7 +654,7 @@ mod tests {
 
     #[test]
     fn test_fstring() {
-        let tokens = lex(r#"f"Hello {name}!""#).unwrap();
+        let tokens = lex_ok(r#"f"Hello {name}!""#);
         match &tokens[0].kind {
             TokenKind::FString(parts) => {
                 assert_eq!(parts.len(), 3);
@@ -655,9 +669,7 @@ mod tests {
     #[test]
     fn test_unicode_identifier_rejected() {
         // Unicode characters should not be valid identifiers (ASCII-only)
-        let result = lex("π = 1");
-        assert!(result.is_err(), "Unicode identifier should produce an error");
-        let errors = result.unwrap_err();
+        let errors = lex_err("π = 1");
         assert_eq!(errors.len(), 1);
         assert!(errors[0].message.contains("Unexpected character"));
     }
@@ -665,26 +677,22 @@ mod tests {
     #[test]
     fn test_unmatched_closing_bracket() {
         // Closing bracket without matching open should produce an error
-        let result = lex(")");
-        assert!(result.is_err(), "Unmatched ) should produce an error");
-        let errors = result.unwrap_err();
+        let errors = lex_err(")");
         assert_eq!(errors.len(), 1);
         assert!(errors[0].message.contains("Unmatched closing bracket"));
 
         // Same for ] and }
-        let result = lex("]");
-        assert!(result.is_err());
-        assert!(result.unwrap_err()[0].message.contains("Unmatched closing bracket"));
+        let errors = lex_err("]");
+        assert!(errors[0].message.contains("Unmatched closing bracket"));
 
-        let result = lex("}");
-        assert!(result.is_err());
-        assert!(result.unwrap_err()[0].message.contains("Unmatched closing bracket"));
+        let errors = lex_err("}");
+        assert!(errors[0].message.contains("Unmatched closing bracket"));
     }
 
     #[test]
     fn test_matched_brackets_ok() {
         // Properly matched brackets should work fine
-        let tokens = lex("(x)").unwrap();
+        let tokens = lex_ok("(x)");
         assert!(matches!(tokens[0].kind, TokenKind::Punctuation(PunctuationId::LParen)));
         assert!(matches!(&tokens[1].kind, TokenKind::Ident(s) if s == "x"));
         assert!(matches!(tokens[2].kind, TokenKind::Punctuation(PunctuationId::RParen)));
@@ -694,7 +702,7 @@ mod tests {
     fn test_multiple_dedents() {
         // Multiple dedent levels in one line
         let source = "def foo():\n  if True:\n    x = 1\ny = 2";
-        let tokens = lex(source).unwrap();
+        let tokens = lex_ok(source);
 
         let indent_count = tokens.iter().filter(|t| matches!(t.kind, TokenKind::Indent)).count();
         let dedent_count = tokens.iter().filter(|t| matches!(t.kind, TokenKind::Dedent)).count();
@@ -707,7 +715,7 @@ mod tests {
     fn test_tabs_as_spaces() {
         // Tabs count as 2 spaces
         let source = "def foo():\n\tx = 1"; // Tab indentation
-        let tokens = lex(source).unwrap();
+        let tokens = lex_ok(source);
 
         let indent_count = tokens.iter().filter(|t| matches!(t.kind, TokenKind::Indent)).count();
         assert_eq!(indent_count, 1, "Tab should produce INDENT");
@@ -717,7 +725,7 @@ mod tests {
     fn test_newlines_inside_brackets() {
         // Newlines inside brackets should NOT emit Newline tokens (implicit continuation)
         let source = "foo(\n  x,\n  y\n)";
-        let tokens = lex(source).unwrap();
+        let tokens = lex_ok(source);
 
         let newline_count = tokens.iter().filter(|t| matches!(t.kind, TokenKind::Newline)).count();
         assert_eq!(newline_count, 0, "No Newline tokens inside brackets");
@@ -726,7 +734,7 @@ mod tests {
     #[test]
     fn test_range_not_float() {
         // 1..2 should be Int, DotDot, Int - not a float
-        let tokens = lex("1..2").unwrap();
+        let tokens = lex_ok("1..2");
         assert!(matches!(tokens[0].kind, TokenKind::Int(1)));
         assert!(matches!(tokens[1].kind, TokenKind::Operator(OperatorId::DotDot)));
         assert!(matches!(tokens[2].kind, TokenKind::Int(2)));
@@ -735,7 +743,7 @@ mod tests {
     #[test]
     fn test_inclusive_range() {
         // 1..=5 should work
-        let tokens = lex("1..=5").unwrap();
+        let tokens = lex_ok("1..=5");
         assert!(matches!(tokens[0].kind, TokenKind::Int(1)));
         assert!(matches!(tokens[1].kind, TokenKind::Operator(OperatorId::DotDotEq)));
         assert!(matches!(tokens[2].kind, TokenKind::Int(5)));
