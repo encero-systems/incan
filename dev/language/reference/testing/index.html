@@ -989,6 +989,8 @@
       
         
       
+        
+      
     
     
       
@@ -1157,6 +1159,27 @@
   
   <span class="md-ellipsis">
     Modeling with enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/testing_stdlib/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing guide
   </span>
   
 
@@ -1533,45 +1556,45 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#assertcondition-bool-none" class="md-nav__link">
+  <a href="#assertcondition-bool-msg-str-none" class="md-nav__link">
     <span class="md-ellipsis">
-      assert(condition: bool) -&gt; None
+      assert(condition: bool, msg: str = "") -&gt; None
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#assert_truecondition-bool-none" class="md-nav__link">
+  <a href="#assert_truecondition-bool-msg-str-none" class="md-nav__link">
     <span class="md-ellipsis">
-      assert_true(condition: bool) -&gt; None
+      assert_true(condition: bool, msg: str = "") -&gt; None
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#assert_falsecondition-bool-none" class="md-nav__link">
+  <a href="#assert_falsecondition-bool-msg-str-none" class="md-nav__link">
     <span class="md-ellipsis">
-      assert_false(condition: bool) -&gt; None
+      assert_false(condition: bool, msg: str = "") -&gt; None
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#assert_eqtleft-t-right-t-none" class="md-nav__link">
+  <a href="#assert_eqtleft-t-right-t-msg-str-none" class="md-nav__link">
     <span class="md-ellipsis">
-      assert_eq[T](left: T, right: T) -&gt; None
+      assert_eq[T](left: T, right: T, msg: str = "") -&gt; None
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#assert_netleft-t-right-t-none" class="md-nav__link">
+  <a href="#assert_netleft-t-right-t-msg-str-none" class="md-nav__link">
     <span class="md-ellipsis">
-      assert_ne[T](left: T, right: T) -&gt; None
+      assert_ne[T](left: T, right: T, msg: str = "") -&gt; None
     </span>
   </a>
   
@@ -1581,6 +1604,42 @@
   <a href="#failmsg-str-none" class="md-nav__link">
     <span class="md-ellipsis">
       fail(msg: str) -&gt; None
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assert_is_sometoption-optiont-msg-str-t" class="md-nav__link">
+    <span class="md-ellipsis">
+      assert_is_some[T](option: Option[T], msg: str = "") -&gt; T
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assert_is_nonetoption-optiont-msg-str-none" class="md-nav__link">
+    <span class="md-ellipsis">
+      assert_is_none[T](option: Option[T], msg: str = "") -&gt; None
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assert_is_okt-eresult-resultt-e-msg-str-t" class="md-nav__link">
+    <span class="md-ellipsis">
+      assert_is_ok[T, E](result: Result[T, E], msg: str = "") -&gt; T
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assert_is_errt-eresult-resultt-e-msg-str-e" class="md-nav__link">
+    <span class="md-ellipsis">
+      assert_is_err[T, E](result: Result[T, E], msg: str = "") -&gt; E
     </span>
   </a>
   
@@ -3688,6 +3747,8 @@
       
         
       
+        
+      
     
     
       
@@ -3772,6 +3833,27 @@
   
   <span class="md-ellipsis">
     Readable, maintainable Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing internals
   </span>
   
 
@@ -4012,45 +4094,45 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#assertcondition-bool-none" class="md-nav__link">
+  <a href="#assertcondition-bool-msg-str-none" class="md-nav__link">
     <span class="md-ellipsis">
-      assert(condition: bool) -&gt; None
+      assert(condition: bool, msg: str = "") -&gt; None
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#assert_truecondition-bool-none" class="md-nav__link">
+  <a href="#assert_truecondition-bool-msg-str-none" class="md-nav__link">
     <span class="md-ellipsis">
-      assert_true(condition: bool) -&gt; None
+      assert_true(condition: bool, msg: str = "") -&gt; None
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#assert_falsecondition-bool-none" class="md-nav__link">
+  <a href="#assert_falsecondition-bool-msg-str-none" class="md-nav__link">
     <span class="md-ellipsis">
-      assert_false(condition: bool) -&gt; None
+      assert_false(condition: bool, msg: str = "") -&gt; None
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#assert_eqtleft-t-right-t-none" class="md-nav__link">
+  <a href="#assert_eqtleft-t-right-t-msg-str-none" class="md-nav__link">
     <span class="md-ellipsis">
-      assert_eq[T](left: T, right: T) -&gt; None
+      assert_eq[T](left: T, right: T, msg: str = "") -&gt; None
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#assert_netleft-t-right-t-none" class="md-nav__link">
+  <a href="#assert_netleft-t-right-t-msg-str-none" class="md-nav__link">
     <span class="md-ellipsis">
-      assert_ne[T](left: T, right: T) -&gt; None
+      assert_ne[T](left: T, right: T, msg: str = "") -&gt; None
     </span>
   </a>
   
@@ -4060,6 +4142,42 @@
   <a href="#failmsg-str-none" class="md-nav__link">
     <span class="md-ellipsis">
       fail(msg: str) -&gt; None
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assert_is_sometoption-optiont-msg-str-t" class="md-nav__link">
+    <span class="md-ellipsis">
+      assert_is_some[T](option: Option[T], msg: str = "") -&gt; T
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assert_is_nonetoption-optiont-msg-str-none" class="md-nav__link">
+    <span class="md-ellipsis">
+      assert_is_none[T](option: Option[T], msg: str = "") -&gt; None
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assert_is_okt-eresult-resultt-e-msg-str-t" class="md-nav__link">
+    <span class="md-ellipsis">
+      assert_is_ok[T, E](result: Result[T, E], msg: str = "") -&gt; T
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assert_is_errt-eresult-resultt-e-msg-str-e" class="md-nav__link">
+    <span class="md-ellipsis">
+      assert_is_err[T, E](result: Result[T, E], msg: str = "") -&gt; E
     </span>
   </a>
   
@@ -4141,26 +4259,42 @@
 
 <h1 id="testing-reference">Testing (reference)<a class="headerlink" href="#testing-reference" title="Permanent link">&para;</a></h1>
 <p>This page specifies the <strong>standard library testing API</strong> exposed by the <code>testing</code> module.</p>
-<p>If you’re looking for how to <em>run</em> tests (<code>incan test</code>, discovery rules, CLI flags), see: <a href="../../../tooling/how-to/testing/">Tooling → Testing</a>.</p>
-<p>If you want a guided walkthrough, see: <a href="../../tutorials/book/13_unit_tests/">The Incan Book → Unit tests</a>.</p>
+<div class="admonition info">
+<p class="admonition-title">Related pages</p>
+<ul>
+<li>If you’re looking for how to <em>run</em> tests (<code>incan test</code>, discovery rules, CLI flags), see: <a href="../../../tooling/how-to/testing/">Tooling → Testing</a>.</li>
+<li>If you want a guided walkthrough, see: <a href="../../tutorials/book/13_unit_tests/">The Incan Book → Unit tests</a>.</li>
+<li>If you want integration details for how <code>std.testing</code> is compiled and wired, see:
+  [Language → How-to → <code>std.testing</code> guide].</li>
+</ul>
+</div>
+<!-- References -->
 <h2 id="importing-the-testing-api">Importing the testing API<a class="headerlink" href="#importing-the-testing-api" title="Permanent link">&para;</a></h2>
 <p>Incan test helpers are provided via the <code>std.testing</code> module:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="k">assert</span><span class="p">,</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_ne</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_false</span><span class="p">,</span> <span class="n">fail</span>
 </code></pre></div>
 <h2 id="assertion-functions">Assertion functions<a class="headerlink" href="#assertion-functions" title="Permanent link">&para;</a></h2>
 <p>All assertion helpers <strong>fail the current test</strong> when the assertion does not hold.</p>
-<h3 id="assertcondition-bool-none"><code>assert(condition: bool) -&gt; None</code><a class="headerlink" href="#assertcondition-bool-none" title="Permanent link">&para;</a></h3>
+<h3 id="assertcondition-bool-msg-str-none"><code>assert(condition: bool, msg: str = "") -&gt; None</code><a class="headerlink" href="#assertcondition-bool-msg-str-none" title="Permanent link">&para;</a></h3>
 <p>Fails if <code>condition</code> is <code>False</code>.</p>
-<h3 id="assert_truecondition-bool-none"><code>assert_true(condition: bool) -&gt; None</code><a class="headerlink" href="#assert_truecondition-bool-none" title="Permanent link">&para;</a></h3>
+<h3 id="assert_truecondition-bool-msg-str-none"><code>assert_true(condition: bool, msg: str = "") -&gt; None</code><a class="headerlink" href="#assert_truecondition-bool-msg-str-none" title="Permanent link">&para;</a></h3>
 <p>Alias for <code>assert(condition)</code>.</p>
-<h3 id="assert_falsecondition-bool-none"><code>assert_false(condition: bool) -&gt; None</code><a class="headerlink" href="#assert_falsecondition-bool-none" title="Permanent link">&para;</a></h3>
+<h3 id="assert_falsecondition-bool-msg-str-none"><code>assert_false(condition: bool, msg: str = "") -&gt; None</code><a class="headerlink" href="#assert_falsecondition-bool-msg-str-none" title="Permanent link">&para;</a></h3>
 <p>Fails if <code>condition</code> is <code>True</code>.</p>
-<h3 id="assert_eqtleft-t-right-t-none"><code>assert_eq[T](left: T, right: T) -&gt; None</code><a class="headerlink" href="#assert_eqtleft-t-right-t-none" title="Permanent link">&para;</a></h3>
+<h3 id="assert_eqtleft-t-right-t-msg-str-none"><code>assert_eq[T](left: T, right: T, msg: str = "") -&gt; None</code><a class="headerlink" href="#assert_eqtleft-t-right-t-msg-str-none" title="Permanent link">&para;</a></h3>
 <p>Fails if <code>left != right</code>.</p>
-<h3 id="assert_netleft-t-right-t-none"><code>assert_ne[T](left: T, right: T) -&gt; None</code><a class="headerlink" href="#assert_netleft-t-right-t-none" title="Permanent link">&para;</a></h3>
+<h3 id="assert_netleft-t-right-t-msg-str-none"><code>assert_ne[T](left: T, right: T, msg: str = "") -&gt; None</code><a class="headerlink" href="#assert_netleft-t-right-t-msg-str-none" title="Permanent link">&para;</a></h3>
 <p>Fails if <code>left == right</code>.</p>
 <h3 id="failmsg-str-none"><code>fail(msg: str) -&gt; None</code><a class="headerlink" href="#failmsg-str-none" title="Permanent link">&para;</a></h3>
 <p>Unconditionally fails the current test with a message.</p>
+<h3 id="assert_is_sometoption-optiont-msg-str-t"><code>assert_is_some[T](option: Option[T], msg: str = "") -&gt; T</code><a class="headerlink" href="#assert_is_sometoption-optiont-msg-str-t" title="Permanent link">&para;</a></h3>
+<p>Fails if <code>option</code> is <code>None</code>; otherwise returns the inner value.</p>
+<h3 id="assert_is_nonetoption-optiont-msg-str-none"><code>assert_is_none[T](option: Option[T], msg: str = "") -&gt; None</code><a class="headerlink" href="#assert_is_nonetoption-optiont-msg-str-none" title="Permanent link">&para;</a></h3>
+<p>Fails if <code>option</code> is <code>Some(...)</code>.</p>
+<h3 id="assert_is_okt-eresult-resultt-e-msg-str-t"><code>assert_is_ok[T, E](result: Result[T, E], msg: str = "") -&gt; T</code><a class="headerlink" href="#assert_is_okt-eresult-resultt-e-msg-str-t" title="Permanent link">&para;</a></h3>
+<p>Fails if <code>result</code> is <code>Err(...)</code>; otherwise returns the <code>Ok(...)</code> value.</p>
+<h3 id="assert_is_errt-eresult-resultt-e-msg-str-e"><code>assert_is_err[T, E](result: Result[T, E], msg: str = "") -&gt; E</code><a class="headerlink" href="#assert_is_errt-eresult-resultt-e-msg-str-e" title="Permanent link">&para;</a></h3>
+<p>Fails if <code>result</code> is <code>Ok(...)</code>; otherwise returns the <code>Err(...)</code> value.</p>
 <h2 id="test-markers-decorators">Test markers (decorators)<a class="headerlink" href="#test-markers-decorators" title="Permanent link">&para;</a></h2>
 <p>The following decorators are <strong>recognized by the test runner</strong>:</p>
 <h3 id="skipreason-str"><code>@skip(reason: str = "")</code><a class="headerlink" href="#skipreason-str" title="Permanent link">&para;</a></h3>

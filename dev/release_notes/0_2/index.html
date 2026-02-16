@@ -987,6 +987,8 @@
       
         
       
+        
+      
     
     
       
@@ -1155,6 +1157,27 @@
   
   <span class="md-ellipsis">
     Modeling with enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing guide
   </span>
   
 
@@ -3515,6 +3538,8 @@
       
         
       
+        
+      
     
     
       
@@ -3599,6 +3624,27 @@
   
   <span class="md-ellipsis">
     Readable, maintainable Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing internals
   </span>
   
 
@@ -3787,9 +3833,27 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#soft-keyword-activation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Soft keyword activation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#stdlib-types-require-explicit-imports" class="md-nav__link">
     <span class="md-ellipsis">
       Stdlib types require explicit imports
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#testing-markers-are-runner-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      Testing markers are runner metadata
     </span>
   </a>
   
@@ -3977,9 +4041,27 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#soft-keyword-activation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Soft keyword activation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#stdlib-types-require-explicit-imports" class="md-nav__link">
     <span class="md-ellipsis">
       Stdlib types require explicit imports
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#testing-markers-are-runner-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      Testing markers are runner metadata
     </span>
   </a>
   
@@ -4059,6 +4141,7 @@ This is a breaking change to import syntax — all stdlib imports and decorators
 <p>This release lays the groundwork for a cleaner stdlib architecture where the compiler knows less about domain-specific
 modules (web, testing, async) and the stdlib can grow without polluting the global namespace.</p>
 <h2 id="migrating-from-01">Migrating from 0.1<a class="headerlink" href="#migrating-from-01" title="Permanent link">&para;</a></h2>
+<p>Use this checklist when moving a 0.1 codebase to 0.2.</p>
 <h3 id="import-paths">Import paths<a class="headerlink" href="#import-paths" title="Permanent link">&para;</a></h3>
 <p>All stdlib imports move from bare module names to the <code>std.*</code> namespace:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Before (0.1)</span>
@@ -4069,6 +4152,13 @@ modules (web, testing, async) and the stdlib can grow without polluting the glob
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.web</span><span class="w"> </span><span class="kn">import</span> <span class="kt">App</span><span class="p">,</span> <span class="kt">Response</span><span class="p">,</span> <span class="kt">Json</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_ne</span>
 </code></pre></div>
+<p>This also applies to async modules:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Before (0.1)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span>
+
+<span class="c1"># After (0.2)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span>
+</code></pre></div>
 <h3 id="decorators">Decorators<a class="headerlink" href="#decorators" title="Permanent link">&para;</a></h3>
 <p>Decorators are now resolved by their fully qualified module path.
 You can use the canonical path or an aliased import:</p>
@@ -4077,6 +4167,12 @@ You can use the canonical path or an aliased import:</p>
 <span class="k">def</span><span class="w"> </span><span class="nf">hello</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
     <span class="o">...</span>
 </code></pre></div>
+<p>Testing decorators follow the same rule:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Canonical path</span>
+<span class="nd">@std</span><span class="o">.</span><span class="n">testing</span><span class="o">.</span><span class="n">skip</span><span class="p">(</span><span class="s2">&quot;not implemented&quot;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">test_future</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">pass</span>
+</code></pre></div>
 <p>Or with an alias:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.web</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">web</span>
 
@@ -4084,9 +4180,22 @@ You can use the canonical path or an aliased import:</p>
 <span class="k">def</span><span class="w"> </span><span class="nf">hello</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
     <span class="o">...</span>
 </code></pre></div>
+<p>and:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">testing</span>
+
+<span class="nd">@testing</span><span class="o">.</span><span class="n">skip</span><span class="p">(</span><span class="s2">&quot;not implemented&quot;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">test_future</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">pass</span>
+</code></pre></div>
+<h3 id="soft-keyword-activation">Soft keyword activation<a class="headerlink" href="#soft-keyword-activation" title="Permanent link">&para;</a></h3>
+<p><code>async</code>/<code>await</code> are activated per file through stdlib imports.</p>
+<p>If a file uses async syntax, import <code>std.async</code> (or a submodule like <code>std.async.time</code>) in that same file.</p>
 <h3 id="stdlib-types-require-explicit-imports">Stdlib types require explicit imports<a class="headerlink" href="#stdlib-types-require-explicit-imports" title="Permanent link">&para;</a></h3>
 <p>Types like <code>App</code>, <code>Response</code>, <code>Html</code>, <code>Json</code>, and <code>Query</code> are no longer globally available — import them from <code>std.web</code>.
 The compiler will suggest the correct import if you use a stdlib type without importing it.</p>
+<h3 id="testing-markers-are-runner-metadata">Testing markers are runner metadata<a class="headerlink" href="#testing-markers-are-runner-metadata" title="Permanent link">&para;</a></h3>
+<p><code>@skip</code>, <code>@xfail</code>, <code>@slow</code>, <code>@fixture</code>, and <code>@parametrize</code> are consumed by <code>incan test</code> from <code>std.testing</code> metadata.
+They are not intended as runtime function calls.</p>
 <h3 id="reserved-names">Reserved names<a class="headerlink" href="#reserved-names" title="Permanent link">&para;</a></h3>
 <p><code>std</code> and <code>rust</code> are now reserved at the module level and cannot be used as declaration names.</p>
 <h2 id="features-and-enhancements">Features and Enhancements<a class="headerlink" href="#features-and-enhancements" title="Permanent link">&para;</a></h2>
@@ -4094,11 +4203,14 @@ The compiler will suggest the correct import if you use a stdlib type without im
 <li><strong>Compiler</strong>: Namespaced stdlib imports under <code>std.*</code> — all stdlib modules use qualified paths (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>).</li>
 <li><strong>Compiler</strong>: Import-activated soft keywords — <code>async</code> and <code>await</code> are identifiers by default and become reserved only
   when <code>import std.async</code> (or <code>from std.async...</code>) is present. Forgetting the import produces a targeted diagnostic with
-  a fix suggestion.</li>
+  a fix suggestion. Similarly, <code>std.testing</code> activates the <code>assert</code> statement syntax (<a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Compiler</strong>: Namespaced decorator resolution — decorators resolved by module path (e.g., <code>@std.web.route</code>) with
   alias support (<code>import std.web as web</code> enables <code>@web.route(...)</code>) (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>).</li>
 <li><strong>Compiler</strong>: <code>@rust.extern</code> marker for Rust-backed function stubs, replacing the internal <code>@std.builtin</code>
   decorator (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>, <a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
+<li><strong>Testing</strong>: <code>std.testing</code> is Incan-first — user-facing API and assertion behavior are defined in
+  <code>crates/incan_stdlib/stdlib/testing.incn</code>,
+  with Rust limited to explicit <code>@rust.extern</code> host boundaries (for example <code>fail</code> and <code>fail_t</code>) (<a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Compiler</strong>: Stdlib namespace registry (<code>STDLIB_NAMESPACES</code>) replaces the flat stdlib-module list — convention-based
   submodule discovery, registry-driven unknown-module diagnostics, and soft-keyword activation metadata.</li>
 <li><strong>Compiler</strong>: Reserved root namespaces — <code>std</code> and <code>rust</code> cannot be used as user declaration names.</li>
@@ -4118,7 +4230,9 @@ The compiler will suggest the correct import if you use a stdlib type without im
   freshness in CI (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
 <li><strong>Tooling</strong>: Test runner resolves imports against the project source root, enabling tests to import directly from
   source modules (e.g., <code>from greet import greet</code>) without duplication (<a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a>).</li>
-<li><strong>Tooling</strong>: Test runner detects <code>from std.testing import ...</code> for test framework integration.</li>
+<li><strong>Tooling</strong>: Test marker semantics (<code>@skip</code>, <code>@xfail</code>, <code>@slow</code>, <code>@fixture</code>, <code>@parametrize</code>) are derived from
+  <code>std.testing</code> metadata in <code>crates/incan_stdlib/stdlib/testing.incn</code> instead of brittle string/path hardcoding
+  (<a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Parser</strong>: <code>async</code> is allowed as a module path segment in imports (e.g., <code>from std.async.time import sleep</code>).</li>
 <li><strong>Diagnostics</strong>: Clearer error messages for unknown decorators and reserved namespace violations.</li>
 <li><strong>Diagnostics</strong>: Enhanced lock-out-of-date error with expected vs actual fingerprint for easier debugging.</li>
