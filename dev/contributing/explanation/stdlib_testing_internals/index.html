@@ -4007,6 +4007,17 @@ For the API reference, see <a href="../../../language/reference/testing/">Langua
 <li><strong>Marker metadata</strong>: each marker extern carries <code>metadata={...}</code> on its <code>@rust.extern</code> annotation. <code>incan test</code> reads
   this metadata from the parsed stdlib source (via <code>src/frontend/testing_markers.rs</code>) as the single source of truth for
   marker semantics.</li>
+<li><strong>Surface semantics routing</strong>:<ul>
+<li>Pack contracts live in <code>crates/incan_semantics_core</code> (<code>SurfaceFeatureKey</code>, pack trait, registry).</li>
+<li>Stdlib handlers live in <code>crates/incan_semantics_stdlib</code> and are feature-gated by <code>std_testing</code>.</li>
+<li>Frontend/back adapters call into the registry (<code>src/frontend/surface_semantics.rs</code> and
+  <code>src/backend/ir/surface_semantics.rs</code>).</li>
+<li><code>assert</code> statement syntax is lowered through registry-provided canonical call target metadata.</li>
+<li>Lowered assert calls carry canonical callee paths (<code>std.testing.assert_*</code>) in IR.</li>
+<li>Emission uses canonical paths for stdlib dispatch, so <code>import std.testing</code> and
+  <code>from std.testing import assert_*</code> behave consistently.</li>
+</ul>
+</li>
 </ul>
 <p>This design keeps user-facing assertion behavior in one stdlib Incan file while limiting Rust host code to unavoidable
 panic/failure primitives.</p>

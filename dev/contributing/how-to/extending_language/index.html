@@ -3566,6 +3566,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#path-c-add-a-soft-keyword-via-the-surface-semantics-engine" class="md-nav__link">
+    <span class="md-ellipsis">
+      Path C: Add a Soft Keyword via the Surface Semantics Engine
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Path C: Add a Soft Keyword via the Surface Semantics Engine">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-the-registry-drives-every-compiler-stage" class="md-nav__link">
+    <span class="md-ellipsis">
+      How the registry drives every compiler stage
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#end-to-end-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      End-to-end checklist
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#practical-guidance" class="md-nav__link">
     <span class="md-ellipsis">
       Practical guidance
@@ -4075,6 +4108,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#path-c-add-a-soft-keyword-via-the-surface-semantics-engine" class="md-nav__link">
+    <span class="md-ellipsis">
+      Path C: Add a Soft Keyword via the Surface Semantics Engine
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Path C: Add a Soft Keyword via the Surface Semantics Engine">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-the-registry-drives-every-compiler-stage" class="md-nav__link">
+    <span class="md-ellipsis">
+      How the registry drives every compiler stage
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#end-to-end-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      End-to-end checklist
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#practical-guidance" class="md-nav__link">
     <span class="md-ellipsis">
       Practical guidance
@@ -4319,12 +4385,129 @@ touches multiple stages.</p>
 <li>Add a guide snippet and at least one parse/typecheck/codegen regression test</li>
 </ul>
 <hr />
+<!-- markdownlint-disable MD033 -->
+<h2 id="path-c-add-a-soft-keyword-via-the-surface-semantics-engine"><small><em>Path C</em>:</small> Add a Soft Keyword via the Surface Semantics Engine<a class="headerlink" href="#path-c-add-a-soft-keyword-via-the-surface-semantics-engine" title="Permanent link">&para;</a></h2>
+<!-- markdownlint-enable MD033 -->
+
+<p>Use this when the feature is an <strong>import-activated keyword</strong> whose behavior desugars to stdlib calls — not a
+permanently reserved hard keyword. Current examples: <code>assert</code> (activated by <code>import std.testing</code>), <code>async</code>/<code>await</code>
+(activated by <code>import std.async</code>).</p>
+<p>This path avoids creating new IR variants. Instead, the parser emits a generic <code>Surface</code> AST node keyed by
+<code>SurfaceFeatureKey</code>, and downstream stages (typechecker, lowering, scanning) consult the semantics registry for
+<strong>action descriptors</strong> that tell them what to do. See the <a href="../../explanation/architecture/#surface-semantics-engine">Surface Semantics Engine</a> section of the architecture
+docs for the full design.</p>
+<h3 id="how-the-registry-drives-every-compiler-stage">How the registry drives every compiler stage<a class="headerlink" href="#how-the-registry-drives-every-compiler-stage" title="Permanent link">&para;</a></h3>
+<p>The <code>SurfaceSemanticsPack</code> trait covers the full compiler:</p>
+<!-- markdownlint-disable MD013 -->
+
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Pack method</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Parser</td>
+<td><code>statement_payload_*</code>, <code>expression_payload_*</code>, <code>modifier_payload_*</code></td>
+<td>Payload kind (how to parse)</td>
+</tr>
+<tr>
+<td>Typechecker</td>
+<td><code>typecheck_surface_stmt_action</code>, <code>typecheck_surface_expr_action</code></td>
+<td>Action descriptor (what to check)</td>
+</tr>
+<tr>
+<td>Lowering</td>
+<td><code>lower_surface_stmt_action</code>, <code>lower_surface_expr_action</code></td>
+<td>Action descriptor (how to lower)</td>
+</tr>
+<tr>
+<td>Scanning</td>
+<td><code>modifier_runtime_requirement</code>, <code>import_runtime_requirement</code></td>
+<td><code>RuntimeRequirement</code></td>
+</tr>
+<tr>
+<td>Call targets</td>
+<td><code>assert_call_target</code></td>
+<td><code>SurfaceCallTarget</code></td>
+</tr>
+</tbody>
+</table>
+<!-- markdownlint-enable MD013 -->
+
+<p>Action descriptors are small enums (e.g., <code>SurfaceStmtLoweringAction::AssertCall</code>,
+<code>SurfaceExprTypeCheck::AwaitCheck</code>) that describe <em>what</em> the compiler should do, not <em>which keyword</em>
+triggered it. Multiple keywords can share the same action pattern. If your keyword fits an existing
+action pattern, the compiler already knows how to execute it — <strong>no main-crate changes needed</strong>.</p>
+<h3 id="end-to-end-checklist">End-to-end checklist<a class="headerlink" href="#end-to-end-checklist" title="Permanent link">&para;</a></h3>
+<p><strong>1. Keyword descriptor</strong> (<code>crates/incan_core/src/lang/keywords.rs</code>):</p>
+<ul>
+<li>Add a <code>KeywordId</code> variant.</li>
+<li>Register it with <code>info_soft()</code>, specifying the activating stdlib namespace and the <code>KeywordSurfaceKind</code>
+  (<code>StatementKeywordArgs</code>, <code>PrefixExpression</code>, or <code>DeclarationModifier</code>).</li>
+</ul>
+<p><strong>2. Semantics pack</strong> (<code>crates/incan_semantics_stdlib/src/lib.rs</code>):</p>
+<ul>
+<li>Implement the <strong>parser routing</strong> method (<code>statement_payload_for_soft_keyword</code>,
+  <code>expression_payload_for_soft_keyword</code>, or <code>modifier_payload_for_soft_keyword</code>).</li>
+<li>Implement the <strong>typechecker action</strong> method (<code>typecheck_surface_stmt_action</code> or
+  <code>typecheck_surface_expr_action</code>), returning an existing action descriptor if one fits.</li>
+<li>Implement the <strong>lowering action</strong> method (<code>lower_surface_stmt_action</code> or <code>lower_surface_expr_action</code>),
+  returning an existing action descriptor if one fits.</li>
+<li>If the keyword implies a runtime requirement (e.g., async runtime), implement
+  <code>modifier_runtime_requirement</code> and/or <code>import_runtime_requirement</code>.</li>
+<li>If the keyword desugars to a stdlib call, implement <code>assert_call_target()</code> (or the equivalent for your
+  feature) returning a <code>SurfaceCallTarget</code> with the canonical callee path.</li>
+<li>Gate the handler behind the appropriate Cargo feature (<code>std_testing</code>, <code>std_async</code>, etc.).</li>
+</ul>
+<p><strong>3. Parser</strong>: No per-keyword code needed. The generic helpers — <code>current_surface_keyword()</code> and
+<code>match_surface_keyword()</code> in <code>crates/incan_syntax/src/parser/helpers.rs</code>, and
+<code>try_surface_keyword_statement()</code> in <code>crates/incan_syntax/src/parser/stmts.rs</code> — automatically
+pick up any soft keyword whose descriptor has a matching <code>KeywordSurfaceKind</code>.</p>
+<p><strong>4. Typechecker</strong>: No per-keyword code needed if you returned an existing action descriptor in step 2.
+<code>check_surface_stmt()</code> and <code>check_surface_expr()</code> query the registry and dispatch on the action.</p>
+<p><strong>5. Lowering</strong>: No per-keyword code needed if you returned an existing action descriptor in step 2.
+<code>lower_surface_statement()</code> and the <code>Expr::Surface</code> arm of <code>lower_expr()</code> query the registry and dispatch
+on the action.</p>
+<p><strong>6. Formatter</strong> (<code>src/format/formatter/</code>):</p>
+<ul>
+<li>Handle the new <code>Statement::Surface</code> or <code>Expr::Surface</code> variant (usually a one-liner using
+  <code>keywords::as_str()</code>).</li>
+</ul>
+<p><strong>7. Tests</strong>:</p>
+<ul>
+<li>Add a codegen snapshot test (<code>.incn</code> file + snapshot) exercising the full surface path.</li>
+<li>Verify the snapshot shows canonical-path-resolved calls (e.g. <code>crate::__incan_std::*</code>).</li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">When you need a new action pattern</p>
+<p>If no existing action descriptor fits your keyword's behavior, you'll need to:</p>
+<ol>
+<li>Add a new variant to the relevant action enum in <code>crates/incan_semantics_core/src/lib.rs</code>
+   (e.g., <code>SurfaceStmtLoweringAction::YourPattern</code>).</li>
+<li>Add a handler arm in the corresponding compiler module (<code>lower_surface_statement()</code>,
+   <code>check_surface_stmt()</code>, etc.).</li>
+</ol>
+<p>This is deliberately rare — action descriptors represent <em>compiler behavior patterns</em>, not individual keywords.
+You might add many keywords before needing a new pattern.</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Key difference from Path B</p>
+<p>Path B creates new AST variants and new IR variants for each keyword. Path C reuses the generic <code>Surface</code> AST nodes
+and the existing <code>IrExprKind::Call</code> with <code>canonical_path</code> metadata — so you don't need to touch the IR definition or
+the emitter's call-emission logic at all.</p>
+</div>
+<hr />
 <h2 id="practical-guidance">Practical guidance<a class="headerlink" href="#practical-guidance" title="Permanent link">&para;</a></h2>
 <ul>
 <li>If you find yourself adding a keyword to achieve <em>“a function with a special implementation”</em>, pause and consider making
-  it a <strong>builtin function</strong> instead.</li>
+  it a <strong>builtin function</strong> (or a decorator) instead.</li>
 <li>If you add a new AST/IR enum variant, rely on Rust’s exhaustiveness errors as your checklist: the compiler will tell you
   which match arms you need to update.</li>
+<li>Keywords may only be introduced as the result of a language change (RFC).</li>
 </ul>
 
 

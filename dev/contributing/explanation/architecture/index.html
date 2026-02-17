@@ -3711,6 +3711,57 @@
   
 </li>
         
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#surface-semantics-engine" class="md-nav__link">
+    <span class="md-ellipsis">
+      Surface Semantics Engine
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Surface Semantics Engine">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#action-descriptors" class="md-nav__link">
+    <span class="md-ellipsis">
+      Action descriptors
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#core-pieces" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core pieces
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#feature-gating" class="md-nav__link">
+    <span class="md-ellipsis">
+      Feature gating
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adding-a-new-soft-keyword-or-decorator" class="md-nav__link">
+    <span class="md-ellipsis">
+      Adding a new soft keyword or decorator
+    </span>
+  </a>
+  
+</li>
+        
           <li class="md-nav__item">
   <a href="#backend-srcbackend" class="md-nav__link">
     <span class="md-ellipsis">
@@ -4162,6 +4213,57 @@
   
 </li>
         
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#surface-semantics-engine" class="md-nav__link">
+    <span class="md-ellipsis">
+      Surface Semantics Engine
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Surface Semantics Engine">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#action-descriptors" class="md-nav__link">
+    <span class="md-ellipsis">
+      Action descriptors
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#core-pieces" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core pieces
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#feature-gating" class="md-nav__link">
+    <span class="md-ellipsis">
+      Feature gating
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adding-a-new-soft-keyword-or-decorator" class="md-nav__link">
+    <span class="md-ellipsis">
+      Adding a new soft keyword or decorator
+    </span>
+  </a>
+  
+</li>
+        
           <li class="md-nav__item">
   <a href="#backend-srcbackend" class="md-nav__link">
     <span class="md-ellipsis">
@@ -4538,6 +4640,10 @@ dependency-light crate suitable for reuse across compiler and tooling.</p>
 <td>Multi-file module resolution</td>
 </tr>
 <tr>
+<td><code>surface_semantics.rs</code></td>
+<td>Import-driven activation + feature-key routing for soft keywords/decorators</td>
+</tr>
+<tr>
 <td><code>typechecker/</code></td>
 <td>Two-pass collection + type checking</td>
 </tr>
@@ -4586,6 +4692,140 @@ dependency-light crate suitable for reuse across compiler and tooling.</p>
 </tr>
 </tbody>
 </table>
+<h2 id="surface-semantics-engine">Surface Semantics Engine<a class="headerlink" href="#surface-semantics-engine" title="Permanent link">&para;</a></h2>
+<p>Surface syntax features (soft keywords, decorator semantics) are fully driven by a <strong>semantics registry</strong>. Every
+compiler stage — parser, typechecker, lowering, and scanning — consults the registry instead of hardcoding keyword
+identities. The design separates <em>feature knowledge</em> (which keyword does what) from <em>execution knowledge</em> (how the
+compiler performs each action):</p>
+<pre class="mermaid"><code>flowchart LR
+    imports --&gt; SC[SurfaceContext]
+    SC --&gt; REG[semantics registry]
+
+    REG -- payload kinds --&gt; P[Parser]
+    REG -- action descriptors --&gt; TC[Typechecker]
+    REG -- action descriptors --&gt; LO[Lowering / Scanning]
+
+    P --&gt; AST[Surface AST]
+    TC --&gt; TV[Type validation]
+    LO --&gt; IR[IR / runtime detection]</code></pre>
+<h3 id="action-descriptors">Action descriptors<a class="headerlink" href="#action-descriptors" title="Permanent link">&para;</a></h3>
+<p>Packs don't execute compiler logic directly (that would create circular dependencies). Instead, they return small
+<strong>action descriptor</strong> enums that tell the compiler <em>what to do</em>:</p>
+<!-- markdownlint-disable MD013 -->
+
+<table>
+<thead>
+<tr>
+<th>Enum</th>
+<th>Variants (current)</th>
+<th>Used by</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SurfaceStmtLoweringAction</code></td>
+<td><code>AssertCall</code></td>
+<td>Lowering</td>
+<td>Describes how to lower a surface statement</td>
+</tr>
+<tr>
+<td><code>SurfaceExprLoweringAction</code></td>
+<td><code>Await</code></td>
+<td>Lowering</td>
+<td>Describes how to lower a surface expression</td>
+</tr>
+<tr>
+<td><code>SurfaceStmtTypeCheck</code></td>
+<td><code>AssertCheck</code></td>
+<td>Typechecker</td>
+<td>Describes how to typecheck a surface statement</td>
+</tr>
+<tr>
+<td><code>SurfaceExprTypeCheck</code></td>
+<td><code>AwaitCheck</code></td>
+<td>Typechecker</td>
+<td>Describes how to typecheck a surface expression</td>
+</tr>
+<tr>
+<td><code>RuntimeRequirement</code></td>
+<td><code>None</code>, <code>AsyncRuntime</code></td>
+<td>Scanning</td>
+<td>Runtime implied by a modifier or import</td>
+</tr>
+</tbody>
+</table>
+<!-- markdownlint-enable MD013 -->
+
+<p>Multiple keywords can share the same action descriptor (e.g., a hypothetical <code>ensure</code> keyword could reuse
+<code>AssertCall</code>). Adding a keyword that fits an existing action pattern is a <strong>pack-only change</strong> — zero touches to the
+main compiler crate.</p>
+<h3 id="core-pieces">Core pieces<a class="headerlink" href="#core-pieces" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>crates/incan_semantics_core</code><ul>
+<li>Defines stable <code>SurfaceFeatureKey</code> ids and payload categories used by parser/typechecker/lowering.</li>
+<li>Defines the action descriptor enums listed above.</li>
+<li>Defines <code>SurfaceSemanticsPack</code> trait (full compiler-stage coverage) and <code>SurfaceSemanticsRegistry</code>.</li>
+</ul>
+</li>
+<li><code>crates/incan_semantics_stdlib</code><ul>
+<li>Implements stdlib semantics pack(s) for <code>assert</code>, <code>async</code>, <code>await</code>, and stdlib decorator families.</li>
+<li>Returns action descriptors for each compiler stage, gated by Cargo features (<code>std_testing</code>, <code>std_async</code>).</li>
+<li>Exposes canonical call targets (e.g., <code>std.testing.assert_*</code>) and runtime requirements.</li>
+</ul>
+</li>
+<li><code>src/frontend/surface_semantics.rs</code><ul>
+<li>Builds <code>SurfaceContext</code> from imports and aliases.</li>
+<li>Provides import-driven soft-keyword activation and registry queries.</li>
+</ul>
+</li>
+<li><code>src/frontend/typechecker/check_stmt.rs</code> / <code>check_expr/mod.rs</code><ul>
+<li><code>check_surface_stmt()</code> and <code>check_surface_expr()</code> query the registry for typecheck action descriptors and
+  dispatch on the returned action — no <code>KeywordId</code> matching.</li>
+</ul>
+</li>
+<li><code>src/backend/ir/lower/stmt.rs</code> / <code>lower/expr/mod.rs</code><ul>
+<li><code>lower_surface_statement()</code> and the <code>Expr::Surface</code> arm of <code>lower_expr()</code> query the registry for lowering
+  action descriptors and dispatch on the returned action — no <code>KeywordId</code> matching.</li>
+</ul>
+</li>
+<li><code>src/backend/ir/scanners/async_.rs</code><ul>
+<li>Detects async runtime requirement by asking the registry about each import and each surface modifier —
+  no hardcoded module names or keyword checks.</li>
+</ul>
+</li>
+<li><code>src/backend/ir/surface_semantics.rs</code><ul>
+<li>Thin helpers for action execution (assert condition decomposition, await IR wrapping).</li>
+</ul>
+</li>
+<li><code>src/backend/ir/expr.rs</code> (<code>IrExprKind::Call</code>)<ul>
+<li>Carries optional canonical callee path metadata.</li>
+<li>Lets emission resolve stdlib calls independent of local import style.</li>
+</ul>
+</li>
+</ul>
+<h3 id="feature-gating">Feature gating<a class="headerlink" href="#feature-gating" title="Permanent link">&para;</a></h3>
+<p>Feature gating is compile-time and crate-level:</p>
+<ul>
+<li><code>std_testing</code>, <code>std_async</code>, and <code>std_decorators</code> enable pack capabilities through Cargo features.</li>
+<li>When disabled, the corresponding semantics handlers are not compiled into the <code>incan</code> artifact.</li>
+</ul>
+<h3 id="adding-a-new-soft-keyword-or-decorator">Adding a new soft keyword or decorator<a class="headerlink" href="#adding-a-new-soft-keyword-or-decorator" title="Permanent link">&para;</a></h3>
+<p>If the new keyword fits an existing action pattern, only steps 1–3 require code changes:</p>
+<ol>
+<li>Add activation metadata in <code>incan_core::lang</code> registry tables (<code>KeywordId</code> + <code>info_soft()</code>).</li>
+<li>Implement the relevant <code>SurfaceSemanticsPack</code> methods in <code>incan_semantics_stdlib</code> (or another pack crate):
+   parser routing, typecheck action, lowering action, runtime requirements, and call targets as needed.</li>
+<li>Ensure parser emits generic surface payload with <code>SurfaceFeatureKey</code> handoff (usually automatic via existing
+   parser helpers).</li>
+<li><strong>Typechecker / Lowering / Scanning</strong>: no changes needed — the registry returns the action descriptor and the
+   existing dispatch handles it.</li>
+<li>Handle the new surface node in the <strong>formatter</strong> (usually a one-liner).</li>
+<li>Add parser/typechecker/codegen tests and update snapshots.</li>
+</ol>
+<p>If the keyword needs a <em>new</em> compiler behavior pattern, add a variant to the relevant action descriptor enum in
+<code>incan_semantics_core</code> and a handler arm in the corresponding compiler module. This is deliberately rare — action
+descriptors represent compiler behavior patterns, not individual keywords.</p>
 <h3 id="backend-srcbackend">Backend (<code>src/backend/</code>)<a class="headerlink" href="#backend-srcbackend" title="Permanent link">&para;</a></h3>
 <table>
 <thead>

@@ -4188,7 +4188,7 @@ You can use the canonical path or an aliased import:</p>
     <span class="k">pass</span>
 </code></pre></div>
 <h3 id="soft-keyword-activation">Soft keyword activation<a class="headerlink" href="#soft-keyword-activation" title="Permanent link">&para;</a></h3>
-<p><code>async</code>/<code>await</code> are activated per file through stdlib imports.</p>
+<p><code>async</code>/<code>await</code> keywords are activated per file through stdlib imports.</p>
 <p>If a file uses async syntax, import <code>std.async</code> (or a submodule like <code>std.async.time</code>) in that same file.</p>
 <h3 id="stdlib-types-require-explicit-imports">Stdlib types require explicit imports<a class="headerlink" href="#stdlib-types-require-explicit-imports" title="Permanent link">&para;</a></h3>
 <p>Types like <code>App</code>, <code>Response</code>, <code>Html</code>, <code>Json</code>, and <code>Query</code> are no longer globally available — import them from <code>std.web</code>.
@@ -4204,6 +4204,10 @@ They are not intended as runtime function calls.</p>
 <li><strong>Compiler</strong>: Import-activated soft keywords — <code>async</code> and <code>await</code> are identifiers by default and become reserved only
   when <code>import std.async</code> (or <code>from std.async...</code>) is present. Forgetting the import produces a targeted diagnostic with
   a fix suggestion. Similarly, <code>std.testing</code> activates the <code>assert</code> statement syntax (<a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
+<li><strong>Compiler</strong>: Surface Semantics Engine — soft keywords (<code>assert</code>, <code>async</code>, <code>await</code>) and decorator semantics are routed
+  through a registry-driven dispatch system (<code>SurfaceSemanticsPack</code>). The parser emits generic <code>Surface</code> AST nodes keyed
+  by <code>SurfaceFeatureKey</code>; downstream stages dispatch on that key rather than per-keyword AST variants. Adding a new soft
+  keyword requires no parser, AST, or IR changes — only a keyword descriptor and a semantics-pack handler (<a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Compiler</strong>: Namespaced decorator resolution — decorators resolved by module path (e.g., <code>@std.web.route</code>) with
   alias support (<code>import std.web as web</code> enables <code>@web.route(...)</code>) (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>).</li>
 <li><strong>Compiler</strong>: <code>@rust.extern</code> marker for Rust-backed function stubs, replacing the internal <code>@std.builtin</code>
