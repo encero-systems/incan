@@ -1,7 +1,7 @@
 //! Check control-flow-ish expressions (`await`, `?`, `if`, and ranges).
 //!
-//! These helpers validate expressions that affect control flow or propagate errors, such as the
-//! `?` operator and `if` expressions (treated as statement-like blocks in the current checker).
+//! These helpers validate expressions that affect control flow or propagate errors, such as the `?` operator and
+//! `if` expressions (treated as statement-like blocks in the current checker).
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
@@ -12,6 +12,9 @@ use crate::frontend::typechecker::helpers::ensure_bool_condition;
 
 impl TypeChecker {
     /// Type-check an `await` expression.
+    ///
+    /// By the time we reach this method the registry has already confirmed that the `await` feature is active (via
+    /// `typecheck_surface_expr_action`), so no additional feature-gate check is needed here.
     pub(in crate::frontend::typechecker::check_expr) fn check_await(
         &mut self,
         inner: &Spanned<Expr>,

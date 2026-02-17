@@ -1,0 +1,232 @@
+//! Expression AST types: literals, operators, calls, match/if expressions, comprehensions, and surface expressions.
+
+use std::fmt;
+
+use incan_semantics_core::SurfaceFeatureKey;
+
+use super::{Ident, Param, Spanned, Statement};
+
+// ============================================================================
+// Expressions
+// ============================================================================
+
+/// Slice expression: represents `start:end` or `start:end:step`
+/// All components are optional, e.g., `[:5]`, `[2:]`, `[::2]`
+#[derive(Debug, Clone, PartialEq)]
+pub struct SliceExpr {
+    pub start: Option<Box<Spanned<Expr>>>,
+    pub end: Option<Box<Spanned<Expr>>>,
+    pub step: Option<Box<Spanned<Expr>>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expr {
+    /// Identifier
+    Ident(Ident),
+    /// Literal
+    Literal(Literal),
+    /// `self`
+    SelfExpr,
+    /// Binary operation: `a + b`
+    Binary(Box<Spanned<Expr>>, BinaryOp, Box<Spanned<Expr>>),
+    /// Unary operation: `-x`, `not x`
+    Unary(UnaryOp, Box<Spanned<Expr>>),
+    /// Function/method call: `f(a, b)`
+    Call(Box<Spanned<Expr>>, Vec<CallArg>),
+    /// Index: `x[i]`
+    Index(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
+    /// Slice: `x[start:end]` or `x[start:end:step]`
+    Slice(Box<Spanned<Expr>>, SliceExpr),
+    /// Field access: `x.field`
+    Field(Box<Spanned<Expr>>, Ident),
+    /// Method call: `x.method(args)`
+    MethodCall(Box<Spanned<Expr>>, Ident, Vec<CallArg>),
+    /// `expr?` (try/propagate)
+    Try(Box<Spanned<Expr>>),
+    /// Match expression
+    Match(Box<Spanned<Expr>>, Vec<Spanned<MatchArm>>),
+    /// If expression
+    If(Box<IfExpr>),
+    /// List comprehension: `[expr for x in iter if cond]`
+    ListComp(Box<ListComp>),
+    /// Dict comprehension: `{k: v for x in iter if cond}`
+    DictComp(Box<DictComp>),
+    /// Closure: `(x, y) => expr` (a lot like python's lambda)
+    Closure(Vec<Spanned<Param>>, Box<Spanned<Expr>>),
+    /// Tuple: `(a, b)`
+    Tuple(Vec<Spanned<Expr>>),
+    /// List literal: `[a, b, c]`
+    List(Vec<Spanned<Expr>>),
+    /// Dict literal: `{k: v, ...}`
+    Dict(Vec<(Spanned<Expr>, Spanned<Expr>)>),
+    /// Set literal: `{a, b, c}`
+    Set(Vec<Spanned<Expr>>),
+    /// Parenthesized expression
+    Paren(Box<Spanned<Expr>>),
+    /// Type constructor: `Some(x)`, `Ok(x)`, `User(id=1, name="Ada")`
+    Constructor(Ident, Vec<CallArg>),
+    /// f-string: `f"Hello {name}"`
+    FString(Vec<FStringPart>),
+    /// `yield expr` (for fixtures/generators)
+    Yield(Option<Box<Spanned<Expr>>>),
+    /// Range expression: `start..end` (exclusive) or `start..=end` (inclusive)
+    Range {
+        start: Box<Spanned<Expr>>,
+        end: Box<Spanned<Expr>>,
+        inclusive: bool,
+    },
+    /// Generic surface expression routed to semantics handlers.
+    Surface(Box<SurfaceExpr>),
+}
+
+/// Generic surface expression node emitted by parser handoff.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SurfaceExpr {
+    pub key: SurfaceFeatureKey,
+    pub payload: SurfaceExprPayload,
+}
+
+/// Surface expression payload variants.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SurfaceExprPayload {
+    /// Prefix unary keyword expression: `kw expr`.
+    PrefixUnary(Box<Spanned<Expr>>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FStringPart {
+    Literal(String),
+    Expr(Spanned<Expr>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Literal {
+    Int(i64),
+    Float(f64),
+    String(String),
+    Bytes(Vec<u8>),
+    Bool(bool),
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    FloorDiv, // // (Python-style floor division)
+    Mod,
+    Pow,
+    Eq,
+    NotEq,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq,
+    And,
+    Or,
+    In,
+    NotIn,
+    Is,
+}
+
+impl fmt::Display for BinaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BinaryOp::Add => write!(f, "+"),
+            BinaryOp::Sub => write!(f, "-"),
+            BinaryOp::Mul => write!(f, "*"),
+            BinaryOp::Div => write!(f, "/"),
+            BinaryOp::FloorDiv => write!(f, "//"),
+            BinaryOp::Mod => write!(f, "%"),
+            BinaryOp::Pow => write!(f, "**"),
+            BinaryOp::Eq => write!(f, "=="),
+            BinaryOp::NotEq => write!(f, "!="),
+            BinaryOp::Lt => write!(f, "<"),
+            BinaryOp::Gt => write!(f, ">"),
+            BinaryOp::LtEq => write!(f, "<="),
+            BinaryOp::GtEq => write!(f, ">="),
+            BinaryOp::And => write!(f, "and"),
+            BinaryOp::Or => write!(f, "or"),
+            BinaryOp::In => write!(f, "in"),
+            BinaryOp::NotIn => write!(f, "not in"),
+            BinaryOp::Is => write!(f, "is"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp {
+    Neg,
+    Not,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CallArg {
+    /// Positional argument
+    Positional(Spanned<Expr>),
+    /// Named argument: `name=value`
+    Named(Ident, Spanned<Expr>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PatternArg {
+    /// Positional pattern: `Type(x)`
+    Positional(Spanned<Pattern>),
+    /// Named pattern: `Type(name=pat)`
+    Named(Ident, Spanned<Pattern>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub pattern: Spanned<Pattern>,
+    pub guard: Option<Spanned<Expr>>, // `if condition` guard
+    pub body: MatchBody,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MatchBody {
+    /// `=> expr` (single expression)
+    Expr(Spanned<Expr>),
+    /// Block of statements
+    Block(Vec<Spanned<Statement>>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    /// Wildcard: `_`
+    Wildcard,
+    /// Binding: `x`
+    Binding(Ident),
+    /// Literal: `42`, `"hello"`, `true`
+    Literal(Literal),
+    /// Constructor: `Some(x)`, `Ok(value)`, `Type(name=pat)`
+    Constructor(Ident, Vec<PatternArg>),
+    /// Tuple: `(a, b)`
+    Tuple(Vec<Spanned<Pattern>>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IfExpr {
+    pub condition: Spanned<Expr>,
+    pub then_body: Vec<Spanned<Statement>>,
+    pub else_body: Option<Vec<Spanned<Statement>>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ListComp {
+    pub expr: Spanned<Expr>,
+    pub var: Ident,
+    pub iter: Spanned<Expr>,
+    pub filter: Option<Spanned<Expr>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DictComp {
+    pub key: Spanned<Expr>,
+    pub value: Spanned<Expr>,
+    pub var: Ident,
+    pub iter: Spanned<Expr>,
+    pub filter: Option<Spanned<Expr>>,
+}

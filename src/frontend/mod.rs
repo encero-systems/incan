@@ -16,6 +16,7 @@ pub use incan_syntax::{ast, diagnostics, lexer, parser};
 pub mod decorator_resolution;
 pub mod module;
 pub mod resolver;
+pub mod surface_semantics;
 pub mod symbols;
 pub mod testing_markers;
 pub mod typechecker;

@@ -1,6 +1,8 @@
 //! Statement formatting: assignments, control flow (if/elif/else, while, for), and compound statements.
 
 use crate::frontend::ast::*;
+use incan_core::lang::keywords;
+use incan_semantics_core::SurfaceFeatureKey;
 
 use super::Formatter;
 
@@ -56,15 +58,20 @@ impl Formatter {
             Statement::If(if_stmt) => self.format_if(if_stmt),
             Statement::While(while_stmt) => self.format_while(while_stmt),
             Statement::For(for_stmt) => self.format_for(for_stmt),
-            Statement::Assert(assert_stmt) => {
-                self.writer.write("assert ");
-                self.format_expr(&assert_stmt.condition.node);
-                if let Some(message) = &assert_stmt.message {
-                    self.writer.write(", ");
-                    self.format_expr(&message.node);
+            Statement::Surface(surface_stmt) => match (&surface_stmt.key, &surface_stmt.payload) {
+                (SurfaceFeatureKey::SoftKeyword(id), SurfaceStmtPayload::KeywordArgs(args)) => {
+                    self.writer.write(keywords::as_str(*id));
+                    self.writer.write(" ");
+                    for (idx, arg) in args.iter().enumerate() {
+                        if idx > 0 {
+                            self.writer.write(", ");
+                        }
+                        self.format_expr(&arg.node);
+                    }
+                    self.writer.newline();
                 }
-                self.writer.newline();
-            }
+                _ => self.writer.writeln("<surface_stmt>"),
+            },
             Statement::Pass => self.writer.writeln("pass"),
             Statement::Break => self.writer.writeln("break"),
             Statement::Continue => self.writer.writeln("continue"),

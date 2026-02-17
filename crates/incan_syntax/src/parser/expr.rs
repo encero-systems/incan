@@ -172,11 +172,18 @@ impl<'a> Parser<'a> {
             let expr = self.unary()?;
             let span = Span::new(start, expr.span.end);
             Ok(Spanned::new(Expr::Unary(UnaryOp::Neg, Box::new(expr)), span))
-        } else if self.match_keyword(KeywordId::Await) {
+        } else if let Some(id) = self.current_surface_keyword(KeywordSurfaceKind::PrefixExpression) {
+            self.advance();
             let start = self.tokens[self.pos - 1].span.start;
             let expr = self.unary()?;
             let span = Span::new(start, expr.span.end);
-            Ok(Spanned::new(Expr::Await(Box::new(expr)), span))
+            Ok(Spanned::new(
+                Expr::Surface(Box::new(SurfaceExpr {
+                    key: SurfaceFeatureKey::SoftKeyword(id),
+                    payload: SurfaceExprPayload::PrefixUnary(Box::new(expr)),
+                })),
+                span,
+            ))
         } else {
             self.postfix()
         }
@@ -302,13 +309,6 @@ impl<'a> Parser<'a> {
 
     fn primary(&mut self) -> Result<Spanned<Expr>, CompileError> {
         let start = self.current_span().start;
-
-        // Await expression
-        if self.match_keyword(KeywordId::Await) {
-            let inner = self.expression()?;
-            let end = inner.span.end;
-            return Ok(Spanned::new(Expr::Await(Box::new(inner)), Span::new(start, end)));
-        }
 
         // Yield expression (for fixtures/generators)
         if self.match_token(&TokenKind::Keyword(KeywordId::Yield)) {

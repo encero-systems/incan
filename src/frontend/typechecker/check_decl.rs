@@ -566,6 +566,9 @@ impl TypeChecker {
         self.symbols.enter_scope(ScopeKind::Function);
 
         self.validate_decorators(&func.decorators);
+        // TODO(#146): add async-specific validation here (await-outside-async, return-type constraints) via the
+        // surface semantics registry — not hardcoded KeywordId checks.
+
         // Define parameters
         for param in &func.params {
             let ty = self.resolve_type_checked(&param.node.ty);
@@ -605,6 +608,7 @@ impl TypeChecker {
         self.symbols.enter_scope(ScopeKind::Method {
             receiver: method.receiver,
         });
+        // TODO(#146): add async-specific validation for methods via the surface semantics registry.
 
         // Define self if present
         if let Some(receiver) = method.receiver {

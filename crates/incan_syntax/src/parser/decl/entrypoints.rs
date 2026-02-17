@@ -43,7 +43,7 @@ impl<'a> Parser<'a> {
             Declaration::Newtype(self.newtype_decl(visibility)?)
         } else if self.check_keyword(KeywordId::Enum) {
             Declaration::Enum(self.enum_decl(decorators, visibility)?)
-        } else if self.check_keyword(KeywordId::Def) || self.check_keyword(KeywordId::Async) {
+        } else if self.starts_surface_function_decl() {
             Declaration::Function(self.function_decl(decorators, visibility)?)
         } else {
             if let Some(err) = self.inactive_soft_keyword_error() {

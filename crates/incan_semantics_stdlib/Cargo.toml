@@ -1,0 +1,20 @@
+[package]
+name = "incan_semantics_stdlib"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Stdlib surface-semantics pack for the Incan compiler"
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[features]
+default = []
+std_testing = []
+std_async = []
+std_decorators = []
+
+[dependencies]
+incan_core = { path = "../incan_core" }
+incan_semantics_core = { path = "../incan_semantics_core" }

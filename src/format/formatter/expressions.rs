@@ -1,6 +1,8 @@
 //! Expression formatting: expressions, literals, operators, patterns, match arms, and types.
 
 use crate::frontend::ast::*;
+use incan_core::lang::keywords;
+use incan_semantics_core::SurfaceFeatureKey;
 
 use super::Formatter;
 
@@ -62,10 +64,14 @@ impl Formatter {
                 self.format_call_args(args);
                 self.writer.write(")");
             }
-            Expr::Await(inner) => {
-                self.writer.write("await ");
-                self.format_expr(&inner.node);
-            }
+            Expr::Surface(surface_expr) => match (&surface_expr.key, &surface_expr.payload) {
+                (SurfaceFeatureKey::SoftKeyword(id), SurfaceExprPayload::PrefixUnary(inner)) => {
+                    self.writer.write(keywords::as_str(*id));
+                    self.writer.write(" ");
+                    self.format_expr(&inner.node);
+                }
+                _ => self.writer.write("<surface_expr>"),
+            },
             Expr::Try(inner) => {
                 self.format_expr(&inner.node);
                 self.writer.write("?");

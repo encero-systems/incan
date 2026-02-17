@@ -88,6 +88,76 @@ impl<'a> Parser<'a> {
         Some(errors::soft_keyword_requires_import(name, namespace, self.current_span()))
     }
 
+    /// Return the currently-active soft keyword id, if the current token is an active soft keyword spelling.
+    fn current_active_soft_keyword(&self) -> Option<KeywordId> {
+        match &self.peek().kind {
+            TokenKind::Keyword(id) if incan_core::lang::keywords::is_soft(*id) && self.active_soft_keywords.contains(id) => {
+                Some(*id)
+            }
+            TokenKind::Ident(name) => {
+                let id = incan_core::lang::keywords::from_str(name)?;
+                if incan_core::lang::keywords::is_soft(id) && self.active_soft_keywords.contains(&id) {
+                    Some(id)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn keyword_supports_surface_usage(&self, id: KeywordId, usage: KeywordSurfaceKind) -> bool {
+        incan_core::lang::keywords::supports_surface_kind(id, usage)
+    }
+
+    fn current_surface_keyword(&self, usage: KeywordSurfaceKind) -> Option<KeywordId> {
+        let id = self.current_active_soft_keyword()?;
+        if self.keyword_supports_surface_usage(id, usage) {
+            Some(id)
+        } else {
+            None
+        }
+    }
+
+    fn match_surface_keyword(&mut self, usage: KeywordSurfaceKind) -> Option<KeywordId> {
+        let id = self.current_surface_keyword(usage)?;
+        self.advance();
+        Some(id)
+    }
+
+    /// Whether the current token stream starts a function/method declaration (`[soft_kw ...] def`).
+    fn starts_surface_function_decl(&self) -> bool {
+        if self.check_keyword(KeywordId::Def) {
+            return true;
+        }
+
+        let mut idx = self.pos;
+        let mut saw_modifier = false;
+        while let Some(token) = self.tokens.get(idx) {
+            let id = match &token.kind {
+                TokenKind::Keyword(id) => Some(*id),
+                TokenKind::Ident(name) => incan_core::lang::keywords::from_str(name),
+                _ => None,
+            };
+            let Some(id) = id else {
+                break;
+            };
+            if !self.active_soft_keywords.contains(&id)
+                || !self.keyword_supports_surface_usage(id, KeywordSurfaceKind::DeclarationModifier)
+            {
+                break;
+            }
+            saw_modifier = true;
+            idx += 1;
+        }
+
+        saw_modifier
+            && matches!(
+                self.tokens.get(idx).map(|t| &t.kind),
+                Some(TokenKind::Keyword(KeywordId::Def))
+            )
+    }
+
     /// Return `true` if the current token is the given punctuation.
     fn check_punct(&self, id: PunctuationId) -> bool {
         self.peek().kind.is_punctuation(id)
@@ -235,7 +305,7 @@ impl<'a> Parser<'a> {
             || self.check_keyword(KeywordId::None)
             || self.check_keyword(KeywordId::Not)
             || self.check_keyword(KeywordId::SelfKw)
-            || self.check_keyword(KeywordId::Await)
+            || self.current_surface_keyword(KeywordSurfaceKind::PrefixExpression).is_some()
             || self.check_keyword(KeywordId::Match)
             || self.check_keyword(KeywordId::If)
             || self.check_punct(PunctuationId::LParen)

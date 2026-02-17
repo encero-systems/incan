@@ -127,7 +127,7 @@ impl ImportTracker {
                     self.scan_expr(item);
                 }
             }
-            IrExprKind::Call { func, args } => {
+            IrExprKind::Call { func, args, .. } => {
                 self.scan_expr(func);
                 for arg in args {
                     self.scan_expr(&arg.expr);

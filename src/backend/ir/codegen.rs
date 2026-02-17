@@ -38,8 +38,7 @@ use incan_core::lang::derives::{self, DeriveId};
 use super::emit::RouteSpec;
 use super::scanners::{
     check_for_this_import as scan_check_for_this_import, collect_routes as scan_collect_routes,
-    collect_rust_crates as scan_collect_rust_crates, detect_async_usage, detect_list_helpers_usage, detect_serde_usage,
-    detect_web_usage,
+    collect_rust_crates as scan_collect_rust_crates, detect_list_helpers_usage, detect_serde_usage, detect_web_usage,
 };
 use super::{AstLowering, EmitError, EmitService, IrEmitter, LoweringErrors};
 
@@ -423,9 +422,10 @@ impl<'a> IrCodegen<'a> {
         }
     }
 
-    /// Scan a program for async usage
+    /// Scan a program for async usage via the semantics registry.
     pub fn scan_for_async(&mut self, program: &Program) {
-        if detect_async_usage(program) {
+        use crate::semantics_registry::semantics_registry;
+        if incan_syntax::scanners::runtime::needs_async_runtime(program, &semantics_registry()) {
             self.needs_tokio = true;
         }
     }

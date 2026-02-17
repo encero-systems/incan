@@ -85,7 +85,7 @@ pub fn collect_routes(program: &Program, module_path_segments: Option<&[String]>
                             path,
                             methods,
                             unknown_methods,
-                            func.is_async,
+                            func.is_async(),
                             module_path_segments.map(|segs| segs.to_vec()),
                         ));
                     }

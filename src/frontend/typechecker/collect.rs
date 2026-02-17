@@ -240,7 +240,7 @@ impl TypeChecker {
             kind: SymbolKind::Function(FunctionInfo {
                 params,
                 return_type,
-                is_async: func.is_async,
+                is_async: func.is_async(),
                 type_params: Vec::new(),
             }),
             span,

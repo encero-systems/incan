@@ -1,17 +1,18 @@
 //! Statement lowering for AST to IR conversion.
 //!
-//! This module handles lowering of all statement types: let bindings,
-//! assignments, control flow (if/while/for), and returns.
+//! This module handles lowering of all statement types: let bindings, assignments, control flow (if/while/for), and
+//! returns.
 
 use std::collections::HashMap;
 
-use super::super::expr::{IrExprKind, Pattern, VarAccess, VarRefKind};
+use super::super::expr::{IrCallArg, IrExprKind, Pattern, VarAccess, VarRefKind};
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::IrType;
 use super::super::{IrSpan, Mutability, TypedExpr};
 use super::AstLowering;
 use super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
+use incan_semantics_core::SurfaceStmtLoweringAction;
 
 impl AstLowering {
     /// Lower a list of statements to IR.
@@ -259,11 +260,7 @@ impl AstLowering {
                 }
             }
 
-            ast::Statement::Assert(a) => {
-                let condition = self.lower_expr_spanned(&a.condition)?;
-                let message = a.message.as_ref().map(|m| self.lower_expr_spanned(m)).transpose()?;
-                IrStmtKind::Assert { condition, message }
-            }
+            ast::Statement::Surface(surface_stmt) => self.lower_surface_statement(surface_stmt)?,
 
             ast::Statement::Pass => IrStmtKind::Expr(TypedExpr::new(IrExprKind::Unit, IrType::Unit)),
             ast::Statement::Break => IrStmtKind::Break(None),
@@ -399,11 +396,79 @@ impl AstLowering {
         Ok(IrStmt::new(kind))
     }
 
+    /// Lower a surface statement to IR via the semantics registry.
+    ///
+    /// The registry selects the lowering action; this method executes it.
+    fn lower_surface_statement(&mut self, stmt: &ast::SurfaceStmt) -> Result<IrStmtKind, LoweringError> {
+        use crate::semantics_registry::semantics_registry;
+
+        let action = semantics_registry()
+            .lower_surface_stmt_action(&stmt.key)
+            .ok_or_else(|| LoweringError {
+                message: format!("no lowering action registered for surface statement {:?}", stmt.key),
+                span: IrSpan::default(),
+            })?;
+
+        match (action, &stmt.payload) {
+            (SurfaceStmtLoweringAction::AssertCall, ast::SurfaceStmtPayload::KeywordArgs(args)) => {
+                self.lower_assert_call_surface_stmt(args)
+            }
+        }
+    }
+
+    /// Execute the `AssertCall` lowering action: decompose condition, look up call target, build IR.
+    fn lower_assert_call_surface_stmt(&mut self, args: &[Spanned<ast::Expr>]) -> Result<IrStmtKind, LoweringError> {
+        let Some(condition_expr) = args.first() else {
+            return Err(LoweringError {
+                message: "assert surface statement requires a condition".to_string(),
+                span: IrSpan::default(),
+            });
+        };
+        let condition = self.lower_expr_spanned(condition_expr)?;
+        let message = args.get(1).map(|m| self.lower_expr_spanned(m)).transpose()?;
+        let lowered = super::super::surface_semantics::desugar_assert_statement(condition, message);
+
+        let callee = TypedExpr::new(
+            IrExprKind::Var {
+                name: lowered.local_name.to_string(),
+                access: VarAccess::Copy,
+                ref_kind: VarRefKind::Value,
+            },
+            self.lookup_var(lowered.local_name),
+        );
+        let call_args = lowered
+            .args
+            .into_iter()
+            .map(|expr| IrCallArg { name: None, expr })
+            .collect();
+        let call = TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(callee),
+                args: call_args,
+                canonical_path: Some(lowered.canonical_path),
+            },
+            IrType::Unit,
+        );
+        Ok(IrStmtKind::Expr(call))
+    }
+
+    /// Bump the number of ident reads for a given name.
+    ///
+    /// # Parameters
+    ///
+    /// * `counts` - The hashmap to count the ident reads
+    /// * `name` - The name to bump the ident reads for
     fn bump_ident_read(counts: &mut HashMap<String, usize>, name: &str) {
         let entry = counts.entry(name.to_string()).or_insert(0);
         *entry += 1;
     }
 
+    /// Count the number of ident reads in a list of call arguments.
+    ///
+    /// # Parameters
+    ///
+    /// * `args` - The list of call arguments
+    /// * `counts` - The hashmap to count the ident reads
     fn count_call_args_ident_reads(&self, args: &[ast::CallArg], counts: &mut HashMap<String, usize>) {
         for arg in args {
             match arg {
@@ -413,6 +478,12 @@ impl AstLowering {
         }
     }
 
+    /// Count the number of ident reads in a statement.
+    ///
+    /// # Parameters
+    ///
+    /// * `stmt` - The statement to count the ident reads
+    /// * `counts` - The hashmap to count the ident reads
     fn count_statement_ident_reads(&self, stmt: &ast::Statement, counts: &mut HashMap<String, usize>) {
         match stmt {
             ast::Statement::Assignment(a) => self.count_expr_ident_reads(&a.value.node, counts),
@@ -459,12 +530,13 @@ impl AstLowering {
                     self.count_statement_ident_reads(&stmt.node, counts);
                 }
             }
-            ast::Statement::Assert(a) => {
-                self.count_expr_ident_reads(&a.condition.node, counts);
-                if let Some(message) = &a.message {
-                    self.count_expr_ident_reads(&message.node, counts);
+            ast::Statement::Surface(surface_stmt) => match &surface_stmt.payload {
+                ast::SurfaceStmtPayload::KeywordArgs(args) => {
+                    for arg in args {
+                        self.count_expr_ident_reads(&arg.node, counts);
+                    }
                 }
-            }
+            },
             ast::Statement::Expr(expr) => self.count_expr_ident_reads(&expr.node, counts),
             ast::Statement::Pass | ast::Statement::Break | ast::Statement::Continue => {}
             ast::Statement::CompoundAssignment(ca) => {
@@ -516,9 +588,12 @@ impl AstLowering {
                 self.count_expr_ident_reads(&receiver.node, counts);
                 self.count_call_args_ident_reads(args, counts);
             }
-            ast::Expr::Await(inner) | ast::Expr::Try(inner) | ast::Expr::Paren(inner) => {
+            ast::Expr::Try(inner) | ast::Expr::Paren(inner) => {
                 self.count_expr_ident_reads(&inner.node, counts);
             }
+            ast::Expr::Surface(surface_expr) => match &surface_expr.payload {
+                ast::SurfaceExprPayload::PrefixUnary(inner) => self.count_expr_ident_reads(&inner.node, counts),
+            },
             ast::Expr::Match(scrutinee, arms) => {
                 self.count_expr_ident_reads(&scrutinee.node, counts);
                 for arm in arms {

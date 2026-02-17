@@ -1,5 +1,5 @@
 //! Canonical stdlib module names.
-use super::keywords::KeywordId;
+use super::keywords;
 
 /// Root stdlib namespace (e.g. `import std::...`).
 pub const STDLIB_ROOT: &str = "std";
@@ -60,8 +60,6 @@ pub struct StdlibNamespace {
     pub feature: Option<&'static str>,
     /// Known submodules for validation and LSP completion. Empty for leaf modules.
     pub submodules: &'static [&'static str],
-    /// Soft keywords activated by importing this namespace.
-    pub soft_keywords: &'static [KeywordId],
 }
 
 /// Registry of top-level stdlib namespaces.
@@ -75,56 +73,48 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         impl_mode: StdlibImplMode::RuntimeFacade,
         feature: Some("web"),
         submodules: &["app", "routing", "request", "response", "prelude"],
-        soft_keywords: &[],
     },
     StdlibNamespace {
         name: "testing",
         impl_mode: StdlibImplMode::IncanSource,
         feature: None,
         submodules: &[],
-        soft_keywords: &[KeywordId::Assert],
     },
     StdlibNamespace {
         name: "async",
         impl_mode: StdlibImplMode::RuntimeFacade,
         feature: None,
         submodules: &["time", "task", "channel", "select", "sync", "prelude"],
-        soft_keywords: &[KeywordId::Async, KeywordId::Await],
     },
     StdlibNamespace {
         name: "serde",
         impl_mode: StdlibImplMode::RuntimeFacade,
         feature: Some("json"),
         submodules: &["json"],
-        soft_keywords: &[],
     },
     StdlibNamespace {
         name: "reflection",
         impl_mode: StdlibImplMode::RuntimeFacade,
         feature: None,
         submodules: &[],
-        soft_keywords: &[],
     },
     StdlibNamespace {
         name: "derives",
         impl_mode: StdlibImplMode::RuntimeFacade,
         feature: None,
         submodules: &["string", "comparison", "copying", "collection"],
-        soft_keywords: &[],
     },
     StdlibNamespace {
         name: "traits",
         impl_mode: StdlibImplMode::RuntimeFacade,
         feature: None,
         submodules: &["convert", "ops", "error", "indexing", "callable"],
-        soft_keywords: &[],
     },
     StdlibNamespace {
         name: "math",
         impl_mode: StdlibImplMode::RuntimeFacade,
         feature: None,
         submodules: &[],
-        soft_keywords: &[],
     },
 ];
 
@@ -144,12 +134,12 @@ pub fn stdlib_impl_mode_for(path: &[String]) -> Option<StdlibImplMode> {
 /// Resolve soft keywords activated by a stdlib import path.
 ///
 /// `path` is expected in canonical segmented form (e.g. `["std", "async", "time"]`).
-/// Returns an empty slice for non-stdlib paths or namespaces without soft keywords.
-pub fn soft_keywords_for_import(path: &[String]) -> &'static [KeywordId] {
+/// Returns an empty vector for non-stdlib paths or namespaces without soft keywords.
+pub fn soft_keywords_for_import(path: &[String]) -> Vec<keywords::KeywordId> {
     if path.len() < 2 || path[0] != STDLIB_ROOT {
-        return &[];
+        return Vec::new();
     }
-    find_namespace(&path[1]).map_or(&[], |ns| ns.soft_keywords)
+    keywords::soft_keywords_for_namespace(&path[1])
 }
 
 /// Check if a module path matches a known Incan stdlib module.

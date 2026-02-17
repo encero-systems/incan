@@ -4,8 +4,10 @@ use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::*;
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved};
+use incan_core::lang::keywords;
 use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::{NumericTy, result_numeric_type};
+use incan_semantics_core::SurfaceStmtTypeCheck;
 
 use super::TypeChecker;
 use crate::frontend::typechecker::helpers::{collection_type_id, ensure_bool_condition};
@@ -29,7 +31,7 @@ impl TypeChecker {
             Statement::If(if_stmt) => self.check_if_stmt(if_stmt),
             Statement::While(while_stmt) => self.check_while_stmt(while_stmt),
             Statement::For(for_stmt) => self.check_for_stmt(for_stmt),
-            Statement::Assert(assert_stmt) => self.check_assert_stmt(assert_stmt),
+            Statement::Surface(surface_stmt) => self.check_surface_stmt(surface_stmt, stmt.span),
             Statement::Expr(expr) => {
                 self.check_expr(expr);
             }
@@ -505,6 +507,33 @@ impl TypeChecker {
                     &msg_ty.to_string(),
                     message.span,
                 ));
+            }
+        }
+    }
+
+    /// Typecheck a surface statement via the semantics registry.
+    fn check_surface_stmt(&mut self, stmt: &SurfaceStmt, span: Span) {
+        use crate::semantics_registry::semantics_registry;
+
+        let Some(action) = semantics_registry().typecheck_surface_stmt_action(&stmt.key) else {
+            // No pack claimed this surface statement — report as unknown.
+            let label = match &stmt.key {
+                incan_semantics_core::SurfaceFeatureKey::SoftKeyword(id) => keywords::as_str(*id).to_string(),
+                incan_semantics_core::SurfaceFeatureKey::Decorator(_) => "decorator-surface-feature".to_string(),
+            };
+            self.errors.push(errors::unknown_symbol(&label, span));
+            return;
+        };
+
+        match (action, &stmt.payload) {
+            (SurfaceStmtTypeCheck::AssertCheck, SurfaceStmtPayload::KeywordArgs(args)) => {
+                if let Some(condition) = args.first() {
+                    let assert_stmt = AssertStmt {
+                        condition: condition.clone(),
+                        message: args.get(1).cloned(),
+                    };
+                    self.check_assert_stmt(&assert_stmt);
+                }
             }
         }
     }

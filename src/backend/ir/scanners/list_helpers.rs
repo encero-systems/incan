@@ -50,13 +50,11 @@ fn stmt_uses_list_helpers(stmt: &Statement) -> bool {
         Statement::IndexAssignment(assign) => expr_uses_list_helpers(&assign.value.node),
         Statement::TupleUnpack(unpack) => expr_uses_list_helpers(&unpack.value.node),
         Statement::TupleAssign(assign) => expr_uses_list_helpers(&assign.value.node),
-        Statement::Assert(assert_stmt) => {
-            expr_uses_list_helpers(&assert_stmt.condition.node)
-                || assert_stmt
-                    .message
-                    .as_ref()
-                    .is_some_and(|msg| expr_uses_list_helpers(&msg.node))
-        }
+        Statement::Surface(surface_stmt) => match &surface_stmt.payload {
+            crate::frontend::ast::SurfaceStmtPayload::KeywordArgs(args) => {
+                args.iter().any(|arg| expr_uses_list_helpers(&arg.node))
+            }
+        },
         Statement::Return(Some(expr)) => expr_uses_list_helpers(&expr.node),
         Statement::If(if_stmt) => {
             body_uses_list_helpers(&if_stmt.then_body)
@@ -80,6 +78,9 @@ fn expr_uses_list_helpers(expr: &Expr) -> bool {
         }
         Expr::Binary(left, _, right) => expr_uses_list_helpers(&left.node) || expr_uses_list_helpers(&right.node),
         Expr::Unary(_, expr) => expr_uses_list_helpers(&expr.node),
+        Expr::Surface(surface_expr) => match &surface_expr.payload {
+            crate::frontend::ast::SurfaceExprPayload::PrefixUnary(inner) => expr_uses_list_helpers(&inner.node),
+        },
         Expr::List(items) | Expr::Tuple(items) | Expr::Set(items) => {
             items.iter().any(|item| expr_uses_list_helpers(&item.node))
         }

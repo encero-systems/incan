@@ -90,7 +90,7 @@ udeps:
 .PHONY: pre-commit  ## quality - Fast pre-commit: fmt, lint, and test (no release build, no udeps)
 pre-commit: fmt lint
 	@echo "\033[1mRunning tests...\033[0m"
-	@cargo nextest run --all 2>/dev/null || cargo test --all --quiet
+	@cargo nextest run --all || cargo test --all
 	@echo "\033[32m✓ Pre-commit checks passed\033[0m"
 
 .PHONY: pre-commit-full  ## quality - Full CI check: fmt, lint, udeps, test, and release build

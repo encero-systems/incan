@@ -7,7 +7,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::super::conversions::{ConversionContext, determine_conversion};
-use super::super::expr::{BinOp, IrExprKind, Pattern, UnaryOp};
+use super::super::expr::{IrExprKind, Pattern};
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::IrType;
 use super::super::types::Mutability;
@@ -329,69 +329,6 @@ impl<'a> IrEmitter<'a> {
                         #(#inner)*
                     }
                 })
-            }
-            IrStmtKind::Assert { condition, message } => {
-                let emit_message = |default_msg: &str| -> Result<TokenStream, EmitError> {
-                    if let Some(msg_expr) = message {
-                        let emitted = self.emit_expr(msg_expr)?;
-                        let conversion =
-                            determine_conversion(msg_expr, Some(&IrType::String), ConversionContext::IncanFunctionArg);
-                        Ok(conversion.apply(emitted))
-                    } else {
-                        Ok(quote! { (#default_msg).to_string() })
-                    }
-                };
-
-                match &condition.kind {
-                    // `assert left == right` -> `std.testing.assert_eq(left, right, msg)`
-                    IrExprKind::BinOp {
-                        op: BinOp::Eq,
-                        left,
-                        right,
-                    } => {
-                        let left_tokens = self.emit_expr(left)?;
-                        let right_tokens = self.emit_expr(right)?;
-                        let msg_tokens = emit_message("assertion failed: left != right")?;
-                        Ok(quote! {
-                            crate::__incan_std::testing::assert_eq(#left_tokens, #right_tokens, #msg_tokens);
-                        })
-                    }
-
-                    // `assert left != right` -> `std.testing.assert_ne(left, right, msg)`
-                    IrExprKind::BinOp {
-                        op: BinOp::Ne,
-                        left,
-                        right,
-                    } => {
-                        let left_tokens = self.emit_expr(left)?;
-                        let right_tokens = self.emit_expr(right)?;
-                        let msg_tokens = emit_message("assertion failed: left == right")?;
-                        Ok(quote! {
-                            crate::__incan_std::testing::assert_ne(#left_tokens, #right_tokens, #msg_tokens);
-                        })
-                    }
-
-                    // `assert not cond` -> `std.testing.assert_false(cond, msg)`
-                    IrExprKind::UnaryOp {
-                        op: UnaryOp::Not,
-                        operand,
-                    } => {
-                        let cond_tokens = self.emit_expr(operand)?;
-                        let msg_tokens = emit_message("")?;
-                        Ok(quote! {
-                            crate::__incan_std::testing::assert_false(#cond_tokens, #msg_tokens);
-                        })
-                    }
-
-                    // Fallback: `assert cond` -> `std.testing.assert(cond, msg)`
-                    _ => {
-                        let cond_tokens = self.emit_expr(condition)?;
-                        let msg_tokens = emit_message("assertion failed")?;
-                        Ok(quote! {
-                            crate::__incan_std::testing::assert(#cond_tokens, #msg_tokens);
-                        })
-                    }
-                }
             }
             IrStmtKind::CompoundAssign { .. } => Err(EmitError::Unsupported(
                 "CompoundAssign should be lowered into a regular assignment before emission".to_string(),

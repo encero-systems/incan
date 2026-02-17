@@ -11,11 +11,12 @@
 //! 6. Invalid `rust.module()` path (syntax or unresolved crate) → error
 
 use crate::frontend::ast::*;
+use crate::frontend::decorator_resolution;
 use crate::frontend::diagnostics::errors;
+use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
 
 use super::TypeChecker;
-use super::collect::decorators::resolve_decorator_id;
-use incan_core::lang::decorators::DecoratorId;
+use super::collect::decorators::resolve_decorator_path;
 
 /// Regex-style validation of a Rust module path.
 ///
@@ -182,9 +183,18 @@ impl TypeChecker {
 
     /// Check if a decorator list contains `@rust.extern`.
     fn has_rust_extern_decorator(&self, decorators: &[Spanned<Decorator>]) -> bool {
-        decorators
-            .iter()
-            .any(|d| resolve_decorator_id(&d.node, &self.symbols) == Some(DecoratorId::RustExtern))
+        decorators.iter().any(|d| {
+            let mut resolved = resolve_decorator_path(&d.node, &self.symbols);
+            let mut feature = self.surface_context.decorator_feature_for_path(&resolved);
+            if feature.is_none() {
+                let alias_resolved = decorator_resolution::resolve_decorator_path(&d.node, &self.import_aliases);
+                if alias_resolved != resolved {
+                    resolved = alias_resolved;
+                    feature = self.surface_context.decorator_feature_for_path(&resolved);
+                }
+            }
+            feature == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::RustExtern))
+        })
     }
 }
 

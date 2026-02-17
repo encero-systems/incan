@@ -184,12 +184,6 @@ fn scan_stmt_for_bounds(
                 scan_stmt_for_bounds(s, type_params, params, bounds_map);
             }
         }
-        IrStmtKind::Assert { condition, message } => {
-            scan_expr_for_bounds(condition, type_params, params, bounds_map);
-            if let Some(message) = message {
-                scan_expr_for_bounds(message, type_params, params, bounds_map);
-            }
-        }
     }
 }
 
@@ -244,7 +238,7 @@ fn scan_expr_for_bounds(
         }
 
         // ---- Function call: recurse into args ----
-        IrExprKind::Call { func, args } => {
+        IrExprKind::Call { func, args, .. } => {
             scan_expr_for_bounds(func, type_params, params, bounds_map);
             for arg in args {
                 scan_expr_for_bounds(&arg.expr, type_params, params, bounds_map);
@@ -610,12 +604,6 @@ fn collect_calls_in_stmt(
                 recurse_stmt(s, result);
             }
         }
-        IrStmtKind::Assert { condition, message } => {
-            recurse_expr(condition, result);
-            if let Some(message) = message {
-                recurse_expr(message, result);
-            }
-        }
     }
 }
 
@@ -636,7 +624,7 @@ fn collect_calls_in_expr(
     };
 
     match &expr.kind {
-        IrExprKind::Call { func, args } => {
+        IrExprKind::Call { func, args, .. } => {
             // ---- Check if the called function is a generic function we know about ----
             if let IrExprKind::Var { name, .. } = &func.kind
                 && function_bounds.contains_key(name.as_str())

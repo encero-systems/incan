@@ -465,7 +465,7 @@ mod tests {
         let func = FunctionDecl {
             visibility: Visibility::Public,
             decorators: vec![],
-            is_async: false,
+            surface_modifiers: vec![],
             name: "calculate".to_string(),
             type_params: vec![],
             params: vec![],
@@ -546,7 +546,7 @@ mod tests {
         let func = FunctionDecl {
             visibility: Visibility::Public,
             decorators: vec![],
-            is_async: false,
+            surface_modifiers: vec![],
             name: "create_user".to_string(),
             type_params: vec![],
             params: vec![],

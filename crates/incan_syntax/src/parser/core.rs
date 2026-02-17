@@ -160,7 +160,7 @@ impl<'a> Parser<'a> {
         };
 
         for kw in incan_core::lang::stdlib::soft_keywords_for_import(&path.segments) {
-            self.active_soft_keywords.insert(*kw);
+            self.active_soft_keywords.insert(kw);
         }
     }
 }

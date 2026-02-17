@@ -1,0 +1,69 @@
+//! Import declaration lowering.
+
+use super::super::super::decl::IrDeclKind;
+use super::super::AstLowering;
+use crate::frontend::ast;
+
+impl AstLowering {
+    /// Lower an import declaration.
+    pub(in crate::backend::ir::lower) fn lower_import(&self, i: &ast::ImportDecl) -> IrDeclKind {
+        let (path, ast_items) = match &i.kind {
+            ast::ImportKind::Module(p) => (p.segments.clone(), vec![]),
+            ast::ImportKind::From { module, items } => (module.segments.clone(), items.clone()),
+            ast::ImportKind::RustCrate { crate_name, path, .. } => {
+                let mut segs = vec![crate_name.clone()];
+                segs.extend(path.clone());
+                (segs, vec![])
+            }
+            ast::ImportKind::RustFrom {
+                crate_name,
+                path,
+                items,
+                ..  // Ignore version and features
+            } => {
+                let mut segs = vec![crate_name.clone()];
+                segs.extend(path.clone());
+                (segs, items.clone())
+            }
+            ast::ImportKind::Python(s) => (vec![s.clone()], vec![]),
+        };
+
+        let qualifier = match &i.kind {
+            ast::ImportKind::Module(p) => {
+                if p.parent_levels > 0 {
+                    super::super::super::decl::IrImportQualifier::Super(p.parent_levels)
+                } else if p.is_absolute {
+                    super::super::super::decl::IrImportQualifier::Crate
+                } else {
+                    super::super::super::decl::IrImportQualifier::Auto
+                }
+            }
+            ast::ImportKind::From { module, .. } => {
+                if module.parent_levels > 0 {
+                    super::super::super::decl::IrImportQualifier::Super(module.parent_levels)
+                } else if module.is_absolute {
+                    super::super::super::decl::IrImportQualifier::Crate
+                } else {
+                    super::super::super::decl::IrImportQualifier::Auto
+                }
+            }
+            _ => super::super::super::decl::IrImportQualifier::None,
+        };
+
+        // Convert AST import items to IR import items
+        let ir_items: Vec<super::super::super::decl::IrImportItem> = ast_items
+            .iter()
+            .map(|item| super::super::super::decl::IrImportItem {
+                name: item.name.clone(),
+                alias: item.alias.clone(),
+            })
+            .collect();
+
+        IrDeclKind::Import {
+            qualifier,
+            path,
+            alias: i.alias.clone(),
+            items: ir_items,
+        }
+    }
+}

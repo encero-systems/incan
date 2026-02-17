@@ -12,10 +12,10 @@ use crate::frontend::symbols::{ResolvedType, SymbolKind, SymbolTable, TypeInfo};
 use crate::frontend::typechecker::TypeChecker;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives;
-use incan_core::lang::stdlib;
+use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
 
 /// Resolve a decorator path to a module path.
-pub(super) fn resolve_decorator_path(dec: &Decorator, symbols: &SymbolTable) -> Vec<String> {
+pub(in crate::frontend::typechecker) fn resolve_decorator_path(dec: &Decorator, symbols: &SymbolTable) -> Vec<String> {
     decorator_resolution::resolve_decorator_path(dec, symbols)
 }
 
@@ -63,21 +63,30 @@ impl TypeChecker {
     pub(crate) fn validate_decorators(&mut self, decorators: &[Spanned<Decorator>]) {
         for dec in decorators {
             let mut resolved = resolve_decorator_path(&dec.node, &self.symbols);
+            let mut feature = self.surface_context.decorator_feature_for_path(&resolved);
 
             // ---- Fallback: import-alias resolution ----
             // The SymbolTable-based `DecoratorPrefixLookup` only handles Module symbols, so decorators imported as
             // functions (e.g. `from std.testing import parametrize` then `@parametrize(...)`) won't resolve via the
             // symbol table. Fall back to the import aliases collected from the program's `import` / `from ... import`
             // declarations, which correctly map `parametrize` → `["std", "testing", "parametrize"]`.
-            if decorators::from_segments(&resolved).is_none() && !self.is_stdlib_decorator_function(&resolved) {
+            if feature.is_none() && decorators::from_segments(&resolved).is_none() {
                 let alias_resolved = decorator_resolution::resolve_decorator_path(&dec.node, &self.import_aliases);
                 if alias_resolved != resolved {
                     resolved = alias_resolved;
+                    feature = self.surface_context.decorator_feature_for_path(&resolved);
                 }
             }
 
             let Some(_id) = decorators::from_segments(&resolved) else {
-                if self.is_stdlib_decorator_function(&resolved) {
+                let is_stdlib_decorator_function = feature
+                    == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::StdlibDecoratorFunction))
+                    && resolved.len() >= 3
+                    && self
+                        .stdlib_cache
+                        .lookup_function(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
+                        .is_some();
+                if is_stdlib_decorator_function {
                     continue;
                 }
 
@@ -106,26 +115,6 @@ impl TypeChecker {
                 continue;
             };
         }
-    }
-
-    /// Allow stdlib functions to be used as decorators without requiring core-registry entries.
-    ///
-    /// This keeps user-facing stdlib surface (like `std.testing.fixture`) out of `incan_core`.
-    fn is_stdlib_decorator_function(&mut self, resolved: &[String]) -> bool {
-        if resolved.len() < 3 || !matches!(resolved.first(), Some(seg) if seg == stdlib::STDLIB_ROOT) {
-            return false;
-        }
-
-        let (module_path, function_name) = resolved.split_at(resolved.len() - 1);
-        let Some(function_name) = function_name.first() else {
-            return false;
-        };
-
-        if !stdlib::is_known_stdlib_module(module_path) {
-            return false;
-        }
-
-        self.stdlib_cache.lookup_function(module_path, function_name).is_some()
     }
 
     /// Validate @derive decorator arguments and report errors for unknown derives.

@@ -120,7 +120,11 @@ impl<'a> IrEmitter<'a> {
                 }
             }
 
-            IrExprKind::Call { func, args } => self.emit_call_expr(func, args),
+            IrExprKind::Call {
+                func,
+                args,
+                canonical_path,
+            } => self.emit_call_expr(func, args, canonical_path.as_deref()),
             IrExprKind::BuiltinCall { func, args } => self.emit_builtin_call(func, args),
             IrExprKind::MethodCall { receiver, method, args } => self.emit_method_call_expr(receiver, method, args),
             IrExprKind::KnownMethodCall { receiver, kind, args } => self.emit_known_method_call(receiver, kind, args),

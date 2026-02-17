@@ -494,6 +494,19 @@ fn test_std_testing_compiled_codegen() {
 }
 
 // ============================================================================
+/// Issue #145: Full surface-semantics path for `assert` statements.
+// ============================================================================
+///
+/// Exercises: parser `Statement::Surface` -> typechecker -> lowering to `IrExprKind::Call` with `canonical_path` ->
+/// emission via `emit_canonical_callee_path()`.
+#[test]
+fn test_assert_surface_codegen() {
+    let source = load_test_file("assert_surface");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("assert_surface", rust_code);
+}
+
+// ============================================================================
 // RFC 023: Trait Bound Inference and `with` Annotation
 // ============================================================================
 

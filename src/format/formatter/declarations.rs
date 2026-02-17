@@ -369,7 +369,7 @@ impl Formatter {
         }
 
         self.write_visibility(func.visibility);
-        if func.is_async {
+        if func.is_async() {
             self.writer.write("async ");
         }
         self.writer.write("def ");
@@ -399,7 +399,7 @@ impl Formatter {
             self.format_decorator(&dec.node);
         }
 
-        if method.is_async {
+        if method.is_async() {
             self.writer.write("async ");
         }
         self.writer.write("def ");

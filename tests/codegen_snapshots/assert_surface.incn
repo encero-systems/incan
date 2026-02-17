@@ -1,0 +1,8 @@
+from std.testing import assert_eq
+
+def check_basics() -> None:
+    assert 1 + 1 == 2
+    assert 3 != 4
+    assert not false
+    assert true
+    assert 10 > 5, "ten should be greater than five"

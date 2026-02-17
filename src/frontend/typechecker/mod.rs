@@ -58,9 +58,9 @@ mod tests;
 use std::collections::{HashMap, HashSet};
 
 use crate::frontend::ast::*;
-use crate::frontend::decorator_resolution;
 use crate::frontend::diagnostics::{CompileError, ErrorKind, errors};
 use crate::frontend::module::{ExportedSymbol, exported_symbols};
+use crate::frontend::surface_semantics::SurfaceContext;
 use crate::frontend::symbols::*;
 use helpers::{collection_type_id, stringlike_type_id};
 use incan_core::lang::surface::types as surface_types;
@@ -195,6 +195,8 @@ pub struct TypeChecker {
     /// [`DecoratorPrefixLookup`](crate::frontend::decorator_resolution::DecoratorPrefixLookup) cannot resolve a
     /// decorator path (e.g. functions imported via `from std.testing import parametrize`).
     pub(crate) import_aliases: HashMap<String, Vec<String>>,
+    /// Unified import-driven activation and strategy context for soft-keyword/decorator semantics.
+    pub(crate) surface_context: SurfaceContext,
 }
 
 impl TypeChecker {
@@ -218,6 +220,7 @@ impl TypeChecker {
             stdlib_cache: stdlib_loader::StdlibAstCache::new(),
             testing_marker_import_bindings: HashSet::new(),
             import_aliases: HashMap::new(),
+            surface_context: SurfaceContext::default(),
         }
     }
 
@@ -423,7 +426,8 @@ impl TypeChecker {
         self.warnings.clear();
         self.errors.clear();
         self.testing_marker_import_bindings.clear();
-        self.import_aliases = decorator_resolution::collect_import_aliases(program);
+        self.surface_context = SurfaceContext::from_program(program);
+        self.import_aliases = self.surface_context.import_aliases().clone();
 
         // First pass: collect type declarations
         for decl in &program.declarations {

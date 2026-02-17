@@ -17,9 +17,10 @@ use crate::ast::*;
 use crate::diagnostics::{CompileError, errors};
 use crate::lexer::{FStringPart as LexFStringPart, Token, TokenKind};
 use incan_core::lang::field_metadata::{self, FieldMetadataKey};
-use incan_core::lang::keywords::KeywordId;
+use incan_core::lang::keywords::{KeywordId, KeywordSurfaceKind};
 use incan_core::lang::operators::OperatorId;
 use incan_core::lang::punctuation::PunctuationId;
+use incan_semantics_core::SurfaceFeatureKey;
 
 // NOTE: This module is split across multiple files using `include!` to keep all parser
 // methods in the same Rust module (preserving privacy + call patterns) while avoiding

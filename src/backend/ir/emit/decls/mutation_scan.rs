@@ -116,12 +116,6 @@ impl<'a> IrEmitter<'a> {
                     self.scan_stmt_for_param_writes(s, param_names, mutated);
                 }
             }
-            IrStmtKind::Assert { condition, message } => {
-                self.scan_expr_for_param_writes(condition, param_names, mutated);
-                if let Some(message) = message {
-                    self.scan_expr_for_param_writes(message, param_names, mutated);
-                }
-            }
         }
     }
 
@@ -140,7 +134,7 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::UnaryOp { operand, .. } => {
                 self.scan_expr_for_param_writes(operand, param_names, mutated);
             }
-            IrExprKind::Call { func, args } => {
+            IrExprKind::Call { func, args, .. } => {
                 self.scan_expr_for_param_writes(func, param_names, mutated);
                 for arg in args {
                     self.scan_expr_for_param_writes(&arg.expr, param_names, mutated);

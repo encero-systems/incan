@@ -155,8 +155,8 @@ impl<'a> Parser<'a> {
                 return Err(err);
             }
 
-            // Check if it's a method (starts with def or async def)
-            if self.check_keyword(KeywordId::Def) || self.check_keyword(KeywordId::Async) {
+            // Check if it's a method (`def` or surface-modifier-prefixed `def`).
+            if self.starts_surface_function_decl() {
                 methods.push(self.method_decl(decorators)?);
             } else {
                 // It's a field

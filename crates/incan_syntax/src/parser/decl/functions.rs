@@ -6,7 +6,12 @@ impl<'a> Parser<'a> {
         decorators: Vec<Spanned<Decorator>>,
         visibility: Visibility,
     ) -> Result<FunctionDecl, CompileError> {
-        let is_async = self.match_keyword(KeywordId::Async);
+        let mut surface_modifiers = Vec::new();
+        while let Some(id) = self.match_surface_keyword(KeywordSurfaceKind::DeclarationModifier) {
+            surface_modifiers.push(SurfaceModifier {
+                key: SurfaceFeatureKey::SoftKeyword(id),
+            });
+        }
         self.expect_keyword(KeywordId::Def, "Expected 'def'")?;
         let name = self.identifier()?;
 
@@ -29,7 +34,7 @@ impl<'a> Parser<'a> {
         Ok(FunctionDecl {
             visibility,
             decorators,
-            is_async,
+            surface_modifiers,
             name,
             type_params,
             params,
@@ -41,7 +46,12 @@ impl<'a> Parser<'a> {
     /// Parse a method declaration.
     fn method_decl(&mut self, decorators: Vec<Spanned<Decorator>>) -> Result<Spanned<MethodDecl>, CompileError> {
         let start = self.current_span().start;
-        let is_async = self.match_keyword(KeywordId::Async);
+        let mut surface_modifiers = Vec::new();
+        while let Some(id) = self.match_surface_keyword(KeywordSurfaceKind::DeclarationModifier) {
+            surface_modifiers.push(SurfaceModifier {
+                key: SurfaceFeatureKey::SoftKeyword(id),
+            });
+        }
         self.expect_keyword(KeywordId::Def, "Expected 'def'")?;
         let name = self.identifier()?;
         self.expect_punct(PunctuationId::LParen, "Expected '(' after method name")?;
@@ -76,7 +86,7 @@ impl<'a> Parser<'a> {
         Ok(Spanned::new(
             MethodDecl {
                 decorators,
-                is_async,
+                surface_modifiers,
                 name,
                 receiver,
                 params,

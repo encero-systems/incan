@@ -4,8 +4,8 @@
 //!
 //! ## Enum-based dispatch
 //!
-//! Built-in functions and known methods are represented as enums (`BuiltinFn`, `MethodKind`) rather than
-//! stringly-typed names. This enables:
+//! Built-in functions and known methods are represented as enums (`BuiltinFn`, `MethodKind`) rather than stringly-typed
+//! names. This enables:
 //!
 //! - Compile-time exhaustiveness checking in the emitter
 //! - Easier refactoring (rename a variant → compiler shows all call sites)
@@ -109,10 +109,12 @@ pub enum IrExprKind {
     Call {
         func: Box<IrExpr>,
         args: Vec<IrCallArg>,
+        /// Canonical callee path when known (e.g. `["std","testing","assert_eq"]`).
+        /// This lets emission/type-directed policies resolve calls independent of local import style.
+        canonical_path: Option<Vec<String>>,
     },
 
     /// Built-in function call (enum-dispatched).
-    ///
     /// Used for known builtins like `print`, `len`, `range`, etc.
     /// The emitter matches on `BuiltinFn` instead of string names.
     BuiltinCall {
@@ -128,7 +130,6 @@ pub enum IrExprKind {
     },
 
     /// Known method call (enum-dispatched).
-    ///
     /// Used for known methods like `upper`, `append`, `contains`, etc.
     /// The emitter matches on `MethodKind` instead of string names.
     KnownMethodCall {
@@ -454,8 +455,8 @@ impl BuiltinFn {
 
 /// Known method kinds recognized by the Incan compiler.
 ///
-/// These are methods that have special lowering or emit behavior. The emitter
-/// matches on this enum instead of string names.
+/// These are methods that have special lowering or emit behavior. The emitter matches on this enum instead of string
+/// names.
 ///
 /// ## Adding a new method
 ///

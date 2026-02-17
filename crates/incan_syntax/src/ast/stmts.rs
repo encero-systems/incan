@@ -1,0 +1,163 @@
+//! Statement AST types: assignments, control flow, assertions, and surface statements.
+
+use incan_semantics_core::SurfaceFeatureKey;
+
+use super::{Expr, Ident, Span, Spanned, Type};
+
+// ============================================================================
+// Statements
+// ============================================================================
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Statement {
+    /// `x = value` or `let x = value` or `mut x = value`
+    Assignment(AssignmentStmt),
+    /// `obj.field = value` or `self.field = value`
+    FieldAssignment(FieldAssignmentStmt),
+    /// `obj[index] = value`
+    IndexAssignment(IndexAssignmentStmt),
+    /// `return expr`
+    Return(Option<Spanned<Expr>>),
+    /// `if expr: ... [else: ...]`
+    If(IfStmt),
+    /// `while expr: ...`
+    While(WhileStmt),
+    /// `for x in expr: ...`
+    For(ForStmt),
+    /// Expression statement
+    Expr(Spanned<Expr>),
+    /// `pass` or `...`
+    Pass,
+    /// `break` - exit the innermost loop
+    Break,
+    /// `continue` - skip to next iteration
+    Continue,
+    /// Compound assignment: `x += value`, `x -= value`, etc.
+    CompoundAssignment(CompoundAssignmentStmt),
+    /// Tuple unpacking: `a, b = expr` or `let a, b = expr`
+    TupleUnpack(TupleUnpackStmt),
+    /// Tuple assignment to lvalues: `arr[i], arr[j] = arr[j], arr[i]`
+    TupleAssign(TupleAssignStmt),
+    /// Chained assignment: `x = y = z = value`
+    ChainedAssignment(ChainedAssignmentStmt),
+    /// Generic surface statement routed to semantics handlers.
+    Surface(SurfaceStmt),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssignmentStmt {
+    pub binding: BindingKind,
+    pub name: Ident,
+    pub ty: Option<Spanned<Type>>,
+    pub value: Spanned<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldAssignmentStmt {
+    /// Span of the assignment target (e.g. `self.field`).
+    pub target_span: Span,
+    pub object: Spanned<Expr>,
+    pub field: Ident,
+    pub value: Spanned<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexAssignmentStmt {
+    pub object: Spanned<Expr>,
+    pub index: Spanned<Expr>,
+    pub value: Spanned<Expr>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindingKind {
+    /// Plain `x = value` - first assignment (becomes `let` in Rust)
+    Inferred,
+    /// `let x = value`
+    Let,
+    /// `mut x = value`
+    Mutable,
+    /// Reassignment to existing mutable variable (no `let` in Rust)
+    Reassign,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompoundAssignmentStmt {
+    pub name: Ident,
+    pub op: CompoundOp,
+    pub value: Spanned<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChainedAssignmentStmt {
+    pub binding: BindingKind,
+    pub targets: Vec<Ident>,
+    pub value: Spanned<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TupleUnpackStmt {
+    pub binding: BindingKind,
+    pub names: Vec<Ident>,
+    pub value: Spanned<Expr>,
+}
+
+/// Tuple assignment to lvalue expressions: `arr[i], arr[j] = arr[j], arr[i]`
+/// Used for swaps and multi-target assignments where targets are not new bindings.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TupleAssignStmt {
+    /// Left-hand side lvalue expressions (index, field, or identifier references)
+    pub targets: Vec<Spanned<Expr>>,
+    /// Right-hand side expression (typically a tuple)
+    pub value: Spanned<Expr>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompoundOp {
+    Add,      // +=
+    Sub,      // -=
+    Mul,      // *=
+    Div,      // /=
+    FloorDiv, // //=
+    Mod,      // %=
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IfStmt {
+    pub condition: Spanned<Expr>,
+    pub then_body: Vec<Spanned<Statement>>,
+    pub elif_branches: Vec<(Spanned<Expr>, Vec<Spanned<Statement>>)>,
+    pub else_body: Option<Vec<Spanned<Statement>>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WhileStmt {
+    pub condition: Spanned<Expr>,
+    pub body: Vec<Spanned<Statement>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForStmt {
+    pub var: Ident,
+    pub iter: Spanned<Expr>,
+    pub body: Vec<Spanned<Statement>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssertStmt {
+    pub condition: Spanned<Expr>,
+    pub message: Option<Spanned<Expr>>,
+}
+
+/// Generic surface statement node emitted by parser handoff.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SurfaceStmt {
+    pub key: SurfaceFeatureKey,
+    pub payload: SurfaceStmtPayload,
+}
+
+/// Surface statement payload variants.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SurfaceStmtPayload {
+    /// Generic keyword statement args: `kw expr[, expr]`.
+    KeywordArgs(Vec<Spanned<Expr>>),
+}

@@ -23,4 +23,5 @@ pub mod ast;
 pub mod diagnostics;
 pub mod lexer;
 pub mod parser;
+pub mod scanners;
 pub mod token_helpers;

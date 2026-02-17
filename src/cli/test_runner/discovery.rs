@@ -80,7 +80,7 @@ pub fn discover_tests_and_fixtures(file_path: &Path) -> Result<DiscoveryResult, 
                     autouse,
                     dependencies,
                     has_teardown,
-                    is_async: func.is_async,
+                    is_async: func.is_async(),
                 });
             } else if func.name.starts_with("test_") {
                 let markers = extract_test_markers(&func.decorators, &import_aliases, &semantics);

@@ -32,6 +32,7 @@ pub mod facade;
 pub mod lower;
 pub mod scanners;
 pub mod stmt;
+pub mod surface_semantics;
 pub mod trait_bound_inference;
 pub mod types;
 
@@ -43,8 +44,8 @@ pub use expr::{BuiltinFn, IrExpr, IrExprKind, MethodKind, TypedExpr};
 pub use facade::CodegenFacade;
 pub use lower::{AstLowering, LoweringError, LoweringErrors};
 pub use scanners::{
-    check_for_this_import, collect_routes, collect_rust_crates, detect_async_usage, detect_list_helpers_usage,
-    detect_serde_usage, detect_web_usage,
+    check_for_this_import, collect_routes, collect_rust_crates, detect_list_helpers_usage, detect_serde_usage,
+    detect_web_usage,
 };
 pub use stmt::{IrStmt, IrStmtKind};
 pub use types::{IrType, Mutability, Ownership};

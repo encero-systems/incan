@@ -96,10 +96,11 @@ fn stmt_has_call(stmt: &Spanned<Statement>, target: BuiltinFnId) -> bool {
         Statement::IndexAssignment(a) => expr_has_call(&a.value.node, target),
         Statement::TupleUnpack(u) => expr_has_call(&u.value.node, target),
         Statement::TupleAssign(a) => expr_has_call(&a.value.node, target),
-        Statement::Assert(a) => {
-            expr_has_call(&a.condition.node, target)
-                || a.message.as_ref().is_some_and(|m| expr_has_call(&m.node, target))
-        }
+        Statement::Surface(surface_stmt) => match &surface_stmt.payload {
+            crate::frontend::ast::SurfaceStmtPayload::KeywordArgs(args) => {
+                args.iter().any(|arg| expr_has_call(&arg.node, target))
+            }
+        },
         Statement::If(s) => {
             body_has_call_named(&s.then_body, target)
                 || s.else_body.as_ref().is_some_and(|b| body_has_call_named(b, target))
@@ -127,9 +128,10 @@ fn expr_has_call(expr: &Expr, target: BuiltinFnId) -> bool {
         Expr::Constructor(_, args) => args.iter().any(|a| call_arg_has(a, target)),
         Expr::Binary(l, _, r) | Expr::Index(l, r) => expr_has_call(&l.node, target) || expr_has_call(&r.node, target),
         Expr::Range { start, end, .. } => expr_has_call(&start.node, target) || expr_has_call(&end.node, target),
-        Expr::Unary(_, e) | Expr::Await(e) | Expr::Try(e) | Expr::Paren(e) | Expr::Field(e, _) => {
-            expr_has_call(&e.node, target)
-        }
+        Expr::Unary(_, e) | Expr::Try(e) | Expr::Paren(e) | Expr::Field(e, _) => expr_has_call(&e.node, target),
+        Expr::Surface(surface_expr) => match &surface_expr.payload {
+            crate::frontend::ast::SurfaceExprPayload::PrefixUnary(inner) => expr_has_call(&inner.node, target),
+        },
         Expr::Closure(_, body) => expr_has_call(&body.node, target),
         Expr::Yield(Some(e)) => expr_has_call(&e.node, target),
         Expr::List(items) | Expr::Tuple(items) | Expr::Set(items) => {

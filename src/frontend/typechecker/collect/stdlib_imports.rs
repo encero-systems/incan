@@ -13,6 +13,7 @@ use crate::frontend::testing_markers::load_testing_marker_semantics;
 use crate::frontend::typechecker::TypeChecker;
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::types as surface_types;
+use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
 
 use super::stdlib_async;
 
@@ -138,11 +139,21 @@ impl TypeChecker {
                         let ast_info = self.stdlib_cache.lookup_function(&module.segments, &item.name);
                         if let Some(info) = ast_info {
                             let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
-                            if is_std_testing
-                                && testing_semantics
+                            let mut resolved_marker_path = module.segments.clone();
+                            resolved_marker_path.push(item.name.clone());
+                            let module_feature = self.surface_context.decorator_feature_for_path(&resolved_marker_path);
+                            let marker_feature =
+                                testing_semantics
                                     .as_ref()
                                     .and_then(|semantics| semantics.marker_kind(&item.name))
-                                    .is_some()
+                                    .map(|_| SurfaceFeatureKey::Decorator(DecoratorFeature::TestingMarker));
+                            if is_std_testing
+                                && module_feature
+                                    == Some(SurfaceFeatureKey::Decorator(
+                                        DecoratorFeature::StdlibDecoratorFunction,
+                                    ))
+                                && marker_feature
+                                    == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::TestingMarker))
                             {
                                 self.testing_marker_import_bindings.insert(local_name.clone());
                             }

@@ -192,16 +192,17 @@ dependency-light crate suitable for reuse across compiler and tooling.
 
 ### Frontend (`src/frontend/`)
 
-|     Module     |                                       Purpose                                       |
-| -------------- | ----------------------------------------------------------------------------------- |
-| `lexer`        | Tokenization (re-exported from `crates/incan_syntax`)                               |
-| `parser`       | Parser (re-exported from `crates/incan_syntax`)                                     |
-| `ast`          | Untyped AST (`Spanned<T>` for diagnostics) (re-exported from `crates/incan_syntax`) |
-| `module.rs`    | Import path modeling and module metadata                                            |
-| `resolver.rs`  | Multi-file module resolution                                                        |
-| `typechecker/` | Two-pass collection + type checking                                                 |
-| `symbols.rs`   | Symbol table and scope management                                                   |
-| `diagnostics`  | Syntax/parse diagnostics (re-exported from `crates/incan_syntax`)                   |
+|         Module         |                                       Purpose                                       |
+| ---------------------- | ----------------------------------------------------------------------------------- |
+| `lexer`                | Tokenization (re-exported from `crates/incan_syntax`)                               |
+| `parser`               | Parser (re-exported from `crates/incan_syntax`)                                     |
+| `ast`                  | Untyped AST (`Spanned<T>` for diagnostics) (re-exported from `crates/incan_syntax`) |
+| `module.rs`            | Import path modeling and module metadata                                            |
+| `resolver.rs`          | Multi-file module resolution                                                        |
+| `surface_semantics.rs` | Import-driven activation + feature-key routing for soft keywords/decorators         |
+| `typechecker/`         | Two-pass collection + type checking                                                 |
+| `symbols.rs`           | Symbol table and scope management                                                   |
+| `diagnostics`          | Syntax/parse diagnostics (re-exported from `crates/incan_syntax`)                   |
 
 #### Typechecker submodules (`typechecker/`)
 
@@ -213,6 +214,101 @@ dependency-light crate suitable for reuse across compiler and tooling.
 | `check_decl.rs`             | Pass 2: validate declarations                         |
 | `check_stmt.rs`             | Statement checking (assign/return/control)            |
 | `check_expr/`               | Expression checking (calls/indexing/ops/match)        |
+
+## Surface Semantics Engine
+
+Surface syntax features (soft keywords, decorator semantics) are fully driven by a **semantics registry**. Every
+compiler stage — parser, typechecker, lowering, and scanning — consults the registry instead of hardcoding keyword
+identities. The design separates *feature knowledge* (which keyword does what) from *execution knowledge* (how the
+compiler performs each action):
+
+```mermaid
+flowchart LR
+    imports --> SC[SurfaceContext]
+    SC --> REG[semantics registry]
+
+    REG -- payload kinds --> P[Parser]
+    REG -- action descriptors --> TC[Typechecker]
+    REG -- action descriptors --> LO[Lowering / Scanning]
+
+    P --> AST[Surface AST]
+    TC --> TV[Type validation]
+    LO --> IR[IR / runtime detection]
+```
+
+### Action descriptors
+
+Packs don't execute compiler logic directly (that would create circular dependencies). Instead, they return small
+**action descriptor** enums that tell the compiler *what to do*:
+
+<!-- markdownlint-disable MD013 -->
+
+|            Enum             |   Variants (current)   |   Used by   |                     Purpose                     |
+| --------------------------- | ---------------------- | ----------- | ----------------------------------------------- |
+| `SurfaceStmtLoweringAction` | `AssertCall`           | Lowering    | Describes how to lower a surface statement      |
+| `SurfaceExprLoweringAction` | `Await`                | Lowering    | Describes how to lower a surface expression     |
+| `SurfaceStmtTypeCheck`      | `AssertCheck`          | Typechecker | Describes how to typecheck a surface statement  |
+| `SurfaceExprTypeCheck`      | `AwaitCheck`           | Typechecker | Describes how to typecheck a surface expression |
+| `RuntimeRequirement`        | `None`, `AsyncRuntime` | Scanning    | Runtime implied by a modifier or import         |
+
+<!-- markdownlint-enable MD013 -->
+
+Multiple keywords can share the same action descriptor (e.g., a hypothetical `ensure` keyword could reuse
+`AssertCall`). Adding a keyword that fits an existing action pattern is a **pack-only change** — zero touches to the
+main compiler crate.
+
+### Core pieces
+
+- `crates/incan_semantics_core`
+    - Defines stable `SurfaceFeatureKey` ids and payload categories used by parser/typechecker/lowering.
+    - Defines the action descriptor enums listed above.
+    - Defines `SurfaceSemanticsPack` trait (full compiler-stage coverage) and `SurfaceSemanticsRegistry`.
+- `crates/incan_semantics_stdlib`
+    - Implements stdlib semantics pack(s) for `assert`, `async`, `await`, and stdlib decorator families.
+    - Returns action descriptors for each compiler stage, gated by Cargo features (`std_testing`, `std_async`).
+    - Exposes canonical call targets (e.g., `std.testing.assert_*`) and runtime requirements.
+- `src/frontend/surface_semantics.rs`
+    - Builds `SurfaceContext` from imports and aliases.
+    - Provides import-driven soft-keyword activation and registry queries.
+- `src/frontend/typechecker/check_stmt.rs` / `check_expr/mod.rs`
+    - `check_surface_stmt()` and `check_surface_expr()` query the registry for typecheck action descriptors and
+      dispatch on the returned action — no `KeywordId` matching.
+- `src/backend/ir/lower/stmt.rs` / `lower/expr/mod.rs`
+    - `lower_surface_statement()` and the `Expr::Surface` arm of `lower_expr()` query the registry for lowering
+      action descriptors and dispatch on the returned action — no `KeywordId` matching.
+- `src/backend/ir/scanners/async_.rs`
+    - Detects async runtime requirement by asking the registry about each import and each surface modifier —
+      no hardcoded module names or keyword checks.
+- `src/backend/ir/surface_semantics.rs`
+    - Thin helpers for action execution (assert condition decomposition, await IR wrapping).
+- `src/backend/ir/expr.rs` (`IrExprKind::Call`)
+    - Carries optional canonical callee path metadata.
+    - Lets emission resolve stdlib calls independent of local import style.
+
+### Feature gating
+
+Feature gating is compile-time and crate-level:
+
+- `std_testing`, `std_async`, and `std_decorators` enable pack capabilities through Cargo features.
+- When disabled, the corresponding semantics handlers are not compiled into the `incan` artifact.
+
+### Adding a new soft keyword or decorator
+
+If the new keyword fits an existing action pattern, only steps 1–3 require code changes:
+
+1. Add activation metadata in `incan_core::lang` registry tables (`KeywordId` + `info_soft()`).
+2. Implement the relevant `SurfaceSemanticsPack` methods in `incan_semantics_stdlib` (or another pack crate):
+   parser routing, typecheck action, lowering action, runtime requirements, and call targets as needed.
+3. Ensure parser emits generic surface payload with `SurfaceFeatureKey` handoff (usually automatic via existing
+   parser helpers).
+4. **Typechecker / Lowering / Scanning**: no changes needed — the registry returns the action descriptor and the
+   existing dispatch handles it.
+5. Handle the new surface node in the **formatter** (usually a one-liner).
+6. Add parser/typechecker/codegen tests and update snapshots.
+
+If the keyword needs a *new* compiler behavior pattern, add a variant to the relevant action descriptor enum in
+`incan_semantics_core` and a handler arm in the corresponding compiler module. This is deliberately rare — action
+descriptors represent compiler behavior patterns, not individual keywords.
 
 ### Backend (`src/backend/`)
 

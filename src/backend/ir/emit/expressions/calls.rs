@@ -9,6 +9,7 @@ use super::super::super::conversions::{BinOpEmitKind, ConversionContext, determi
 use super::super::super::expr::{BinOp, IrCallArg, IrExprKind, TypedExpr, VarAccess, VarRefKind};
 use super::super::super::types::{IrType, Mutability};
 use super::super::{EmitError, IrEmitter};
+use incan_core::lang::stdlib::{self, StdlibImplMode};
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 
 impl<'a> IrEmitter<'a> {
@@ -81,7 +82,7 @@ impl<'a> IrEmitter<'a> {
                 Ok(Some(quote! { None::<#inner_ty> }))
             }
 
-            (IrExprKind::Call { func, args }, IrType::Result(ok_ty, err_ty)) => {
+            (IrExprKind::Call { func, args, .. }, IrType::Result(ok_ty, err_ty)) => {
                 let IrExprKind::Var { name, .. } = &func.kind else {
                     return Ok(None);
                 };
@@ -186,12 +187,15 @@ impl<'a> IrEmitter<'a> {
         &self,
         func: &TypedExpr,
         args: &[IrCallArg],
+        canonical_path: Option<&[String]>,
     ) -> Result<TokenStream, EmitError> {
-        let callee_name = if let IrExprKind::Var { name, .. } = &func.kind {
+        let canonical_name = canonical_path.and_then(|path| path.last()).map(|s| s.as_str());
+        let local_name = if let IrExprKind::Var { name, .. } = &func.kind {
             Some(name.as_str())
         } else {
             None
         };
+        let callee_name = local_name.or(canonical_name);
 
         // Handle builtin functions specially (legacy string-based path)
         if let Some(name) = callee_name {
@@ -201,14 +205,16 @@ impl<'a> IrEmitter<'a> {
             }
         }
 
-        let f = self.emit_expr(func)?;
+        let f = if let Some(path) = canonical_path {
+            self.emit_canonical_callee_path(path)?.unwrap_or(self.emit_expr(func)?)
+        } else {
+            self.emit_expr(func)?
+        };
 
         // Look up function signature
-        let function_sig = if let IrExprKind::Var { name, .. } = &func.kind {
-            self.function_registry.get(name)
-        } else {
-            None
-        };
+        let function_sig = local_name
+            .and_then(|name| self.function_registry.get(name))
+            .or_else(|| canonical_name.and_then(|name| self.function_registry.get(name)));
 
         // Order arguments only when keyword args are present (positional-only calls preserve previous behavior,
         // which is important for snapshots + for default-arg lowering work that happens elsewhere).
@@ -363,6 +369,42 @@ impl<'a> IrEmitter<'a> {
             .collect::<Result<_, _>>()?;
 
         Ok(quote! { #f(#(#arg_tokens),*) })
+    }
+
+    fn emit_canonical_callee_path(&self, canonical_path: &[String]) -> Result<Option<TokenStream>, EmitError> {
+        if canonical_path.len() < 3 || canonical_path.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
+            return Ok(None);
+        }
+
+        let module_path: Vec<String> = canonical_path[..canonical_path.len() - 1].to_vec();
+        let Some(function_name) = canonical_path.last() else {
+            return Ok(None);
+        };
+        let Some(mode) = stdlib::stdlib_impl_mode_for(&module_path) else {
+            return Ok(None);
+        };
+
+        let mut segments: Vec<TokenStream> = match mode {
+            StdlibImplMode::IncanSource => {
+                let ns = Self::rust_ident(stdlib::INCAN_STD_NAMESPACE);
+                vec![quote! { crate }, quote! { #ns }]
+            }
+            StdlibImplMode::RuntimeFacade => vec![quote! { incan_stdlib }],
+        };
+
+        for seg in module_path.iter().skip(1) {
+            let ident = Self::rust_ident(seg);
+            segments.push(quote! { #ident });
+        }
+        let fn_ident = Self::rust_ident(function_name);
+        segments.push(quote! { #fn_ident });
+
+        let mut iter = segments.into_iter();
+        let Some(first) = iter.next() else {
+            return Ok(None);
+        };
+        let path_tokens = iter.fold(first, |acc, seg| quote! { #acc :: #seg });
+        Ok(Some(path_tokens))
     }
 
     /// Emit a binary operation expression.

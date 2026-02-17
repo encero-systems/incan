@@ -145,11 +145,10 @@ fn render_keywords_section(out: &mut String) {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        let activation = k
-            .activation
+        let activation = keywords::activation(k.id)
             .map(|ns| format!("`std.{}`", ns))
             .unwrap_or_else(|| "-".to_string());
-        let reservation = if k.activation.is_some() { "Soft" } else { "Hard" };
+        let reservation = if keywords::is_soft(k.id) { "Soft" } else { "Hard" };
         let category = format!("{:?}", k.category);
         let usage = if k.usage.is_empty() {
             String::new()
@@ -196,8 +195,11 @@ fn render_soft_keywords_section(out: &mut String) {
     out.push_str("| Id | Canonical | Activated by | Category | Usage | RFC | Since | Stability |\n");
     out.push_str("|---|---|---|---|---|---|---|---|\n");
 
-    for k in keywords::KEYWORDS.iter().filter(|k| k.activation.is_some()) {
-        let Some(activation_ns) = k.activation else {
+    for k in keywords::KEYWORDS
+        .iter()
+        .filter(|k| keywords::activation(k.id).is_some())
+    {
+        let Some(activation_ns) = keywords::activation(k.id) else {
             continue;
         };
         let id = format!("{:?}", k.id);
@@ -241,10 +243,11 @@ fn render_stdlib_namespaces_section(out: &mut String) {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        let soft_keywords = if ns.soft_keywords.is_empty() {
+        let namespace_soft_keywords = keywords::soft_keywords_for_namespace(ns.name);
+        let soft_keywords = if namespace_soft_keywords.is_empty() {
             "-".to_string()
         } else {
-            ns.soft_keywords
+            namespace_soft_keywords
                 .iter()
                 .map(|id| format!("`{}`", keywords::as_str(*id)))
                 .collect::<Vec<_>>()

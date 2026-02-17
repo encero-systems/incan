@@ -421,7 +421,7 @@ pub struct SymbolInfo {
 fn format_function_signature(func: &crate::frontend::ast::FunctionDecl) -> String {
     let mut sig = String::new();
 
-    if func.is_async {
+    if func.is_async() {
         sig.push_str("async ");
     }
 

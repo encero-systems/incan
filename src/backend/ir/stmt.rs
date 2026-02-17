@@ -91,13 +91,6 @@ pub enum IrStmtKind {
 
     /// Block of statements
     Block(Vec<IrStmt>),
-
-    /// Assert statement (`assert cond` or `assert cond, msg`).
-    ///
-    /// Lowered from the `assert` soft keyword (activated by `import std.testing` or `from std.testing import ...`).
-    /// Emitted by desugaring to `std.testing` helper calls (`assert`, `assert_eq`, `assert_ne`, `assert_false`) so
-    /// statement syntax stays aligned with the Incan stdlib semantics regardless of import style.
-    Assert { condition: IrExpr, message: Option<IrExpr> },
 }
 
 /// Target of an assignment

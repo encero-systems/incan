@@ -28,7 +28,7 @@ pub(super) fn collect_methods(
                     receiver: m.node.receiver,
                     params,
                     return_type,
-                    is_async: m.node.is_async,
+                    is_async: m.node.is_async(),
                     has_body: m.node.body.is_some(),
                 },
             )

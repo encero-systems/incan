@@ -1,0 +1,13 @@
+[package]
+name = "incan_semantics_core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Shared surface-semantics contracts and registry interfaces for the Incan compiler"
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[dependencies]
+incan_core = { path = "../incan_core" }

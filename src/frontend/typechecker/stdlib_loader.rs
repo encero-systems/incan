@@ -174,7 +174,7 @@ fn function_decl_to_info(func: &ast::FunctionDecl) -> FunctionInfo {
     FunctionInfo {
         params,
         return_type,
-        is_async: func.is_async,
+        is_async: func.is_async(),
         type_params: tp_names,
     }
 }

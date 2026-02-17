@@ -31,8 +31,8 @@ impl<'a> Parser<'a> {
             self.while_stmt()?
         } else if self.check_keyword(KeywordId::For) {
             self.for_stmt()?
-        } else if self.check_keyword(KeywordId::Assert) {
-            self.assert_stmt()?
+        } else if let Some(surface_stmt) = self.try_surface_keyword_statement()? {
+            surface_stmt
         } else if self.check_keyword(KeywordId::Break) {
             self.advance();
             Statement::Break
@@ -79,8 +79,8 @@ impl<'a> Parser<'a> {
         } else if self.check_keyword(KeywordId::Pass) || self.check(&TokenKind::Punctuation(PunctuationId::Ellipsis)) {
             self.advance();
             Statement::Pass
-        } else if self.check_keyword(KeywordId::Assert) {
-            self.assert_stmt()?
+        } else if let Some(surface_stmt) = self.try_surface_keyword_statement()? {
+            surface_stmt
         } else {
             if let Some(err) = self.inactive_assert_statement_error() {
                 return Err(err);
@@ -92,6 +92,23 @@ impl<'a> Parser<'a> {
 
         let end = self.tokens[self.pos.saturating_sub(1)].span.end;
         Ok(Spanned::new(stmt, Span::new(start, end)))
+    }
+
+    /// Parse a generic soft-keyword statement payload (`kw expr[, expr]`) and hand off to semantics.
+    fn try_surface_keyword_statement(&mut self) -> Result<Option<Statement>, CompileError> {
+        let Some(id) = self.current_surface_keyword(KeywordSurfaceKind::StatementKeywordArgs) else {
+            return Ok(None);
+        };
+        self.advance();
+        let first = self.expression()?;
+        let mut args = vec![first];
+        if self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+            args.push(self.expression()?);
+        }
+        Ok(Some(Statement::Surface(SurfaceStmt {
+            key: SurfaceFeatureKey::SoftKeyword(id),
+            payload: SurfaceStmtPayload::KeywordArgs(args),
+        })))
     }
 
     fn return_stmt(&mut self) -> Result<Statement, CompileError> {
@@ -179,17 +196,6 @@ impl<'a> Parser<'a> {
         self.expect(&TokenKind::Dedent, "Expected dedent after for body")?;
 
         Ok(Statement::For(ForStmt { var, iter, body }))
-    }
-
-    fn assert_stmt(&mut self) -> Result<Statement, CompileError> {
-        self.expect_keyword(KeywordId::Assert, "Expected 'assert'")?;
-        let condition = self.expression()?;
-        let message = if self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
-            Some(self.expression()?)
-        } else {
-            None
-        };
-        Ok(Statement::Assert(AssertStmt { condition, message }))
     }
 
     /// Targeted soft-keyword diagnostic for `assert <expr>` when `std.testing` is not imported.

@@ -100,7 +100,7 @@ pub enum KeywordId {
 ///
 /// ## Notes
 /// - Categories are metadata only; they do not enforce parsing context.
-/// - Prefer [`KeywordInfo::category`] when presenting keyword tables in docs.
+/// - Prefer [`KeywordDescriptor::category`] when presenting keyword tables in docs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeywordCategory {
     ControlFlow,
@@ -125,6 +125,23 @@ pub enum KeywordUsage {
     ReceiverOnly,
 }
 
+/// Activation mode for a keyword.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeywordActivation {
+    /// Hard keyword: always reserved.
+    Hard,
+    /// Soft keyword: reserved only after importing the activating stdlib namespace.
+    Soft { namespace: &'static str },
+}
+
+/// Parser handoff shape for registry-driven surface keywords.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeywordSurfaceKind {
+    StatementKeywordArgs,
+    PrefixExpression,
+    DeclarationModifier,
+}
+
 /// Metadata for a keyword.
 ///
 /// ## Notes
@@ -132,14 +149,13 @@ pub enum KeywordUsage {
 /// - `aliases` are additional spellings accepted by the compiler.
 /// - `examples` are intended for generated documentation; keep them small and focused.
 #[derive(Debug, Clone, Copy)]
-pub struct KeywordInfo {
+pub struct KeywordDescriptor {
     pub id: KeywordId,
     pub canonical: &'static str,
     pub aliases: &'static [&'static str],
-    /// Optional stdlib namespace that activates this keyword as a soft keyword.
-    ///
-    /// `None` means this is a hard keyword that is always reserved.
-    pub activation: Option<&'static str>,
+    pub activation: KeywordActivation,
+    /// Parser handoff metadata for surface dispatch.
+    pub surface_kind: Option<KeywordSurfaceKind>,
     pub category: KeywordCategory,
     pub usage: &'static [KeywordUsage],
     pub introduced_in_rfc: RfcId,
@@ -152,7 +168,7 @@ pub struct KeywordInfo {
 ///
 /// ## Notes
 /// - The ordering is not semantically meaningful, but is grouped for readability.
-pub const KEYWORDS: &[KeywordInfo] = &[
+pub const KEYWORDS: &[KeywordDescriptor] = &[
     // Control flow / statements
     info(
         KeywordId::If,
@@ -262,18 +278,17 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         RFC::_000,
         Since(0, 1),
     ),
-    KeywordInfo {
-        id: KeywordId::Assert,
-        canonical: "assert",
-        aliases: &[],
-        activation: Some("testing"),
-        category: KeywordCategory::ControlFlow,
-        usage: &[KeywordUsage::Statement],
-        introduced_in_rfc: RFC::_018,
-        since: Since(0, 2),
-        stability: Stability::Draft,
-        examples: &[],
-    },
+    info_soft(
+        KeywordId::Assert,
+        "assert",
+        "testing",
+        KeywordSurfaceKind::StatementKeywordArgs,
+        KeywordCategory::ControlFlow,
+        &[KeywordUsage::Statement],
+        RFC::_018,
+        Since(0, 2),
+        Stability::Draft,
+    ),
     // Definitions / declarations
     info_with_aliases(
         KeywordId::Def,
@@ -284,30 +299,28 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         RFC::_000,
         Since(0, 1),
     ),
-    KeywordInfo {
-        id: KeywordId::Async,
-        canonical: "async",
-        aliases: &[],
-        activation: Some("async"),
-        category: KeywordCategory::Definition,
-        usage: &[KeywordUsage::Modifier],
-        introduced_in_rfc: RFC::_000,
-        since: Since(0, 1),
-        stability: Stability::Stable,
-        examples: &[],
-    },
-    KeywordInfo {
-        id: KeywordId::Await,
-        canonical: "await",
-        aliases: &[],
-        activation: Some("async"),
-        category: KeywordCategory::Definition,
-        usage: &[KeywordUsage::Expression],
-        introduced_in_rfc: RFC::_000,
-        since: Since(0, 1),
-        stability: Stability::Stable,
-        examples: &[],
-    },
+    info_soft(
+        KeywordId::Async,
+        "async",
+        "async",
+        KeywordSurfaceKind::DeclarationModifier,
+        KeywordCategory::Definition,
+        &[KeywordUsage::Modifier],
+        RFC::_000,
+        Since(0, 1),
+        Stability::Stable,
+    ),
+    info_soft(
+        KeywordId::Await,
+        "await",
+        "async",
+        KeywordSurfaceKind::PrefixExpression,
+        KeywordCategory::Definition,
+        &[KeywordUsage::Expression],
+        RFC::_000,
+        Since(0, 1),
+        Stability::Stable,
+    ),
     info(
         KeywordId::Class,
         "class",
@@ -610,18 +623,36 @@ pub fn usage(id: KeywordId) -> &'static [KeywordUsage] {
     info_for(id).usage
 }
 
+/// Parser surface handoff metadata for a keyword.
+pub fn surface_kind(id: KeywordId) -> Option<KeywordSurfaceKind> {
+    info_for(id).surface_kind
+}
+
+/// Whether a keyword supports the given surface handoff kind.
+pub fn supports_surface_kind(id: KeywordId, kind: KeywordSurfaceKind) -> bool {
+    surface_kind(id) == Some(kind)
+}
+
 /// Activation namespace for soft keywords.
 ///
 /// ## Returns
 /// - `Some("namespace")` if this keyword is import-activated.
 /// - `None` if this is a hard keyword.
 pub fn activation(id: KeywordId) -> Option<&'static str> {
+    match info_for(id).activation {
+        KeywordActivation::Hard => None,
+        KeywordActivation::Soft { namespace } => Some(namespace),
+    }
+}
+
+/// Full activation metadata for a keyword.
+pub fn activation_kind(id: KeywordId) -> KeywordActivation {
     info_for(id).activation
 }
 
 /// Whether a keyword is soft (import-activated).
 pub fn is_soft(id: KeywordId) -> bool {
-    activation(id).is_some()
+    matches!(activation_kind(id), KeywordActivation::Soft { .. })
 }
 
 /// Full metadata.
@@ -630,11 +661,11 @@ pub fn is_soft(id: KeywordId) -> bool {
 /// - `id`: Keyword identifier.
 ///
 /// ## Returns
-/// - The associated [`KeywordInfo`] from [`KEYWORDS`].
+/// - The associated [`KeywordDescriptor`] from [`KEYWORDS`].
 ///
 /// ## Panics
 /// - If the registry is missing an entry for `id` (this indicates a programming error).
-pub fn info_for(id: KeywordId) -> &'static KeywordInfo {
+pub fn info_for(id: KeywordId) -> &'static KeywordDescriptor {
     match KEYWORDS.iter().find(|k| k.id == id) {
         Some(info) => info,
         None => panic!("keyword info missing for {:?}", id),
@@ -672,6 +703,19 @@ pub fn from_str_hard_only(s: &str) -> Option<KeywordId> {
     from_str(s).filter(|id| !is_soft(*id))
 }
 
+/// Resolve soft keywords activated by a stdlib namespace.
+pub fn soft_keywords_for_namespace(namespace: &str) -> Vec<KeywordId> {
+    KEYWORDS
+        .iter()
+        .filter_map(|k| match k.activation {
+            KeywordActivation::Soft {
+                namespace: activation_namespace,
+            } if activation_namespace == namespace => Some(k.id),
+            _ => None,
+        })
+        .collect()
+}
+
 // --- helpers -----------------------------------------------------------------
 
 const fn info(
@@ -682,12 +726,13 @@ const fn info(
     usage: &'static [KeywordUsage],
     introduced_in_rfc: RfcId,
     since: Since,
-) -> KeywordInfo {
-    KeywordInfo {
+) -> KeywordDescriptor {
+    KeywordDescriptor {
         id,
         canonical,
         aliases,
-        activation: None,
+        activation: KeywordActivation::Hard,
+        surface_kind: None,
         category,
         usage,
         introduced_in_rfc,
@@ -705,6 +750,35 @@ const fn info_with_aliases(
     usage: &'static [KeywordUsage],
     introduced_in_rfc: RfcId,
     since: Since,
-) -> KeywordInfo {
+) -> KeywordDescriptor {
     info(id, canonical, aliases, category, usage, introduced_in_rfc, since)
+}
+
+#[allow(clippy::too_many_arguments)] // const table constructor mirrors `info()` — a struct param would be awkward here
+const fn info_soft(
+    id: KeywordId,
+    canonical: &'static str,
+    activation_namespace: &'static str,
+    surface_kind: KeywordSurfaceKind,
+    category: KeywordCategory,
+    usage: &'static [KeywordUsage],
+    introduced_in_rfc: RfcId,
+    since: Since,
+    stability: Stability,
+) -> KeywordDescriptor {
+    KeywordDescriptor {
+        id,
+        canonical,
+        aliases: &[],
+        activation: KeywordActivation::Soft {
+            namespace: activation_namespace,
+        },
+        surface_kind: Some(surface_kind),
+        category,
+        usage,
+        introduced_in_rfc,
+        since,
+        stability,
+        examples: &[],
+    }
 }

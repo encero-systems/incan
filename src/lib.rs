@@ -21,15 +21,18 @@
 //!   clear explanation.
 
 pub mod backend;
+#[cfg(feature = "cli")]
 pub mod cli;
 pub mod dependency_resolver;
 pub mod format;
 pub mod frontend;
 pub mod lockfile;
+#[cfg(feature = "lsp")]
 pub mod lsp;
 pub mod manifest;
 pub mod numeric;
 pub mod numeric_adapters;
+pub(crate) mod semantics_registry;
 pub mod version;
 
 pub use frontend::ast;

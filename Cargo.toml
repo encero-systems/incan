@@ -1,10 +1,18 @@
 [workspace]
-members = [".", "crates/incan_derive", "crates/incan_stdlib", "crates/incan_core", "crates/incan_syntax"]
+members = [
+    ".",
+    "crates/incan_derive",
+    "crates/incan_stdlib",
+    "crates/incan_core",
+    "crates/incan_syntax",
+    "crates/incan_semantics_core",
+    "crates/incan_semantics_stdlib",
+]
 exclude = ["target/incan"]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0-dev.1"
+version = "0.2.0-dev.2"
 description = "The Incan programming language compiler"
 edition = "2024"
 rust-version = "1.88"
@@ -30,21 +38,32 @@ authors.workspace = true
 description.workspace = true
 readme.workspace = true
 
+[features]
+default = ["cli", "std_testing", "std_async", "std_decorators"]
+cli = ["dep:clap", "dep:tracing-subscriber"]
+lsp = ["dep:tower-lsp", "dep:tokio"]
+std_testing = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_testing"]
+std_async = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_async"]
+std_decorators = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_decorators"]
+
 [dependencies]
 # Shared language/semantic helpers (canonical vocab)
 incan_core = { path = "crates/incan_core" }
 # Shared syntax frontend (lexer, parser, AST, diagnostics)
 incan_syntax = { path = "crates/incan_syntax" }
+# Shared semantics backend (type checker, semantic analysis)
+incan_semantics_core = { path = "crates/incan_semantics_core" }
+incan_semantics_stdlib = { path = "crates/incan_semantics_stdlib", optional = true }
 
 # LSP server implementation
-tower-lsp = "0.17"  # TODO: update to latest version
+tower-lsp = { version = "0.17", optional = true }  # TODO: update to latest version
 # Async runtime (for LSP and generated async code)
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["full"], optional = true }
 # JSON serialization (for LSP protocol)
 serde_json = "1.0"
 
 # CLI parsing with typed subcommands
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.4", features = ["derive"], optional = true }
 # Composable error types
 thiserror = "2.0"
 # Rich error diagnostics with source context
@@ -57,7 +76,7 @@ proc-macro2 = "1.0"
 # Code formatting for generated Rust
 prettyplease = "0.2"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 # TOML parsing for incan.toml manifests (RFC 013/023)
 toml = "0.9"
@@ -81,10 +100,12 @@ tempfile = "3"
 [[bin]]
 name = "incan"
 path = "src/main.rs"
+required-features = ["cli"]
 
 [[bin]]
 name = "incan-lsp"
 path = "src/bin/lsp.rs"
+required-features = ["lsp"]
 
 [lib]
 name = "incan"

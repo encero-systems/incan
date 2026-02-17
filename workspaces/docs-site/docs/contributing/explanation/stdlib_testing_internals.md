@@ -27,6 +27,15 @@ This page documents the internal integration model, runtime boundary design, and
 - **Marker metadata**: each marker extern carries `metadata={...}` on its `@rust.extern` annotation. `incan test` reads
   this metadata from the parsed stdlib source (via `src/frontend/testing_markers.rs`) as the single source of truth for
   marker semantics.
+- **Surface semantics routing**:
+    - Pack contracts live in `crates/incan_semantics_core` (`SurfaceFeatureKey`, pack trait, registry).
+    - Stdlib handlers live in `crates/incan_semantics_stdlib` and are feature-gated by `std_testing`.
+    - Frontend/back adapters call into the registry (`src/frontend/surface_semantics.rs` and
+      `src/backend/ir/surface_semantics.rs`).
+    - `assert` statement syntax is lowered through registry-provided canonical call target metadata.
+    - Lowered assert calls carry canonical callee paths (`std.testing.assert_*`) in IR.
+    - Emission uses canonical paths for stdlib dispatch, so `import std.testing` and
+      `from std.testing import assert_*` behave consistently.
 
 This design keeps user-facing assertion behavior in one stdlib Incan file while limiting Rust host code to unavoidable
 panic/failure primitives.

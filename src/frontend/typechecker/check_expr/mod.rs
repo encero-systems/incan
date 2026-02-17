@@ -8,7 +8,10 @@
 //! - [`super::TypeChecker`]: the main type checker entrypoint.
 
 use crate::frontend::ast::*;
+use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::{FieldInfo, ResolvedType};
+use incan_core::lang::keywords;
+use incan_semantics_core::SurfaceExprTypeCheck;
 use std::collections::HashMap;
 
 use super::TypeChecker;
@@ -69,7 +72,7 @@ impl TypeChecker {
             Expr::Slice(base, slice) => self.check_slice(base, slice, expr.span),
             Expr::Field(base, field) => self.check_field(base, field, expr.span),
             Expr::MethodCall(base, method, args) => self.check_method_call(base, method, args, expr.span),
-            Expr::Await(inner) => self.check_await(inner, expr.span),
+            Expr::Surface(surface_expr) => self.check_surface_expr(surface_expr, expr.span),
             Expr::Try(inner) => self.check_try(inner, expr.span),
             Expr::Match(subject, arms) => self.check_match(subject, arms, expr.span),
             Expr::If(if_expr) => self.check_if_expr(if_expr, expr.span),
@@ -108,5 +111,24 @@ impl TypeChecker {
         // Record for downstream stages (lowering/codegen).
         self.record_expr_type(expr.span, ty.clone());
         ty
+    }
+
+    /// Typecheck a surface expression via the semantics registry.
+    fn check_surface_expr(&mut self, expr: &SurfaceExpr, span: Span) -> ResolvedType {
+        use crate::semantics_registry::semantics_registry;
+
+        let Some(action) = semantics_registry().typecheck_surface_expr_action(&expr.key) else {
+            // No pack claimed this surface expression — report as unknown.
+            let label = match &expr.key {
+                incan_semantics_core::SurfaceFeatureKey::SoftKeyword(id) => keywords::as_str(*id).to_string(),
+                incan_semantics_core::SurfaceFeatureKey::Decorator(_) => "decorator-surface-feature".to_string(),
+            };
+            self.errors.push(errors::unknown_symbol(&label, span));
+            return ResolvedType::Unknown;
+        };
+
+        match (action, &expr.payload) {
+            (SurfaceExprTypeCheck::AwaitCheck, SurfaceExprPayload::PrefixUnary(inner)) => self.check_await(inner, span),
+        }
     }
 }

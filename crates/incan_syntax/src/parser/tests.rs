@@ -1,8 +1,8 @@
 #[cfg(test)]
 /// Parser unit tests.
 ///
-/// These tests focus on correctness of specific syntactic forms and on the parser’s
-/// error recovery behavior (avoiding cascaded errors).
+/// These tests focus on correctness of specific syntactic forms and on the parser’s error recovery behavior
+/// (avoiding cascaded errors).
 mod tests {
     use super::*;
     use crate::lexer;
@@ -338,7 +338,7 @@ async def foo() -> None:
             Declaration::Function(f) => f,
             _ => panic!("Expected function declaration"),
         };
-        assert!(func.is_async);
+        assert!(func.is_async());
         Ok(())
     }
 
@@ -357,7 +357,15 @@ async def foo() -> None:
         };
         assert!(matches!(
             &func.body[0].node,
-            Statement::Expr(expr) if matches!(expr.node, Expr::Await(_))
+            Statement::Expr(expr)
+                if matches!(
+                    expr.node,
+                    Expr::Surface(ref surface)
+                        if matches!(
+                            surface.payload,
+                            SurfaceExprPayload::PrefixUnary(_)
+                        )
+                )
         ));
         Ok(())
     }
@@ -401,7 +409,14 @@ def f(x: int) -> None:
             Declaration::Function(f) => f,
             _ => panic!("Expected function declaration"),
         };
-        assert!(matches!(&func.body[0].node, Statement::Assert(_)));
+        assert!(matches!(
+            &func.body[0].node,
+            Statement::Surface(surface)
+                if matches!(
+                    surface.payload,
+                    SurfaceStmtPayload::KeywordArgs(_)
+                )
+        ));
         Ok(())
     }
 
