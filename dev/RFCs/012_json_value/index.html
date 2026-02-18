@@ -4339,7 +4339,7 @@
 <li>Related: <ul>
 <li><a href="/dev/RFCs/005_rust_interop">RFC 005</a> (Rust interop)</li>
 <li><a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a> (compilable stdlib &amp; rust.module binding)</li>
-<li>[RFC 025] (multi-instantiation trait dispatch)</li>
+<li><a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a> (multi-instantiation trait dispatch)</li>
 </ul>
 </li>
 </ul>
@@ -4594,7 +4594,7 @@ underlying Rust type can use <code>rust::</code> interop:</p>
 <code>JsonValue.Null</code>. This enables ergonomic chaining without intermediate unwrapping.</p>
 <p>The intended design is trait-based: <code>JsonValue</code> adopts both <code>Index[str, JsonValue]</code> and <code>Index[int, JsonValue]</code>, with
 two <code>__getitem__</code> implementations disambiguated by argument type. This requires multi-instantiation trait dispatch,
-proposed in [RFC 025]. Until RFC 025 is implemented, indexing may use compiler-level support as an interim fallback
+proposed in <a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a>. Until RFC 025 is implemented, indexing may use compiler-level support as an interim fallback
 (the same way <code>List</code> and <code>Dict</code> indexing works today).</p>
 <h4 id="numeric-handling">Numeric handling<a class="headerlink" href="#numeric-handling" title="Permanent link">&para;</a></h4>
 <p>JSON has a single number type. Incan has <code>int</code> and <code>float</code>. The mapping:</p>
@@ -4706,7 +4706,7 @@ types (null vs missing, int vs float, etc.).</p>
 </ul>
 <h3 id="phase-3-indexing-support">Phase 3: Indexing support<a class="headerlink" href="#phase-3-indexing-support" title="Permanent link">&para;</a></h3>
 <ul>
-<li>[ ] Implement <code>Index[str, JsonValue]</code> and <code>Index[int, JsonValue]</code> via <code>__getitem__</code> (depends on [RFC 025])</li>
+<li>[ ] Implement <code>Index[str, JsonValue]</code> and <code>Index[int, JsonValue]</code> via <code>__getitem__</code> (depends on <a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a>)</li>
 <li>[ ] Alternatively, add compiler-level subscript support as an interim fallback</li>
 <li>[ ] Verify chained access works: <code>value["users"][0]["name"].as_str()</code></li>
 <li>[ ] Add codegen snapshot tests for indexing and chained access</li>
@@ -4764,7 +4764,7 @@ types (null vs missing, int vs float, etc.).</p>
    <code>JsonValue.parse()</code> and <code>value.to_json()</code>.</p>
 </li>
 <li>
-<p><strong>Trait-based indexing</strong>: <code>JsonValue</code> indexing depends on multi-instantiation trait dispatch ([RFC 025]) to adopt
+<p><strong>Trait-based indexing</strong>: <code>JsonValue</code> indexing depends on multi-instantiation trait dispatch (<a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a>) to adopt
    both <code>Index[str, JsonValue]</code> and <code>Index[int, JsonValue]</code>. Until RFC 025 is implemented, the compiler may use
    built-in indexing support as a fallback.</p>
 </li>
@@ -4772,7 +4772,7 @@ types (null vs missing, int vs float, etc.).</p>
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a> — Extensible Derive Protocol</li>
-<li>[RFC 025] — Multi-Instantiation Trait Dispatch</li>
+<li><a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a> — Multi-Instantiation Trait Dispatch</li>
 <li>Rust <code>serde_json</code> crate — <code>serde_json::Value</code></li>
 <li>Python <code>json</code> module — <code>json.loads()</code>, <code>json.dumps()</code></li>
 </ul>

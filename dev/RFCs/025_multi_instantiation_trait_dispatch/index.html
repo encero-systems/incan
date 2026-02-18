@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 024: Extensible Derive Protocol - Incan Documentation</title>
+        <title>RFC 025: Multi-Instantiation Trait Dispatch - Incan Documentation</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-024-extensible-derive-protocol" class="md-skip">
+        <a href="#rfc-025-multi-instantiation-trait-dispatch" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 024: Extensible Derive Protocol
+              RFC 025: Multi-Instantiation Trait Dispatch
             
           </span>
         </div>
@@ -3881,36 +3881,18 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#the-derive-system-is-closed" class="md-nav__link">
+  <a href="#one-trait-multiple-key-types" class="md-nav__link">
     <span class="md-ellipsis">
-      The derive system is closed
+      One trait, multiple key types
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#serialization-isnt-just-json" class="md-nav__link">
+  <a href="#rust-handles-this-naturally" class="md-nav__link">
     <span class="md-ellipsis">
-      Serialization isn't just JSON
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#users-need-custom-derives" class="md-nav__link">
-    <span class="md-ellipsis">
-      Users need custom derives
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#injected-methods-need-trait-bounds" class="md-nav__link">
-    <span class="md-ellipsis">
-      Injected methods need trait bounds
+      Rust handles this naturally
     </span>
   </a>
   
@@ -3941,63 +3923,36 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#deriving-a-format" class="md-nav__link">
+  <a href="#adopting-a-trait-multiple-times" class="md-nav__link">
     <span class="md-ellipsis">
-      Deriving a format
+      Adopting a trait multiple times
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#deriving-multiple-formats" class="md-nav__link">
+  <a href="#call-site-resolution" class="md-nav__link">
     <span class="md-ellipsis">
-      Deriving multiple formats
+      Call-site resolution
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#partial-derives-serialize-only-deserialize-only" class="md-nav__link">
+  <a href="#works-for-any-generic-trait" class="md-nav__link">
     <span class="md-ellipsis">
-      Partial derives (serialize-only, deserialize-only)
+      Works for any generic trait
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#schema-generation-pure-incan-no-rust-needed" class="md-nav__link">
+  <a href="#multi-format-serialization-the-foundational-use-case" class="md-nav__link">
     <span class="md-ellipsis">
-      Schema generation (pure Incan, no Rust needed)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#behavioral-derives" class="md-nav__link">
-    <span class="md-ellipsis">
-      Behavioral derives
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#using-trait-bounds-in-generic-functions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Using trait bounds in generic functions
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#writing-a-custom-derivable-module" class="md-nav__link">
-    <span class="md-ellipsis">
-      Writing a custom derivable module
+      Multi-format serialization (the foundational use case)
     </span>
   </a>
   
@@ -4019,54 +3974,36 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#the-__derives__-module-attribute" class="md-nav__link">
+  <a href="#trait-adoption" class="md-nav__link">
     <span class="md-ellipsis">
-      The __derives__ module attribute
+      Trait adoption
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#trait-adoption-via-derive" class="md-nav__link">
+  <a href="#method-disambiguation" class="md-nav__link">
     <span class="md-ellipsis">
-      Trait adoption via derive
+      Method disambiguation
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#rust-derive-binding-via-rustderive" class="md-nav__link">
+  <a href="#symbol-table-representation" class="md-nav__link">
     <span class="md-ellipsis">
-      Rust derive binding via @rust.derive
+      Symbol table representation
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#derive-deduplication" class="md-nav__link">
+  <a href="#rust-emission" class="md-nav__link">
     <span class="md-ellipsis">
-      Derive deduplication
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#individual-trait-imports" class="md-nav__link">
-    <span class="md-ellipsis">
-      Individual trait imports
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#method-resolution" class="md-nav__link">
-    <span class="md-ellipsis">
-      Method resolution
+      Rust emission
     </span>
   </a>
   
@@ -4106,37 +4043,55 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#three-categories-of-derivable-modules" class="md-nav__link">
+  <a href="#interaction-with-existing-features" class="md-nav__link">
     <span class="md-ellipsis">
-      Three categories of derivable modules
+      Interaction with existing features
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Three categories of derivable modules">
+    <nav class="md-nav" aria-label="Interaction with existing features">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-serialization-formats-data-inout" class="md-nav__link">
+  <a href="#enum-model-and-class-types" class="md-nav__link">
     <span class="md-ellipsis">
-      1. Serialization formats (data in/out)
+      Enum, model, and class types
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-schema-generators-type-shape-out" class="md-nav__link">
+  <a href="#built-in-types-list-dict" class="md-nav__link">
     <span class="md-ellipsis">
-      2. Schema generators (type shape out)
+      Built-in types (List, Dict)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-behavioral-derives" class="md-nav__link">
+  <a href="#rustextern-methods" class="md-nav__link">
     <span class="md-ellipsis">
-      3. Behavioral derives
+      @rust.extern methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generic-function-bounds" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generic function bounds
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cross-trait-method-name-collisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cross-trait method name collisions
     </span>
   </a>
   
@@ -4148,46 +4103,46 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#interaction-with-existing-features" class="md-nav__link">
+  <a href="#diagnostics" class="md-nav__link">
     <span class="md-ellipsis">
-      Interaction with existing features
+      Diagnostics
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Interaction with existing features">
+    <nav class="md-nav" aria-label="Diagnostics">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#built-in-derives-eq-clone-debug-etc" class="md-nav__link">
+  <a href="#1-duplicate-method-with-no-trait-backing" class="md-nav__link">
     <span class="md-ellipsis">
-      Built-in derives (Eq, Clone, Debug, etc.)
+      1. Duplicate method with no trait backing
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#rust-imports-rfc-005" class="md-nav__link">
+  <a href="#2-duplicate-trait-instantiation" class="md-nav__link">
     <span class="md-ellipsis">
-      rust:: imports (RFC 005)
+      2. Duplicate trait instantiation
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#with-trait-bounds-rfc-023" class="md-nav__link">
+  <a href="#3-ambiguous-call-argument-types-match-multiple-candidates" class="md-nav__link">
     <span class="md-ellipsis">
-      with trait bounds (RFC 023)
+      3. Ambiguous call (argument types match multiple candidates)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#field-metadata-rfc-021" class="md-nav__link">
+  <a href="#4-irreconcilable-cross-trait-collision" class="md-nav__link">
     <span class="md-ellipsis">
-      Field metadata (RFC 021)
+      4. Irreconcilable cross-trait collision
     </span>
   </a>
   
@@ -4223,36 +4178,36 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-decorator-based-method-injection-current-approach" class="md-nav__link">
+  <a href="#1-union-types-str-int" class="md-nav__link">
     <span class="md-ellipsis">
-      1. Decorator-based method injection (current approach)
+      1. Union types (str | int)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-__derive__-as-a-simple-list-without-traits" class="md-nav__link">
+  <a href="#2-overload-decorator-python-style" class="md-nav__link">
     <span class="md-ellipsis">
-      2. __derive__ as a simple list without traits
+      2. @overload decorator (Python-style)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-proc-macro-style-user-derives" class="md-nav__link">
+  <a href="#3-separate-method-names" class="md-nav__link">
     <span class="md-ellipsis">
-      3. Proc-macro-style user derives
+      3. Separate method names
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#4-making-all-built-in-derives-use-this-protocol-too" class="md-nav__link">
+  <a href="#4-compiler-special-casing-per-type" class="md-nav__link">
     <span class="md-ellipsis">
-      4. Making all built-in derives use this protocol too
+      4. Compiler special-casing per type
     </span>
   </a>
   
@@ -4278,66 +4233,6 @@
       Implementation plan
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Implementation plan">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#phase-1-parser-support-for-__derives__-and-rustderive" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 1: Parser support for __derives__ and @rust.derive
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-2-derive-expansion-in-the-typechecker" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 2: Derive expansion in the typechecker
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-3-emission-deduplication" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 3: Emission deduplication
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-4-migrate-stdserdejson-to-the-protocol" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 4: Migrate std.serde.json to the protocol
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-5-add-a-second-serde-format-and-a-schema-generator" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 5: Add a second serde format and a schema generator
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-6-documentation-and-migration-guide" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 6: Documentation and migration guide
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -4386,637 +4281,334 @@
   
 
 
-<h1 id="rfc-024-extensible-derive-protocol">RFC 024: Extensible Derive Protocol<a class="headerlink" href="#rfc-024-extensible-derive-protocol" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-025-multi-instantiation-trait-dispatch">RFC 025: Multi-Instantiation Trait Dispatch<a class="headerlink" href="#rfc-025-multi-instantiation-trait-dispatch" title="Permanent link">&para;</a></h1>
 <ul>
-<li>Status: Planned</li>
+<li>Status: Draft</li>
 <li>Author(s): Danny Meijer (@dannymeijer)</li>
-<li>Issue: #148</li>
+<li>Issue: #150</li>
 <li>RFC PR: —</li>
 <li>Created: 2026-02-17</li>
 <li>Related:<ul>
 <li><a href="/dev/RFCs/012_json_value">RFC 012</a> (JsonValue &amp; enum methods)</li>
-<li><a href="/dev/RFCs/closed/implemented/021_model_field_metadata_and_aliases">RFC 021</a> (field metadata &amp; aliases)</li>
 <li><a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a> (compilable stdlib &amp; rust.module binding)</li>
-<li><a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a> (multi-instantiation trait dispatch)</li>
+<li><a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a> (extensible derive protocol)</li>
 </ul>
 </li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC proposes an extensible derive protocol that lets modules declare themselves as <strong>derivable</strong>. A derivable module
-exposes a <code>__derives__</code> list that declares which of the module's traits are adoptable via <code>@derive()</code>. When a type
-derives the module, those traits — and their methods — are adopted onto the type. This replaces the current closed
-<code>DeriveId</code> registry for format-related derives with a trait-based, module-driven mechanism — enabling user-defined
-serialization formats, schema generators, and behavioral adapters without compiler changes.</p>
+<p>This RFC proposes allowing a type to adopt multiple instantiations of the same generic trait with different type
+parameters. When this results in multiple methods with the same name but different parameter types, the compiler
+resolves which implementation to call based on the argument type at the call site. This is compile-time dispatch, not
+runtime overloading.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<h3 id="the-derive-system-is-closed">The derive system is closed<a class="headerlink" href="#the-derive-system-is-closed" title="Permanent link">&para;</a></h3>
-<p>Today, <code>@derive(Serialize, Deserialize)</code> is backed by a hardcoded <code>DeriveId</code> enum in
-<code>crates/incan_core/src/lang/derives.rs</code>. The method injection (<code>to_json</code>, <code>from_json</code>) is wired into the typechecker via
-<code>inject_json_methods()</code>. Adding a new serialization format requires changes across multiple compiler stages — there is no
-user-facing mechanism to create custom derivable traits.</p>
-<h3 id="serialization-isnt-just-json">Serialization isn't just JSON<a class="headerlink" href="#serialization-isnt-just-json" title="Permanent link">&para;</a></h3>
-<p>A natural extension of Incan's model system is serving multiple wire formats from one definition: JSON, YAML, Protobuf,
-Avro, Arrow, and more. Each format needs its own serialization/deserialization methods, and users need the ability to
-pick exactly which formats a model supports. For example:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span><span class="p">,</span> <span class="n">yaml</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.schema</span><span class="w"> </span><span class="kn">import</span> <span class="n">protobuf</span>
+<h3 id="one-trait-multiple-key-types">One trait, multiple key types<a class="headerlink" href="#one-trait-multiple-key-types" title="Permanent link">&para;</a></h3>
+<p>Incan's <code>Index[K, V]</code> trait (from <code>std.traits.indexing</code>) defines <code>__getitem__(self, key: K) -&gt; V</code> for subscript
+access. Some types naturally need indexing by more than one key type:</p>
+<ul>
+<li><code>JsonValue</code> needs <code>value["key"]</code> (str) and <code>value[0]</code> (int)</li>
+<li>A <code>DataFrame</code> might need <code>df["column"]</code> (str) and <code>df[0]</code> (int for row access)</li>
+<li>A <code>Matrix</code> might need <code>m[(0, 1)]</code> (tuple) and <code>m[0]</code> (int for row slice)</li>
+</ul>
+<p>Today, a type can only adopt <code>Index</code> once — <code>with Index[str, V]</code> or <code>with Index[int, V]</code>, but not both — because the
+method table stores one entry per method name and two <code>__getitem__</code> definitions would collide.</p>
+<h3 id="rust-handles-this-naturally">Rust handles this naturally<a class="headerlink" href="#rust-handles-this-naturally" title="Permanent link">&para;</a></h3>
+<p>In Rust, a type can implement the same trait for different type parameters without conflict:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="k">impl</span><span class="w"> </span><span class="n">Index</span><span class="o">&lt;&amp;</span><span class="kt">str</span><span class="o">&gt;</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">JsonValue</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">JsonValue</span><span class="p">;</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">index</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">key</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="kt">str</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">JsonValue</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">..</span><span class="p">.</span><span class="w"> </span><span class="p">}</span>
+<span class="p">}</span>
 
-<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">,</span> <span class="n">yaml</span><span class="p">,</span> <span class="n">protobuf</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">CustomerEvent</span><span class="p">:</span>
-    <span class="n">customer_id</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">email</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">event_type</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">amount</span><span class="p">:</span> <span class="nb">int</span>
-    <span class="n">timestamp</span><span class="p">:</span> <span class="n">datetime</span>
+<span class="k">impl</span><span class="w"> </span><span class="n">Index</span><span class="o">&lt;&amp;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">JsonValue</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">JsonValue</span><span class="p">;</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">index</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">key</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="kt">i64</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">JsonValue</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">..</span><span class="p">.</span><span class="w"> </span><span class="p">}</span>
+<span class="p">}</span>
 </code></pre></div>
-<p>This model gets <code>.to_json()</code>, <code>.from_json()</code>, <code>.to_yaml()</code>, <code>.from_yaml()</code>, <code>.proto_schema()</code> — all statically verified,
-all type-safe.</p>
-<h3 id="users-need-custom-derives">Users need custom derives<a class="headerlink" href="#users-need-custom-derives" title="Permanent link">&para;</a></h3>
-<p>Data engineering workflows (steps, pipelines, Readers/Writers) often use internal formats. Teams need to create their own
-derivable modules — an internal binary codec, a company-specific schema format, a custom wire protocol — without forking
-the compiler or waiting for stdlib additions.</p>
-<h3 id="injected-methods-need-trait-bounds">Injected methods need trait bounds<a class="headerlink" href="#injected-methods-need-trait-bounds" title="Permanent link">&para;</a></h3>
-<p>The current <code>inject_json_methods()</code> approach makes <code>.to_json()</code> appear on types that derive <code>Serialize</code>, but there's no
-trait backing it. This means generic functions cannot express "T must be JSON-serializable":</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Impossible today — no trait to bind against</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="n">data</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">data</span><span class="o">.</span><span class="n">to_json</span><span class="p">()</span>  <span class="c1"># Compiler: &quot;T has no method to_json&quot;</span>
-</code></pre></div>
-<p>With trait-based derives, this becomes expressible:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="n">json</span><span class="o">.</span><span class="kt">Serialize</span><span class="p">](</span><span class="n">data</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">data</span><span class="o">.</span><span class="n">to_json</span><span class="p">()</span>  <span class="c1"># Verified: json.Serialize guarantees .to_json()</span>
-</code></pre></div>
+<p>The compiler resolves which <code>index()</code> to call based on the argument type. This is not overloading — it's the trait
+system working as designed. Incan should support the same pattern.</p>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Implementing specific format libraries.</strong> This RFC uses YAML, Protobuf, Avro, SQL DDL, and others as illustrative
-  examples of what the protocol <em>enables</em>. It does not propose adding those libraries to the stdlib. Each format would
-  be introduced by its own RFC or feature issue (e.g., <a href="/dev/RFCs/012_json_value">RFC 012</a> for <code>JsonValue</code>).</li>
-<li><strong>Migrating built-in derives</strong> (<code>Eq</code>, <code>Clone</code>, <code>Debug</code>, etc.) to the <code>__derives__</code> protocol. These remain compiler
-  intrinsics handled by the <code>DeriveId</code> registry.
-  See <a href="#interaction-with-existing-features">Interaction with existing features</a> for details.</li>
-<li><strong>Runtime reflection of field values.</strong> The protocol relies on existing <code>__fields__()</code> metadata reflection for schema
-  generators. Dynamic field <em>value</em> access (needed to express <code>__eq__</code> or <code>__repr__</code> in pure Incan) is out of scope.</li>
+<li><strong>General method overloading.</strong> This RFC does not add the ability to define two freestanding <code>def foo(x: int)</code> and
+  <code>def foo(x: str)</code> at module level. Same-name methods are permitted <strong>only</strong> when they arise from different trait
+  instantiations.</li>
+<li><strong>Runtime dispatch.</strong> Resolution happens at compile time based on argument types. There is no dynamic dispatch or
+  <code>isinstance</code>-style checks.</li>
+<li><strong>Union types.</strong> <code>str | int</code> as a first-class type is a separate concern. This RFC solves the multi-key problem
+  through the trait system, not through type unions.</li>
 </ul>
 <h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
-<h3 id="deriving-a-format">Deriving a format<a class="headerlink" href="#deriving-a-format" title="Permanent link">&para;</a></h3>
-<p>Users import a format module and derive it:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
+<h3 id="adopting-a-trait-multiple-times">Adopting a trait multiple times<a class="headerlink" href="#adopting-a-trait-multiple-times" title="Permanent link">&para;</a></h3>
+<p>A type can adopt the same generic trait with different type parameters:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.indexing</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Index</span>
 
-<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">Config</span><span class="p">:</span>
-    <span class="n">host</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">port</span><span class="p">:</span> <span class="nb">int</span>
-    <span class="n">debug</span><span class="p">:</span> <span class="nb">bool</span>
+<span class="k">enum</span> <span class="nc">JsonValue</span> <span class="k">with</span> <span class="nc">Index</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">JsonValue</span><span class="p">],</span> <span class="nc">Index</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">JsonValue</span><span class="p">]:</span>
+    <span class="nc">Null</span>
+    <span class="nc">Bool</span><span class="p">(</span><span class="nb">bool</span><span class="p">)</span>
+    <span class="nc">Int</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+    <span class="nc">Float</span><span class="p">(</span><span class="nb">float</span><span class="p">)</span>
+    <span class="nc">String</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+    <span class="nc">Array</span><span class="p">(</span><span class="kt">List</span><span class="p">[</span><span class="nc">JsonValue</span><span class="p">])</span>
+    <span class="nc">Object</span><span class="p">(</span><span class="kt">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">JsonValue</span><span class="p">])</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
 </code></pre></div>
-<p><code>Config</code> now has <code>.to_json()</code> and <code>.from_json()</code> methods. The user can see exactly where they come from — the <code>json</code>
-module defines the traits. See Phase 4 of this RFC for the <code>std.serde.json</code> module migration.</p>
-<h3 id="deriving-multiple-formats">Deriving multiple formats<a class="headerlink" href="#deriving-multiple-formats" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span><span class="p">,</span> <span class="n">yaml</span>
+<p>The two <code>__getitem__</code> methods are not overloads — they are implementations of two different trait instantiations. The
+compiler matches each definition to its trait by comparing parameter types.</p>
+<h3 id="call-site-resolution">Call-site resolution<a class="headerlink" href="#call-site-resolution" title="Permanent link">&para;</a></h3>
+<p>The compiler resolves which implementation to use based on the argument type at the call site:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">value</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]</span>    <span class="c1"># str argument → Index[str, JsonValue].__getitem__</span>
+<span class="n">value</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>         <span class="c1"># int argument → Index[int, JsonValue].__getitem__</span>
+</code></pre></div>
+<p>This works in chains too:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">value</span><span class="p">[</span><span class="s2">&quot;users&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;name&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">as_str</span><span class="p">()</span>
+</code></pre></div>
+<p>Each <code>[]</code> resolves independently based on its argument type.</p>
+<blockquote>
+<p>Note: see <a href="/dev/RFCs/012_json_value">RFC 012</a> for the full <code>JsonValue</code> type definition and indexing support.</p>
+</blockquote>
+<h3 id="works-for-any-generic-trait">Works for any generic trait<a class="headerlink" href="#works-for-any-generic-trait" title="Permanent link">&para;</a></h3>
+<p>This is not <code>Index</code>-specific. Any generic trait can be adopted multiple times:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Into</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">into</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">model</span> <span class="nc">Measurement</span> <span class="k">with</span> <span class="nc">Into</span><span class="p">[</span><span class="nb">float</span><span class="p">],</span> <span class="nc">Into</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+    <span class="n">raw</span><span class="p">:</span> <span class="nb">float</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">into</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">raw</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">into</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">round</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">raw</span><span class="p">)</span>
+
+<span class="c1"># Context always disambiguates:</span>
+<span class="n">reading</span> <span class="o">=</span> <span class="nc">Measurement</span><span class="p">(</span><span class="n">raw</span><span class="o">=</span><span class="mf">1.23</span><span class="p">)</span>
+<span class="k">let</span> <span class="n">precise</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">reading</span><span class="o">.</span><span class="n">into</span><span class="p">()</span>   <span class="c1"># Into[float]</span>
+<span class="k">let</span> <span class="n">rounded</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">reading</span><span class="o">.</span><span class="n">into</span><span class="p">()</span>     <span class="c1"># Into[int]</span>
+</code></pre></div>
+<p>The compiler resolves <code>reading.into()</code> based on the expected return type from context (the binding's type annotation).
+If the context doesn't disambiguate, the compiler reports an ambiguity error.</p>
+<h3 id="multi-format-serialization-the-foundational-use-case">Multi-format serialization (the foundational use case)<a class="headerlink" href="#multi-format-serialization-the-foundational-use-case" title="Permanent link">&para;</a></h3>
+<p>Beyond <code>Index</code> and <code>Into</code>, the primary real-world motivation for multi-instantiation is <strong>multi-format serialization</strong>.
+Many applications require a single model to serve multiple wire formats — JSON, YAML, Protobuf, Avro — each via a
+derivable trait. A generic <code>Serializable[F]</code> trait makes this composable:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Serializable</span><span class="p">[</span><span class="nc">F</span><span class="p">]:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">serialize</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span> <span class="o">...</span>
 
 <span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">,</span> <span class="n">yaml</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">Config</span><span class="p">:</span>
-    <span class="n">host</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">port</span><span class="p">:</span> <span class="nb">int</span>
-
-<span class="n">config</span> <span class="o">=</span> <span class="nc">Config</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s2">&quot;localhost&quot;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span>
-<span class="n">json_str</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">to_json</span><span class="p">()</span>
-<span class="n">yaml_str</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">to_yaml</span><span class="p">()</span>
-</code></pre></div>
-<p>Both format modules define their own <code>Serialize</code> trait, each carrying <code>@rust.derive("serde::Serialize")</code>. The compiler
-deduplicates to a single Rust-level derive, while each module injects its own distinct methods (<code>.to_json()</code> vs
-<code>.to_yaml()</code>).</p>
-<h3 id="partial-derives-serialize-only-deserialize-only">Partial derives (serialize-only, deserialize-only)<a class="headerlink" href="#partial-derives-serialize-only-deserialize-only" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Serialize</span> <span class="k">as</span> <span class="n">json_write</span>
-
-<span class="nd">@derive</span><span class="p">(</span><span class="n">json_write</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">LogEntry</span><span class="p">:</span>
-    <span class="n">message</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">level</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">timestamp</span><span class="p">:</span> <span class="n">datetime</span>
-
-<span class="c1"># LogEntry has .to_json() but NOT .from_json()</span>
-</code></pre></div>
-<h3 id="schema-generation-pure-incan-no-rust-needed">Schema generation (pure Incan, no Rust needed)<a class="headerlink" href="#schema-generation-pure-incan-no-rust-needed" title="Permanent link">&para;</a></h3>
-<p>Not all derives involve serialization. Schema generators produce text artifacts from a model's field metadata using
-<code>__fields__()</code> reflection — no <code>rust::</code> imports required:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.schema</span><span class="w"> </span><span class="kn">import</span> <span class="n">sql</span>
-
-<span class="nd">@derive</span><span class="p">(</span><span class="n">sql</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">Users</span><span class="p">:</span>
-    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+<span class="k">model</span> <span class="nc">CustomerEvent</span> <span class="k">with</span> <span class="nc">Serializable</span><span class="p">[</span><span class="kt">Json</span><span class="p">],</span> <span class="nc">Serializable</span><span class="p">[</span><span class="nc">Yaml</span><span class="p">]:</span>
+    <span class="n">customer_id</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">email</span><span class="p">:</span> <span class="nb">str</span>
-
-<span class="nb">print</span><span class="p">(</span><span class="nc">Users</span><span class="o">.</span><span class="n">sql_ddl</span><span class="p">())</span>
-<span class="c1"># CREATE TABLE Users (</span>
-<span class="c1">#   id INTEGER,</span>
-<span class="c1">#   name TEXT,</span>
-<span class="c1">#   email TEXT</span>
-<span class="c1"># );</span>
 </code></pre></div>
-<p>The (hypothetical) <code>sql</code> module in this example defines a <code>SqlSchema</code> trait whose <code>sql_ddl()</code> method is implemented
-entirely in Incan by iterating over <code>__fields__()</code>. The same pattern works for OpenAPI, GraphQL type definitions, or any
-text-based schema format.</p>
-<h3 id="behavioral-derives">Behavioral derives<a class="headerlink" href="#behavioral-derives" title="Permanent link">&para;</a></h3>
-<p>Derives aren't limited to formats. A derivable module can attach any behavior to a model:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.schema</span><span class="w"> </span><span class="kn">import</span> <span class="n">sql</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">my_company.observability</span><span class="w"> </span><span class="kn">import</span> <span class="n">auditable</span>
+<p>A generic function can then operate over any format and any model without knowing which one:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">publish</span><span class="p">[</span><span class="nc">F</span><span class="p">,</span> <span class="nc">T</span> <span class="k">with</span> <span class="nc">Serializable</span><span class="p">[</span><span class="nc">F</span><span class="p">]](</span><span class="n">event</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">event</span><span class="o">.</span><span class="n">serialize</span><span class="p">()</span>
 
-<span class="nd">@derive</span><span class="p">(</span><span class="n">sql</span><span class="p">,</span> <span class="n">auditable</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">Account</span><span class="p">:</span>
-    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
-    <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">balance</span><span class="p">:</span> <span class="nb">int</span>
+<span class="c1"># Call site: F and T are resolved at monomorphization</span>
+<span class="k">let</span> <span class="n">json_bytes</span> <span class="o">=</span> <span class="n">publish</span><span class="p">[</span><span class="kt">Json</span><span class="p">](</span><span class="n">my_event</span><span class="p">)</span>   <span class="c1"># T inferred as CustomerEvent; Serializable[Json]::serialize</span>
+<span class="k">let</span> <span class="n">yaml_bytes</span> <span class="o">=</span> <span class="n">publish</span><span class="p">[</span><span class="nc">Yaml</span><span class="p">](</span><span class="n">my_event</span><span class="p">)</span>  <span class="c1"># Serializable[Yaml]::serialize</span>
 </code></pre></div>
-<p>Here <code>auditable</code> might define an <code>Auditable</code> trait that provides a <code>.diff(other)</code> method, a <code>.changelog()</code> method, or
-field-level change tracking — whatever the module's traits declare. The mechanism is the same regardless of whether the
-derive produces bytes, text, or behavior.</p>
-<h3 id="using-trait-bounds-in-generic-functions">Using trait bounds in generic functions<a class="headerlink" href="#using-trait-bounds-in-generic-functions" title="Permanent link">&para;</a></h3>
-<p>Because derives are backed by traits, they compose with the <code>with</code> bound syntax (<a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>):</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span><span class="p">,</span> <span class="n">yaml</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="kt">Serialize</span><span class="p">,</span> <span class="n">yaml</span><span class="o">.</span><span class="kt">Serialize</span><span class="p">)](</span>
-    <span class="n">data</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span>
-    <span class="nb">format</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">if</span> <span class="nb">format</span> <span class="o">==</span> <span class="s2">&quot;json&quot;</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">data</span><span class="o">.</span><span class="n">to_json</span><span class="p">()</span>
-    <span class="k">return</span> <span class="n">data</span><span class="o">.</span><span class="n">to_yaml</span><span class="p">()</span>
-</code></pre></div>
-<h3 id="writing-a-custom-derivable-module">Writing a custom derivable module<a class="headerlink" href="#writing-a-custom-derivable-module" title="Permanent link">&para;</a></h3>
-<p>No compiler changes needed. A user writes exactly the same pattern as stdlib:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># my_company/formats/internal.incn</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">my_codec</span> <span class="kn">import</span><span class="w"> </span><span class="nn">encode</span><span class="o">,</span><span class="w"> </span><span class="nn">decode</span>
-
-<span class="n">__derives__</span> <span class="o">=</span> <span class="p">[</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">]</span>
-
-<span class="c1"># No @rust.derive needed — encode/decode handle serialization directly, without requiring a Rust derive on the struct.</span>
-<span class="k">trait</span> <span class="kt">Serialize</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">to_internal</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">encode</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">?</span>
-
-<span class="k">trait</span> <span class="kt">Deserialize</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_internal</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Self</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-        <span class="k">return</span> <span class="n">decode</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
-<p>Then anywhere in the codebase:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">my_company.formats</span><span class="w"> </span><span class="kn">import</span> <span class="n">internal</span>
-
-<span class="nd">@derive</span><span class="p">(</span><span class="n">internal</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">SensorReading</span><span class="p">:</span>
-    <span class="n">device_id</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">value</span><span class="p">:</span> <span class="nb">float</span>
-</code></pre></div>
-<p><code>SensorReading</code> now has <code>.to_internal()</code> and <code>.from_internal()</code>.</p>
+<p>The type parameter <code>F</code> determines which <code>Serializable</code> instantiation the compiler selects. The bound
+<code>T with Serializable[F]</code> links the model type to the format — standard Incan <code>with</code> syntax in the type
+parameter list. This pattern is the foundation of the <code>@derive(format)</code> protocol described in <a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a>.</p>
 <h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
-<h3 id="the-__derives__-module-attribute">The <code>__derives__</code> module attribute<a class="headerlink" href="#the-__derives__-module-attribute" title="Permanent link">&para;</a></h3>
-<p>A module that defines a <code>__derives__</code> attribute at module level is a <strong>derivable module</strong>. The attribute lists which of
-the module's traits are adoptable via <code>@derive()</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">__derives__</span> <span class="o">=</span> <span class="p">[</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">]</span>
+<h3 id="trait-adoption">Trait adoption<a class="headerlink" href="#trait-adoption" title="Permanent link">&para;</a></h3>
+<p>A type may list the same trait name multiple times in its <code>with</code> clause, provided each instantiation has different type
+arguments:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Foo</span> <span class="k">with</span> <span class="nc">Trait</span><span class="p">[</span><span class="nc">A</span><span class="p">],</span> <span class="nc">Trait</span><span class="p">[</span><span class="nc">B</span><span class="p">]:</span>  <span class="c1"># OK — different type args</span>
+<span class="k">model</span> <span class="nc">Bar</span> <span class="k">with</span> <span class="nc">Trait</span><span class="p">[</span><span class="nc">A</span><span class="p">],</span> <span class="nc">Trait</span><span class="p">[</span><span class="nc">A</span><span class="p">]:</span>  <span class="c1"># ERROR — duplicate instantiation</span>
 </code></pre></div>
-<p>Here, <code>Serialize</code> and <code>Deserialize</code> refer to traits defined in the same module. When a type writes
-<code>@derive(module_name)</code>, the compiler:</p>
+<h3 id="method-disambiguation">Method disambiguation<a class="headerlink" href="#method-disambiguation" title="Permanent link">&para;</a></h3>
+<p>When multiple trait instantiations produce methods with the same name, the compiler resolves which to call using:</p>
 <ol>
-<li>Resolves <code>module_name</code> to the imported module</li>
-<li>Reads <code>module_name.__derives__</code> to get the list of derivable traits</li>
-<li>Adopts those traits onto the type — their methods become available on instances of the type</li>
-<li>Determines the Rust-level <code>#[derive(...)]</code> attributes needed (an emission concern, derived from <code>@rust.derive</code>
-   decorators on the adopted traits)</li>
+<li><strong>Argument types</strong> — the most common case. <code>value["key"]</code> vs <code>value[0]</code> is unambiguous because <code>str</code> and <code>int</code> are
+   distinct types.</li>
+<li><strong>Expected return type</strong> (provisional) — when argument types are identical but return types differ (e.g.,
+   <code>Into[float]</code> vs <code>Into[int]</code>), the compiler may use the expected type from surrounding context (type annotation,
+   function argument, etc.). See <a href="#deferred-questions">deferred question #2</a> for open design considerations.</li>
+<li><strong>Explicit qualification</strong> — if neither argument nor return type disambiguates, the call is an error. The user must
+   qualify which trait they mean (syntax TBD — could be <code>value.Index[str].__getitem__("key")</code> or similar, but this is
+   expected to be rare).</li>
 </ol>
-<h3 id="trait-adoption-via-derive">Trait adoption via derive<a class="headerlink" href="#trait-adoption-via-derive" title="Permanent link">&para;</a></h3>
-<p>The traits listed in <code>__derives__</code> are adopted by any type that derives the module. This is equivalent to the type
-writing <code>with TraitName</code> for each listed trait, but driven by the <code>@derive()</code> decorator. Only traits explicitly listed
-in <code>__derives__</code> are adopted — other traits defined in the module are not automatically included.</p>
-<h3 id="rust-derive-binding-via-rustderive">Rust derive binding via <code>@rust.derive</code><a class="headerlink" href="#rust-derive-binding-via-rustderive" title="Permanent link">&para;</a></h3>
-<p>A trait in a derivable module may need the compiler to emit a Rust <code>#[derive(...)]</code> attribute on any struct that adopts
-it. This is distinct from <code>@rust.extern</code> (which delegates a <em>method call</em> to Rust) — <code>@rust.derive</code> declares that the
-<em>type itself</em> requires a Rust-level derive for the trait's methods to work.</p>
-<p>The <code>@rust.derive("path::to::Derive")</code> decorator on a trait declaration carries this binding:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="k">derive</span><span class="p">(</span><span class="s2">&quot;serde::Serialize&quot;</span><span class="p">)</span>
-<span class="k">trait</span> <span class="kt">Serialize</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">to_json</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nb">to_string</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
-<p>When a type adopts this trait via <code>@derive()</code>, the compiler emits <code>#[derive(serde::Serialize)]</code> on the Rust struct.</p>
-<p>Traits that don't need a Rust-level derive (pure Incan behavioral traits, schema generators using <code>__fields__()</code>
-reflection) simply omit <code>@rust.derive</code> — their methods compile normally without any struct-level annotation.</p>
-<h3 id="derive-deduplication">Derive deduplication<a class="headerlink" href="#derive-deduplication" title="Permanent link">&para;</a></h3>
-<p>Multiple modules may declare the same <code>@rust.derive</code> path. For example, both <code>json.Serialize</code> and <code>yaml.Serialize</code>
-carry <code>@rust.derive("serde::Serialize")</code>. The compiler collects all <code>@rust.derive</code> paths from all adopted traits into a
-set before emission, producing one <code>#[derive(serde::Serialize, serde::Deserialize)]</code> regardless of how many format
-modules are derived.</p>
-<h3 id="individual-trait-imports">Individual trait imports<a class="headerlink" href="#individual-trait-imports" title="Permanent link">&para;</a></h3>
-<p>Traits within a derivable module can be imported individually:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Serialize</span>
-</code></pre></div>
-<p>When used in <code>@derive(Serialize)</code>, only that single trait is adopted (and its <code>@rust.derive</code> path, if any, is emitted).
-This enables fine-grained control — derive only serialization, only deserialization, etc.</p>
-<h3 id="method-resolution">Method resolution<a class="headerlink" href="#method-resolution" title="Permanent link">&para;</a></h3>
-<p>When a type derives a module, the module's traits are adopted. Method calls on instances of the type resolve through
-normal trait method lookup. If two derived modules define traits with the same method name, this is a compile-time error
-(ambiguous method), following normal trait method resolution rules.</p>
+<h3 id="symbol-table-representation">Symbol table representation<a class="headerlink" href="#symbol-table-representation" title="Permanent link">&para;</a></h3>
+<p>The current <code>HashMap&lt;String, MethodInfo&gt;</code> representation is insufficient for multi-instantiation methods. The
+implementation must support multiple entries for the same method name, keyed or grouped by their trait origin. The
+specifics of this data structure change are left to the implementer.</p>
+<h3 id="rust-emission">Rust emission<a class="headerlink" href="#rust-emission" title="Permanent link">&para;</a></h3>
+<p>Each trait instantiation emits a separate <code>impl Trait&lt;TypeArg&gt; for Type { ... }</code> block in Rust. This maps directly
+to how Rust handles multiple trait implementations.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
-<p>Three new syntactic elements:</p>
-<ol>
-<li>
-<p><strong>Module-level <code>__derives__</code> attribute</strong>: a list of derive names assigned at module scope.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">__derives__</span> <span class="o">=</span> <span class="p">[</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">]</span>
-</code></pre></div>
-<p>Parsed as a const assignment where the name is <code>__derives__</code> and the value is a list of identifiers. Each identifier
-must resolve to a trait defined in the same module.</p>
-</li>
-<li>
-<p><strong><code>@derive(module)</code> expansion</strong>: the existing <code>@derive(...)</code> syntax is extended to accept module names (not just
-   derive names). When the argument resolves to a module with a <code>__derives__</code> attribute, it is expanded.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
-<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>          <span class="c1"># Module derive — expands via __derives__</span>
-<span class="nd">@derive</span><span class="p">(</span><span class="kt">Debug</span><span class="p">,</span> <span class="kt">Clone</span><span class="p">)</span>  <span class="c1"># DeriveId derives — unchanged</span>
-<span class="k">model</span> <span class="nc">Foo</span><span class="p">:</span>
-    <span class="n">x</span><span class="p">:</span> <span class="nb">int</span>
-</code></pre></div>
-</li>
-<li>
-<p><strong><code>@rust.derive</code> decorator on traits</strong>: declares the Rust <code>#[derive(...)]</code> attribute that must be emitted on any
-   struct adopting this trait. This is the bridge between an Incan trait and the Rust code generation it requires.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="k">derive</span><span class="p">(</span><span class="s2">&quot;serde::Serialize&quot;</span><span class="p">)</span>
-<span class="k">trait</span> <span class="kt">Serialize</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">to_json</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nb">to_string</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
-<p>Traits without <code>@rust.derive</code> are pure Incan — no Rust-level derive is emitted for them.</p>
-</li>
-</ol>
-<p>No new keywords. <code>@rust.derive</code> follows the existing <code>@rust.extern</code> decorator pattern.</p>
+<p>No new syntax is proposed. The existing <code>with Trait[A], Trait[B]</code> clause already parses a comma-separated list of trait
+adoptions. If the parser currently rejects duplicate trait names in the <code>with</code> clause, that restriction must be lifted.
+Same-name <code>def</code> declarations are permitted inside the body when they correspond to different trait instantiations.</p>
 <h3 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h3>
-<p>When the compiler encounters <code>@derive(name)</code>:</p>
-<ol>
-<li><strong>Resolve <code>name</code></strong>: check if it refers to a <code>DeriveId</code> (built-in derive) or an imported symbol.</li>
-<li><strong>If <code>DeriveId</code></strong>: existing behavior — emit the corresponding Rust <code>#[derive(...)]</code>.</li>
-<li><strong>If module with <code>__derives__</code></strong>: adopt the traits listed in <code>__derives__</code> onto the type. The compiler determines the
-   necessary Rust-level derives from the adopted traits during emission.</li>
-<li><strong>If trait from a derivable module</strong>: adopt only that single trait onto the type.</li>
-<li><strong>Error</strong>: if <code>name</code> is neither a known derive, a derivable module, nor a trait from one — emit a diagnostic.</li>
-</ol>
-<p>Trait method injection follows normal trait adoption rules. Methods with <code>self</code> receiver become instance methods on the
-adopting type. Methods without a receiver become associated functions (e.g., <code>Model.from_json(s)</code>).</p>
-<h3 id="three-categories-of-derivable-modules">Three categories of derivable modules<a class="headerlink" href="#three-categories-of-derivable-modules" title="Permanent link">&para;</a></h3>
-<h4 id="1-serialization-formats-data-inout">1. Serialization formats (data in/out)<a class="headerlink" href="#1-serialization-formats-data-inout" title="Permanent link">&para;</a></h4>
-<p>These convert instances to/from bytes or strings. They use <code>rust::</code> interop to call codec libraries. Multiple serde
-formats define similarly-named traits (each module has its own <code>Serialize</code> / <code>Deserialize</code>) that inject distinct methods:</p>
-<table>
-<thead>
-<tr>
-<th>Module</th>
-<th><code>__derives__</code></th>
-<th>Traits / methods</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>std.serde.json</code></td>
-<td><code>[Serialize, Deserialize]</code></td>
-<td><code>.to_json()</code>, <code>.from_json()</code></td>
-</tr>
-<tr>
-<td><code>std.serde.yaml</code></td>
-<td><code>[Serialize, Deserialize]</code></td>
-<td><code>.to_yaml()</code>, <code>.from_yaml()</code></td>
-</tr>
-<tr>
-<td><code>std.serde.toml</code></td>
-<td><code>[Serialize, Deserialize]</code></td>
-<td><code>.to_toml()</code>, <code>.from_toml()</code></td>
-</tr>
-<tr>
-<td><code>std.serde.msgpack</code></td>
-<td><code>[Serialize, Deserialize]</code></td>
-<td><code>.to_msgpack()</code>, <code>.from_msgpack()</code></td>
-</tr>
-<tr>
-<td><code>std.serde.csv</code></td>
-<td><code>[Serialize, Deserialize]</code></td>
-<td><code>.to_csv_row()</code>, <code>.from_csv_row()</code></td>
-</tr>
-</tbody>
-</table>
-<p>Example implementation:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># stdlib/serde/json.incn</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">serde_json</span> <span class="kn">import</span><span class="w"> </span><span class="nn">to_string</span><span class="o">,</span><span class="w"> </span><span class="nn">from_str</span>
-
-<span class="n">__derives__</span> <span class="o">=</span> <span class="p">[</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">]</span>
-
-<span class="nd">@rust</span><span class="o">.</span><span class="k">derive</span><span class="p">(</span><span class="s2">&quot;serde::Serialize&quot;</span><span class="p">)</span>
-<span class="k">trait</span> <span class="kt">Serialize</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">to_json</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nb">to_string</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">?</span>
-
-<span class="nd">@rust</span><span class="o">.</span><span class="k">derive</span><span class="p">(</span><span class="s2">&quot;serde::Deserialize&quot;</span><span class="p">)</span>
-<span class="k">trait</span> <span class="kt">Deserialize</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_json</span><span class="p">(</span><span class="n">json_str</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Self</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-        <span class="k">return</span> <span class="n">from_str</span><span class="p">(</span><span class="n">json_str</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
-<p>No <code>rust.module()</code>, no <code>@rust.extern</code> — the <code>.incn</code> file is the complete implementation. <code>@rust.derive</code> declares the
-Rust struct-level derive needed for the <code>rust::</code> interop calls to work. The <code>rust::</code> interop (<a href="/dev/RFCs/005_rust_interop">RFC 005</a>) provides access
-to the underlying Rust codec library.</p>
-<h4 id="2-schema-generators-type-shape-out">2. Schema generators (type shape out)<a class="headerlink" href="#2-schema-generators-type-shape-out" title="Permanent link">&para;</a></h4>
-<p>These generate schema artifacts from the model's type definition. They operate on field metadata via <code>__fields__()</code>
-reflection and are typically pure Incan:</p>
-<table>
-<thead>
-<tr>
-<th>Module</th>
-<th><code>__derives__</code></th>
-<th>Traits / methods</th>
-<th>Artifact</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>std.schema.protobuf</code></td>
-<td><code>[ProtobufMessage]</code></td>
-<td><code>.proto_schema()</code></td>
-<td><code>.proto</code> definition</td>
-</tr>
-<tr>
-<td><code>std.schema.avro</code></td>
-<td><code>[AvroSchemaDerive]</code></td>
-<td><code>.avro_schema()</code></td>
-<td>Avro schema JSON</td>
-</tr>
-<tr>
-<td><code>std.schema.openapi</code></td>
-<td><code>[OpenApiSchema]</code></td>
-<td><code>.openapi_schema()</code></td>
-<td>OpenAPI spec fragment</td>
-</tr>
-<tr>
-<td><code>std.schema.graphql</code></td>
-<td><code>[GraphqlType]</code></td>
-<td><code>.graphql_type()</code></td>
-<td>GraphQL type def</td>
-</tr>
-<tr>
-<td><code>std.schema.sql</code></td>
-<td><code>[SqlSchema]</code></td>
-<td><code>.sql_ddl()</code></td>
-<td><code>CREATE TABLE</code></td>
-</tr>
-<tr>
-<td><code>std.schema.arrow</code></td>
-<td><code>[ArrowSchema]</code></td>
-<td><code>.arrow_schema()</code></td>
-<td><code>arrow::Schema</code></td>
-</tr>
-</tbody>
-</table>
-<p>Schema generators with only one trait can still use <code>__derives__</code> to make the module derivable. Since the trait has no
-<code>@rust.derive</code> decorator, no Rust-level derive is emitted — the trait methods are pure Incan reflection:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># stdlib/schema/sql.incn</span>
-
-<span class="n">__derives__</span> <span class="o">=</span> <span class="p">[</span><span class="nc">SqlSchema</span><span class="p">]</span>
-
-<span class="k">trait</span> <span class="nc">SqlSchema</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">sql_ddl</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="n">lines</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
-        <span class="n">lines</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;CREATE TABLE </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">__class_name__</span><span class="si">}</span><span class="s2"> (&quot;</span><span class="p">)</span>
-        <span class="k">for</span> <span class="n">field</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">__fields__</span><span class="p">():</span>
-            <span class="n">sql_type</span> <span class="o">=</span> <span class="n">_incan_type_to_sql</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">type_name</span><span class="p">)</span>
-            <span class="n">lines</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">field</span><span class="o">.</span><span class="n">wire_name</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">sql_type</span><span class="si">}</span><span class="s2">,&quot;</span><span class="p">)</span>
-        <span class="n">lines</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="s2">&quot;);&quot;</span><span class="p">)</span>
-        <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="nb">join</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span>
-</code></pre></div>
-<p>Some formats are <strong>hybrids</strong> — they need both schema generation AND instance serialization (e.g., Avro needs schema
-JSON plus binary encode/decode).</p>
-<h4 id="3-behavioral-derives">3. Behavioral derives<a class="headerlink" href="#3-behavioral-derives" title="Permanent link">&para;</a></h4>
-<p>These attach behavior to models without producing bytes or schemas. For example:</p>
-<table>
-<thead>
-<tr>
-<th>Module</th>
-<th><code>__derives__</code></th>
-<th>What it does</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>std.validation</code></td>
-<td><code>[Validate]</code></td>
-<td>Checked construction via <code>.new()</code></td>
-</tr>
-<tr>
-<td><code>std.governance</code></td>
-<td><code>[Governed]</code></td>
-<td>PII masking, field-level access control</td>
-</tr>
-<tr>
-<td><code>std.versioning</code></td>
-<td><code>[Versioned]</code></td>
-<td>API version-aware response shapes</td>
-</tr>
-</tbody>
-</table>
+<p>The rule is simple: <strong>same-name methods are permitted if and only if they satisfy different <code>with</code> trait adoptions.</strong>
+This is not general overloading — it's the trait system resolving dispatch.</p>
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
-<h4 id="built-in-derives-eq-clone-debug-etc">Built-in derives (<code>Eq</code>, <code>Clone</code>, <code>Debug</code>, etc.)<a class="headerlink" href="#built-in-derives-eq-clone-debug-etc" title="Permanent link">&para;</a></h4>
-<p>Built-in derives remain compiler intrinsics. They are <strong>not</strong> migrated to the <code>__derives__</code> protocol because their
-implementations are Rust proc macros that generate <code>impl</code> blocks — there is no Incan-expressible body to put in a trait.
-The <code>DeriveId</code> registry continues to handle these.</p>
-<p>The distinction is clear: built-in derives implement <em>language-level semantics</em> (equality, ordering, cloning, debug
-formatting). Format derives implement <em>library-level functionality</em> (serialization, schema generation). The protocol
-applies to the latter.</p>
+<h4 id="enum-model-and-class-types">Enum, model, and class types<a class="headerlink" href="#enum-model-and-class-types" title="Permanent link">&para;</a></h4>
+<p>Multi-instantiation works on all three declaration types that support <code>with</code>.</p>
+<h4 id="built-in-types-list-dict">Built-in types (<code>List</code>, <code>Dict</code>)<a class="headerlink" href="#built-in-types-list-dict" title="Permanent link">&para;</a></h4>
+<p>Built-in collection types currently have compiler-level indexing support. This RFC does not change that, but provides
+the mechanism for user-defined types to achieve the same capability through traits.</p>
+<h4 id="rustextern-methods"><code>@rust.extern</code> methods<a class="headerlink" href="#rustextern-methods" title="Permanent link">&para;</a></h4>
+<p><code>@rust.extern</code> methods in multi-instantiation traits work normally — each <code>__getitem__</code> can independently be
+<code>@rust.extern</code> or pure Incan.</p>
+<h4 id="generic-function-bounds">Generic function bounds<a class="headerlink" href="#generic-function-bounds" title="Permanent link">&para;</a></h4>
+<p>A generic function can require multiple instantiations of the same trait in its bounds:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">lookup</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="nc">Index</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">V</span><span class="p">],</span> <span class="nc">Index</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">V</span><span class="p">]](</span><span class="n">data</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">V</span><span class="p">:</span>
+    <span class="o">...</span>
+</code></pre></div>
+<p>This falls out naturally from the trait system — each <code>with</code> bound is an independent constraint. The function body can
+call <code>data[key]</code> and <code>data[idx]</code>, and the compiler resolves each to the matching <code>Index</code> instantiation.</p>
+<h4 id="cross-trait-method-name-collisions">Cross-trait method name collisions<a class="headerlink" href="#cross-trait-method-name-collisions" title="Permanent link">&para;</a></h4>
+<p>Multi-instantiation of the <em>same</em> generic trait is the primary use case, but the same-name rule applies to <em>any</em>
+combination of adopted traits. Consider:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Readable</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">trait</span> <span class="nc">Parseable</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">SomeResult</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">model</span> <span class="nc">Source</span> <span class="k">with</span> <span class="nc">Readable</span><span class="p">,</span> <span class="nc">Parseable</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>        <span class="c1"># satisfies Readable</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">SomeResult</span><span class="p">:</span> <span class="o">...</span> <span class="c1"># satisfies Parseable</span>
+</code></pre></div>
+<p>This is permitted — the two <code>read</code> methods come from different trait adoptions and have different parameter types, so
+the compiler can disambiguate at the call site. However, if two different traits produce methods with <strong>identical
+signatures</strong>, no disambiguation is possible and the type declaration is an error (see <a href="#diagnostics">Diagnostics</a>
+below).</p>
 <blockquote>
-<p>Note: as the language evolves, this might change. It is hypothetically possible to rewrite the built-in derives as
-traits in the stdlib, but that would be a significant change requiring currently unavailable functionality and syntax
-that is not in scope for this RFC.</p>
+<p>Note: permitted does not mean that this is encouraged. Avoid ambiguous method signatures whenever possible.</p>
 </blockquote>
-<h4 id="rust-imports-rfc-005"><code>rust::</code> imports (RFC 005)<a class="headerlink" href="#rust-imports-rfc-005" title="Permanent link">&para;</a></h4>
-<p>The <code>rust::</code> import mechanism is the primary way derivable modules access Rust codec libraries. A derivable module's
-trait methods are pure Incan that call into Rust libraries via <code>rust::</code> imports. The two mechanisms are complementary.</p>
-<h4 id="with-trait-bounds-rfc-023"><code>with</code> trait bounds (RFC 023)<a class="headerlink" href="#with-trait-bounds-rfc-023" title="Permanent link">&para;</a></h4>
-<p>Traits from derivable modules work with the existing <code>with</code> bound syntax. A function can require specific format
-capabilities:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">publish</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="kt">Serialize</span><span class="p">,</span> <span class="n">avro</span><span class="o">.</span><span class="kt">Serialize</span><span class="p">,</span> <span class="n">avro</span><span class="o">.</span><span class="nc">AvroSchema</span><span class="p">)](</span>
-    <span class="n">events</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nc">T</span><span class="p">],</span>
-    <span class="n">target</span><span class="p">:</span> <span class="nc">ExportTarget</span><span class="p">,</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-    <span class="k">match</span> <span class="n">target</span><span class="p">:</span>
-        <span class="nc">ExportTarget</span><span class="o">.</span><span class="nc">Api</span> <span class="o">=&gt;</span>
-            <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">events</span><span class="p">:</span>
-                <span class="n">http_post</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">to_json</span><span class="p">())</span>
-        <span class="nc">ExportTarget</span><span class="o">.</span><span class="nc">Kafka</span> <span class="o">=&gt;</span>
-            <span class="n">schema</span> <span class="o">=</span> <span class="nc">T</span><span class="o">.</span><span class="n">avro_schema</span><span class="p">()</span>
-            <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">events</span><span class="p">:</span>
-                <span class="n">kafka_publish</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">to_avro</span><span class="p">(),</span> <span class="n">schema</span><span class="p">)</span>
+<h3 id="diagnostics">Diagnostics<a class="headerlink" href="#diagnostics" title="Permanent link">&para;</a></h3>
+<p>The following error scenarios must have clear, actionable diagnostics.</p>
+<h4 id="1-duplicate-method-with-no-trait-backing">1. Duplicate method with no trait backing<a class="headerlink" href="#1-duplicate-method-with-no-trait-backing" title="Permanent link">&para;</a></h4>
+<p>Same-name methods without corresponding trait adoptions are never permitted:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Foo</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+    <span class="c1">#   ^^^^^^^ error: duplicate method `process`</span>
+    <span class="c1">#   note: same-name methods are only permitted when they implement</span>
+    <span class="c1">#         different trait adoptions in the `with` clause</span>
 </code></pre></div>
-<h4 id="field-metadata-rfc-021">Field metadata (RFC 021)<a class="headerlink" href="#field-metadata-rfc-021" title="Permanent link">&para;</a></h4>
-<p>Derivable modules can read field metadata via <code>__fields__()</code>. This enables format-specific field annotations:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.schema</span><span class="w"> </span><span class="kn">import</span> <span class="n">protobuf</span>
+<h4 id="2-duplicate-trait-instantiation">2. Duplicate trait instantiation<a class="headerlink" href="#2-duplicate-trait-instantiation" title="Permanent link">&para;</a></h4>
+<p>Adopting the same trait with identical type arguments is redundant and likely a mistake:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Bar</span> <span class="k">with</span> <span class="nc">Index</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="nc">Index</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+    <span class="c1">#                           ^^^^^^^^^^^^^^^^ error: duplicate trait</span>
+    <span class="c1">#           instantiation `Index[str, int]` — each instantiation</span>
+    <span class="c1">#           must have different type arguments</span>
+</code></pre></div>
+<h4 id="3-ambiguous-call-argument-types-match-multiple-candidates">3. Ambiguous call (argument types match multiple candidates)<a class="headerlink" href="#3-ambiguous-call-argument-types-match-multiple-candidates" title="Permanent link">&para;</a></h4>
+<p>When the argument type doesn't uniquely select a trait instantiation:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">value</span><span class="o">.</span><span class="n">some_method</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="c1">#     ^^^^^^^^^^^ error: ambiguous call to `some_method` — multiple</span>
+<span class="c1">#     trait instantiations match:</span>
+<span class="c1">#       - TraitA.some_method(self, x: int) -&gt; str</span>
+<span class="c1">#       - TraitB.some_method(self, x: int) -&gt; bool</span>
+<span class="c1">#     help: annotate the expected return type, or use explicit trait</span>
+<span class="c1">#     qualification (see deferred question #1)</span>
+</code></pre></div>
+<h4 id="4-irreconcilable-cross-trait-collision">4. Irreconcilable cross-trait collision<a class="headerlink" href="#4-irreconcilable-cross-trait-collision" title="Permanent link">&para;</a></h4>
+<p>Two different traits produce methods with identical signatures on the same type:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Logger</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">write</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
 
-<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">,</span> <span class="n">protobuf</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">Event</span><span class="p">:</span>
-    <span class="n">customer_id</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">email</span> <span class="p">[</span><span class="n">pii</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">proto</span><span class="o">.</span><span class="n">tag</span><span class="o">=</span><span class="mi">1</span><span class="p">]:</span> <span class="nb">str</span>
-    <span class="n">event_type</span> <span class="p">[</span><span class="n">proto</span><span class="o">.</span><span class="n">tag</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="nb">values</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;click&quot;</span><span class="p">,</span> <span class="s2">&quot;purchase&quot;</span><span class="p">]]:</span> <span class="nb">str</span>
+<span class="k">trait</span> <span class="nc">Serializer</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">write</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">model</span> <span class="nc">Sink</span> <span class="k">with</span> <span class="nc">Logger</span><span class="p">,</span> <span class="nc">Serializer</span><span class="p">:</span>
+    <span class="c1">#              ^^^^ error: method `write` from `Serializer` conflicts</span>
+    <span class="c1">#   with `write` from `Logger` — both have signature</span>
+    <span class="c1">#   `(self, msg: str) -&gt; None` and cannot be disambiguated</span>
+    <span class="c1">#   help: rename one of the trait methods, or adopt only one of</span>
+    <span class="c1">#   these traits</span>
 </code></pre></div>
-<p>The <code>json</code> module sees <code>alias</code>, <code>description</code>, etc. The <code>protobuf</code> module reads <code>proto.tag</code> for stable field numbering.
-Each format consumes the metadata it understands and ignores the rest.</p>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<p>This RFC is <strong>additive</strong> for the protocol itself — <code>__derives__</code>, <code>@rust.derive</code>, and module-based <code>@derive()</code> are new
-capabilities. However, it includes one <strong>deprecation</strong>: bare <code>@derive(Serialize, Deserialize)</code> will be removed from the
-<code>DeriveId</code> registry once the <code>std.serde.json</code> module is available (see design decision #4). Users migrate to the
-explicit module form:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Before (deprecated — will be removed)</span>
-<span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">Config</span><span class="p">:</span>
-    <span class="n">host</span><span class="p">:</span> <span class="nb">str</span>
-
-<span class="n">config</span><span class="o">.</span><span class="n">to_json</span><span class="p">()</span>
-
-<span class="c1"># After</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
-
-<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">Config</span><span class="p">:</span>
-    <span class="n">host</span><span class="p">:</span> <span class="nb">str</span>
-
-<span class="n">config</span><span class="o">.</span><span class="n">to_json</span><span class="p">()</span>
-</code></pre></div>
-<p>The migration is mechanical: add the format import, replace bare <code>Serialize</code>/<code>Deserialize</code> with the module name. The
-generated Rust output is identical. Built-in derives (<code>Debug</code>, <code>Clone</code>, <code>Eq</code>, etc.) are unaffected.</p>
+<p>Fully additive. Existing code that adopts a trait once is unaffected. The only new capability is adopting the same
+trait with different type arguments.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<h3 id="1-decorator-based-method-injection-current-approach">1. Decorator-based method injection (current approach)<a class="headerlink" href="#1-decorator-based-method-injection-current-approach" title="Permanent link">&para;</a></h3>
-<p>The status quo: hardcode method injection in the typechecker per derive. Rejected because it doesn't scale to N formats
-and provides no trait for generic bounds.</p>
-<h3 id="2-__derive__-as-a-simple-list-without-traits">2. <code>__derive__</code> as a simple list without traits<a class="headerlink" href="#2-__derive__-as-a-simple-list-without-traits" title="Permanent link">&para;</a></h3>
-<p>A module-level <code>__derive__</code> that maps to Rust derives, with methods injected by convention (e.g., <code>to_&lt;format&gt;</code> always
-exists). Rejected because there's no trait to bind against in generic functions, and the method signatures are invisible
-to the user.</p>
-<h3 id="3-proc-macro-style-user-derives">3. Proc-macro-style user derives<a class="headerlink" href="#3-proc-macro-style-user-derives" title="Permanent link">&para;</a></h3>
-<p>Allow users to write Rust proc macros and register them as Incan derives. Rejected because it requires Rust expertise
-and breaks the "Incan all the way down" principle. The trait-based approach keeps everything in Incan.</p>
-<h3 id="4-making-all-built-in-derives-use-this-protocol-too">4. Making all built-in derives use this protocol too<a class="headerlink" href="#4-making-all-built-in-derives-use-this-protocol-too" title="Permanent link">&para;</a></h3>
-<p>Migrate <code>Eq</code>, <code>Clone</code>, <code>Debug</code>, etc. to <code>__derives__</code>-based modules. Rejected because these are genuinely compiler
-intrinsics — their implementations are Rust proc macros that generate <code>impl</code> blocks, not callable functions. The
-protocol is for library-level functionality.</p>
+<h3 id="1-union-types-str-int">1. Union types (<code>str | int</code>)<a class="headerlink" href="#1-union-types-str-int" title="Permanent link">&para;</a></h3>
+<p>A single <code>Index[str | int, JsonValue]</code> adoption with one <code>__getitem__</code>. Rejected as a dependency — union types are a
+larger language feature. Multi-instantiation dispatch solves the immediate problem through the existing trait system.</p>
+<h3 id="2-overload-decorator-python-style">2. <code>@overload</code> decorator (Python-style)<a class="headerlink" href="#2-overload-decorator-python-style" title="Permanent link">&para;</a></h3>
+<p>Declare multiple signatures, implement once with runtime dispatch. Rejected because it's a runtime mechanism in a
+compile-time language. Multi-instantiation dispatch is resolved entirely at compile time.</p>
+<h3 id="3-separate-method-names">3. Separate method names<a class="headerlink" href="#3-separate-method-names" title="Permanent link">&para;</a></h3>
+<p><code>get_by_key(str)</code> and <code>get_by_index(int)</code> instead of two <code>__getitem__</code>. Works but breaks the <code>[]</code> subscript syntax
+and feels un-Pythonic.</p>
+<h3 id="4-compiler-special-casing-per-type">4. Compiler special-casing per type<a class="headerlink" href="#4-compiler-special-casing-per-type" title="Permanent link">&para;</a></h3>
+<p>Give <code>JsonValue</code> special compiler support for multi-key indexing without a general mechanism. Rejected because it
+doesn't scale — every type with the same need would require its own compiler special-case.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Two derive systems</strong>: built-in derives (<code>DeriveId</code> registry) and module-based derives (<code>__derives__</code> protocol)
-  coexist. This is intentional — they serve different purposes — but adds conceptual surface area.</li>
-<li><strong>Naming collisions</strong>: if a module defines a <code>Serialize</code> trait and the user also imports <code>Serialize</code> from another
-  module, the compiler must disambiguate. Normal trait resolution rules apply, but the error messages need to be clear.</li>
-<li><strong>Rust derive deduplication</strong>: the compiler must correctly deduplicate underlying Rust derives across modules. This is
-  straightforward (collect into a set) but adds a codegen step.</li>
+<li><strong>Ambiguity errors</strong>: when the compiler can't determine which instantiation to use from context, it must report an
+  error. The error messages need to be clear about <em>why</em> the call is ambiguous and <em>how</em> to resolve it.</li>
+<li><strong>Symbol table complexity</strong>: the method table representation needs to support multiple entries per method name. This
+  is an internal complexity increase, though the user-facing model is simple.</li>
+<li><strong>Compile-time cost</strong>: resolving multi-instantiation dispatch requires checking argument types against all candidates.
+  For typical usage (2-3 instantiations), this is negligible.</li>
+<li><strong>Teachability</strong>: "two methods with the same name" is a new concept for Python-background users, who are accustomed to
+  one-name-one-definition. The key teaching point is that these are <em>trait implementations</em>, not overloads — the trait
+  system makes the distinction principled rather than ad-hoc. This puts a high bar on tooling: the LSP must surface
+  which trait instantiation a call resolves to (e.g., hover info showing <code>Index[str, JsonValue].__getitem__</code>), and
+  diagnostics for ambiguous calls must clearly explain the competing candidates and how to disambiguate.</li>
 </ul>
 <h2 id="implementation-plan">Implementation plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
-<h3 id="phase-1-parser-support-for-__derives__-and-rustderive">Phase 1: Parser support for <code>__derives__</code> and <code>@rust.derive</code><a class="headerlink" href="#phase-1-parser-support-for-__derives__-and-rustderive" title="Permanent link">&para;</a></h3>
 <ul>
-<li>[ ] Extend the parser to recognize module-level <code>__derives__ = [...]</code> as a special attribute</li>
-<li>[ ] Store the derives list in the AST's module metadata (alongside <code>rust.module()</code>)</li>
-<li>[ ] Parse <code>@rust.derive("path")</code> as a decorator on trait declarations</li>
-<li>[ ] Store <code>@rust.derive</code> paths in <code>TraitDecl</code> AST metadata</li>
-<li>[ ] Emit compile error for <code>__derives__ = []</code> (empty list)</li>
-<li>[ ] Emit compile error if <code>__derives__</code> references a name that isn't a trait in the same module</li>
-<li>Touchpoints: <code>crates/incan_syntax/src/parser/core.rs</code>, <code>crates/incan_syntax/src/ast/decls.rs</code></li>
+<li>[ ] Verify parser allows duplicate trait names in <code>with</code> clauses; lift restriction if needed</li>
+<li>[ ] Update the symbol table to support multiple method entries per name (grouped by trait origin)</li>
+<li>[ ] Update the typechecker to allow same-name methods when they correspond to different trait instantiations</li>
+<li>[ ] Update call resolution to disambiguate based on argument types (and optionally return type context, see
+  <a href="#deferred-questions">deferred question #2</a>)</li>
+<li>[ ] Update lowering to emit separate <code>impl Trait&lt;T&gt; for Type</code> blocks per instantiation</li>
+<li>[ ] Add diagnostics:<ul>
+<li>Duplicate trait instantiation (<code>with Trait[A], Trait[A]</code>)</li>
+<li>Ambiguous call (argument types match multiple candidates)</li>
+<li>Return-type ambiguity (if return-type dispatch is supported: explain how to annotate the expected type)</li>
 </ul>
-<h3 id="phase-2-derive-expansion-in-the-typechecker">Phase 2: Derive expansion in the typechecker<a class="headerlink" href="#phase-2-derive-expansion-in-the-typechecker" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[ ] When <code>@derive(name)</code> resolves to a module (not a <code>DeriveId</code>), read <code>__derives__</code> from the module</li>
-<li>[ ] Adopt the listed traits onto the type; inject their methods into the type's method table</li>
-<li>[ ] Collect <code>@rust.derive</code> paths from adopted traits for the emission layer</li>
-<li>[ ] When <code>@derive(name)</code> resolves to a single trait (imported from a derivable module), adopt only that trait</li>
-<li>[ ] Replace <code>inject_json_methods()</code> with the general trait adoption mechanism</li>
-<li>[ ] Add diagnostic for ambiguous method names when deriving multiple modules with conflicting trait methods</li>
-<li>Touchpoints: <code>src/frontend/typechecker/collect/decl_helpers.rs</code>, <code>collect/stdlib_imports.rs</code></li>
-</ul>
-<h3 id="phase-3-emission-deduplication">Phase 3: Emission deduplication<a class="headerlink" href="#phase-3-emission-deduplication" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[ ] Collect all <code>@rust.derive</code> paths from adopted traits, plus <code>DeriveId</code>-mapped derives</li>
-<li>[ ] Deduplicate into a set before emitting <code>#[derive(...)]</code></li>
-<li>[ ] Verify that <code>@rust.derive</code> with multiple arguments works: <code>@rust.derive("a::B", "c::D")</code></li>
-<li>Touchpoints: <code>src/backend/ir/emit/decls/structures.rs</code></li>
-</ul>
-<h3 id="phase-4-migrate-stdserdejson-to-the-protocol">Phase 4: Migrate <code>std.serde.json</code> to the protocol<a class="headerlink" href="#phase-4-migrate-stdserdejson-to-the-protocol" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[ ] Rewrite <code>stdlib/serde/json.incn</code> with <code>__derives__</code>, <code>@rust.derive</code>, <code>Serialize</code> trait, <code>Deserialize</code> trait</li>
-<li>[ ] <code>Serialize.to_json()</code> returns <code>str</code> (serialization of a valid model cannot fail); <code>Deserialize.from_json()</code>
-  returns <code>Result[Self, str]</code></li>
-<li>[ ] Remove <code>inject_json_methods()</code> hardcoding from <code>decl_helpers.rs</code></li>
-<li>[ ] Remove <code>Serialize</code> / <code>Deserialize</code> from <code>DeriveId</code> registry</li>
-<li>[ ] Verify <code>@derive(json)</code> works end-to-end (typechecks, lowers, emits correct Rust)</li>
-<li>[ ] Verify <code>from std.serde.json import Serialize</code> + <code>@derive(Serialize)</code> works for partial derives</li>
-<li>[ ] Add codegen snapshot tests for single-format and partial derives</li>
-<li>[ ] Update existing tests that use bare <code>@derive(Serialize, Deserialize)</code> to use <code>@derive(json)</code></li>
-</ul>
-<h3 id="phase-5-add-a-second-serde-format-and-a-schema-generator">Phase 5: Add a second serde format and a schema generator<a class="headerlink" href="#phase-5-add-a-second-serde-format-and-a-schema-generator" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[ ] Implement <code>std.serde.yaml</code> following the same pattern as <code>std.serde.json</code></li>
-<li>[ ] Verify multi-format derives work: <code>@derive(json, yaml)</code> — correct deduplication, distinct methods</li>
-<li>[ ] Verify <code>with</code> trait bounds work across format modules: <code>T with (json.Serialize, yaml.Serialize)</code></li>
-<li>[ ] Implement one schema generator (e.g., <code>std.schema.sql</code>) to validate the pure-Incan <code>__fields__()</code> reflection path</li>
-<li>[ ] Verify schema generator derives work: <code>@derive(sql)</code> with no <code>@rust.derive</code> on the trait</li>
-<li>[ ] Add codegen snapshot tests for multi-format and schema generator derives</li>
-</ul>
-<h3 id="phase-6-documentation-and-migration-guide">Phase 6: Documentation and migration guide<a class="headerlink" href="#phase-6-documentation-and-migration-guide" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[ ] Update user-facing docs to show the <code>from std.serde import json</code> pattern</li>
-<li>[ ] Document how to create custom derivable modules (user guide)</li>
-<li>[ ] Add deprecation notice for bare <code>@derive(Serialize, Deserialize)</code> in release notes</li>
+</li>
+<li>[ ] Add codegen snapshot tests for multi-instantiation dispatch</li>
+<li>[ ] Add integration tests for <code>Index</code> with multiple key types</li>
 </ul>
 <h2 id="design-decisions">Design decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
-<p>The following questions were considered during design and are recorded here for posterity.</p>
 <ol>
 <li>
-<p><strong>Trait naming within modules</strong>: modules use short names (<code>Serialize</code>, <code>Deserialize</code>). Users who need disambiguation
-   use import aliasing: <code>from std.serde.json import Serialize as JsonSerialize</code>. This keeps module definitions simple
-   and pushes naming concerns to the import site where the user has full context.</p>
+<p><strong>Trait-driven, not general overloading</strong>: same-name methods are only allowed when they arise from different trait
+   instantiations. This keeps the language simple and the dispatch rule principled.</p>
 </li>
 <li>
-<p><strong><code>__derives__</code> syntax</strong>: parsed as an implicit const assignment. The dunder convention already signals
-   "compiler-recognized"; an explicit <code>const</code> keyword would be redundant. It is semantically immutable — reassigning
-   <code>__derives__</code> is a compile error.</p>
-</li>
-<li>
-<p><strong>Missing or empty <code>__derives__</code></strong>: a module without <code>__derives__</code> is not derivable. A module with
-   <code>__derives__ = []</code> is a compile error (or at minimum a warning) — an empty list signals a mistake, since there is
-   no reason to declare <code>__derives__</code> without listing at least one trait.</p>
-</li>
-<li>
-<p><strong>Bare <code>Serialize</code> / <code>Deserialize</code> derives</strong>: bare <code>@derive(Serialize, Deserialize)</code> ceases to exist as a <code>DeriveId</code>
-   shortcut. Users import the format module and derive it: <code>@derive(json)</code>. If direct access to the Rust serde traits
-   is needed, <code>rust::</code> interop remains available. This eliminates ambiguity and makes the format dependency explicit.</p>
-</li>
-<li>
-<p><strong><code>@rust.derive</code> validation</strong>: treated the same as <code>@rust.extern</code> — the path string is passed through to the emitted
-   Rust code. Validation happens at Rust compile time, not in the Incan compiler. This keeps the protocol simple and
-   works with any Rust derive crate without the Incan compiler needing to know about them.</p>
-</li>
-<li>
-<p><strong>Multiple <code>@rust.derive</code> on one trait</strong>: allowed. A single trait may require multiple Rust-level derives. The
-   decorator accepts multiple arguments: <code>@rust.derive("serde::Serialize", "apache_avro::AvroSchema")</code>.</p>
+<p><strong>Compile-time resolution</strong>: no runtime dispatch. The compiler knows which implementation to call from the argument
+   types at the call site.</p>
 </li>
 </ol>
 <h2 id="deferred-questions">Deferred questions<a class="headerlink" href="#deferred-questions" title="Permanent link">&para;</a></h2>
 <ol>
 <li>
-<p><strong>Derive-time metadata</strong>: some formats may need per-model configuration (e.g., JSON naming conventions, Protobuf
-   field numbering strategy). Whether this should be decorator args (<code>@derive(json, rename_all="camelCase")</code>), field
-   metadata, or a separate mechanism is out of scope for this RFC and deferred to future format-specific RFCs.</p>
+<p><strong>Explicit qualification syntax</strong>: when disambiguation fails, how does the user specify which trait instantiation
+   they mean? Options include <code>value.Index[str].__getitem__("key")</code>, turbofish-style <code>value.__getitem__::&lt;str&gt;("key")</code>,
+   or something else. This is expected to be rare in practice.</p>
 </li>
 <li>
-<p><strong>Pretty printing</strong>: should <code>.to_json()</code> accept formatting options (indent, sort keys), or should pretty printing be
-   a separate function (e.g., <code>json.pretty(value, indent=2)</code>)? Deferred to the <code>std.serde.json</code> implementation.</p>
+<p><strong>Return-type-only disambiguation</strong>: is it sufficient to resolve based on expected return type alone (e.g.,
+   <code>let precise: float = reading.into()</code>)? Or should this always be an error requiring explicit qualification?</p>
+</li>
+<li>
+<p><strong>Type-parameter-level dispatch</strong>: in the multi-format serialization pattern, disambiguation comes from a generic
+   type parameter resolved at monomorphization, not from argument or return types at the call site:</p>
 </li>
 </ol>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">publish</span><span class="p">[</span><span class="nc">F</span><span class="p">,</span> <span class="nc">T</span> <span class="k">with</span> <span class="nc">Serializable</span><span class="p">[</span><span class="nc">F</span><span class="p">]](</span><span class="n">event</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">event</span><span class="o">.</span><span class="n">serialize</span><span class="p">()</span>
+</code></pre></div>
+<p>When the caller writes <code>publish[Json](my_event)</code>, <code>F = Json</code> and <code>T</code> is inferred from the argument. The compiler
+   picks <code>Serializable[Json]::serialize</code>. This uses standard Incan <code>with</code> syntax in the type parameter list — no
+   <code>where</code> clause. Incan will need this mechanism once generic functions with trait bounds are implemented.</p>
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="/dev/RFCs/005_rust_interop">RFC 005</a> — Rust Interop</li>
-<li><a href="/dev/RFCs/012_json_value">RFC 012</a> — <code>JsonValue</code> Type and Enum Methods</li>
-<li><a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a> — Multi-Instantiation Trait Dispatch</li>
-<li><a href="/dev/RFCs/closed/implemented/021_model_field_metadata_and_aliases">RFC 021</a> — Model field metadata and schema-safe aliases</li>
+<li><a href="/dev/RFCs/012_json_value">RFC 012</a> — <code>JsonValue</code> Type, Enum Methods, and Enum Trait Adoption</li>
 <li><a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a> — Compilable Stdlib &amp; Rust Module Binding</li>
-<li>Rust <code>serde</code> crate (format-agnostic serialization)</li>
-<li>Rust <code>prost</code> crate (Protobuf code generation)</li>
-<li>Rust <code>apache-avro</code> crate (Avro serialization and schema)</li>
+<li><a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a> — Extensible Derive Protocol</li>
+<li>Rust trait system — multiple <code>impl Trait&lt;T&gt; for Type</code> blocks</li>
 </ul>
 <!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
 
