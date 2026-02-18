@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 012: JsonValue Type for Dynamic JSON - Incan Documentation</title>
+        <title>RFC 012: JsonValue Type, Enum Methods, and Enum Trait Adoption - Incan Documentation</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-012-jsonvalue-type-for-dynamic-json" class="md-skip">
+        <a href="#rfc-012-jsonvalue-type-enum-methods-and-enum-trait-adoption" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 012: JsonValue Type for Dynamic JSON
+              RFC 012: JsonValue Type, Enum Methods, and Enum Trait Adoption
             
           </span>
         </div>
@@ -3871,15 +3871,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#module-placement-and-names" class="md-nav__link">
-    <span class="md-ellipsis">
-      Module placement and names
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#motivation" class="md-nav__link">
     <span class="md-ellipsis">
       Motivation
@@ -3890,18 +3881,27 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#current-approach-works" class="md-nav__link">
+  <a href="#enums-cant-have-methods" class="md-nav__link">
     <span class="md-ellipsis">
-      Current Approach (Works)
+      Enums can't have methods
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#proposed-addition" class="md-nav__link">
+  <a href="#enums-cant-adopt-traits" class="md-nav__link">
     <span class="md-ellipsis">
-      Proposed Addition
+      Enums can't adopt traits
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dynamic-json-has-no-solution" class="md-nav__link">
+    <span class="md-ellipsis">
+      Dynamic JSON has no solution
     </span>
   </a>
   
@@ -3913,55 +3913,55 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#detailed-design" class="md-nav__link">
+  <a href="#non-goals" class="md-nav__link">
     <span class="md-ellipsis">
-      Detailed Design
+      Non-Goals
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Detailed Design">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation (how users think about it)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Guide-level explanation (how users think about it)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#jsonvalue-type" class="md-nav__link">
+  <a href="#enum-methods-general-feature" class="md-nav__link">
     <span class="md-ellipsis">
-      JsonValue Type
+      Enum methods (general feature)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#constructors" class="md-nav__link">
+  <a href="#enum-trait-adoption-general-feature" class="md-nav__link">
     <span class="md-ellipsis">
-      Constructors
+      Enum trait adoption (general feature)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#access-methods" class="md-nav__link">
+  <a href="#jsonvalue-dynamic-json" class="md-nav__link">
     <span class="md-ellipsis">
-      Access Methods
+      JsonValue — dynamic JSON
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#indexing" class="md-nav__link">
+  <a href="#mixing-typed-and-dynamic" class="md-nav__link">
     <span class="md-ellipsis">
-      Indexing
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#serialization" class="md-nav__link">
-    <span class="md-ellipsis">
-      Serialization
+      Mixing typed and dynamic
     </span>
   </a>
   
@@ -3973,55 +3973,238 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#rust-implementation" class="md-nav__link">
+  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
     <span class="md-ellipsis">
-      Rust Implementation
+      Reference-level explanation (precise rules)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reference-level explanation (precise rules)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#enum-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Enum methods
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Enum methods">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#enum-declaration-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      Enum declaration syntax
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#hybrid-models" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#ast-changes" class="md-nav__link">
     <span class="md-ellipsis">
-      Hybrid Models
+      AST changes
     </span>
   </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#typechecking" class="md-nav__link">
+    <span class="md-ellipsis">
+      Typechecking
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lowering-and-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lowering and emission
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stdjsonjsonvalue" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.json.JsonValue
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.json.JsonValue">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#type-definition" class="md-nav__link">
+    <span class="md-ellipsis">
+      Type definition
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rust-backing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust backing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#indexing-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Indexing semantics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#numeric-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Numeric handling
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      Syntax
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Semantics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction-with-existing-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interaction with existing features
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Interaction with existing features">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#match-expressions" class="md-nav__link">
+    <span class="md-ellipsis">
+      match expressions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rustextern-on-enum-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      @rust.extern on enum methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#jsonvalue-as-a-model-field-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      JsonValue as a model field type
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compatibility-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compatibility / migration
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
         <li class="md-nav__item">
   <a href="#alternatives-considered" class="md-nav__link">
     <span class="md-ellipsis">
-      Alternatives Considered
+      Alternatives considered
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Alternatives Considered">
+    <nav class="md-nav" aria-label="Alternatives considered">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-dictstr-any" class="md-nav__link">
+  <a href="#1-jsonvalue-as-a-model-with-opaque-rust-interior" class="md-nav__link">
     <span class="md-ellipsis">
-      1. Dict[str, Any]
+      1. JsonValue as a model with opaque Rust interior
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-generic-parsing-only" class="md-nav__link">
+  <a href="#2-module-level-functions-instead-of-methods" class="md-nav__link">
     <span class="md-ellipsis">
-      2. Generic parsing only
+      2. Module-level functions instead of methods
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-automatic-dict-conversion" class="md-nav__link">
+  <a href="#3-dictstr-any-for-dynamic-json" class="md-nav__link">
     <span class="md-ellipsis">
-      3. Automatic Dict conversion
+      3. Dict[str, Any] for dynamic JSON
     </span>
   </a>
   
@@ -4033,18 +4216,87 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-plan" class="md-nav__link">
+  <a href="#drawbacks" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation Plan
+      Drawbacks
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#open-questions" class="md-nav__link">
+  <a href="#implementation-plan" class="md-nav__link">
     <span class="md-ellipsis">
-      Open Questions
+      Implementation plan
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-enum-methods-and-trait-adoption-language-feature" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 1: Enum methods and trait adoption (language feature)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-stdjsonjsonvalue-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 2: std.json.JsonValue type
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-indexing-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 3: Indexing support
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-jsonvalue-as-a-model-field-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 4: JsonValue as a model field type
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 5: Documentation
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design decisions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deferred-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Deferred questions
     </span>
   </a>
   
@@ -4077,72 +4329,203 @@
   
 
 
-<h1 id="rfc-012-jsonvalue-type-for-dynamic-json">RFC 012: JsonValue Type for Dynamic JSON<a class="headerlink" href="#rfc-012-jsonvalue-type-for-dynamic-json" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> Draft</p>
+<h1 id="rfc-012-jsonvalue-type-enum-methods-and-enum-trait-adoption">RFC 012: <code>JsonValue</code> Type, Enum Methods, and Enum Trait Adoption<a class="headerlink" href="#rfc-012-jsonvalue-type-enum-methods-and-enum-trait-adoption" title="Permanent link">&para;</a></h1>
+<ul>
+<li>Status: Planned</li>
+<li>Author(s): Danny Meijer (@dannymeijer)</li>
+<li>Issue: #80</li>
+<li>RFC PR: —</li>
+<li>Created: 2025-11-15 (draft), 2026-02-17 (final)</li>
+<li>Related: <ul>
+<li><a href="/dev/RFCs/005_rust_interop">RFC 005</a> (Rust interop)</li>
+<li><a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a> (compilable stdlib &amp; rust.module binding)</li>
+<li>[RFC 025] (multi-instantiation trait dispatch)</li>
+</ul>
+</li>
+</ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Add a <code>JsonValue</code> type for handling JSON with unknown or varying structure at runtime.</p>
-<h2 id="module-placement-and-names">Module placement and names<a class="headerlink" href="#module-placement-and-names" title="Permanent link">&para;</a></h2>
-<p>This RFC proposes that dynamic JSON support lives in a dedicated stdlib module:</p>
-<ul>
-<li><strong>Canonical module</strong>: <code>std.json</code></li>
-<li><strong>Python analogy</strong>: <code>import json</code></li>
-</ul>
-<p>Rationale:</p>
-<ul>
-<li>JSON is cross-cutting (web responses, HTTP clients, config, tooling).</li>
-<li>A dedicated module avoids duplicating “JSON-ish” vocabulary across <code>std.web</code>, <code>std.http</code>, etc.</li>
-<li>It cleanly separates “dynamic JSON data” (<code>std.json.JsonValue</code>) from “web transport wrappers” like <code>std.web.Json[T]</code>.</li>
-</ul>
-<p>Clarifications:</p>
-<ul>
-<li><code>std.json.JsonValue</code> is the <strong>dynamic JSON data</strong> type (parseable, indexable, inspectable).</li>
-<li><code>std.web.Json[T]</code> is a <strong>web transport wrapper</strong> for request/response bodies; it is not “the JSON module”.
-  It may internally use <code>std.json</code> but has distinct semantics and typing.</li>
-<li>Rust backing type is expected to be <code>serde_json::Value</code> under the hood, but that Rust type is an implementation detail
-  (accessible explicitly via <code>rust::…</code> interop when needed).</li>
-</ul>
-<p>Recommended import style:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">json</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonValue</span>
-</code></pre></div>
+<p>This RFC introduces three things:</p>
+<ol>
+<li><strong>Enum methods</strong> — extend Incan enums to support method declarations, bringing them to parity with models and
+   classes.</li>
+<li><strong>Enum trait adoption</strong> — extend Incan enums to support <code>with Trait</code> syntax, enabling enums to adopt traits like
+   <code>Index[K, V]</code> for subscript access.</li>
+<li><strong><code>std.json.JsonValue</code></strong> — an enum with methods and trait adoption for handling JSON with unknown or varying
+   structure at runtime. <code>JsonValue</code> is the motivating use case for both enum features and the first stdlib type to
+   use them.</li>
+</ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Currently, Incan requires defining models with <code>@derive(Serialize, Deserialize)</code> for JSON handling.
-This works well for known, fixed schemas but falls short for:</p>
+<h3 id="enums-cant-have-methods">Enums can't have methods<a class="headerlink" href="#enums-cant-have-methods" title="Permanent link">&para;</a></h3>
+<p>Today, Incan enums can only declare variants. They cannot have methods:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Current: enums are variant-only</span>
+<span class="k">enum</span> <span class="nc">Color</span><span class="p">:</span>
+    <span class="nc">Red</span>
+    <span class="nc">Green</span>
+    <span class="nc">Blue</span>
+
+<span class="c1"># No way to add methods — this doesn&#39;t parse:</span>
+<span class="c1">#   def is_warm(self) -&gt; bool: ...</span>
+</code></pre></div>
+<p>This is a significant gap. Models and classes both support methods. Enums — which in Incan are algebraic data types
+with tuple variants — are the only declaration type without them. This limits their usefulness for any type that needs
+both variants and behavior.</p>
+<h3 id="enums-cant-adopt-traits">Enums can't adopt traits<a class="headerlink" href="#enums-cant-adopt-traits" title="Permanent link">&para;</a></h3>
+<p>Models and classes support <code>with Trait</code> to adopt traits (e.g., <code>model Matrix with Index[Tuple[int, int], float]</code>).
+Enums cannot. This means enums can't implement protocols like <code>Index</code> for subscript access, which is essential for
+<code>JsonValue["key"]</code> to work. Without enum trait adoption, <code>JsonValue</code> indexing would require special-case compiler
+support rather than using the existing <code>Index</code> trait from <code>std.traits.indexing</code>.</p>
+<h3 id="dynamic-json-has-no-solution">Dynamic JSON has no solution<a class="headerlink" href="#dynamic-json-has-no-solution" title="Permanent link">&para;</a></h3>
+<p>Incan currently requires defining models for all JSON handling. This falls short for:</p>
 <ol>
 <li><strong>Dynamic APIs</strong> — APIs that return varying structures depending on context</li>
-<li><strong>Exploration</strong> — Prototyping without defining full models</li>
-<li><strong>Partial parsing</strong> — Extracting specific fields from large JSON without modeling everything</li>
+<li><strong>Exploration</strong> — prototyping without defining full models upfront</li>
+<li><strong>Partial parsing</strong> — extracting specific fields from large JSON without modeling everything</li>
 <li><strong>Mixed schemas</strong> — JSON where some parts are typed and others are dynamic</li>
 </ol>
-<h3 id="current-approach-works">Current Approach (Works)<a class="headerlink" href="#current-approach-works" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">age</span><span class="p">:</span> <span class="nb">int</span>
+<p>A <code>JsonValue</code> type needs to be an enum (it represents one of: null, bool, int, float, string, array, object) <strong>and</strong> it
+needs methods (<code>.as_str()</code>, <code>.is_null()</code>, <code>.parse()</code>, etc.). Without enum methods, <code>JsonValue</code> would require clunky
+module-level functions instead of natural method-call syntax.</p>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Typed JSON serialization</strong> (<code>@derive(json)</code>, <code>.to_json()</code>, <code>.from_json()</code>). That is covered by [RFC 024] Phase 4,
+  which provides the <code>std.serde.json</code> derivable module.</li>
+<li><strong>Enum pattern matching enhancements.</strong> This RFC adds methods and trait adoption to enums; it does not change <code>match</code>
+  semantics.</li>
+</ul>
+<h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
+<h3 id="enum-methods-general-feature">Enum methods (general feature)<a class="headerlink" href="#enum-methods-general-feature" title="Permanent link">&para;</a></h3>
+<p>Enums can now have methods, just like models and classes:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Direction</span><span class="p">:</span>
+    <span class="nc">North</span>
+    <span class="nc">South</span>
+    <span class="nc">East</span>
+    <span class="nc">West</span>
 
-<span class="n">user</span> <span class="o">=</span> <span class="nc">User</span><span class="o">.</span><span class="n">from_json</span><span class="p">(</span><span class="n">json_str</span><span class="p">)</span><span class="o">?</span>
-<span class="nb">println</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_horizontal</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
+            <span class="nc">East</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="k">true</span>
+            <span class="nc">West</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="k">true</span>
+            <span class="n">_</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="k">false</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">opposite</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Direction</span><span class="p">:</span>
+        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
+            <span class="nc">North</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">South</span>
+            <span class="nc">South</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">North</span>
+            <span class="nc">East</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">West</span>
+            <span class="nc">West</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">East</span>
 </code></pre></div>
-<h3 id="proposed-addition">Proposed Addition<a class="headerlink" href="#proposed-addition" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Recommended: import the stdlib json module</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">json</span>
+<p>Methods on enums follow the same rules as methods on models/classes:</p>
+<ul>
+<li><code>self</code> receiver for instance methods</li>
+<li>No receiver for associated functions</li>
+<li>Can be <code>@rust.extern</code> for Rust-backed implementations</li>
+<li>Support type parameters on the enum and on individual methods</li>
+</ul>
+<h3 id="enum-trait-adoption-general-feature">Enum trait adoption (general feature)<a class="headerlink" href="#enum-trait-adoption-general-feature" title="Permanent link">&para;</a></h3>
+<p>Enums can now adopt traits with <code>with</code>, just like models and classes:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.indexing</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Index</span>
+
+<span class="k">enum</span> <span class="nc">Lookup</span> <span class="k">with</span> <span class="nc">Index</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+    <span class="nc">Mapping</span><span class="p">(</span><span class="kt">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">])</span>
+    <span class="nc">Empty</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
+            <span class="nc">Lookup</span><span class="o">.</span><span class="nc">Mapping</span><span class="p">(</span><span class="n">d</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="n">d</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+            <span class="nc">Lookup</span><span class="o">.</span><span class="nc">Empty</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="mi">0</span>
+</code></pre></div>
+<p>This brings enums to full parity with models and classes for trait adoption. The <code>with</code> clause appears after the enum
+name (and optional type parameters), before the colon.</p>
+<h3 id="jsonvalue-dynamic-json"><code>JsonValue</code> — dynamic JSON<a class="headerlink" href="#jsonvalue-dynamic-json" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonValue</span>
 
 <span class="c1"># Parse unknown JSON</span>
-<span class="n">data</span> <span class="o">=</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">json_str</span><span class="p">)</span><span class="o">?</span>
+<span class="n">data</span> <span class="o">=</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">response_body</span><span class="p">)</span><span class="o">?</span>
 
-<span class="c1"># Access dynamically</span>
+<span class="c1"># Navigate dynamically</span>
 <span class="n">name</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;user&quot;</span><span class="p">][</span><span class="s2">&quot;name&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">as_str</span><span class="p">()</span>
-<span class="nb">count</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;count&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">as_int</span><span class="p">()</span>
-<span class="n">items</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;items&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">as_list</span><span class="p">()</span>
+<span class="nb">count</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;items&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">as_int</span><span class="p">()</span>
 
-<span class="c1"># Check types at runtime</span>
-<span class="k">if</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;field&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">is_string</span><span class="p">():</span>
-    <span class="nb">println</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;field&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">as_str</span><span class="p">())</span>
+<span class="c1"># Type inspection</span>
+<span class="k">if</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;payload&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">is_object</span><span class="p">():</span>
+    <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;payload is an object&quot;</span><span class="p">)</span>
+
+<span class="c1"># Serialize back to string</span>
+<span class="n">json_str</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">to_json</span><span class="p">()</span>
 </code></pre></div>
-<h2 id="detailed-design">Detailed Design<a class="headerlink" href="#detailed-design" title="Permanent link">&para;</a></h2>
-<h3 id="jsonvalue-type">JsonValue Type<a class="headerlink" href="#jsonvalue-type" title="Permanent link">&para;</a></h3>
-<p><code>JsonValue</code> is an enum representing any JSON value:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">JsonValue</span><span class="p">:</span>
+<h3 id="mixing-typed-and-dynamic">Mixing typed and dynamic<a class="headerlink" href="#mixing-typed-and-dynamic" title="Permanent link">&para;</a></h3>
+<p>With [RFC 024]'s <code>@derive(json)</code>, a model can have <code>JsonValue</code> fields for partially-dynamic schemas:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonValue</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
+<span class="k">model</span> <span class="nc">ApiResponse</span><span class="p">:</span>
+    <span class="n">status</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">message</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">data</span><span class="p">:</span> <span class="nc">JsonValue</span>  <span class="c1"># Dynamic payload — structure varies per endpoint</span>
+
+<span class="n">response</span> <span class="o">=</span> <span class="nc">ApiResponse</span><span class="o">.</span><span class="n">from_json</span><span class="p">(</span><span class="n">body</span><span class="p">)</span><span class="o">?</span>
+<span class="n">user_name</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;user&quot;</span><span class="p">][</span><span class="s2">&quot;name&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">as_str</span><span class="p">()</span>
+</code></pre></div>
+<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
+<h3 id="enum-methods">Enum methods<a class="headerlink" href="#enum-methods" title="Permanent link">&para;</a></h3>
+<h4 id="enum-declaration-syntax">Enum declaration syntax<a class="headerlink" href="#enum-declaration-syntax" title="Permanent link">&para;</a></h4>
+<p>Enum declarations are extended to allow method declarations after the variant list:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">TypeName</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
+    <span class="nc">Variant1</span>
+    <span class="nc">Variant2</span><span class="p">(</span><span class="n">field_type</span><span class="p">)</span>
+    <span class="nc">Variant3</span><span class="p">(</span><span class="n">type1</span><span class="p">,</span> <span class="n">type2</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">method_name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">ReturnType</span><span class="p">:</span>
+        <span class="c1"># method body</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">associated_function</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">ReturnType</span><span class="p">:</span>
+        <span class="c1"># no self — associated function</span>
+</code></pre></div>
+<p>Methods are separated from variants by a blank line (by convention, not enforced). The parser continues to parse
+variants until it encounters <code>def</code> (or a decorator followed by <code>def</code>), then switches to parsing methods.</p>
+<h4 id="ast-changes">AST changes<a class="headerlink" href="#ast-changes" title="Permanent link">&para;</a></h4>
+<p><code>EnumDecl</code> gains <code>traits</code> and <code>methods</code> fields:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="n">EnumDecl</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">visibility</span><span class="p">:</span><span class="w"> </span><span class="nc">Visibility</span><span class="p">,</span>
+<span class="w">    </span><span class="n">decorators</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Spanned</span><span class="o">&lt;</span><span class="n">Decorator</span><span class="o">&gt;&gt;</span><span class="p">,</span>
+<span class="w">    </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="nc">Ident</span><span class="p">,</span>
+<span class="w">    </span><span class="n">type_params</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">TypeParam</span><span class="o">&gt;</span><span class="p">,</span>
+<span class="w">    </span><span class="n">traits</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Spanned</span><span class="o">&lt;</span><span class="n">Ident</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w">            </span><span class="c1">// NEW — adopted traits</span>
+<span class="w">    </span><span class="n">variants</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Spanned</span><span class="o">&lt;</span><span class="n">VariantDecl</span><span class="o">&gt;&gt;</span><span class="p">,</span>
+<span class="w">    </span><span class="n">methods</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Spanned</span><span class="o">&lt;</span><span class="n">MethodDecl</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w">      </span><span class="c1">// NEW — enum methods</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><code>EnumInfo</code> in the symbol table gains <code>traits</code> and <code>methods</code> fields:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="n">EnumInfo</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">type_params</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">,</span>
+<span class="w">    </span><span class="n">traits</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">,</span><span class="w">                    </span><span class="c1">// NEW</span>
+<span class="w">    </span><span class="n">variants</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">,</span>
+<span class="w">    </span><span class="n">methods</span><span class="p">:</span><span class="w"> </span><span class="nc">HashMap</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="n">MethodInfo</span><span class="o">&gt;</span><span class="p">,</span><span class="w">   </span><span class="c1">// NEW</span>
+<span class="p">}</span>
+</code></pre></div>
+<h4 id="typechecking">Typechecking<a class="headerlink" href="#typechecking" title="Permanent link">&para;</a></h4>
+<ul>
+<li>Enum methods are collected in the first pass (<code>collect_enum</code>), same as model/class methods.</li>
+<li>Method bodies can reference <code>self</code> and use <code>match self</code> to dispatch on variants.</li>
+<li>The enum's type parameters are in scope within method bodies.</li>
+</ul>
+<h4 id="lowering-and-emission">Lowering and emission<a class="headerlink" href="#lowering-and-emission" title="Permanent link">&para;</a></h4>
+<ul>
+<li>Enum methods lower to <code>IrFunction</code> entries associated with the enum type, same as model/class methods.</li>
+<li>Emitted as <code>impl TypeName { fn method_name(&amp;self, ...) { ... } }</code> in Rust.</li>
+</ul>
+<h3 id="stdjsonjsonvalue"><code>std.json.JsonValue</code><a class="headerlink" href="#stdjsonjsonvalue" title="Permanent link">&para;</a></h3>
+<h4 id="type-definition">Type definition<a class="headerlink" href="#type-definition" title="Permanent link">&para;</a></h4>
+<blockquote>
+<p>Note: this is a pseudo-code example showing the shape of the type. It is not a complete implementation.</p>
+</blockquote>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># stdlib/json.incn</span>
+<span class="k">rust</span><span class="o">.</span><span class="k">module</span><span class="p">(</span><span class="s2">&quot;incan_stdlib::json&quot;</span><span class="p">)</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.indexing</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Index</span>
+
+<span class="k">enum</span> <span class="nc">JsonValue</span> <span class="k">with</span> <span class="nc">Index</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">JsonValue</span><span class="p">],</span> <span class="nc">Index</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">JsonValue</span><span class="p">]:</span>
     <span class="nc">Null</span>
     <span class="nc">Bool</span><span class="p">(</span><span class="nb">bool</span><span class="p">)</span>
     <span class="nc">Int</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
@@ -4150,116 +4533,252 @@ This works well for known, fixed schemas but falls short for:</p>
     <span class="nc">String</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
     <span class="nc">Array</span><span class="p">(</span><span class="kt">List</span><span class="p">[</span><span class="nc">JsonValue</span><span class="p">])</span>
     <span class="nc">Object</span><span class="p">(</span><span class="kt">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">JsonValue</span><span class="p">])</span>
-</code></pre></div>
-<h3 id="constructors">Constructors<a class="headerlink" href="#constructors" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Parse from string</span>
-<span class="n">value</span> <span class="o">=</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">json_str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">JsonValue</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span>
 
-<span class="c1"># Create values directly</span>
-<span class="n">null_val</span> <span class="o">=</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="n">null</span><span class="p">()</span>
-<span class="n">bool_val</span> <span class="o">=</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="kt">bool</span><span class="p">(</span><span class="k">true</span><span class="p">)</span>
-<span class="n">int_val</span> <span class="o">=</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="kt">int</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
-<span class="n">str_val</span> <span class="o">=</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="n">string</span><span class="p">(</span><span class="s2">&quot;hello&quot;</span><span class="p">)</span>
-<span class="n">arr_val</span> <span class="o">=</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">val1</span><span class="p">,</span> <span class="n">val2</span><span class="p">])</span>
-<span class="n">obj_val</span> <span class="o">=</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="n">object</span><span class="p">({</span><span class="s2">&quot;key&quot;</span><span class="p">:</span> <span class="n">value</span><span class="p">})</span>
-</code></pre></div>
-<h3 id="access-methods">Access Methods<a class="headerlink" href="#access-methods" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Type checking</span>
-<span class="n">value</span><span class="o">.</span><span class="n">is_null</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
-<span class="n">value</span><span class="o">.</span><span class="n">is_bool</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
-<span class="n">value</span><span class="o">.</span><span class="n">is_int</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
-<span class="n">value</span><span class="o">.</span><span class="n">is_float</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
-<span class="n">value</span><span class="o">.</span><span class="n">is_string</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
-<span class="n">value</span><span class="o">.</span><span class="n">is_array</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
-<span class="n">value</span><span class="o">.</span><span class="n">is_object</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+    <span class="c1"># ---- Rust-backed primitives ----</span>
 
-<span class="c1"># Value extraction (returns Option)</span>
-<span class="n">value</span><span class="o">.</span><span class="n">as_bool</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span>
-<span class="n">value</span><span class="o">.</span><span class="n">as_int</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span>
-<span class="n">value</span><span class="o">.</span><span class="n">as_float</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span>
-<span class="n">value</span><span class="o">.</span><span class="n">as_str</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
-<span class="n">value</span><span class="o">.</span><span class="n">as_array</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="kt">List</span><span class="p">[</span><span class="nc">JsonValue</span><span class="p">]]</span>
-<span class="n">value</span><span class="o">.</span><span class="n">as_object</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="kt">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">JsonValue</span><span class="p">]]</span>
-</code></pre></div>
-<h3 id="indexing">Indexing<a class="headerlink" href="#indexing" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Object field access</span>
-<span class="n">value</span><span class="p">[</span><span class="s2">&quot;key&quot;</span><span class="p">]</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span>  <span class="c1"># Returns JsonValue.Null if missing</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">parse</span><span class="p">(</span><span class="n">json_str</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">JsonValue</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_json</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
 
-<span class="c1"># Array index access</span>
-<span class="n">value</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span>  <span class="c1"># Returns JsonValue.Null if out of bounds</span>
+    <span class="c1"># ---- Constructors ----</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">null</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_bool</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_int</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_float</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_string</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_array</span><span class="p">(</span><span class="n">items</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nc">JsonValue</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_object</span><span class="p">(</span><span class="n">entries</span><span class="p">:</span> <span class="kt">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">JsonValue</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
+
+    <span class="c1"># ---- Type inspection ----</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_null</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_bool</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_int</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_float</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_string</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_array</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_object</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
+
+    <span class="c1"># ---- Value extraction ----</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">as_bool</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">bool</span><span class="p">]:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">as_int</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">as_float</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">as_str</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">as_array</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="kt">List</span><span class="p">[</span><span class="nc">JsonValue</span><span class="p">]]:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">as_object</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="kt">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">JsonValue</span><span class="p">]]:</span> <span class="o">...</span>
+
+    <span class="c1"># ---- Indexing (from Index trait adoption, see RFC 025) ----</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<h4 id="rust-backing">Rust backing<a class="headerlink" href="#rust-backing" title="Permanent link">&para;</a></h4>
+<p><code>JsonValue</code> is backed by <code>serde_json::Value</code> at the Rust level. The implementation will use <code>rust.module()</code> and/or
+<code>rust::</code> interop to bridge the two — the specifics are left to the implementer. Users who need direct access to the
+underlying Rust type can use <code>rust::</code> interop:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">serde_json</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Value</span>
+</code></pre></div>
+<h4 id="indexing-semantics">Indexing semantics<a class="headerlink" href="#indexing-semantics" title="Permanent link">&para;</a></h4>
+<p><code>JsonValue</code> supports subscript access with both <code>str</code> keys (object field access) and <code>int</code> keys (array element access):</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Object field access — returns JsonValue.Null if key is missing</span>
+<span class="n">value</span><span class="p">[</span><span class="s2">&quot;key&quot;</span><span class="p">]</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span>
+
+<span class="c1"># Array index access — returns JsonValue.Null if out of bounds</span>
+<span class="n">value</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span>
 
 <span class="c1"># Chained access</span>
-<span class="n">value</span><span class="p">[</span><span class="s2">&quot;user&quot;</span><span class="p">][</span><span class="s2">&quot;address&quot;</span><span class="p">][</span><span class="s2">&quot;city&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">as_str</span><span class="p">()</span>
+<span class="n">value</span><span class="p">[</span><span class="s2">&quot;users&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;name&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">as_str</span><span class="p">()</span>
 </code></pre></div>
-<h3 id="serialization">Serialization<a class="headerlink" href="#serialization" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">value</span><span class="o">.</span><span class="n">to_json</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span>  <span class="c1"># Serialize back to JSON string</span>
-</code></pre></div>
-<h2 id="rust-implementation">Rust Implementation<a class="headerlink" href="#rust-implementation" title="Permanent link">&para;</a></h2>
-<p>Maps to <code>serde_json::Value</code>:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="k">pub</span><span class="w"> </span><span class="k">type</span><span class="w"> </span><span class="nc">JsonValue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">serde_json</span><span class="p">::</span><span class="n">Value</span><span class="p">;</span>
-
-<span class="k">impl</span><span class="w"> </span><span class="n">JsonValue</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">parse</span><span class="p">(</span><span class="n">s</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="kt">str</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">,</span><span class="w"> </span><span class="nb">String</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="n">serde_json</span><span class="p">::</span><span class="n">from_str</span><span class="p">(</span><span class="n">s</span><span class="p">).</span><span class="n">map_err</span><span class="p">(</span><span class="o">|</span><span class="n">e</span><span class="o">|</span><span class="w"> </span><span class="n">e</span><span class="p">.</span><span class="n">to_string</span><span class="p">())</span>
-<span class="w">    </span><span class="p">}</span>
-
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">is_null</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">is_null</span><span class="p">()</span><span class="w"> </span><span class="p">}</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">as_str</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;&amp;</span><span class="kt">str</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">as_str</span><span class="p">()</span><span class="w"> </span><span class="p">}</span>
-<span class="w">    </span><span class="c1">// ... etc</span>
-<span class="p">}</span>
-</code></pre></div>
-<h2 id="hybrid-models">Hybrid Models<a class="headerlink" href="#hybrid-models" title="Permanent link">&para;</a></h2>
-<p>Mix typed and dynamic:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">ApiResponse</span><span class="p">:</span>
-    <span class="n">status</span><span class="p">:</span> <span class="nb">int</span>
-    <span class="n">message</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">data</span><span class="p">:</span> <span class="nc">JsonValue</span>  <span class="c1"># Dynamic payload</span>
-</code></pre></div>
-<h2 id="alternatives-considered">Alternatives Considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<h3 id="1-dictstr-any">1. Dict[str, Any]<a class="headerlink" href="#1-dictstr-any" title="Permanent link">&para;</a></h3>
-<p>Rust doesn't have <code>Any</code> like Python. Would require boxing and type erasure.</p>
-<h3 id="2-generic-parsing-only">2. Generic parsing only<a class="headerlink" href="#2-generic-parsing-only" title="Permanent link">&para;</a></h3>
-<p>Keep <code>json_parse[T]()</code> and require models for everything. Rejected because:</p>
+<p>Indexing returns <code>JsonValue</code> (not <code>Option[JsonValue]</code>), with missing keys / out-of-bounds indices returning
+<code>JsonValue.Null</code>. This enables ergonomic chaining without intermediate unwrapping.</p>
+<p>The intended design is trait-based: <code>JsonValue</code> adopts both <code>Index[str, JsonValue]</code> and <code>Index[int, JsonValue]</code>, with
+two <code>__getitem__</code> implementations disambiguated by argument type. This requires multi-instantiation trait dispatch,
+proposed in [RFC 025]. Until RFC 025 is implemented, indexing may use compiler-level support as an interim fallback
+(the same way <code>List</code> and <code>Dict</code> indexing works today).</p>
+<h4 id="numeric-handling">Numeric handling<a class="headerlink" href="#numeric-handling" title="Permanent link">&para;</a></h4>
+<p>JSON has a single number type. Incan has <code>int</code> and <code>float</code>. The mapping:</p>
 <ul>
-<li>Too restrictive for dynamic use cases</li>
-<li>Poor developer experience for exploration</li>
+<li>JSON integers (no decimal point) → <code>JsonValue.Int(int)</code></li>
+<li>JSON floats (with decimal point or exponent) → <code>JsonValue.Float(float)</code></li>
+<li><code>.as_int()</code> on a <code>Float</code> value returns <code>None</code> (no silent truncation)</li>
+<li><code>.as_float()</code> on an <code>Int</code> value returns <code>Some(value as float)</code> (widening is safe)</li>
 </ul>
-<h3 id="3-automatic-dict-conversion">3. Automatic Dict conversion<a class="headerlink" href="#3-automatic-dict-conversion" title="Permanent link">&para;</a></h3>
-<p>Auto-convert JSON objects to <code>Dict[str, ???]</code>. Rejected because:</p>
-<ul>
-<li>Loses type information</li>
-<li>Can't handle nested structures uniformly</li>
-</ul>
-<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<p>The implementer might want to add a generic helper function to convert numerical strings to their correct type.
+For example:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">parse_number</span><span class="p">(</span><span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">s</span><span class="o">.</span><span class="nb">contains</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="nc">Float</span><span class="p">(</span><span class="nb">float</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">s</span><span class="p">))</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="nc">Int</span><span class="p">(</span><span class="nb">int</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">s</span><span class="p">))</span>
+</code></pre></div>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
+<p>Two new syntactic elements for enums:</p>
 <ol>
-<li>Add <code>JsonValue</code> as a language surface type in <code>incan_core::lang::surface</code> (maps to <code>serde_json::Value</code>)</li>
-<li>Implement constructors and methods in codegen</li>
-<li>Add typechecker support for indexing operations</li>
-<li>Add <code>JsonValue</code> field support in models</li>
-<li>Document with examples</li>
+<li><strong><code>with Trait</code> clause</strong> — optional, after the enum name and type parameters, before the colon. Parsed identically to
+   the existing <code>with</code> clause on models and classes (this means that <code>@derive(...)</code>-decorator will also be supported).</li>
+<li><strong>Method declarations inside enum bodies</strong> — after all variants, the parser looks for <code>def</code> (or decorators followed
+   by <code>def</code>) and parses method declarations using the same <code>method_decl</code> parser already used for models and classes.</li>
 </ol>
-<h2 id="open-questions">Open Questions<a class="headerlink" href="#open-questions" title="Permanent link">&para;</a></h2>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Name</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="k">with</span> <span class="nc">Trait1</span><span class="p">,</span> <span class="nc">Trait2</span><span class="p">:</span>
+    <span class="nc">Variant1</span>
+    <span class="nc">Variant2</span><span class="p">(</span><span class="nc">T</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">method</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<h3 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h3>
+<p>Enum methods behave identically to model/class methods:</p>
+<ul>
+<li>Instance methods receive <code>self</code> (immutable) or <code>mut self</code> (mutable)</li>
+<li>Associated functions have no receiver</li>
+<li>Methods can use <code>match self</code> to dispatch on variants</li>
+<li>Type parameters from the enum declaration are in scope</li>
+</ul>
+<h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
+<h4 id="match-expressions"><code>match</code> expressions<a class="headerlink" href="#match-expressions" title="Permanent link">&para;</a></h4>
+<p>Enum methods complement <code>match</code> — they don't replace it. Pattern matching remains the primary way to destructure enum
+variants from outside the type. Methods provide behavior that the enum encapsulates internally.</p>
+<h4 id="rustextern-on-enum-methods"><code>@rust.extern</code> on enum methods<a class="headerlink" href="#rustextern-on-enum-methods" title="Permanent link">&para;</a></h4>
+<p><code>@rust.extern</code> works on enum methods the same way it works on model/class methods — delegates to the Rust backing
+module declared by <code>rust.module()</code>. This is how <code>JsonValue</code>'s <code>parse()</code> and <code>to_json()</code> primitives are backed.</p>
+<h4 id="jsonvalue-as-a-model-field-type"><code>JsonValue</code> as a model field type<a class="headerlink" href="#jsonvalue-as-a-model-field-type" title="Permanent link">&para;</a></h4>
+<p><code>JsonValue</code> can be used as a field type in models. When the model derives JSON serialization ([RFC 024]), <code>JsonValue</code>
+fields serialize as their JSON representation:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonValue</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
+<span class="k">model</span> <span class="nc">Event</span><span class="p">:</span>
+    <span class="n">event_type</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">payload</span><span class="p">:</span> <span class="nc">JsonValue</span>  <span class="c1"># Serializes as whatever JSON structure it holds</span>
+</code></pre></div>
+<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
+<p><strong>Enum methods</strong>: fully additive. Existing enums without methods continue to work unchanged. The parser only looks for
+methods after all variants are parsed.</p>
+<p><strong><code>JsonValue</code></strong>: entirely new. No migration needed.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<h3 id="1-jsonvalue-as-a-model-with-opaque-rust-interior">1. <code>JsonValue</code> as a model with opaque Rust interior<a class="headerlink" href="#1-jsonvalue-as-a-model-with-opaque-rust-interior" title="Permanent link">&para;</a></h3>
+<p>Use a model (not an enum) backed by <code>serde_json::Value</code>, with all methods on the model. This works with current Incan
+but loses the ability to pattern match on JSON variants:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Can&#39;t do this without an enum:</span>
+<span class="k">match</span> <span class="n">data</span><span class="p">:</span>
+    <span class="nc">JsonValue</span><span class="o">.</span><span class="nc">String</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;got string: </span><span class="si">{</span><span class="n">s</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nc">JsonValue</span><span class="o">.</span><span class="nc">Int</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;got int: </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">_</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;other&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Pattern matching is a natural fit for JSON type dispatch. An enum with methods is the right abstraction.</p>
+<h3 id="2-module-level-functions-instead-of-methods">2. Module-level functions instead of methods<a class="headerlink" href="#2-module-level-functions-instead-of-methods" title="Permanent link">&para;</a></h3>
+<p>Keep enums method-free, put <code>JsonValue</code> functions at module level:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonValue</span><span class="p">,</span> <span class="n">parse</span><span class="p">,</span> <span class="n">as_str</span><span class="p">,</span> <span class="n">is_null</span>
+
+<span class="n">data</span> <span class="o">=</span> <span class="n">parse</span><span class="p">(</span><span class="n">body</span><span class="p">)</span><span class="o">?</span>
+<span class="n">name</span> <span class="o">=</span> <span class="n">as_str</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;user&quot;</span><span class="p">][</span><span class="s2">&quot;name&quot;</span><span class="p">])</span>
+</code></pre></div>
+<p>Functional but clunky — no method chaining, no <code>.</code> syntax, poor discoverability via IDE completion.</p>
+<h3 id="3-dictstr-any-for-dynamic-json">3. <code>Dict[str, Any]</code> for dynamic JSON<a class="headerlink" href="#3-dictstr-any-for-dynamic-json" title="Permanent link">&para;</a></h3>
+<p>Rust doesn't have <code>Any</code> like Python. Would require boxing and type erasure, losing the ability to distinguish JSON
+types (null vs missing, int vs float, etc.).</p>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Enum methods are a language change</strong>: extends the parser, AST, typechecker, lowering, and emission. However, the
+  mechanism is a straightforward extension of existing model/class method support — no new concepts are introduced.</li>
+<li><strong><code>JsonValue</code> is dynamically typed</strong>: introduces runtime type inspection into a language that emphasizes static
+  typing. This is intentional and scoped — <code>JsonValue</code> is opt-in for specific use cases, not a general-purpose <code>Any</code>.</li>
+<li><strong>Rust dependency</strong>: <code>JsonValue</code> maps to <code>serde_json::Value</code>, adding a hard dependency on <code>serde_json</code>. This crate
+  is already a dependency for model serialization.</li>
+</ul>
+<h2 id="implementation-plan">Implementation plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-enum-methods-and-trait-adoption-language-feature">Phase 1: Enum methods and trait adoption (language feature)<a class="headerlink" href="#phase-1-enum-methods-and-trait-adoption-language-feature" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] Extend the AST and symbol table to support methods and <code>with</code> trait adoption on enums</li>
+<li>[ ] Update the parser to accept <code>with</code> clauses and method declarations in enum bodies</li>
+<li>[ ] Update the typechecker to collect and validate enum traits and methods</li>
+<li>[ ] Update lowering and emission to generate Rust <code>impl</code> blocks for enum methods and trait implementations</li>
+<li>[ ] Add codegen snapshot and integration tests for enums with methods and trait adoption</li>
+</ul>
+<h3 id="phase-2-stdjsonjsonvalue-type">Phase 2: <code>std.json.JsonValue</code> type<a class="headerlink" href="#phase-2-stdjsonjsonvalue-type" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] Define the <code>JsonValue</code> enum in <code>stdlib/json.incn</code> with the surface described in this RFC</li>
+<li>[ ] Implement the Rust backing module wrapping <code>serde_json::Value</code></li>
+<li>[ ] Implement all methods (constructors, type inspection, value extraction, <code>parse</code>, <code>to_json</code>)</li>
+<li>[ ] Add codegen snapshot tests</li>
+</ul>
+<h3 id="phase-3-indexing-support">Phase 3: Indexing support<a class="headerlink" href="#phase-3-indexing-support" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] Implement <code>Index[str, JsonValue]</code> and <code>Index[int, JsonValue]</code> via <code>__getitem__</code> (depends on [RFC 025])</li>
+<li>[ ] Alternatively, add compiler-level subscript support as an interim fallback</li>
+<li>[ ] Verify chained access works: <code>value["users"][0]["name"].as_str()</code></li>
+<li>[ ] Add codegen snapshot tests for indexing and chained access</li>
+</ul>
+<h3 id="phase-4-jsonvalue-as-a-model-field-type">Phase 4: <code>JsonValue</code> as a model field type<a class="headerlink" href="#phase-4-jsonvalue-as-a-model-field-type" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] Ensure <code>JsonValue</code> fields in <code>@derive(json)</code> models ([RFC 024]) serialize/deserialize correctly</li>
+<li>[ ] Add codegen snapshot tests for hybrid models (typed + dynamic fields)</li>
+</ul>
+<h3 id="phase-5-documentation">Phase 5: Documentation<a class="headerlink" href="#phase-5-documentation" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] User guide: enum methods and trait adoption</li>
+<li>[ ] User guide: dynamic JSON with <code>JsonValue</code></li>
+<li>[ ] API reference for <code>std.json</code></li>
+</ul>
+<h2 id="design-decisions">Design decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Should <code>value["key"]</code> return <code>JsonValue</code> or <code>Option[JsonValue]</code>?</li>
-<li>Returning <code>JsonValue</code> (with Null for missing) is more ergonomic for chaining</li>
 <li>
-<p>Returning <code>Option</code> is more explicit about missing keys</p>
+<p><strong>Enum methods and trait adoption are general-purpose</strong>: although <code>JsonValue</code> motivates these features, they are not
+   <code>JsonValue</code>-specific. Any enum benefits. The implementation follows the same pattern as model/class methods and
+   trait adoption.</p>
 </li>
 <li>
-<p>Should we support <code>value.key</code> syntax as sugar for <code>value["key"]</code>?</p>
+<p><strong>Null fallback for indexing</strong>: <code>value["missing_key"]</code> returns <code>JsonValue.Null</code> rather than <code>Option[JsonValue]</code>.
+   This matches <code>serde_json::Value</code> behavior and enables ergonomic chaining. Users who need explicit missing-key
+   detection use <code>.as_object()</code> and check the dict.</p>
 </li>
 <li>
-<p>How to handle numeric types? JSON has only one number type, but Incan has <code>int</code> and <code>float</code>.</p>
+<p><strong>Safe numeric widening</strong>: <code>.as_float()</code> on an <code>Int</code> value returns <code>Some(value as float)</code> because widening is
+   lossless. <code>.as_int()</code> on a <code>Float</code> returns <code>None</code> because truncation is lossy and should be explicit.</p>
+</li>
+<li>
+<p><strong>Minimal <code>@rust.extern</code> surface</strong>: only <code>parse()</code> and <code>to_json()</code> are <code>@rust.extern</code> — they call <code>serde_json</code>
+   functions that cannot be expressed in Incan. All other methods (constructors, type inspection, value extraction) are
+   pure Incan using enum variant constructors and pattern matching.</p>
+</li>
+</ol>
+<h2 id="deferred-questions">Deferred questions<a class="headerlink" href="#deferred-questions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>
+<p><strong><code>value.key</code> sugar</strong>: should <code>value.key</code> be syntactic sugar for <code>value["key"]</code> on <code>JsonValue</code>? Convenient for
+   exploration but adds typechecker complexity. Deferred to a future RFC.</p>
+</li>
+<li>
+<p><strong>Pretty printing</strong>: should <code>.to_json()</code> accept formatting options, or should pretty printing be a separate
+   function?</p>
+</li>
+<li>
+<p><strong>Streaming / incremental parsing</strong>: large JSON documents may benefit from streaming parsers. Out of scope —
+   <code>JsonValue.parse()</code> is eager (loads entire document into memory).</p>
+</li>
+<li>
+<p><strong>Module-level convenience functions</strong>: the implementation may add module-level aliases like <code>json.parse(s)</code> and
+   <code>json.dumps(value)</code> mirroring Python's <code>json.loads()</code> / <code>json.dumps()</code> convention, as syntactic sugar over
+   <code>JsonValue.parse()</code> and <code>value.to_json()</code>.</p>
+</li>
+<li>
+<p><strong>Trait-based indexing</strong>: <code>JsonValue</code> indexing depends on multi-instantiation trait dispatch ([RFC 025]) to adopt
+   both <code>Index[str, JsonValue]</code> and <code>Index[int, JsonValue]</code>. Until RFC 025 is implemented, the compiler may use
+   built-in indexing support as a fallback.</p>
 </li>
 </ol>
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Rust: <code>serde_json::Value</code></li>
-<li>Python: <code>dict</code> from <code>json.loads()</code></li>
-<li>TypeScript: <code>any</code> or <code>unknown</code></li>
-<li>Go: <code>interface{}</code> / <code>any</code></li>
+<li>[RFC 024] — Extensible Derive Protocol</li>
+<li>[RFC 025] — Multi-Instantiation Trait Dispatch</li>
+<li>Rust <code>serde_json</code> crate — <code>serde_json::Value</code></li>
+<li>Python <code>json</code> module — <code>json.loads()</code>, <code>json.dumps()</code></li>
 </ul>
+<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
+
+<!-- RFC reference links for reuse: '[RFC 018]' or '[RFC 018: Title][RFC 018]' -->
 
 
 
