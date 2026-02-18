@@ -1,18 +1,20 @@
 //! RFC 023: Stdlib `.incn` file loader.
 //!
-//! This module provides infrastructure for loading, parsing, and extracting function signatures from stdlib `.incn`
-//! files. It replaces hardcoded function registries with signatures derived from the actual source files.
+//! This module provides infrastructure for loading, parsing, and extracting function and trait signatures from stdlib
+//! `.incn` files. It replaces hardcoded function registries with signatures derived from the actual source files.
 //!
 //! ## Design
 //!
 //! 1. **Discovery**: finds stdlib `.incn` files using `incan_core::lang::stdlib::stdlib_stub_path`.
 //! 2. **Parsing**: lexes and parses the file through the normal Incan frontend pipeline.
-//! 3. **Extraction**: walks the parsed AST to extract `FunctionInfo` entries for each `def`.
+//! 3. **Extraction**: walks the parsed AST to extract `FunctionInfo` entries for each `def` and `TraitInfo` entries for
+//!    each `trait`.
 //! 4. **Caching**: results are cached per module path in a `HashMap` to avoid redundant parsing.
 //!
 //! ## Limitations
 //!
 //! - Function signatures are extracted from top-level `def` declarations (not methods on classes/models).
+//! - Trait signatures are extracted from top-level `trait` declarations with their methods.
 //! - Default parameter values are not captured (only the parameter name and type).
 //! - Complex types beyond the common set (`int`, `str`, `bool`, `Option[T]`, etc.) are treated as `Named`.
 //! - Parse failures are logged and cause a graceful fallback to hardcoded registries.
@@ -21,7 +23,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::frontend::ast;
-use crate::frontend::symbols::{FunctionInfo, ResolvedType};
+use crate::frontend::symbols::{FunctionInfo, MethodInfo, ResolvedType, TraitInfo};
 use incan_core::lang::conventions;
 use incan_core::lang::stdlib;
 use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
@@ -31,6 +33,7 @@ use incan_core::lang::types::stringlike::{self as string_types, StringLikeId};
 #[derive(Debug, Clone, Default)]
 struct StdlibModuleData {
     functions: Vec<(String, FunctionInfo)>,
+    traits: Vec<(String, TraitInfo)>,
 }
 
 /// Cached stdlib module signatures keyed by dot-joined module path (e.g. `"std.testing"`).
@@ -49,23 +52,36 @@ impl StdlibAstCache {
     ///
     /// Returns `Some(FunctionInfo)` if the module has been loaded and contains a function with the given name.
     pub fn lookup_function(&mut self, module_path: &[String], function_name: &str) -> Option<FunctionInfo> {
+        self.ensure_loaded(module_path);
         let key = module_path.join(".");
-        // Load on first access.
-        if !self.cache.contains_key(&key) {
-            if let Some(module_data) = load_stdlib_module_data(module_path) {
-                self.cache.insert(key.clone(), module_data);
-            } else {
-                // Cache an empty entry to avoid re-trying.
-                self.cache.insert(key.clone(), StdlibModuleData::default());
-            }
-        }
-
         self.cache
             .get(&key)?
             .functions
             .iter()
             .find(|(name, _)| name == function_name)
             .map(|(_, info)| info.clone())
+    }
+
+    /// Look up a specific trait in a stdlib module.
+    ///
+    /// Returns `Some(TraitInfo)` if the module has been loaded and contains a trait with the given name.
+    pub fn lookup_trait(&mut self, module_path: &[String], trait_name: &str) -> Option<TraitInfo> {
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        self.cache
+            .get(&key)?
+            .traits
+            .iter()
+            .find(|(name, _)| name == trait_name)
+            .map(|(_, info)| info.clone())
+    }
+
+    /// Ensure a module is loaded into the cache, loading it on first access.
+    fn ensure_loaded(&mut self, module_path: &[String]) {
+        let key = module_path.join(".");
+        self.cache
+            .entry(key)
+            .or_insert_with(|| load_stdlib_module_data(module_path).unwrap_or_default());
     }
 }
 
@@ -95,7 +111,8 @@ fn load_stdlib_module_data(module_path: &[String]) -> Option<StdlibModuleData> {
         .ok()?;
 
     let functions = extract_function_signatures(&program);
-    Some(StdlibModuleData { functions })
+    let traits = extract_trait_signatures(&program);
+    Some(StdlibModuleData { functions, traits })
 }
 
 /// Find the absolute path for a stdlib file given its relative path (e.g. `"stdlib/testing.incn"`).
@@ -156,6 +173,60 @@ fn extract_function_signatures(program: &ast::Program) -> Vec<(String, FunctionI
         }
     }
     fns
+}
+
+/// Extract trait signatures from a parsed stdlib `.incn` program.
+///
+/// Top-level `trait` declarations are extracted with their method signatures. `@requires` decorators are not
+/// resolved (requires fields are left empty) since stdlib traits typically don't use them.
+fn extract_trait_signatures(program: &ast::Program) -> Vec<(String, TraitInfo)> {
+    let mut traits = Vec::new();
+    for decl in &program.declarations {
+        if let ast::Declaration::Trait(tr) = &decl.node {
+            let tp_names: Vec<String> = tr.type_params.iter().map(|tp| tp.name.clone()).collect();
+            let methods = extract_method_signatures(&tr.methods, &tp_names);
+            traits.push((
+                tr.name.clone(),
+                TraitInfo {
+                    type_params: tp_names,
+                    methods,
+                    requires: Vec::new(),
+                },
+            ));
+        }
+    }
+    traits
+}
+
+/// Extract method signatures from AST method declarations.
+///
+/// Converts each `MethodDecl` into a `MethodInfo` using lightweight type resolution (no full typechecker needed).
+fn extract_method_signatures(
+    methods: &[ast::Spanned<ast::MethodDecl>],
+    type_params: &[String],
+) -> HashMap<String, MethodInfo> {
+    methods
+        .iter()
+        .map(|m| {
+            let params: Vec<(String, ResolvedType)> = m
+                .node
+                .params
+                .iter()
+                .map(|p| (p.node.name.clone(), ast_type_to_resolved(&p.node.ty.node, type_params)))
+                .collect();
+            let return_type = ast_type_to_resolved(&m.node.return_type.node, type_params);
+            (
+                m.node.name.clone(),
+                MethodInfo {
+                    receiver: m.node.receiver,
+                    params,
+                    return_type,
+                    is_async: m.node.is_async(),
+                    has_body: m.node.body.is_some(),
+                },
+            )
+        })
+        .collect()
 }
 
 /// Convert an AST `FunctionDecl` to a typechecker `FunctionInfo`.
@@ -361,6 +432,164 @@ mod tests {
         assert!(channel_fn.is_some(), "should find 'channel' function");
         let oneshot_fn = fns.iter().find(|(name, _)| name == "oneshot");
         assert!(oneshot_fn.is_some(), "should find 'oneshot' function");
+
+        Ok(())
+    }
+
+    // ---- Phase 6: Derive trait extraction tests ----
+
+    use incan_core::lang::derives::{self as derive_reg, DeriveId};
+
+    /// Helper: canonical derive name from the registry (avoids stringly-typed vocab checks).
+    fn derive_name(id: DeriveId) -> &'static str {
+        derive_reg::as_str(id)
+    }
+
+    #[test]
+    fn test_load_derives_comparison_traits() -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "derives".to_string(), "comparison".to_string()];
+        let module = load_stdlib_module_data(&path);
+        let module = module.ok_or("failed to load stdlib/derives/comparison.incn")?;
+
+        // Should have no top-level functions, only traits.
+        assert!(
+            module.functions.is_empty(),
+            "comparison.incn has no top-level functions"
+        );
+        assert!(!module.traits.is_empty(), "should have extracted trait signatures");
+
+        // Eq trait: __eq__ (extern, no body) and __ne__ (default, has body).
+        let eq_name = derive_name(DeriveId::Eq);
+        let eq_trait = module.traits.iter().find(|(name, _)| name == eq_name);
+        assert!(eq_trait.is_some(), "should find Eq trait");
+        let eq_info = &eq_trait.ok_or("Eq not found")?.1;
+        assert!(eq_info.type_params.is_empty());
+        assert!(eq_info.methods.contains_key("__eq__"), "Eq should have __eq__");
+        assert!(eq_info.methods.contains_key("__ne__"), "Eq should have __ne__");
+        let ne = &eq_info.methods["__ne__"];
+        assert!(ne.has_body, "__ne__ is a default method with a body");
+        assert!(matches!(ne.return_type, ResolvedType::Bool));
+
+        // Ord trait: __lt__ (extern) + __le__, __gt__, __ge__ (defaults).
+        let ord_name = derive_name(DeriveId::Ord);
+        let ord_trait = module.traits.iter().find(|(name, _)| name == ord_name);
+        assert!(ord_trait.is_some(), "should find Ord trait");
+        let ord_info = &ord_trait.ok_or("Ord not found")?.1;
+        assert_eq!(ord_info.methods.len(), 4);
+        assert!(!ord_info.methods["__lt__"].has_body, "__lt__ is abstract (extern)");
+        assert!(ord_info.methods["__le__"].has_body, "__le__ is a default method");
+        assert!(ord_info.methods["__gt__"].has_body, "__gt__ is a default method");
+        assert!(ord_info.methods["__ge__"].has_body, "__ge__ is a default method");
+
+        // Hash trait: single __hash__ (extern).
+        let hash_name = derive_name(DeriveId::Hash);
+        let hash_trait = module.traits.iter().find(|(name, _)| name == hash_name);
+        assert!(hash_trait.is_some(), "should find Hash trait");
+        let hash_info = &hash_trait.ok_or("Hash not found")?.1;
+        assert_eq!(hash_info.methods.len(), 1);
+        assert!(hash_info.methods.contains_key("__hash__"));
+        assert!(matches!(hash_info.methods["__hash__"].return_type, ResolvedType::Int));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_derives_copying_traits() -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "derives".to_string(), "copying".to_string()];
+        let module = load_stdlib_module_data(&path);
+        let module = module.ok_or("failed to load stdlib/derives/copying.incn")?;
+
+        assert!(module.functions.is_empty(), "copying.incn has no top-level functions");
+
+        // Clone trait: single clone(self) -> Self method.
+        let clone_name = derive_name(DeriveId::Clone);
+        let clone_trait = module.traits.iter().find(|(name, _)| name == clone_name);
+        assert!(clone_trait.is_some(), "should find Clone trait");
+        let clone_info = &clone_trait.ok_or("Clone not found")?.1;
+        assert_eq!(clone_info.methods.len(), 1);
+        assert!(clone_info.methods.contains_key("clone"));
+        assert!(matches!(
+            clone_info.methods["clone"].return_type,
+            ResolvedType::SelfType
+        ));
+
+        // Copy trait: marker trait with no methods.
+        let copy_name = derive_name(DeriveId::Copy);
+        let copy_trait = module.traits.iter().find(|(name, _)| name == copy_name);
+        assert!(copy_trait.is_some(), "should find Copy trait");
+        let copy_info = &copy_trait.ok_or("Copy not found")?.1;
+        assert!(copy_info.methods.is_empty(), "Copy is a marker trait with no methods");
+
+        // Default trait: default() -> Self (no receiver, associated function).
+        let default_name = derive_name(DeriveId::Default);
+        let default_trait = module.traits.iter().find(|(name, _)| name == default_name);
+        assert!(default_trait.is_some(), "should find Default trait");
+        let default_info = &default_trait.ok_or("Default not found")?.1;
+        assert_eq!(default_info.methods.len(), 1);
+        let default_method = &default_info.methods["default"];
+        assert!(
+            default_method.receiver.is_none(),
+            "default() is an associated function (no receiver)"
+        );
+        assert!(matches!(default_method.return_type, ResolvedType::SelfType));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_derives_string_traits() -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "derives".to_string(), "string".to_string()];
+        let module = load_stdlib_module_data(&path);
+        let module = module.ok_or("failed to load stdlib/derives/string.incn")?;
+
+        assert!(module.functions.is_empty(), "string.incn has no top-level functions");
+
+        // Debug trait: __repr__(self) -> str.
+        let debug_name = derive_name(DeriveId::Debug);
+        let debug_trait = module.traits.iter().find(|(name, _)| name == debug_name);
+        assert!(debug_trait.is_some(), "should find Debug trait");
+        let debug_info = &debug_trait.ok_or("Debug not found")?.1;
+        assert_eq!(debug_info.methods.len(), 1);
+        assert!(debug_info.methods.contains_key("__repr__"));
+        assert!(matches!(debug_info.methods["__repr__"].return_type, ResolvedType::Str));
+
+        // Display trait: __str__(self) -> str (abstract, no body).
+        let display_name = derive_name(DeriveId::Display);
+        let display_trait = module.traits.iter().find(|(name, _)| name == display_name);
+        assert!(display_trait.is_some(), "should find Display trait");
+        let display_info = &display_trait.ok_or("Display not found")?.1;
+        assert_eq!(display_info.methods.len(), 1);
+        assert!(display_info.methods.contains_key("__str__"));
+        assert!(
+            !display_info.methods["__str__"].has_body,
+            "__str__ is abstract (no body)"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_cache_trait_lookup() -> Result<(), Box<dyn std::error::Error>> {
+        let mut cache = StdlibAstCache::new();
+        let path = vec!["std".to_string(), "derives".to_string(), "comparison".to_string()];
+
+        // First lookup loads the module and finds the trait.
+        let eq_name = derive_name(DeriveId::Eq);
+        let eq_info = cache.lookup_trait(&path, eq_name);
+        assert!(eq_info.is_some(), "should find Eq trait from cache");
+
+        // Second lookup uses the cache.
+        let ord_name = derive_name(DeriveId::Ord);
+        let ord_info = cache.lookup_trait(&path, ord_name);
+        assert!(ord_info.is_some(), "should find Ord trait from cache");
+
+        // Function lookup on a trait-only module returns None.
+        let no_fn = cache.lookup_function(&path, eq_name);
+        assert!(no_fn.is_none(), "should not find Eq as a function");
+
+        // Unknown trait returns None.
+        let unknown = cache.lookup_trait(&path, "NonExistent");
+        assert!(unknown.is_none(), "should not find unknown trait");
 
         Ok(())
     }

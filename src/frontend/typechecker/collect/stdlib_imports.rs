@@ -133,9 +133,10 @@ impl TypeChecker {
                             }
                         }
 
-                    // RFC 023: for known stdlib modules with `.incn` stubs, prefer AST-derived function signatures.
+                    // RFC 023: for known stdlib modules with `.incn` stubs, prefer AST-derived signatures.
                     // Async prelude still resolves via dedicated fallback logic below.
                     if is_known_stdlib_with_stub && !is_async_prelude {
+                        // Try function lookup first.
                         let ast_info = self.stdlib_cache.lookup_function(&module.segments, &item.name);
                         if let Some(info) = ast_info {
                             let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
@@ -161,6 +162,20 @@ impl TypeChecker {
                             self.symbols.define(Symbol {
                                 name: local_name,
                                 kind: SymbolKind::Function(info),
+                                span,
+                                scope: 0,
+                            });
+                            continue;
+                        }
+
+                        // Phase 6: try trait lookup (e.g., `from std.derives.comparison import Eq`).
+                        let trait_info = self.stdlib_cache.lookup_trait(&module.segments, &item.name);
+                        if let Some(info) = trait_info {
+                            let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
+                            self.validate_root_namespace(&local_name, span);
+                            self.symbols.define(Symbol {
+                                name: local_name,
+                                kind: SymbolKind::Trait(info),
                                 span,
                                 scope: 0,
                             });

@@ -100,7 +100,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "derives",
-        impl_mode: StdlibImplMode::RuntimeFacade,
+        impl_mode: StdlibImplMode::IncanSource,
         feature: None,
         submodules: &["string", "comparison", "copying", "collection"],
     },

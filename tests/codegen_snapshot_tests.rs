@@ -494,6 +494,46 @@ fn test_std_testing_compiled_codegen() {
 }
 
 // ============================================================================
+// RFC 023: Compile std.derives.* trait definitions from Incan source
+// ============================================================================
+
+/// compile `std.derives.comparison` (Eq, Ord, Hash) from `.incn` source.
+///
+/// Verifies that trait declarations with `@rust.extern` abstract methods and pure-Incan default methods
+/// (`__ne__`, `__le__`, `__gt__`, `__ge__`) compile through the full pipeline.
+#[test]
+fn test_std_derives_comparison_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/derives/comparison.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_derives_comparison_compiled", rust_code);
+}
+
+/// compile `std.derives.copying` (Clone, Copy, Default) from `.incn` source.
+#[test]
+fn test_std_derives_copying_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/derives/copying.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_derives_copying_compiled", rust_code);
+}
+
+/// compile `std.derives.string` (Debug, Display) from `.incn` source.
+#[test]
+fn test_std_derives_string_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/derives/string.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_derives_string_compiled", rust_code);
+}
+
+// ============================================================================
 /// Issue #145: Full surface-semantics path for `assert` statements.
 // ============================================================================
 ///

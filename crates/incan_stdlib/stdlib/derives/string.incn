@@ -1,3 +1,5 @@
+rust.module("incan_stdlib::derives::string")
+
 """
 String representation traits: Debug and Display
 See docs/derives/string_representation.md for detailed documentation.

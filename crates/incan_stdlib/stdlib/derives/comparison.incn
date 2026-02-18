@@ -1,3 +1,5 @@
+rust.module("incan_stdlib::derives::comparison")
+
 """
 Comparison and hashing traits: Eq, Ord, Hash
 See docs/derives/comparison.md for detailed documentation.

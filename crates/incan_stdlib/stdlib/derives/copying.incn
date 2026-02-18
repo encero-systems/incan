@@ -1,3 +1,5 @@
+rust.module("incan_stdlib::derives::copying")
+
 """
 Copying and default value traits: Clone, Copy, Default
 See docs/derives/copying_default.md for detailed documentation.
@@ -33,8 +35,8 @@ trait Copy:
     """
     Copy trait - Enables implicit copying (marker trait)
     
-    Copy is a MARKER TRAIT — it has no methods. It tells the compiler
-    "this type can be copied implicitly on assignment."
+    Copy is a MARKER TRAIT — it has no methods.
+    It tells the compiler "this type can be copied *implicitly* on assignment."
     
     Example:
 
@@ -88,9 +90,8 @@ trait Default:
     println(config.debug)  # false
     ```
     
-    Note: Default cannot be derived for types with fields that have no
-    sensible default (e.g., custom types without their own Default).
+    Note: Default cannot be derived for types with fields that have no sensible default
+    (e.g., custom types without their own Default).
     """
     @rust.extern
-    @classmethod
-    def default(cls) -> Self: ...
+    def default() -> Self: ...
