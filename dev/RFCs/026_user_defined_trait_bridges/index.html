@@ -1,0 +1,5373 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the Incan programming language">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>RFC 026: User-Defined Trait Bridges - Incan Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/pygments.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#rfc-026-user-defined-trait-bridges" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Incan Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              RFC 026: User-Defined Trait Bridges
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1M8 13h8v-2H8zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4a5 5 0 0 0 5-5 5 5 0 0 0-5-5"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="purple" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5m0 8a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-label="Switch to system preference"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Switch to system preference" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5M7 15a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/dannys-code-corner/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dannys-code-corner/incan
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Incan Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/dannys-code-corner/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dannys-code-corner/incan
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../start_here/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Start here
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Start here
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/coming_from_python/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Python (apps)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Rust (evaluator)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/beginner/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Beginner
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Language
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Language
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    The Incan Book (Basics)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_2_1" id="__nav_3_2_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            The Incan Book (Basics)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Hello world
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Values, variables, and types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Functions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Modules and imports
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Errors (Result/Option and `?`)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Strings and formatting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Collections and iteration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    9. Enums and better `match`
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    10. Models vs classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    11. Traits and derives
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    12. Newtypes (stronger types)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    13. Unit tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Build your first API
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/async_programming/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Async programming
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Customize derived behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling recipes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/error_messages/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error messages
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Modeling with enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing guide
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/string_processing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/performance/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Performance
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust interop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust types (coming from Python)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/reference/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Language reference (generated)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/glossary/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Glossary
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O reference (Path/File APIs)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric semantics
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/strings/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Strings and Bytes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (reference)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_11" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Stdlib traits
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_11" id="__nav_3_4_11_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_11">
+            <span class="md-nav__icon md-icon"></span>
+            Stdlib traits
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Collection protocols
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Indexing and slicing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable objects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error trait
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Operators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Conversions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_12" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4_12" id="__nav_3_4_12_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Derives
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_12">
+            <span class="md-nav__icon md-icon"></span>
+            Derives
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String representation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Comparison
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Copying/default
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Serialization
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/validation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Validation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Custom behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/why_incan/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why Incan?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why not just Rust?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How Incan works
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/closures/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Closures
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/consts/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Consts
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (explained)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How derives work
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/error_handling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_12" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Models and classes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_5_12" id="__nav_3_5_12_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_12">
+            <span class="md-nav__icon md-icon"></span>
+            Models and classes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Models
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Traits as language hooks
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Scopes and name resolution
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../tooling/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Tooling
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Tooling
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipeline mini-project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Troubleshooting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Editor setup
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Formatting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Projects today
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP protocol support
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+          
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../contributing/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Contributing
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Contributing
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Incan Contributor Book (Advanced)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2_1" id="__nav_5_2_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            Incan Contributor Book (Advanced)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Architecture tour
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Layering and boundaries
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Proposals: issues vs RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Your first change: add a builtin
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Your first syntax change
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Tooling loop: formatter + tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Tooling loop: LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Docsite contributor loop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Extending the language
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Benchmarks & profiling (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Writing RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_4">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/layering/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Layering rules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Readable, maintainable Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing internals
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../release_notes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Release notes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            Release notes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_1/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.1
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../roadmap/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Roadmap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stability/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Stability policy
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Summary
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scope-non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Scope / Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#motivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Motivation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Motivation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-is-a-trait-bridge" class="md-nav__link">
+    <span class="md-ellipsis">
+      What is a Trait Bridge?
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#current-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      Current State
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      The Problem
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-solution" class="md-nav__link">
+    <span class="md-ellipsis">
+      The Solution
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#core-syntax-rustdelegate" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core Syntax: @rust.delegate
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core Syntax: @rust.delegate">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#basic-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      Basic Usage
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multiple-traits" class="md-nav__link">
+    <span class="md-ellipsis">
+      Multiple Traits
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#method-renaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      Method Renaming
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#advanced-associated-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Advanced: Associated Types
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#advanced-async-traits" class="md-nav__link">
+    <span class="md-ellipsis">
+      Advanced: Async Traits
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#decorator-parameters-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      Decorator Parameters Reference
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#comparison-hardcoded-vs-user-defined" class="md-nav__link">
+    <span class="md-ellipsis">
+      Comparison: Hardcoded vs User-Defined
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Comparison: Hardcoded vs User-Defined">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hardcoded-v02-stdlib-approach" class="md-nav__link">
+    <span class="md-ellipsis">
+      Hardcoded (v0.2 Stdlib Approach)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#user-defined-this-rfc" class="md-nav__link">
+    <span class="md-ellipsis">
+      User-Defined (This RFC)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lsp-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      LSP Support
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="LSP Support">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#autocomplete" class="md-nav__link">
+    <span class="md-ellipsis">
+      Autocomplete
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hover-information" class="md-nav__link">
+    <span class="md-ellipsis">
+      Hover Information
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#diagnostics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Diagnostics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#signature-help" class="md-nav__link">
+    <span class="md-ellipsis">
+      Signature Help
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      Examples
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#example-1-database-connection-pool" class="md-nav__link">
+    <span class="md-ellipsis">
+      Example 1: Database Connection Pool
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-2-custom-iterator" class="md-nav__link">
+    <span class="md-ellipsis">
+      Example 2: Custom Iterator
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-3-error-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Example 3: Error Handling
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-4-method-renaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      Example 4: Method Renaming
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-5-disambiguating-method-collisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Example 5: Disambiguating Method Collisions
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-rustdelegate-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why @rust.delegate Syntax?
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Why @rust.delegate Syntax?">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#namespacing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Namespacing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#symbolic-arguments" class="md-nav__link">
+    <span class="md-ellipsis">
+      Symbolic Arguments
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design Decisions
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design Decisions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-multiple-decorator-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Multiple Decorator Handling
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-default-delegation-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Default Delegation Strategy
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-limitations-auto-traits" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Limitations: Auto Traits
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-rust-trait-introspection" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Rust Trait Introspection
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#migration-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      Migration Path
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Migration Path">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stdlib-migration-required-for-rfc-completion" class="md-nav__link">
+    <span class="md-ellipsis">
+      Stdlib Migration (Required for RFC Completion)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acceptance-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      Acceptance Criteria
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      Alternatives Considered
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#success-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Success Metrics
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      References
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#future-extensions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Future Extensions
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Future Extensions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-rustunsafe-decorator" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. @rust.unsafe Decorator
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-rustinline-hint" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. @rust.inline Hint
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-rustffi-for-c-bindings" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. @rust.ffi for C Bindings
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-full-impl-blocks" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Full impl Blocks
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-current-trait-bridge-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      Appendix: Current Trait Bridge Registry
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="rfc-026-user-defined-trait-bridges">RFC 026: User-Defined Trait Bridges<a class="headerlink" href="#rfc-026-user-defined-trait-bridges" title="Permanent link">&para;</a></h1>
+<ul>
+<li><strong>Status</strong>: Draft  </li>
+<li><strong>Author</strong>: Danny Meijer (@dannymeijer)  </li>
+<li><strong>Issue</strong>: #152</li>
+<li><strong>RFC PR</strong>: -</li>
+<li><strong>Created</strong>: 2026-02-19</li>
+<li><strong>Related</strong>:<ul>
+<li><a href="/dev/RFCs/005_rust_interop">RFC 005</a> (Rust interop - foundation for <code>rust::</code> imports)</li>
+<li><a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a> (Stdlib web module - where trait bridges were first implemented)</li>
+<li><a href="/dev/RFCs/closed/implemented/021_model_field_metadata_and_aliases">RFC 021</a> (Field metadata - similar decorator pattern)</li>
+</ul>
+</li>
+</ul>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>During implementation of RFC 023 (stdlib web module), the stdlib work necessitated us to implement a trait bridge system
+that automatically generates Rust trait implementations for newtypes wrapping external types
+(e.g., <code>Query[T]</code> wrapping Axum's <code>AxumQuery&lt;T&gt;</code> gets automatic <code>FromRequestParts</code> delegation).</p>
+<p>This system is currently hardcoded for stdlib patterns only. This RFC proposes exposing trait bridges to user code via
+a new <code>@rust.delegate</code> decorator, enabling users to wrap arbitrary external Rust types (<code>sqlx</code>, <code>reqwest</code>, <code>diesel</code>, etc.)
+with automatic trait delegation.</p>
+<h2 id="scope-non-goals">Scope / Non-Goals<a class="headerlink" href="#scope-non-goals" title="Permanent link">&para;</a></h2>
+<p><strong>This RFC covers:</strong></p>
+<ul>
+<li>Trait delegation for newtypes wrapping external Rust types</li>
+<li>Method subsetting and renaming via decorator parameters</li>
+<li>Associated type specification for traits that require them</li>
+<li>Multi-trait delegation with collision detection</li>
+<li>Automatic async trait handling via rust-analyzer introspection</li>
+<li><strong>Capability parity between stdlib and user code</strong>: delegations used by stdlib modules must be expressible through
+    the same <code>@rust.delegate</code> mechanism available to users</li>
+</ul>
+<p><strong>This RFC does NOT cover:</strong></p>
+<ul>
+<li><strong>Manual <code>impl</code> blocks</strong> - Writing full trait implementations with custom logic (see <a href="#future-extensions">Future Extensions</a>)</li>
+<li><strong>Custom delegation logic</strong> - Delegation is pure forwarding; no custom code in delegated methods</li>
+<li><strong>Implementing unimplemented traits</strong> - <code>rust.delegate</code> can only delegate traits the wrapped type already implements</li>
+<li><strong>Auto traits</strong> - <code>Send</code>, <code>Sync</code>, <code>Unpin</code> are inferred by Rust automatically (see <a href="#3-limitations-auto-traits">Limitations: Auto Traits</a>)</li>
+<li><strong>Conditional delegation</strong> - No <code>#[cfg]</code> or type-parameter-based conditional delegation</li>
+<li><strong>Cross-language bridges</strong> - Only Rust trait delegation (no C FFI, Python protocols, etc.)</li>
+<li><strong>Runtime trait objects</strong> - Delegation is compile-time only; no <code>dyn Trait</code> boxing</li>
+<li><strong>Permanent stdlib-only delegation paths</strong> - hardcoded bridges are treated as migration scaffolding, not long-term
+    architecture</li>
+</ul>
+<p>This RFC establishes the <strong>decorator surface</strong> and <strong>delegation semantics</strong>. Implementation details may evolve, but the
+user-facing contract (decorator parameters, error messages, generated behavior) is the specification boundary.</p>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<h3 id="what-is-a-trait-bridge">What is a Trait Bridge?<a class="headerlink" href="#what-is-a-trait-bridge" title="Permanent link">&para;</a></h3>
+<p>A <strong>trait bridge</strong> solves the newtype transparency problem: when you wrap an external Rust type in a newtype, you lose
+access to its traits. Without trait bridges, <code>Query[T]</code> would just be an opaque wrapper—you couldn't use it as an Axum
+extractor because the <code>FromRequestParts</code> trait is implemented on <code>AxumQuery&lt;T&gt;</code>, not <code>Query[T]</code>.</p>
+<p>The trait bridge system generates delegation code automatically. For example, for <code>axum::Query[T]</code>:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="c1">// Pseudo-Rust: simplified for illustration (actual codegen would include async_trait desugaring)</span>
+<span class="k">impl</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span><span class="w"> </span><span class="n">S</span><span class="o">&gt;</span><span class="w"> </span><span class="n">FromRequestParts</span><span class="o">&lt;</span><span class="n">S</span><span class="o">&gt;</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">Query</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span>
+<span class="k">where</span>
+<span class="w">    </span><span class="n">T</span><span class="p">:</span><span class="w"> </span><span class="nc">DeserializeOwned</span><span class="p">,</span>
+<span class="w">    </span><span class="n">S</span><span class="p">:</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Sync</span><span class="p">,</span>
+<span class="w">    </span><span class="n">AxumQuery</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">:</span><span class="w"> </span><span class="nc">FromRequestParts</span><span class="o">&lt;</span><span class="n">S</span><span class="o">&gt;</span><span class="p">,</span>
+<span class="p">{</span>
+<span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Rejection</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&lt;</span><span class="n">AxumQuery</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">FromRequestParts</span><span class="o">&lt;</span><span class="n">S</span><span class="o">&gt;&gt;</span><span class="p">::</span><span class="n">Rejection</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">from_request_parts</span><span class="p">(</span>
+<span class="w">        </span><span class="n">parts</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">mut</span><span class="w"> </span><span class="n">Parts</span><span class="p">,</span>
+<span class="w">        </span><span class="n">state</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">S</span><span class="p">,</span>
+<span class="w">    </span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">,</span><span class="w"> </span><span class="bp">Self</span><span class="p">::</span><span class="n">Rejection</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">AxumQuery</span><span class="p">::</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">::</span><span class="n">from_request_parts</span><span class="p">(</span><span class="n">parts</span><span class="p">,</span><span class="w"> </span><span class="n">state</span><span class="p">)</span>
+<span class="w">            </span><span class="p">.</span><span class="k">await</span>
+<span class="w">            </span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="bp">Self</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>This delegation is:</p>
+<ul>
+<li><strong>Type-safe</strong> - preserves all generic constraints, associated types, and where clauses</li>
+<li><strong>Transparent</strong> - unwraps the newtype (<code>self.0</code>), delegates to wrapped type, re-wraps result</li>
+<li><strong>Automatic</strong> - triggered by pattern matching on the wrapped type's path during codegen</li>
+</ul>
+<p><strong>Why we need this</strong>: Incan newtypes provide type safety and semantics (e.g., <code>Query[SearchParams]</code> vs raw
+<code>AxumQuery&lt;SearchParams&gt;</code>), but Rust's trait system doesn't automatically forward trait impls through newtype wrappers.
+Trait bridges make newtypes truly transparent.</p>
+<h3 id="current-state">Current State<a class="headerlink" href="#current-state" title="Permanent link">&para;</a></h3>
+<p>Trait bridges work beautifully for stdlib:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># stdlib/web/request.incn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">axum</span><span class="p">::</span><span class="n">extract</span> <span class="o">@</span> <span class="s2">&quot;0.8&quot;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Query</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">AxumQuery</span>
+
+<span class="nb">type</span> <span class="kt">Query</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">AxumQuery</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+<span class="c1"># Compiler auto-generates FromRequestParts impl via hardcoded bridge</span>
+</code></pre></div>
+<p>Backend pattern matching in <code>src/backend/ir/emit/decls/structures.rs</code>:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="k">for</span><span class="w"> </span><span class="n">bridge</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="n">TRAIT_BRIDGES</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="n">wrapped_type_path</span><span class="p">.</span><span class="n">contains</span><span class="p">(</span><span class="n">bridge</span><span class="p">.</span><span class="n">applies_to_type_path</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">generate_delegation_impl</span><span class="p">(</span><span class="n">bridge</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<h3 id="the-problem">The Problem<a class="headerlink" href="#the-problem" title="Permanent link">&para;</a></h3>
+<p>Users <strong>cannot</strong> define their own delegation patterns:</p>
+<div class="language-incan highlight"><span class="filename">user_lib/database.incn</span><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">sqlx</span> <span class="o">@</span> <span class="s2">&quot;0.7&quot;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">PgPool</span>
+
+<span class="nb">type</span> <span class="nc">Pool</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">PgPool</span>
+<span class="c1"># ❌ No trait delegation - PgPool&#39;s traits are lost!</span>
+</code></pre></div>
+<p>Users are forced to either:</p>
+<ol>
+<li>Write manual Rust wrapper code (defeats the purpose)</li>
+<li>Use raw <code>PgPool</code> directly (no type safety)</li>
+<li>Wait for stdlib support</li>
+</ol>
+<h3 id="the-solution">The Solution<a class="headerlink" href="#the-solution" title="Permanent link">&para;</a></h3>
+<p>Let users define trait bridges inline:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">sqlx</span> <span class="o">@</span> <span class="s2">&quot;0.7&quot;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">PgPool</span>
+
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span>
+    <span class="k">trait</span><span class="o">=</span><span class="n">sqlx</span><span class="p">::</span><span class="nc">Executor</span><span class="p">,</span>
+    <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;execute&quot;</span><span class="p">,</span> <span class="s2">&quot;fetch_one&quot;</span><span class="p">,</span> <span class="s2">&quot;fetch_all&quot;</span><span class="p">],</span>
+<span class="p">)</span>
+<span class="nb">type</span> <span class="nc">Pool</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">PgPool</span>
+<span class="c1"># ✅ Generates Rust impl block: makes Pool usable wherever sqlx::Executor is expected</span>
+</code></pre></div>
+<p>The <code>@rust.delegate</code> decorator tells the compiler to generate a Rust <code>impl sqlx::Executor for Pool</code> that forwards all
+trait methods to the wrapped <code>PgPool</code>. This preserves Rust's trait-based polymorphism: code expecting an <code>Executor</code> will
+accept <code>Pool</code> because it implements the trait, just like the wrapped type does.</p>
+<h2 id="design">Design<a class="headerlink" href="#design" title="Permanent link">&para;</a></h2>
+<h3 id="core-syntax-rustdelegate">Core Syntax: <code>@rust.delegate</code><a class="headerlink" href="#core-syntax-rustdelegate" title="Permanent link">&para;</a></h3>
+<p>The decorator attaches to <code>newtype</code> declarations and instructs the compiler to generate trait delegation code.</p>
+<h4 id="basic-usage">Basic Usage<a class="headerlink" href="#basic-usage" title="Permanent link">&para;</a></h4>
+<p>The simplest form delegates specific methods from a single trait:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">sqlx</span>
+
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span>
+    <span class="k">trait</span><span class="o">=</span><span class="n">sqlx</span><span class="p">::</span><span class="nc">Executor</span><span class="p">,</span>
+    <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;execute&quot;</span><span class="p">,</span> <span class="s2">&quot;fetch_one&quot;</span><span class="p">],</span>
+<span class="p">)</span>
+<span class="nb">type</span> <span class="nc">Pool</span> <span class="o">=</span> <span class="k">newtype</span> <span class="k">rust</span><span class="p">::</span><span class="n">sqlx</span><span class="p">::</span><span class="nc">PgPool</span>
+</code></pre></div>
+<p><strong>Parameters</strong>:</p>
+<ul>
+<li><strong><code>trait</code></strong> - The Rust trait to delegate (must be an imported symbol, not a string). The compiler generates
+  <code>impl sqlx::Executor for Pool</code> that forwards the specified methods to the wrapped <code>PgPool</code>.</li>
+<li><strong><code>methods</code></strong> - List of method names to delegate. If omitted, delegates <strong>all</strong> trait methods
+  (see <a href="#2-default-delegation-strategy">Open Questions: Default Delegation Strategy</a>).
+  Use explicit lists when you only need a subset of the trait's methods.</li>
+</ul>
+<h4 id="multiple-traits">Multiple Traits<a class="headerlink" href="#multiple-traits" title="Permanent link">&para;</a></h4>
+<p>When your newtype needs to implement multiple traits, use the <code>traits</code> parameter (<em>note: plural</em>):</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span>
+    <span class="n">traits</span><span class="o">=</span><span class="p">[</span>
+        <span class="n">sqlx</span><span class="p">::</span><span class="nc">Executor</span><span class="p">,</span>
+        <span class="n">sqlx</span><span class="p">::</span><span class="nc">PgExecutor</span><span class="p">,</span>
+        <span class="n">std</span><span class="p">::</span><span class="n">fmt</span><span class="p">::</span><span class="kt">Debug</span><span class="p">,</span>
+    <span class="p">],</span>
+<span class="p">)</span>
+<span class="nb">type</span> <span class="nc">Pool</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">PgPool</span>
+</code></pre></div>
+<p><strong>Parameter</strong>:</p>
+<ul>
+<li><strong><code>traits</code></strong> - List of trait symbols to delegate. Generates multiple <code>impl</code> blocks (one per trait). All traits must
+  be implemented on the wrapped type. If method names collide across traits, the compiler rejects with an error
+  (see <a href="#1-multiple-decorator-handling">Multiple Decorator Handling</a>).</li>
+</ul>
+<p><strong>When to use</strong>: Your newtype needs to preserve multiple unrelated trait implementations from the wrapped type
+(e.g., database traits + formatting traits).</p>
+<h4 id="method-renaming">Method Renaming<a class="headerlink" href="#method-renaming" title="Permanent link">&para;</a></h4>
+<p>Sometimes you want to expose Rust trait methods under different names in Incan. Use a dictionary for <code>methods</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span>
+    <span class="k">trait</span><span class="o">=</span><span class="n">sqlx</span><span class="p">::</span><span class="nc">Connection</span><span class="p">,</span>
+    <span class="n">methods</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;connect&quot;</span><span class="p">:</span> <span class="s2">&quot;establish&quot;</span><span class="p">,</span>  <span class="c1"># Rust: establish → Incan: connect</span>
+        <span class="s2">&quot;close&quot;</span><span class="p">:</span> <span class="s2">&quot;shutdown&quot;</span><span class="p">,</span>     <span class="c1"># Rust: shutdown  → Incan: close</span>
+    <span class="p">},</span>
+<span class="p">)</span>
+<span class="nb">type</span> <span class="nc">DbConnection</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">PgConnection</span>
+</code></pre></div>
+<p><strong>Parameter</strong>:</p>
+<ul>
+<li><strong><code>methods</code> (dict form)</strong> - Maps Incan method names (keys) to Rust method names (values).
+  The compiler generates methods with the Incan names that delegate to the Rust names.</li>
+</ul>
+<p><strong>When to use</strong>: The Rust trait uses naming conventions that conflict with Incan style or when avoiding reserved keywords.</p>
+<blockquote>
+<p><strong>Note</strong>: Method renaming affects only the generated Incan-facing methods; the Rust trait is implemented with its
+original method names.</p>
+</blockquote>
+<h3 id="advanced-associated-types">Advanced: Associated Types<a class="headerlink" href="#advanced-associated-types" title="Permanent link">&para;</a></h3>
+<p>Some Rust traits have <strong>associated types</strong> - type placeholders that must be specified when implementing the trait. These
+are different from generic type parameters: they're <em>output</em> types that the implementer chooses, not <em>input</em> types the
+caller provides.</p>
+<p><strong>Example: <code>Iterator</code> has an associated type <code>Item</code></strong></p>
+<div class="language-rust highlight"><pre><span></span><code><span class="k">trait</span><span class="w"> </span><span class="nb">Iterator</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Item</span><span class="p">;</span><span class="w">  </span><span class="c1">// ← Associated type: &quot;what does this iterator yield?&quot;</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">next</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">::</span><span class="n">Item</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="c1">// When implementing, you must specify what Item is:</span>
+<span class="k">impl</span><span class="w"> </span><span class="nb">Iterator</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">MyRange</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Item</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kt">i32</span><span class="p">;</span><span class="w">  </span><span class="c1">// ← &quot;This iterator yields i32 values&quot;</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">next</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="kt">i32</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* ... */</span><span class="w"> </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><strong>Why this matters:</strong></p>
+<p>Associated types answer questions like:</p>
+<ul>
+<li><code>Iterator::Item</code> - What does this iterator yield?</li>
+<li><code>Future::Output</code> - What does this future resolve to?</li>
+<li><code>FromStr::Err</code> - What error does parsing return?</li>
+</ul>
+<p>They're part of the trait's contract - without specifying them, the implementation is incomplete.</p>
+<p><strong>Why trait bridges need this information:</strong></p>
+<p>When you delegate a trait with associated types, the compiler needs to know what to put in those "holes":</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">my_crate</span><span class="w"> </span><span class="kn">import</span> <span class="nc">CustomIterator</span><span class="p">,</span> <span class="nc">MyItem</span>   <span class="c1"># custom types defined in user code</span>
+
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span>
+    <span class="k">trait</span><span class="o">=</span><span class="n">std</span><span class="p">::</span><span class="nb">iter</span><span class="p">::</span><span class="nc">Iterator</span><span class="p">,</span>
+    <span class="n">associated_types</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;Item&quot;</span><span class="p">:</span> <span class="nc">MyItem</span><span class="p">,</span>  <span class="c1"># ← Symbolic type reference, validated by compiler</span>
+    <span class="p">},</span>
+<span class="p">)</span>
+<span class="nb">type</span> <span class="nc">MyIter</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">CustomIterator</span>
+</code></pre></div>
+<p><strong>Generated Rust:</strong></p>
+<div class="language-rust highlight"><pre><span></span><code><span class="k">impl</span><span class="w"> </span><span class="nb">Iterator</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">MyIter</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Item</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MyItem</span><span class="p">;</span><span class="w">  </span><span class="c1">// ← From your decorator</span>
+
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">next</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">MyItem</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="bp">self</span><span class="p">.</span><span class="mf">0.</span><span class="n">next</span><span class="p">()</span><span class="w">  </span><span class="c1">// Delegate to wrapped type</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Without the <code>associated_types</code> parameter, the compiler can't generate the <code>type Item = ...;</code> line, and Rust will reject
+the incomplete impl.</p>
+<p><strong>Parameter:</strong></p>
+<ul>
+<li><strong><code>associated_types</code></strong> - Dict mapping associated type names (strings) to <strong>type symbols</strong> (not strings). The type
+  values must be valid Incan or Rust types accessible in the current scope (either defined locally or imported). Each
+  entry becomes a <code>type Name = Type;</code> declaration in the generated impl block. The wrapped type must implement the same
+  trait with compatible associated types.</li>
+</ul>
+<p><strong>Common traits with associated types:</strong></p>
+<p>Not just <code>Iterator</code>! Many Rust traits use associated types:</p>
+<ul>
+<li><strong><code>Iterator</code></strong> - <code>Item</code> (what you iterate over)</li>
+<li><strong><code>Future</code></strong> - <code>Output</code> (what the future resolves to)</li>
+<li><strong><code>FromStr</code></strong> - <code>Err</code> (what error parsing returns)</li>
+<li><strong><code>Add</code>, <code>Sub</code>, <code>Mul</code></strong> - <code>Output</code> (result type of arithmetic)</li>
+<li><strong><code>Deref</code></strong> - <code>Target</code> (what the smart pointer points to)</li>
+<li><strong><code>Index</code></strong> - <code>Output</code> (type returned by indexing)</li>
+<li><strong><code>TryFrom</code></strong> - <code>Error</code> (error type of conversion)</li>
+</ul>
+<p><strong>When to use:</strong></p>
+<p>Only when delegating traits that define associated types. Most common traits (<code>Display</code>, <code>Debug</code>, <code>Clone</code>, <code>Send</code>, <code>Sync</code>)
+have no associated types and don't need this parameter.</p>
+<p><strong>Associated type inference:</strong></p>
+<p>When <code>associated_types</code> is omitted, the compiler attempts to <strong>infer</strong> associated types from the wrapped type's existing
+trait impl:</p>
+<ul>
+<li>If the wrapped type implements the trait with concrete associated types, the compiler mirrors those types in the
+  delegation impl</li>
+<li>If inference succeeds (wrapped type's impl is visible and concrete), no explicit <code>associated_types</code> needed</li>
+<li>If inference fails (wrapped type's impl is generic, conditional, or unavailable), the compiler errors and requires
+  explicit specification</li>
+</ul>
+<p><strong>Example</strong>: When inference works</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="nb">iter</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Iterator</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">vec</span> <span class="kn">import</span><span class="w"> </span><span class="nn">IntoIter</span>  <span class="c1"># IntoIter&lt;T&gt; implements Iterator with Item = T</span>
+
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="nc">Iterator</span><span class="p">)</span>
+<span class="nb">type</span> <span class="nc">MyIter</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">IntoIter</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+<span class="c1"># Compiler infers: type Item = T (from IntoIter&#39;s impl)</span>
+</code></pre></div>
+<p><strong>Example</strong>: When explicit specification is required</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="nb">iter</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Iterator</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">my_crate</span><span class="w"> </span><span class="kn">import</span> <span class="nc">CustomIter</span>  <span class="c1"># Opaque type, impl not visible to Incan</span>
+
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span>
+    <span class="k">trait</span><span class="o">=</span><span class="nc">Iterator</span><span class="p">,</span>
+    <span class="n">associated_types</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;Item&quot;</span><span class="p">:</span> <span class="nb">int</span><span class="p">},</span>  <span class="c1"># Required: compiler can&#39;t infer</span>
+<span class="p">)</span>
+<span class="nb">type</span> <span class="nc">MyIter</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">CustomIter</span>
+</code></pre></div>
+<p><strong>Rule of thumb</strong>: Try omitting <code>associated_types</code> first. If the compiler errors with "missing associated type", add
+explicit specification.</p>
+<p><strong>Why symbols instead of strings:</strong></p>
+<p>Like <code>trait=</code> parameters, type values are <strong>symbolic references</strong> (they must exist in the namespace).
+Built-in types like <code>int</code>, <code>str</code>, <code>bool</code> work without imports. The LSP autocompletes available types as you type.</p>
+<p>For example:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># ✅ Symbols - validated, refactoring-safe</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">tokio</span> <span class="kn">import</span><span class="w"> </span><span class="nn">JoinHandle</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">std</span><span class="p">::</span><span class="kt">result</span> <span class="k">as</span> <span class="kt">result</span>
+
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span>
+    <span class="k">trait</span><span class="o">=</span><span class="n">std</span><span class="p">::</span><span class="n">future</span><span class="p">::</span><span class="nc">Future</span><span class="p">,</span>
+    <span class="n">associated_types</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;Output&quot;</span><span class="p">:</span> <span class="kt">result</span><span class="p">::</span><span class="kt">Result</span><span class="p">[(),</span> <span class="nb">str</span><span class="p">]},</span>
+<span class="p">)</span>
+<span class="nb">type</span> <span class="nc">Task</span> <span class="o">=</span> <span class="k">newtype</span> <span class="kt">JoinHandle</span>
+
+<span class="c1"># ❌ Strings - unvalidated, breaks silently</span>
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span>
+    <span class="k">trait</span><span class="o">=</span><span class="n">std</span><span class="p">::</span><span class="n">future</span><span class="p">::</span><span class="nc">Future</span><span class="p">,</span>
+    <span class="n">associated_types</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;Output&quot;</span><span class="p">:</span> <span class="s2">&quot;Result&lt;(), String&gt;&quot;</span><span class="p">},</span>  <span class="c1"># Typo won&#39;t be caught</span>
+<span class="p">)</span>
+<span class="nb">type</span> <span class="nc">Task</span> <span class="o">=</span> <span class="k">newtype</span> <span class="kt">JoinHandle</span>
+</code></pre></div>
+<h3 id="advanced-async-traits">Advanced: Async Traits<a class="headerlink" href="#advanced-async-traits" title="Permanent link">&para;</a></h3>
+<p>Rust's async traits require special handling for delegation. The decorator automatically handles this through <strong>trait
+introspection</strong> — the compiler reads the trait definition and extracts method signatures, generic parameters, and
+constraints.</p>
+<p><strong>Example: Delegating <code>FromRequestParts</code></strong></p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">axum</span><span class="p">::</span><span class="n">extract</span> <span class="k">as</span> <span class="n">extract</span>
+
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="n">extract</span><span class="p">::</span><span class="nc">FromRequestParts</span><span class="p">)</span>
+<span class="nb">type</span> <span class="nc">CustomExtractor</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">ExternalExtractor</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+</code></pre></div>
+<p><strong>What the compiler does automatically:</strong></p>
+<ol>
+<li><strong>Introspects the trait definition</strong> from Rust metadata (via rust-analyzer LSP — see <a href="#4-rust-trait-introspection">Rust Trait Introspection</a>)</li>
+<li><strong>Discovers generic parameters</strong>—reads <code>trait FromRequestParts&lt;S&gt;</code> and discovers <code>&lt;S&gt;</code> automatically</li>
+<li><strong>Extracts method signatures</strong>—parameter names, types, return types</li>
+<li><strong>Identifies async methods</strong>—methods returning <code>impl Future&lt;...&gt;</code></li>
+<li><strong>Preserves trait bounds</strong>—carries over where clauses from the trait definition</li>
+</ol>
+<p><strong>Generated Rust:</strong></p>
+<div class="language-rust highlight"><pre><span></span><code><span class="c1">// Pseudo-Rust: simplified for illustration (actual codegen would include async_trait desugaring)</span>
+<span class="k">impl</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span><span class="w"> </span><span class="n">S</span><span class="o">&gt;</span><span class="w"> </span><span class="n">axum</span><span class="p">::</span><span class="n">extract</span><span class="p">::</span><span class="n">FromRequestParts</span><span class="o">&lt;</span><span class="n">S</span><span class="o">&gt;</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">CustomExtractor</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span>
+<span class="k">where</span>
+<span class="w">    </span><span class="n">T</span><span class="p">:</span><span class="w"> </span><span class="nc">DeserializeOwned</span><span class="p">,</span>
+<span class="w">    </span><span class="n">S</span><span class="p">:</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Sync</span><span class="p">,</span><span class="w">  </span><span class="c1">// From trait definition&#39;s bounds</span>
+<span class="w">    </span><span class="n">ExternalExtractor</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">:</span><span class="w"> </span><span class="nc">axum</span><span class="p">::</span><span class="n">extract</span><span class="p">::</span><span class="n">FromRequestParts</span><span class="o">&lt;</span><span class="n">S</span><span class="o">&gt;</span><span class="p">,</span>
+<span class="p">{</span>
+<span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Rejection</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&lt;</span><span class="n">ExternalExtractor</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">FromRequestParts</span><span class="o">&lt;</span><span class="n">S</span><span class="o">&gt;&gt;</span><span class="p">::</span><span class="n">Rejection</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">from_request_parts</span><span class="p">(</span>
+<span class="w">        </span><span class="n">parts</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">mut</span><span class="w"> </span><span class="n">axum</span><span class="p">::</span><span class="n">http</span><span class="p">::</span><span class="n">request</span><span class="p">::</span><span class="n">Parts</span><span class="p">,</span><span class="w">   </span><span class="c1">// Introspected from trait</span>
+<span class="w">        </span><span class="n">state</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">S</span><span class="p">,</span><span class="w">                                </span><span class="c1">// Introspected from trait</span>
+<span class="w">    </span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">,</span><span class="w"> </span><span class="bp">Self</span><span class="p">::</span><span class="n">Rejection</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">ExternalExtractor</span><span class="p">::</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">::</span><span class="n">from_request_parts</span><span class="p">(</span><span class="n">parts</span><span class="p">,</span><span class="w"> </span><span class="n">state</span><span class="p">)</span>
+<span class="w">            </span><span class="p">.</span><span class="k">await</span>
+<span class="w">            </span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="bp">Self</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><strong>No manual parameters needed:</strong></p>
+<p>The compiler discovers <strong>all</strong> trait metadata automatically—generic parameters, method signatures, async detection,
+bounds, and associated types. You only specify the trait symbol:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="n">extract</span><span class="p">::</span><span class="nc">FromRequestParts</span><span class="p">)</span>
+<span class="nb">type</span> <span class="nc">CustomExtractor</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">ExternalExtractor</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+</code></pre></div>
+<p>The compiler reads <code>trait FromRequestParts&lt;S&gt;</code> and discovers that <code>&lt;S&gt;</code> exists, just like it discovers method parameters
+<code>(parts: &amp;mut Parts, state: &amp;S)</code>.</p>
+<p><strong>Common patterns:</strong></p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Database connection</span>
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="n">sqlx</span><span class="p">::</span><span class="nc">Executor</span><span class="p">)</span>
+<span class="nb">type</span> <span class="nc">Pool</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">PgPool</span>
+
+<span class="c1"># Async extractors (compiler discovers &lt;S&gt; from trait definition)</span>
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="n">extract</span><span class="p">::</span><span class="nc">FromRequestParts</span><span class="p">)</span>
+<span class="nb">type</span> <span class="kt">Query</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">AxumQuery</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+
+<span class="c1"># Futures (compiler infers Output from wrapped type&#39;s impl)</span>
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="n">std</span><span class="p">::</span><span class="n">future</span><span class="p">::</span><span class="nc">Future</span><span class="p">)</span>
+<span class="nb">type</span> <span class="nc">Task</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="o">=</span> <span class="k">newtype</span> <span class="kt">JoinHandle</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>  <span class="c1"># Infers: type Output = T</span>
+</code></pre></div>
+<h3 id="decorator-parameters-reference">Decorator Parameters Reference<a class="headerlink" href="#decorator-parameters-reference" title="Permanent link">&para;</a></h3>
+<!-- markdownlint-disable MD013 -->
+
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Description</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>trait</code></td>
+<td>Symbol</td>
+<td>Single trait to delegate</td>
+<td><code>trait=sqlx::Executor</code></td>
+</tr>
+<tr>
+<td><code>traits</code></td>
+<td>List[Symbol]</td>
+<td>Multiple traits</td>
+<td><code>traits=[TraitA, TraitB]</code></td>
+</tr>
+<tr>
+<td><code>methods</code></td>
+<td>List[str] or Dict</td>
+<td>Methods to delegate (default: all)</td>
+<td><code>methods=["execute"]</code> or <code>{"connect": "establish"}</code></td>
+</tr>
+<tr>
+<td><code>associated_types</code></td>
+<td>Dict[str, Symbol]</td>
+<td>Associated type mappings (when trait requires explicit specification)</td>
+<td><code>{"Item": int}</code> or <code>{"Item": MyType}</code></td>
+</tr>
+</tbody>
+</table>
+<!-- markdownlint-enable MD013 -->
+
+<h2 id="comparison-hardcoded-vs-user-defined">Comparison: Hardcoded vs User-Defined<a class="headerlink" href="#comparison-hardcoded-vs-user-defined" title="Permanent link">&para;</a></h2>
+<h3 id="hardcoded-v02-stdlib-approach">Hardcoded (v0.2 Stdlib Approach)<a class="headerlink" href="#hardcoded-v02-stdlib-approach" title="Permanent link">&para;</a></h3>
+<p><strong>Definition</strong> (in <code>crates/incan_core/src/lang/trait_bridges.rs</code>):</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="n">TraitBridge</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">applies_to_type_path</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;axum::extract::&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="n">trait_path</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;axum::extract::FromRequestParts&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="c1">// ...</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><strong>Usage</strong>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="kt">Query</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">AxumQuery</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>  <span class="c1"># Pattern matches automatically</span>
+</code></pre></div>
+<p><strong>Pros</strong>: Automatic, zero boilerplate<br />
+<strong>Cons</strong>: Only stdlib, users can't extend</p>
+<h3 id="user-defined-this-rfc">User-Defined (This RFC)<a class="headerlink" href="#user-defined-this-rfc" title="Permanent link">&para;</a></h3>
+<p><strong>Definition</strong>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="n">sqlx</span><span class="p">::</span><span class="nc">Executor</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;execute&quot;</span><span class="p">])</span>
+<span class="nb">type</span> <span class="nc">Pool</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">PgPool</span>
+</code></pre></div>
+<p><strong>Pros</strong>: User-extensible, explicit, grep-able<br />
+<strong>Cons</strong>: More boilerplate for custom cases</p>
+<h2 id="lsp-support">LSP Support<a class="headerlink" href="#lsp-support" title="Permanent link">&para;</a></h2>
+<p>The Language Server Protocol integration is critical for usability. The LSP provides:</p>
+<h3 id="autocomplete">Autocomplete<a class="headerlink" href="#autocomplete" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>trait=</code> parameter</strong> - suggests available imported traits</li>
+<li><strong><code>associated_types</code> keys</strong> - when trait is set, suggests trait's required associated type names</li>
+<li><strong><code>associated_types</code> values</strong> - suggests types in scope (imported, built-in, or locally defined)</li>
+</ul>
+<h3 id="hover-information">Hover Information<a class="headerlink" href="#hover-information" title="Permanent link">&para;</a></h3>
+<p>Hovering over <code>trait=</code> shows the trait signature:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span>
+    <span class="k">trait</span><span class="o">=</span><span class="n">std</span><span class="p">::</span><span class="nb">iter</span><span class="p">::</span><span class="nc">Iterator</span><span class="p">,</span>  <span class="c1"># ← Hover shows trait definition</span>
+    <span class="n">associated_types</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;Item&quot;</span><span class="p">:</span> <span class="nb">int</span><span class="p">},</span>
+<span class="p">)</span>
+<span class="nb">type</span> <span class="nc">MyIter</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">CustomIterator</span>
+</code></pre></div>
+<p>Displays:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="k">trait</span><span class="w"> </span><span class="nb">Iterator</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Item</span><span class="p">;</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">next</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">::</span><span class="n">Item</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+<h3 id="diagnostics">Diagnostics<a class="headerlink" href="#diagnostics" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Missing required associated types</strong> - "Iterator requires associated type 'Item'"</li>
+<li><strong>Unknown associated type names</strong> - "Trait Iterator has no associated type 'Output'"</li>
+<li><strong>Invalid trait symbols</strong> - "Trait 'Foo' not found in scope"</li>
+<li><strong>Missing trait import</strong> - "Trait must be imported to use in decorator"</li>
+</ul>
+<h3 id="signature-help">Signature Help<a class="headerlink" href="#signature-help" title="Permanent link">&para;</a></h3>
+<p>As you type decorator parameters, shows available parameters and their types:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="o">|</span>  <span class="c1"># ← Shows: trait=Symbol, traits=List[Symbol], methods=...</span>
+</code></pre></div>
+<p>This makes the decorator self-documenting without referring to external Rust documentation.</p>
+<h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
+<h3 id="example-1-database-connection-pool">Example 1: Database Connection Pool<a class="headerlink" href="#example-1-database-connection-pool" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;Custom async database wrapper&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">sqlx</span> <span class="k">as</span> <span class="n">sqlx</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">sqlx</span> <span class="o">@</span> <span class="s2">&quot;0.7&quot;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">PgPool</span>
+
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span>
+    <span class="n">traits</span><span class="o">=</span><span class="p">[</span>
+        <span class="n">sqlx</span><span class="p">::</span><span class="nc">Executor</span><span class="p">,</span>
+        <span class="n">sqlx</span><span class="p">::</span><span class="nc">PgExecutor</span><span class="p">,</span>
+    <span class="p">],</span>
+<span class="p">)</span>
+<span class="nb">type</span> <span class="nc">Pool</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">PgPool</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_users</span><span class="p">(</span><span class="n">pool</span><span class="p">:</span> <span class="nc">Pool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">List</span><span class="p">[</span><span class="nc">User</span><span class="p">]:</span>
+    <span class="c1"># pool.execute() works because Executor is delegated!</span>
+    <span class="n">rows</span> <span class="o">=</span> <span class="k">await</span> <span class="n">pool</span><span class="o">.</span><span class="n">fetch_all</span><span class="p">(</span><span class="s2">&quot;SELECT * FROM users&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">[</span><span class="nc">User</span><span class="o">.</span><span class="n">from_row</span><span class="p">(</span><span class="n">r</span><span class="p">)</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">rows</span><span class="p">]</span>
+</code></pre></div>
+<h3 id="example-2-custom-iterator">Example 2: Custom Iterator<a class="headerlink" href="#example-2-custom-iterator" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">my_crate</span> <span class="o">@</span> <span class="s2">&quot;1.0&quot;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">RangeIter</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">RustRange</span>
+
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span>
+    <span class="k">trait</span><span class="o">=</span><span class="n">std</span><span class="p">::</span><span class="nb">iter</span><span class="p">::</span><span class="nc">Iterator</span><span class="p">,</span>
+    <span class="n">associated_types</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;Item&quot;</span><span class="p">:</span> <span class="nb">int</span><span class="p">},</span>  <span class="c1"># Symbolic type reference</span>
+<span class="p">)</span>
+<span class="nb">type</span> <span class="nc">Range</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">RustRange</span>
+
+<span class="c1"># Now works in for loops!</span>
+<span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nc">Range</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">10</span><span class="p">):</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="example-3-error-handling">Example 3: Error Handling<a class="headerlink" href="#example-3-error-handling" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">anyhow</span> <span class="o">@</span> <span class="s2">&quot;1.0&quot;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Error</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">AnyhowError</span>
+
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span>
+    <span class="n">traits</span><span class="o">=</span><span class="p">[</span>
+        <span class="n">std</span><span class="p">::</span><span class="n">error</span><span class="p">::</span><span class="nc">Error</span><span class="p">,</span>
+        <span class="n">std</span><span class="p">::</span><span class="n">fmt</span><span class="p">::</span><span class="kt">Display</span><span class="p">,</span>
+        <span class="n">std</span><span class="p">::</span><span class="n">fmt</span><span class="p">::</span><span class="kt">Debug</span><span class="p">,</span>
+    <span class="p">],</span>
+<span class="p">)</span>
+<span class="nb">type</span> <span class="nc">AppError</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">AnyhowError</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">risky</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Data</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="n">msg</span><span class="p">(</span><span class="s2">&quot;Something failed&quot;</span><span class="p">))</span>  <span class="c1"># ? operator works!</span>
+</code></pre></div>
+<h3 id="example-4-method-renaming">Example 4: Method Renaming<a class="headerlink" href="#example-4-method-renaming" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Hypothetical: demonstrating method renaming with a custom HTTP trait.</span>
+<span class="sd">(Note: reqwest::Client is a struct in Rust; this assumes a fictional HttpClient trait for illustration)</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">my_http_lib</span> <span class="o">@</span> <span class="s2">&quot;1.0&quot;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Client</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">LibClient</span>
+
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span>
+    <span class="k">trait</span><span class="o">=</span><span class="n">my_http_lib</span><span class="p">::</span><span class="nc">HttpClient</span><span class="p">,</span>   <span class="c1"># Fictional trait for demonstration</span>
+    <span class="n">methods</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;get&quot;</span><span class="p">:</span> <span class="s2">&quot;http_get&quot;</span><span class="p">,</span>           <span class="c1"># Expose http_get as get</span>
+        <span class="s2">&quot;post&quot;</span><span class="p">:</span> <span class="s2">&quot;http_post&quot;</span><span class="p">,</span>         <span class="c1"># Expose http_post as post</span>
+        <span class="s2">&quot;execute&quot;</span><span class="p">:</span> <span class="s2">&quot;send_request&quot;</span><span class="p">,</span>   <span class="c1"># Rename for clarity</span>
+    <span class="p">},</span>
+<span class="p">)</span>
+<span class="nb">type</span> <span class="nc">HttpClient</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">LibClient</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fetch</span><span class="p">(</span><span class="n">client</span><span class="p">:</span> <span class="nc">HttpClient</span><span class="p">,</span> <span class="n">url</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span><span class="o">.</span><span class="n">execute</span><span class="p">()</span>
+    <span class="k">return</span> <span class="k">await</span> <span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="p">()</span>
+</code></pre></div>
+<blockquote>
+<p><strong>Note</strong>: This example uses a hypothetical <code>HttpClient</code> trait for illustration. In practice, HTTP client libraries
+like <code>reqwest</code> provide structs (not traits), so delegation would apply to traits those structs implement
+(e.g., <code>Clone</code>, <code>Debug</code>, or <code>tower::Service</code>).</p>
+</blockquote>
+<h3 id="example-5-disambiguating-method-collisions">Example 5: Disambiguating Method Collisions<a class="headerlink" href="#example-5-disambiguating-method-collisions" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;Wrapping a type that implements multiple Executor traits&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">sqlx</span> <span class="k">as</span> <span class="n">sqlx</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">custom_db</span> <span class="k">as</span> <span class="n">custom</span>
+
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span>
+    <span class="k">trait</span><span class="o">=</span><span class="n">sqlx</span><span class="p">::</span><span class="nc">Executor</span><span class="p">,</span>
+    <span class="n">methods</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;execute_sql&quot;</span><span class="p">:</span> <span class="s2">&quot;execute&quot;</span><span class="p">,</span>      <span class="c1"># Rename to avoid collision</span>
+        <span class="s2">&quot;fetch_one&quot;</span><span class="p">:</span> <span class="s2">&quot;fetch_one&quot;</span><span class="p">,</span>      <span class="c1"># No collision, keep original</span>
+    <span class="p">}</span>
+<span class="p">)</span>
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span>
+    <span class="k">trait</span><span class="o">=</span><span class="n">custom</span><span class="p">::</span><span class="nc">Executor</span><span class="p">,</span>
+    <span class="n">methods</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;execute_custom&quot;</span><span class="p">:</span> <span class="s2">&quot;execute&quot;</span><span class="p">,</span>   <span class="c1"># Rename to avoid collision</span>
+        <span class="s2">&quot;batch_execute&quot;</span><span class="p">:</span> <span class="s2">&quot;batch_execute&quot;</span><span class="p">,</span>
+    <span class="p">}</span>
+<span class="p">)</span>
+<span class="nb">type</span> <span class="nc">HybridPool</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">CustomPgPool</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">run_queries</span><span class="p">(</span><span class="n">pool</span><span class="p">:</span> <span class="nc">HybridPool</span><span class="p">):</span>
+    <span class="c1"># Both executors available under different names</span>
+    <span class="k">await</span> <span class="n">pool</span><span class="o">.</span><span class="n">execute_sql</span><span class="p">(</span><span class="s2">&quot;SELECT * FROM users&quot;</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">pool</span><span class="o">.</span><span class="n">execute_custom</span><span class="p">(</span><span class="n">custom_query</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="why-rustdelegate-syntax">Why <code>@rust.delegate</code> Syntax?<a class="headerlink" href="#why-rustdelegate-syntax" title="Permanent link">&para;</a></h2>
+<h3 id="namespacing">Namespacing<a class="headerlink" href="#namespacing" title="Permanent link">&para;</a></h3>
+<p>The <code>@rust.*</code> prefix clearly marks Rust interop:</p>
+<ul>
+<li><code>@rust.delegate</code> - Trait delegation</li>
+<li><code>@rust.unsafe</code> (future) - Unsafe operations</li>
+<li><code>@rust.ffi</code> (future) - C FFI bindings</li>
+<li><code>@rust.inline</code> (future) - Force inline</li>
+</ul>
+<p>vs Incan-native decorators:</p>
+<ul>
+<li><code>@derive</code> - Incan codegen</li>
+<li><code>@test</code> - Test framework</li>
+<li><code>@fixture</code> - Test fixtures</li>
+</ul>
+<h3 id="symbolic-arguments">Symbolic Arguments<a class="headerlink" href="#symbolic-arguments" title="Permanent link">&para;</a></h3>
+<p>Use <code>trait=sqlx::Executor</code> (symbol) not <code>trait="sqlx::Executor"</code> (string):</p>
+<p><strong>Benefits</strong>:</p>
+<ol>
+<li><strong>Typechecker validation</strong> - trait path must resolve</li>
+<li><strong>IDE autocomplete</strong> - works on trait names</li>
+<li><strong>Refactoring safe</strong> - rename tracking</li>
+<li><strong>Import enforcement</strong> - compiler ensures import exists</li>
+</ol>
+<blockquote>
+<p><strong>Important</strong>: The trait symbol <strong>must be imported</strong> for the decorator to work. This is by design—it forces users to
+ensure proper Rust imports are in place, making the underlying dependencies explicit and verified.</p>
+</blockquote>
+<p><strong>Comparison</strong>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># ✅ GOOD - Symbol imported and used</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">sqlx</span> <span class="k">as</span> <span class="n">sqlx</span>
+
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="n">sqlx</span><span class="p">::</span><span class="nc">Executor</span><span class="p">)</span>
+<span class="nb">type</span> <span class="nc">Pool</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">PgPool</span>
+
+<span class="c1"># ❌ BAD - String, unvalidated, no import verification</span>
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="s2">&quot;sqlx::Executor&quot;</span><span class="p">)</span>
+<span class="nb">type</span> <span class="nc">Pool</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">PgPool</span>
+</code></pre></div>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<h3 id="1-multiple-decorator-handling">1. Multiple Decorator Handling<a class="headerlink" href="#1-multiple-decorator-handling" title="Permanent link">&para;</a></h3>
+<p><strong>Decision</strong>: Multiple <code>@rust.delegate</code> decorators on the same type ARE allowed, with collision detection.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># ✅ ALLOWED - no method name collisions</span>
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="n">sqlx</span><span class="p">::</span><span class="nc">Executor</span><span class="p">)</span>
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="n">std</span><span class="p">::</span><span class="n">fmt</span><span class="p">::</span><span class="kt">Debug</span><span class="p">)</span>
+<span class="nb">type</span> <span class="nc">Pool</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">PgPool</span>
+</code></pre></div>
+<p><strong>Method name collision rule</strong>:</p>
+<p>If two decorators delegate methods with the same final Incan name (after renaming), the compiler <strong>must reject</strong>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># ❌ ERROR - both expose &#39;execute&#39;</span>
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="n">sqlx</span><span class="p">::</span><span class="nc">Executor</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;execute&quot;</span><span class="p">])</span>
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="n">custom</span><span class="p">::</span><span class="nc">Executor</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;execute&quot;</span><span class="p">])</span>
+<span class="nb">type</span> <span class="nc">Pool</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">PgPool</span>
+<span class="c1"># Error: Method &#39;execute&#39; delegated by multiple decorators (sqlx::Executor, custom::Executor)</span>
+<span class="c1"># Hint: Use method renaming to resolve the conflict</span>
+</code></pre></div>
+<p><strong>Disambiguation via renaming</strong>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># ✅ VALID - renamed to avoid collision</span>
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="n">sqlx</span><span class="p">::</span><span class="nc">Executor</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;execute_sql&quot;</span><span class="p">:</span> <span class="s2">&quot;execute&quot;</span><span class="p">})</span>
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="n">custom</span><span class="p">::</span><span class="nc">Executor</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;execute_custom&quot;</span><span class="p">:</span> <span class="s2">&quot;execute&quot;</span><span class="p">})</span>
+<span class="nb">type</span> <span class="nc">Pool</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">PgPool</span>
+</code></pre></div>
+<p><strong>Rationale</strong>:</p>
+<ul>
+<li><strong>Flexibility</strong>: Allows incremental trait addition and per-trait method selection</li>
+<li><strong>Clarity</strong>: Each decorator states its trait and method subset independently</li>
+<li><strong>Simplicity</strong>: Collision detection is straightforward (check final method names across all decorators)</li>
+</ul>
+<p><strong>Alternative single-decorator form</strong>:</p>
+<p>For convenience, <code>traits=[...]</code> in a single decorator is still supported when no renaming is needed:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Equivalent to three separate decorators (when no collisions)</span>
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="n">traits</span><span class="o">=</span><span class="p">[</span><span class="nc">TraitA</span><span class="p">,</span> <span class="nc">TraitB</span><span class="p">,</span> <span class="nc">TraitC</span><span class="p">])</span>
+<span class="nb">type</span> <span class="nc">T</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">Wrapped</span>
+</code></pre></div>
+<p><strong>Method name conflicts within a single decorator</strong>:</p>
+<p>When using <code>traits=[...]</code>, if multiple traits define the same method name, the compiler rejects with an error:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="n">traits</span><span class="o">=</span><span class="p">[</span><span class="n">sqlx</span><span class="p">::</span><span class="nc">Executor</span><span class="p">,</span> <span class="n">custom</span><span class="p">::</span><span class="nc">Executor</span><span class="p">])</span>
+<span class="nb">type</span> <span class="nc">Pool</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">PgPool</span>
+<span class="c1"># Error: Method &#39;execute&#39; appears in multiple traits: sqlx::Executor, custom::Executor</span>
+<span class="c1"># Hint: Use separate decorators with method renaming to disambiguate</span>
+</code></pre></div>
+<h3 id="2-default-delegation-strategy">2. Default Delegation Strategy<a class="headerlink" href="#2-default-delegation-strategy" title="Permanent link">&para;</a></h3>
+<p><strong>Decision</strong>: When <code>methods</code> is omitted, delegate <strong>all trait methods</strong> by default.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="nc">Executor</span><span class="p">)</span>  <span class="c1"># Delegates ALL Executor methods</span>
+</code></pre></div>
+<p><strong>Rationale</strong>:</p>
+<ul>
+<li>Most common use case is full trait delegation (newtypes as transparent wrappers)</li>
+<li>Explicit <code>methods=["execute", "fetch"]</code> available for subsets</li>
+<li>No need for redundant <code>methods="all"</code> parameter</li>
+</ul>
+<p><strong>For subsets</strong>, use explicit list:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="nc">Executor</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;execute&quot;</span><span class="p">,</span> <span class="s2">&quot;fetch&quot;</span><span class="p">])</span>  <span class="c1"># Only these two</span>
+</code></pre></div>
+<h3 id="3-limitations-auto-traits">3. Limitations: Auto Traits<a class="headerlink" href="#3-limitations-auto-traits" title="Permanent link">&para;</a></h3>
+<p><strong>Auto traits (<code>Send</code>, <code>Sync</code>, <code>Unpin</code>, <code>UnwindSafe</code>, <code>RefUnwindSafe</code>) are not supported by <code>@rust.delegate</code>.</strong></p>
+<p>These traits are automatically inferred by Rust's compiler based on type composition and cannot be implemented manually.
+The newtype automatically inherits these traits if the wrapped type has them—no delegation needed.</p>
+<p><strong>What happens automatically:</strong></p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">sync</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Arc</span>
+
+<span class="c1"># Arc&lt;T&gt; is Send + Sync when T is Send + Sync</span>
+<span class="nb">type</span> <span class="nc">SharedData</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">Arc</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+
+<span class="c1"># SharedData[T] automatically gets Send + Sync - no decorator needed!</span>
+<span class="c1"># Rust infers this based on Arc&#39;s auto trait impls</span>
+</code></pre></div>
+<p><strong>What's rejected:</strong></p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># ❌ ERROR - auto traits cannot be explicitly delegated</span>
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="n">std</span><span class="p">::</span><span class="n">marker</span><span class="p">::</span><span class="nc">Send</span><span class="p">)</span>
+<span class="nb">type</span> <span class="nc">MyWrapper</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">SomeType</span>
+<span class="c1"># Error: Cannot delegate auto trait &#39;std::marker::Send&#39;</span>
+<span class="c1"># Note: Auto traits (Send, Sync, Unpin, etc.) are inferred automatically by Rust</span>
+</code></pre></div>
+<p><strong>Why this limitation exists:</strong></p>
+<p>Auto traits are special in Rust's type system — they're implemented automatically based on the types a struct contains.
+You cannot write <code>impl Send for MyType</code> manually. The newtype wrapper inherits auto traits from its wrapped type
+automatically, so explicit delegation is both unnecessary and impossible.</p>
+<p><strong>Common auto traits:</strong></p>
+<ul>
+<li><code>Send</code> - Type can be transferred across thread boundaries</li>
+<li><code>Sync</code> - Type can be shared between threads (via <code>&amp;T</code>)</li>
+<li><code>Unpin</code> - Type can be moved even when pinned</li>
+<li><code>UnwindSafe</code> / <code>RefUnwindSafe</code> - Type is safe across panic unwinding</li>
+</ul>
+<p>If you need to control these traits, you must do so at the type definition level (e.g., wrapping in <code>!Send</code> types), not
+through delegation.</p>
+<h3 id="4-rust-trait-introspection">4. Rust Trait Introspection<a class="headerlink" href="#4-rust-trait-introspection" title="Permanent link">&para;</a></h3>
+<p><strong>How does the compiler access Rust trait definitions?</strong></p>
+<p><strong>Approach:</strong> Leverage rust-analyzer via LSP</p>
+<p>Query rust-analyzer through the Language Server Protocol for trait metadata. This approach piggybacks on Incan's
+existing rust-analyzer dependency (required for <code>rust::</code> imports per <a href="/dev/RFCs/005_rust_interop">RFC 005</a>).</p>
+<p><strong>Why rust-analyzer:</strong></p>
+<ol>
+<li><strong>Already required</strong> - Incan's LSP uses rust-analyzer for <code>rust::</code> import resolution, type checking, and autocomplete</li>
+<li><strong>Solves hard problems</strong> - Expands proc macros, resolves cargo features, handles GATs and const generics</li>
+<li><strong>Stable protocol</strong> - LSP is versioned and stable (unlike rustc internals or rustdoc JSON)</li>
+<li><strong>No custom parser maintenance</strong> - rust-analyzer handles Rust syntax evolution; we consume stable APIs</li>
+<li><strong>IDE integration</strong> - Same service powers editor features (hover, autocomplete)</li>
+</ol>
+<p><strong>What rust-analyzer provides:</strong></p>
+<div class="language-rust highlight"><pre><span></span><code><span class="c1">// Pseudo-code: trait information from rust-analyzer LSP</span>
+<span class="n">TraitInfo</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Executor&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="n">generics</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="n">TypeParam</span><span class="p">(</span><span class="s">&quot;S&quot;</span><span class="p">),</span><span class="w"> </span><span class="n">TypeParam</span><span class="p">(</span><span class="s">&quot;T&quot;</span><span class="p">),</span><span class="w"> </span><span class="o">..</span><span class="p">.],</span>
+<span class="w">    </span><span class="n">methods</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">        </span><span class="n">Method</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;execute&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">is_async</span><span class="p">:</span><span class="w"> </span><span class="nc">true</span><span class="p">,</span><span class="w"> </span><span class="n">params</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="o">..</span><span class="p">.],</span><span class="w"> </span><span class="n">return_type</span><span class="p">:</span><span class="w"> </span><span class="o">..</span><span class="p">.</span><span class="w"> </span><span class="p">},</span>
+<span class="w">        </span><span class="n">Method</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;fetch_one&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">..</span><span class="p">.</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">],</span>
+<span class="w">    </span><span class="n">associated_types</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">        </span><span class="n">AssocType</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Item&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">bounds</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="o">..</span><span class="p">.],</span><span class="w"> </span><span class="n">default</span><span class="p">:</span><span class="w"> </span><span class="nb">None</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">],</span>
+<span class="w">    </span><span class="n">supertraits</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="n">Executor</span><span class="p">,</span><span class="w"> </span><span class="nb">Send</span><span class="p">,</span><span class="w"> </span><span class="nb">Sync</span><span class="p">],</span>
+<span class="w">    </span><span class="n">where_clauses</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="o">..</span><span class="p">.],</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><strong>Key capabilities:</strong></p>
+<ol>
+<li><strong>Proc macro expansion</strong> - Sees traits generated by <code>#[async_trait]</code>, <code>#[derive]</code>, etc.</li>
+<li><strong>Cargo features resolution</strong> - Knows which features are enabled in current build</li>
+<li><strong>Trait impl checking</strong> - Verifies wrapped type actually implements the trait</li>
+<li><strong>Cross-crate resolution</strong> - Follows trait definitions through dependencies</li>
+<li><strong>GATs and const generics</strong> - Full support for advanced Rust type features</li>
+</ol>
+<p><strong>How it works:</strong></p>
+<div class="language-rust highlight"><pre><span></span><code><span class="c1">// Pseudo-code: LSP query during compilation</span>
+<span class="kd">let</span><span class="w"> </span><span class="n">client</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">LspClient</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="s">&quot;rust-analyzer&quot;</span><span class="p">);</span>
+<span class="kd">let</span><span class="w"> </span><span class="n">trait_info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">client</span><span class="p">.</span><span class="n">query_trait</span><span class="p">(</span><span class="s">&quot;sqlx::Executor&quot;</span><span class="p">)</span><span class="o">?</span><span class="p">;</span>
+
+<span class="c1">// Generate delegation impl using trait metadata</span>
+<span class="k">for</span><span class="w"> </span><span class="n">method</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="n">trait_info</span><span class="p">.</span><span class="n">methods</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">generate_delegated_method</span><span class="p">(</span><span class="n">method</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><strong>Caching:</strong></p>
+<ul>
+<li>Queried trait metadata cached in <code>target/incan/trait-cache/</code></li>
+<li>Keyed by (crate_name, version, trait_path, <strong>content_hash</strong>)</li>
+<li>Content hash computed from trait definition source (transitively including supertraits)</li>
+<li>Automatically invalidated when trait definition changes (hash mismatch), regardless of cause</li>
+<li>Resilient to edge cases: manual edits, git branch switches, dependency updates</li>
+<li>Reduces LSP queries on incremental builds</li>
+</ul>
+<p><strong>Fallback for CI/offline environments:</strong></p>
+<p>When rust-analyzer is unavailable (CI, offline builds, cross-compilation):</p>
+<ol>
+<li>Use cached metadata from previous builds (if available)</li>
+<li>Defer trait validation to rustc during final Rust compilation</li>
+<li>rustc errors map back to Incan source locations (e.g., "trait <code>Executor</code> not implemented for <code>PgPool</code>")</li>
+</ol>
+<p>This ensures Incan works in all environments while preferring rich metadata when available.</p>
+<p><strong>Introspection capabilities comparison:</strong></p>
+<p>We considered using <code>syn</code> for this parsing model, but unfortunately it lacks the features to make that a viable option.
+This table shows <code>syn</code> compared to the <code>rust-analyzer</code> approach:</p>
+<table>
+<thead>
+<tr>
+<th>Edge Case</th>
+<th>rust-analyzer</th>
+<th>syn-only</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Proc macro traits</td>
+<td>✅ Yes</td>
+<td>❌ No</td>
+</tr>
+<tr>
+<td>Cargo features</td>
+<td>✅ Yes</td>
+<td>❌ No</td>
+</tr>
+<tr>
+<td>Trait impl checking</td>
+<td>✅ Yes</td>
+<td>❌ No</td>
+</tr>
+<tr>
+<td>GATs (Generic Assoc Types)</td>
+<td>✅ Yes</td>
+<td>⚠️ Partial</td>
+</tr>
+<tr>
+<td>Const generics</td>
+<td>✅ Yes</td>
+<td>⚠️ Partial</td>
+</tr>
+<tr>
+<td>Target-specific impls</td>
+<td>✅ Yes</td>
+<td>❌ No</td>
+</tr>
+<tr>
+<td>Supertrait resolution</td>
+<td>✅ Yes</td>
+<td>✅ Yes</td>
+</tr>
+<tr>
+<td>Async trait detection</td>
+<td>✅ Yes</td>
+<td>⚠️ Partial</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Compiler responsibilities:</strong></p>
+<p>The compiler still handles Incan-specific delegation logic:</p>
+<ol>
+<li><strong>Generic substitution</strong> - Maps Incan type parameters to Rust generics</li>
+<li><strong>Method conflicts</strong> - Detects name collisions in multi-trait delegation</li>
+<li><strong>Associated type inference</strong> - Validates <code>associated_types=</code> matches trait definition</li>
+<li><strong>Error translation</strong> - Converts rust-analyzer/rustc errors to Incan diagnostics</li>
+</ol>
+<h2 id="migration-path">Migration Path<a class="headerlink" href="#migration-path" title="Permanent link">&para;</a></h2>
+<h3 id="stdlib-migration-required-for-rfc-completion">Stdlib Migration (Required for RFC Completion)<a class="headerlink" href="#stdlib-migration-required-for-rfc-completion" title="Permanent link">&para;</a></h3>
+<p>Currently, stdlib uses hardcoded trait bridges:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># stdlib/web/request.incn - current</span>
+<span class="nb">type</span> <span class="kt">Query</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">AxumQuery</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>  <span class="c1"># Auto-delegates via hardcoded pattern</span>
+</code></pre></div>
+<p>Stdlib must converge to explicit decorators for trait delegation parity:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># stdlib/web/request.incn - with decorator</span>
+<span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="n">axum</span><span class="p">::</span><span class="n">extract</span><span class="p">::</span><span class="nc">FromRequestParts</span><span class="p">)</span>
+<span class="nb">type</span> <span class="kt">Query</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">AxumQuery</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+</code></pre></div>
+<p><strong>Benefits of migration:</strong></p>
+<ul>
+<li>Makes trait delegation explicit and grep-able</li>
+<li>Same mechanism for stdlib and user code</li>
+<li>Better documentation (hover shows what traits are implemented)</li>
+</ul>
+<p><strong>Transitional allowance:</strong></p>
+<ul>
+<li>Existing hardcoded bridges may remain temporarily while stdlib modules are migrated</li>
+<li>New trait delegation behavior should be added through <code>@rust.delegate</code>, not new hardcoded bridge entries</li>
+<li>Hardcoded bridges are removed (or reduced to compatibility shims) once equivalent decorator-based coverage exists</li>
+</ul>
+<h2 id="acceptance-criteria">Acceptance Criteria<a class="headerlink" href="#acceptance-criteria" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Parity</strong>: Any trait delegation behavior used by <code>std.web</code> (or other stdlib modules) is expressible with
+    <code>@rust.delegate</code> in user code.</li>
+<li><strong>No privileged path for new features</strong>: New delegation features are implemented in the decorator pipeline, not via
+    stdlib-only hardcoded bridges.</li>
+<li><strong>Stdlib convergence</strong>: Core stdlib newtype delegations are represented via explicit decorators (or generated from an
+    equivalent decorator model), with hardcoded behavior retained only as temporary compatibility scaffolding.</li>
+<li><strong>User validation</strong>: At least one non-stdlib integration example (e.g., <code>sqlx</code>, <code>tower</code>, or equivalent) demonstrates
+    that user libraries can achieve the same delegation outcomes without handwritten Rust wrappers.</li>
+</ol>
+<h2 id="alternatives-considered">Alternatives Considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Hardcoded bridges only</strong> - Keep trait bridges internal to stdlib.
+  Rejected: forces users to wait or write Rust wrappers.</li>
+<li><strong>Build stdlib in Rust</strong> - Write <code>std.web</code> as Rust wrappers instead of Incan.
+  Rejected: defeats Incan's purpose as a high-level language.</li>
+<li><strong>String-based trait names</strong> - Use <code>trait="sqlx::Executor"</code> instead of symbols.
+  Rejected: no validation, no IDE support, breaks refactoring.</li>
+</ul>
+<h2 id="success-metrics">Success Metrics<a class="headerlink" href="#success-metrics" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Adoption</strong>: 50%+ of external Rust wrapper newtypes use <code>@rust.delegate</code> in community packages</li>
+<li><strong>Reduction in manual Rust code</strong>: 75% less hand-written delegation glue</li>
+<li><strong>Parity achieved</strong>: No net-new stdlib-only trait bridge rules are introduced after RFC adoption</li>
+<li><strong>Documentation</strong>: Clear examples in Incan Book chapter on Rust interop</li>
+<li><strong>Performance</strong>: Zero runtime overhead (compile-time only)</li>
+</ol>
+<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
+<ul>
+<li>RFC 005: Rust Interop (<code>rust::</code> import syntax)</li>
+<li>RFC 021: Field Metadata &amp; Aliases (similar decorator pattern)</li>
+<li>Trait bridges implementation: <code>src/backend/ir/emit/decls/structures.rs</code></li>
+<li>Trait bridge registry: <code>crates/incan_core/src/lang/trait_bridges.rs</code></li>
+</ul>
+<h2 id="future-extensions">Future Extensions<a class="headerlink" href="#future-extensions" title="Permanent link">&para;</a></h2>
+<h3 id="1-rustunsafe-decorator">1. <code>@rust.unsafe</code> Decorator<a class="headerlink" href="#1-rustunsafe-decorator" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="n">unsafe</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">raw_pointer_deref</span><span class="p">(</span><span class="n">ptr</span><span class="p">:</span> <span class="o">*</span><span class="k">const</span> <span class="kt">i32</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">i32</span><span class="p">:</span>
+    <span class="k">return</span> <span class="o">*</span><span class="n">ptr</span>  <span class="c1"># Allowed in unsafe block</span>
+</code></pre></div>
+<h3 id="2-rustinline-hint">2. <code>@rust.inline</code> Hint<a class="headerlink" href="#2-rustinline-hint" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="n">inline</span><span class="p">(</span><span class="n">always</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">hot_path</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">x</span> <span class="o">*</span> <span class="mi">2</span>
+</code></pre></div>
+<h3 id="3-rustffi-for-c-bindings">3. <code>@rust.ffi</code> for C Bindings<a class="headerlink" href="#3-rustffi-for-c-bindings" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="n">ffi</span><span class="p">(</span><span class="n">lib</span><span class="o">=</span><span class="s2">&quot;mylib&quot;</span><span class="p">,</span> <span class="n">symbol</span><span class="o">=</span><span class="s2">&quot;compute&quot;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">native_compute</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<h3 id="4-full-impl-blocks">4. Full <code>impl</code> Blocks<a class="headerlink" href="#4-full-impl-blocks" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">impl</span> <span class="nc">CustomTrait</span> <span class="k">for</span> <span class="nc">MyType</span><span class="p">:</span>
+    <span class="n">fn</span> <span class="n">custom_method</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="c1"># Full method body in Incan</span>
+        <span class="k">return</span> <span class="mi">42</span>
+</code></pre></div>
+<p>This RFC focuses on delegation; full impl blocks are a separate (larger) feature.</p>
+<hr />
+<h2 id="appendix-current-trait-bridge-registry">Appendix: Current Trait Bridge Registry<a class="headerlink" href="#appendix-current-trait-bridge-registry" title="Permanent link">&para;</a></h2>
+<p>For reference, stdlib's hardcoded bridges:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="c1">// crates/incan_core/src/lang/trait_bridges.rs</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">TRAIT_BRIDGES</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="p">[</span><span class="n">TraitBridge</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;</span><span class="p">[</span>
+<span class="w">    </span><span class="c1">// Display: println!(&quot;{}&quot;, x)</span>
+<span class="w">    </span><span class="n">TraitBridge</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">applies_to_type_path</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="p">,</span><span class="w">  </span><span class="c1">// Matches all</span>
+<span class="w">        </span><span class="n">trait_path</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;std::fmt::Display&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="c1">// ...</span>
+<span class="w">    </span><span class="p">},</span>
+
+<span class="w">    </span><span class="c1">// FromRequestParts: Axum extractors</span>
+<span class="w">    </span><span class="n">TraitBridge</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">applies_to_type_path</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;axum::extract::&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="n">trait_path</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;axum::extract::FromRequestParts&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="c1">// ...</span>
+<span class="w">    </span><span class="p">},</span>
+
+<span class="w">    </span><span class="c1">// Iterator: for x in iter</span>
+<span class="w">    </span><span class="n">TraitBridge</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">applies_to_type_path</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="n">trait_path</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;std::iter::Iterator&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="c1">// ...</span>
+<span class="w">    </span><span class="p">},</span>
+
+<span class="w">    </span><span class="c1">// IntoResponse: Axum responses</span>
+<span class="w">    </span><span class="n">TraitBridge</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">applies_to_type_path</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;axum::response::&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="n">trait_path</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;axum::response::IntoResponse&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="c1">// ...</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="p">];</span>
+</code></pre></div>
+<p>This RFC proposes making this extensible via <code>@rust.delegate</code>.</p>
+<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
+
+<!-- RFC reference links for reuse: '[RFC 018]' or '[RFC 018: Title][RFC 018]' -->
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+        <script src="../../_snippets/javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
+      
+        <script src="../../_snippets/javascripts/tablesort.js"></script>
+      
+        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+      
+    
+  </body>
+</html>
