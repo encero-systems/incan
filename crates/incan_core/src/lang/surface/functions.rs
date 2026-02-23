@@ -134,7 +134,7 @@ pub fn info_for(id: SurfaceFnId) -> &'static SurfaceFnInfo {
     SURFACE_FUNCTIONS
         .iter()
         .find(|f| f.id == id)
-        .expect("surface function info missing")
+        .expect("INVARIANT: surface function info missing")
 }
 
 const fn info(

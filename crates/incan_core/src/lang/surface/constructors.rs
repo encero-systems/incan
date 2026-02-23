@@ -74,7 +74,7 @@ pub fn info_for(id: ConstructorId) -> &'static ConstructorInfo {
     CONSTRUCTORS
         .iter()
         .find(|c| c.id == id)
-        .expect("constructor info missing")
+        .expect("INVARIANT: constructor info missing")
 }
 
 const fn info(

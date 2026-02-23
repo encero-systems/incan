@@ -240,7 +240,7 @@ pub fn info_for(id: BuiltinFnId) -> &'static BuiltinFnInfo {
     BUILTIN_FUNCTIONS
         .iter()
         .find(|b| b.id == id)
-        .expect("builtin info missing")
+        .expect("INVARIANT: builtin info missing")
 }
 
 /// Resolve a spelling to a builtin function identifier.

@@ -47,7 +47,7 @@ pub enum Visibility {
 }
 
 /// A program is a sequence of declarations, optionally with a `rust.module()` directive (RFC 023).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Program {
     pub declarations: Vec<Spanned<Declaration>>,
     /// The `rust.module("path::to::module")` directive, if present.
@@ -55,6 +55,11 @@ pub struct Program {
     /// Declares that `@rust.extern` items in this module are backed by Rust functions at the given
     /// Rust module path. See RFC 023 for the full semantic design.
     pub rust_module_path: Option<Spanned<String>>,
+    /// Non-fatal warnings emitted during parsing.
+    ///
+    /// These do not prevent the program from being type-checked or compiled. They are surfaced in CLI output and
+    /// forwarded to the LSP as `DiagnosticSeverity::WARNING` squiggles.
+    pub warnings: Vec<crate::diagnostics::CompileError>,
 }
 
 /// Top-level declarations

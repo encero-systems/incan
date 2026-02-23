@@ -278,7 +278,7 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|p| p.parent())
-        .expect("repo root missing")
+        .expect("INVARIANT: repo root missing — CARGO_MANIFEST_DIR chain must resolve during tests")
         .to_path_buf()
 }
 

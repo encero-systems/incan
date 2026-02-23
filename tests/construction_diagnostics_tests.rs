@@ -5,18 +5,18 @@
 
 use incan::frontend::{lexer, parser, typechecker};
 
-fn typecheck_err_messages(src: &str) -> Vec<String> {
-    let tokens = lexer::lex(src).expect("lexer failed");
-    let ast = parser::parse(&tokens).expect("parser failed");
+fn typecheck_err_messages(src: &str) -> Result<Vec<String>, Vec<String>> {
+    let tokens = lexer::lex(src).map_err(|errs| errs.into_iter().map(|e| e.message).collect::<Vec<_>>())?;
+    let ast = parser::parse(&tokens).map_err(|errs| errs.into_iter().map(|e| e.message).collect::<Vec<_>>())?;
     let mut tc = typechecker::TypeChecker::new();
     match tc.check_program(&ast) {
-        Ok(()) => vec![],
-        Err(errs) => errs.into_iter().map(|e| e.message).collect(),
+        Ok(()) => Ok(vec![]),
+        Err(errs) => Ok(errs.into_iter().map(|e| e.message).collect()),
     }
 }
 
 #[test]
-fn model_constructor_missing_required_field_is_reported_by_typechecker() {
+fn model_constructor_missing_required_field_is_reported_by_typechecker() -> Result<(), Vec<String>> {
     let src = r#"
 model User:
     name: str
@@ -25,15 +25,16 @@ model User:
 def main() -> None:
     u = User(age=3)
 "#;
-    let errs = typecheck_err_messages(src);
+    let errs = typecheck_err_messages(src)?;
     assert!(
         !errs.is_empty(),
         "expected typechecker error for missing required field; got none"
     );
+    Ok(())
 }
 
 #[test]
-fn model_constructor_unknown_field_is_reported_by_typechecker() {
+fn model_constructor_unknown_field_is_reported_by_typechecker() -> Result<(), Vec<String>> {
     let src = r#"
 model User:
     name: str
@@ -41,9 +42,10 @@ model User:
 def main() -> None:
     u = User(name="Alice", bogus=123)
 "#;
-    let errs = typecheck_err_messages(src);
+    let errs = typecheck_err_messages(src)?;
     assert!(
         !errs.is_empty(),
         "expected typechecker error for unknown field; got none"
     );
+    Ok(())
 }

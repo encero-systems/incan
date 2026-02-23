@@ -5,7 +5,14 @@ impl<'a> Parser<'a> {
         if self.match_keyword(KeywordId::From) {
             // Check for "from rust::crate import ..." syntax
             if self.match_keyword(KeywordId::Rust) {
-                self.expect_punct(PunctuationId::ColonColon, "Expected '::' after 'rust'")?;
+                // RFC 005: dot-notation `from rust.crate import ...` — warn and recover by treating `.` as `::`.
+                if self.check_punct(PunctuationId::Dot) {
+                    self.warnings
+                        .push(errors::rust_import_dot_notation(self.current_span(), errors::RustImportForm::From));
+                    self.match_punct(PunctuationId::Dot);
+                } else {
+                    self.expect_punct(PunctuationId::ColonColon, "Expected '::' after 'rust'")?;
+                }
                 let (crate_name, path) = self.rust_crate_path()?;
                 let (version, features) = self.rust_import_spec()?;
                 self.expect_keyword(KeywordId::Import, "Expected 'import' after rust crate path")?;
@@ -73,7 +80,14 @@ impl<'a> Parser<'a> {
             ImportKind::Python(pkg)
         } else if self.match_keyword(KeywordId::Rust) {
             // Rust crate import: import rust::serde_json or import rust::serde_json::Value
-            self.expect_punct(PunctuationId::ColonColon, "Expected '::' after 'rust'")?;
+            // RFC 005: dot-notation `import rust.crate` — warn and recover by treating `.` as `::`.
+            if self.check_punct(PunctuationId::Dot) {
+                self.warnings
+                    .push(errors::rust_import_dot_notation(self.current_span(), errors::RustImportForm::Import));
+                self.match_punct(PunctuationId::Dot);
+            } else {
+                self.expect_punct(PunctuationId::ColonColon, "Expected '::' after 'rust'")?;
+            }
             let (crate_name, path) = self.rust_crate_path()?;
             let (version, features) = self.rust_import_spec()?;
             ImportKind::RustCrate {
@@ -97,17 +111,20 @@ impl<'a> Parser<'a> {
         Ok(ImportDecl { kind, alias })
     }
 
-    /// Parse a Rust crate path after `rust::`
+    /// Parse a Rust crate path after `rust::` (or `rust.` recovery)
     /// Returns (crate_name, optional_path_within_crate)
     /// Examples:
     /// - `serde_json` -> ("serde_json", [])
     /// - `serde_json::Value` -> ("serde_json", ["Value"])
     /// - `std::collections::HashMap` -> ("std", ["collections", "HashMap"])
+    ///
+    /// Both `::` and `.` are accepted as separators here to support dot-notation recovery
+    /// (`from rust.std.time import Instant` → same result as `from rust::std::time import Instant`).
     fn rust_crate_path(&mut self) -> Result<(String, Vec<Ident>), CompileError> {
         let crate_name = self.identifier()?;
         let mut path = Vec::new();
 
-        while self.match_punct(PunctuationId::ColonColon) {
+        while self.match_punct(PunctuationId::ColonColon) || self.match_punct(PunctuationId::Dot) {
             let segment = self.identifier()?;
             path.push(segment);
         }

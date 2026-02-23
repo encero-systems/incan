@@ -226,7 +226,7 @@ pub fn info_for(id: PunctuationId) -> &'static PunctuationInfo {
     PUNCTUATION
         .iter()
         .find(|p| p.id == id)
-        .expect("punctuation info missing")
+        .expect("INVARIANT: punctuation info missing")
 }
 
 /// Resolve a punctuation spelling to its identifier.

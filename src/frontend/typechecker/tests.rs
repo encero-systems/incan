@@ -2035,6 +2035,52 @@ fn test_unknown_stdlib_module_from_import() {
     );
 }
 
+// ========================================================================
+// RFC 005: Rust interop
+// ========================================================================
+
+#[test]
+fn test_rust_core_import_is_rejected() {
+    let source = "from rust::core::fmt import Debug\n";
+    let Err(errs) = check_str(source) else {
+        panic!("should fail: rust::core is reserved and unsupported");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("`rust::core` is not supported yet")),
+        "Expected rust::core unsupported diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    assert!(
+        errs.iter()
+            .flat_map(|e| e.hints.iter())
+            .any(|h| h.contains("rust::std::...")),
+        "Expected rust::std guidance hint; got: {:?}",
+        errs.iter().map(|e| &e.hints).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rust_alloc_import_is_rejected() {
+    let source = "import rust::alloc::vec\n";
+    let Err(errs) = check_str(source) else {
+        panic!("should fail: rust::alloc is reserved and unsupported");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("`rust::alloc` is not supported yet")),
+        "Expected rust::alloc unsupported diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    assert!(
+        errs.iter()
+            .flat_map(|e| e.hints.iter())
+            .any(|h| h.contains("rust::std::...")),
+        "Expected rust::std guidance hint; got: {:?}",
+        errs.iter().map(|e| &e.hints).collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn test_known_stdlib_module_is_accepted() {
     // `from std.testing import fail` should not trigger unknown-module diagnostic.

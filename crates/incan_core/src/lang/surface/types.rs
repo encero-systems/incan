@@ -330,7 +330,7 @@ pub fn info_for(id: SurfaceTypeId) -> &'static SurfaceTypeInfo {
     SURFACE_TYPES
         .iter()
         .find(|t| t.item.id == id)
-        .expect("surface type info missing")
+        .expect("INVARIANT: surface type info missing")
 }
 
 const fn info(

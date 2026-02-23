@@ -318,6 +318,7 @@ mod tests {
         let program = Program {
             declarations: vec![],
             rust_module_path: None,
+            warnings: vec![],
         };
         let exports = exported_symbols(&program);
         assert!(exports.is_empty());
@@ -337,6 +338,7 @@ mod tests {
         let program = Program {
             declarations: vec![make_spanned(Declaration::Model(model))],
             rust_module_path: None,
+            warnings: vec![],
         };
         let exports = exported_symbols(&program);
         assert_eq!(exports.len(), 1);
@@ -361,6 +363,7 @@ mod tests {
         let program = Program {
             declarations: vec![make_spanned(Declaration::Class(class))],
             rust_module_path: None,
+            warnings: vec![],
         };
         let exports = exported_symbols(&program);
         assert_eq!(exports.len(), 1);
@@ -395,6 +398,7 @@ mod tests {
         let program = Program {
             declarations: vec![make_spanned(Declaration::Enum(enum_decl))],
             rust_module_path: None,
+            warnings: vec![],
         };
         let exports = exported_symbols(&program);
         // 1 type + 3 variants = 4 exports
@@ -430,6 +434,7 @@ mod tests {
         let program = Program {
             declarations: vec![make_spanned(Declaration::Newtype(newtype))],
             rust_module_path: None,
+            warnings: vec![],
         };
         let exports = exported_symbols(&program);
         assert_eq!(exports.len(), 1);
@@ -451,6 +456,7 @@ mod tests {
         let program = Program {
             declarations: vec![make_spanned(Declaration::Trait(trait_decl))],
             rust_module_path: None,
+            warnings: vec![],
         };
         let exports = exported_symbols(&program);
         assert_eq!(exports.len(), 1);
@@ -475,6 +481,7 @@ mod tests {
         let program = Program {
             declarations: vec![make_spanned(Declaration::Function(func))],
             rust_module_path: None,
+            warnings: vec![],
         };
         let exports = exported_symbols(&program);
         assert_eq!(exports.len(), 1);
@@ -497,6 +504,7 @@ mod tests {
         let program = Program {
             declarations: vec![make_spanned(Declaration::Import(import))],
             rust_module_path: None,
+            warnings: vec![],
         };
         let exports = exported_symbols(&program);
         assert!(exports.is_empty());
@@ -507,6 +515,7 @@ mod tests {
         let program = Program {
             declarations: vec![make_spanned(Declaration::Docstring("Module documentation".to_string()))],
             rust_module_path: None,
+            warnings: vec![],
         };
         let exports = exported_symbols(&program);
         assert!(exports.is_empty());
@@ -523,6 +532,7 @@ mod tests {
         let program = Program {
             declarations: vec![make_spanned(Declaration::Const(konst))],
             rust_module_path: None,
+            warnings: vec![],
         };
         let exports = exported_symbols(&program);
         assert_eq!(exports.len(), 1);
@@ -567,6 +577,7 @@ mod tests {
                 make_spanned(Declaration::Trait(trait_decl)),
             ],
             rust_module_path: None,
+            warnings: vec![],
         };
         let exports = exported_symbols(&program);
         assert_eq!(exports.len(), 3);
@@ -625,6 +636,7 @@ mod tests {
             ast: Program {
                 declarations: vec![],
                 rust_module_path: None,
+                warnings: vec![],
             },
         };
         let debug_str = format!("{:?}", module);

@@ -16,7 +16,8 @@ use crate::lockfile::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint
 use crate::manifest::ProjectManifest;
 
 use super::common::{
-    build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_modules, format_dependency_error,
+    build_inline_rust_import, build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_modules,
+    format_dependency_error, format_rust_from_import_path, format_rust_import_base_path,
 };
 
 /// Generate or update incan.lock for a project.
@@ -246,24 +247,41 @@ fn collect_test_inline_imports(project_root: &Path) -> CliResult<Vec<InlineRustI
             match &import.kind {
                 ImportKind::RustCrate {
                     crate_name,
-                    version,
-                    features,
-                    ..
-                }
-                | ImportKind::RustFrom {
-                    crate_name,
+                    path,
                     version,
                     features,
                     ..
                 } => {
-                    imports.push(InlineRustImport {
-                        crate_name: crate_name.clone(),
-                        version: version.clone(),
-                        features: features.clone(),
-                        span: decl.span,
-                        file_path: file_path.clone(),
-                        is_test_context: true,
-                    });
+                    let import_path = format_rust_import_base_path(crate_name, path);
+                    imports.push(build_inline_rust_import(
+                        crate_name,
+                        import_path,
+                        version,
+                        features,
+                        decl.span,
+                        &file_path,
+                        true,
+                    ));
+                }
+                ImportKind::RustFrom {
+                    crate_name,
+                    path,
+                    items,
+                    version,
+                    features,
+                    ..
+                } => {
+                    let imported = items.iter().map(|item| item.name.clone()).collect::<Vec<_>>();
+                    let import_path = format_rust_from_import_path(crate_name, path, &imported);
+                    imports.push(build_inline_rust_import(
+                        crate_name,
+                        import_path,
+                        version,
+                        features,
+                        decl.span,
+                        &file_path,
+                        true,
+                    ));
                 }
                 _ => {}
             }

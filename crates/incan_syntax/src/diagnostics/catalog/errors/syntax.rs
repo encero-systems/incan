@@ -98,6 +98,33 @@ pub fn rust_import_features_require_version(span: Span) -> CompileError {
         .with_hint("Use `@ \"version\" with [\"feature\"]` on the rust import")
 }
 
+/// Which surface form of `rust` import triggered a dot-notation warning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RustImportForm {
+    /// `from rust.crate import Item`
+    From,
+    /// `import rust.crate`
+    Import,
+}
+
+/// Dot-notation used for a `rust` import instead of `::` (e.g. `from rust.crate import Item`).
+///
+/// This is a non-fatal warning: the parser recovers by treating `.` as `::` so the import still resolves correctly.
+/// Use this to nudge authors toward the canonical `::` style (RFC 005).
+///
+/// The `form` parameter selects the hint that matches what the user actually wrote.
+pub fn rust_import_dot_notation(span: Span, form: RustImportForm) -> CompileError {
+    let hint = match form {
+        RustImportForm::From => "Change `from rust.crate import Item` to `from rust::crate import Item`",
+        RustImportForm::Import => "Change `import rust.crate` to `import rust::crate`",
+    };
+    CompileError::warning(
+        "Dot-notation used for a `rust` import — prefer `::` notation".to_string(),
+        span,
+    )
+    .with_hint(hint)
+}
+
 // -- Enum variants -----------------------------------------------------------
 
 pub fn enum_variant_mapped_values(span: Span) -> CompileError {

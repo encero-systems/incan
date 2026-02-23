@@ -192,13 +192,13 @@ endif
 .PHONY: lsp  ## tool - Build the LSP server
 lsp:
 	@echo "\033[1mBuilding LSP server...\033[0m"
-	@cargo build --release --bin incan-lsp
+	@cargo build --release --features lsp --bin incan-lsp
 	@echo "\033[32m✓ LSP server built: target/release/incan-lsp\033[0m"
 
 .PHONY: install-lsp  ## tool - Install incan-lsp to ~/.cargo/bin
 install-lsp:
 	@echo "\033[1mInstalling incan-lsp...\033[0m"
-	@cargo install --path . --bin incan-lsp --force
+	@cargo install --path . --features lsp --bin incan-lsp --force
 	@echo "\033[32m✓ Installed to ~/.cargo/bin/incan-lsp\033[0m"
 	@echo "\033[33mℹ Ensure ~/.cargo/bin is on your PATH\033[0m"
 

@@ -83,7 +83,7 @@ pub fn info_for(id: MagicMethodId) -> &'static MagicMethodInfo {
     MAGIC_METHODS
         .iter()
         .find(|m| m.id == id)
-        .expect("magic method info missing")
+        .expect("INVARIANT: magic method info missing")
 }
 
 const fn info(

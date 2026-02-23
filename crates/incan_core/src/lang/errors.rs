@@ -170,7 +170,7 @@ pub fn info_for(kind: ErrorKind) -> &'static ExceptionInfo {
     EXCEPTIONS
         .iter()
         .find(|e| e.id == kind)
-        .expect("exception info missing")
+        .expect("INVARIANT: exception info missing")
 }
 
 const fn info(

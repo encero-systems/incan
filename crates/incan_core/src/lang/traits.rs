@@ -155,7 +155,10 @@ pub fn as_str(id: TraitId) -> &'static str {
 /// ## Panics
 /// - If the registry is missing an entry for `id` (this indicates a programming error).
 pub fn info_for(id: TraitId) -> &'static TraitInfo {
-    TRAITS.iter().find(|t| t.id == id).expect("trait info missing")
+    TRAITS
+        .iter()
+        .find(|t| t.id == id)
+        .expect("INVARIANT: trait info missing")
 }
 
 const fn info(

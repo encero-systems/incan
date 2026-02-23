@@ -10,9 +10,12 @@ Use the `rust::` prefix to import from Rust crates:
 # Import entire crate
 import rust::serde_json as json
 
-# Import specific items
-from rust::time import Instant, Duration
+# Import specific items from Rust's standard library
+from rust::std::time import Instant, Duration
 from rust::std::collections import HashMap, HashSet
+
+# Import from an external crate
+from rust::uuid import Uuid
 
 # Import nested items
 import rust::serde_json::Value
@@ -31,6 +34,9 @@ import rust::std::collections::BTreeMap
 ```
 
 For example, if you would use `import std::fs`, this would refer to Incan's stdlib, **not** Rust's!
+
+> **Note:** `rust::core::...` and `rust::alloc::...` are reserved for future `no_std`/target work and are not yet
+> supported. The compiler will tell you to use `rust::std::...` instead.
 
 ## Dependency Management
 
@@ -160,7 +166,7 @@ def main() -> None:
 ### Working with Time
 
 ```incan
-from rust::time import Instant, Duration
+from rust::std::time import Instant, Duration
 
 def measure_operation() -> None:
     start = Instant.now()
@@ -244,6 +250,26 @@ Incan types map to Rust types:
 | `Option[T]`    | `Option<T>`     |
 | `Result[T, E]` | `Result<T, E>`  |
 
+### String arguments and borrowing
+
+!!! tip "Coming from Rust?"
+    You never write `&str` or lifetimes in Incan. When you pass a `str` value to an external Rust function, the
+    compiler automatically passes it as a borrowed `&str` — the most common pattern in Rust APIs.
+
+    If a Rust function requires an owned `String` instead, append `.to_string()` at the call site:
+
+    ```incan
+    from rust::std::fs import write
+
+    # Incan passes `path` and `content` as &str automatically
+    write(path, content)
+
+    # Force an owned String if the API requires it
+    some_fn(path.to_string())
+    ```
+
+    This keeps interop ergonomic without exposing Rust borrow syntax in Incan code.
+
 ## Understanding Rust types (optional)
 
 ??? tip "Coming from Python?"
@@ -265,10 +291,14 @@ Incan types map to Rust types:
 
 ## Best Practices
 
-1. **Prefer Incan types**: Use Incan's built-in types when possible. Use Rust types only when you need
+1. **Use `incan fmt` to fix import style**: the formatter always normalizes `rust::` imports to `::` notation.
+    If you (or a collaborator) wrote `from rust.serde_json import Value`, running `incan fmt` silently rewrites it
+    to `from rust::serde_json import Value`.
+
+2. **Prefer Incan types**: Use Incan's built-in types when possible. Use Rust types only when you need
     specific functionality.
 
-2. **Handle Results**: Rust crate functions often return `Result`. Use `?` or explicit matching:
+3. **Handle Results**: Rust crate functions often return `Result`. Use `?` or explicit matching:
 
     ```incan
     def safe_parse(s: str) -> Result[int, str]:
@@ -282,9 +312,9 @@ Incan types map to Rust types:
                 println(f"Error: {e}")
     ```
 
-3. **Async compatibility**: If using async Rust crates, make sure your Incan functions are also async.
+4. **Async compatibility**: If using async Rust crates, make sure your Incan functions are also async.
 
-4. **Error types**: Rust's error types can be complex. Consider using `anyhow` for simple error handling:
+5. **Error types**: Rust's error types can be complex. Consider using `anyhow` for simple error handling:
 
     ```incan
     from rust::anyhow import Result, Context

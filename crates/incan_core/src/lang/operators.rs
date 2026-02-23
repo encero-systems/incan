@@ -386,7 +386,10 @@ pub const OPERATORS: &[OperatorInfo] = &[
 /// ## Panics
 /// - If the registry is missing an entry for `id` (this indicates a programming error).
 pub fn info_for(id: OperatorId) -> &'static OperatorInfo {
-    OPERATORS.iter().find(|o| o.id == id).expect("operator info missing")
+    OPERATORS
+        .iter()
+        .find(|o| o.id == id)
+        .expect("INVARIANT: operator info missing")
 }
 
 /// Resolve an operator spelling to its identifier.

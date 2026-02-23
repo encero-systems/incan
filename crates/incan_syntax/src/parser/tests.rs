@@ -710,6 +710,86 @@ def add(a: int, b: int) -> int:
         );
     }
 
+    /// RFC 005: `from rust.crate import Item` emits a warning and parses successfully.
+    #[test]
+    fn test_parse_rust_from_import_dot_notation_is_warning() {
+        let source = "from rust.chrono import Utc\n";
+        let Ok(program) = parse_str(source) else {
+            panic!("`from rust.crate import ...` dot-notation should parse successfully with a warning");
+        };
+        assert_eq!(program.warnings.len(), 1, "Expected exactly one warning");
+        assert!(
+            program.warnings[0].message.contains("::"),
+            "Expected warning to mention '::' notation; got: {}",
+            program.warnings[0].message
+        );
+    }
+
+    /// RFC 005: `import rust.crate` emits a warning and parses successfully.
+    #[test]
+    fn test_parse_rust_import_dot_notation_is_warning() {
+        let source = "import rust.serde_json\n";
+        let Ok(program) = parse_str(source) else {
+            panic!("`import rust.crate` dot-notation should parse successfully with a warning");
+        };
+        assert_eq!(program.warnings.len(), 1, "Expected exactly one warning");
+        assert!(
+            program.warnings[0].message.contains("::"),
+            "Expected warning to mention '::' notation; got: {}",
+            program.warnings[0].message
+        );
+    }
+
+    /// RFC 005: `import rust.std.time` (multi-segment bare import, dot path) recovers fully.
+    ///
+    /// Mirrors `test_parse_rust_from_import_multi_dot_notation_is_warning` but for the bare  `import rust.X.Y` form,
+    /// ensuring `rust_crate_path()` dot-recovery works on both branches.
+    #[test]
+    fn test_parse_rust_import_multi_dot_notation_is_warning() {
+        let source = "import rust.std.time\n";
+        let Ok(program) = parse_str(source) else {
+            panic!("`import rust.std.time` multi-dot dot-notation should parse successfully with a warning");
+        };
+        assert_eq!(program.warnings.len(), 1, "Expected exactly one warning for the leading dot");
+        assert!(
+            program.warnings[0].message.contains("::"),
+            "Expected warning to mention '::' notation; got: {}",
+            program.warnings[0].message
+        );
+        // Verify the path was correctly decomposed: crate=std, path=[time]
+        if let Some(decl) = program.declarations.first()
+            && let crate::ast::Declaration::Import(import) = &decl.node
+        {
+            assert!(
+                matches!(
+                    &import.kind,
+                    crate::ast::ImportKind::RustCrate { crate_name, path, .. }
+                    if crate_name == "std" && path == &["time".to_string()]
+                ),
+                "Expected RustCrate {{ crate_name: std, path: [time] }}; got: {:?}",
+                import.kind
+            );
+        }
+    }
+
+    /// RFC 005: `from rust.std.time import Instant` (multi-segment dot path) recovers fully.
+    ///
+    /// `rust_crate_path()` accepts both `::` and `.` as separators, so the entire dotted path is consumed and no
+    /// cascading parse error occurs.
+    #[test]
+    fn test_parse_rust_from_import_multi_dot_notation_is_warning() {
+        let source = "from rust.std.time import Instant\n";
+        let Ok(program) = parse_str(source) else {
+            panic!("`from rust.std.time import ...` multi-dot dot-notation should parse successfully with a warning");
+        };
+        assert_eq!(program.warnings.len(), 1, "Expected exactly one warning for the leading dot");
+        assert!(
+            program.warnings[0].message.contains("::"),
+            "Expected warning to mention '::' notation; got: {}",
+            program.warnings[0].message
+        );
+    }
+
     #[test]
     fn test_parse_match() -> Result<(), Vec<CompileError>> {
         let source = r#"

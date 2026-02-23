@@ -1,8 +1,10 @@
 # RFC 017: Validated newtypes with implicit coercion (pydantic-like feel)
 
-**Status:** Planned  
-**Created:** 2026-01-12  
-**Target:** v0.2  
+- **Status:** In Progress
+- **Created:** 2026-01-12
+- **Author:** Danny Meijer (@dannymeijer)
+- **Issue:** #75
+- **Target:** v0.2  
 
 ## 0.1 vs 0.2 (what’s implemented when)
 

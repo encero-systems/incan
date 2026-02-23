@@ -117,7 +117,7 @@ pub fn fn_info_for(id: MathFnId) -> &'static MathFnInfo {
     MATH_FUNCTIONS
         .iter()
         .find(|f| f.id == id)
-        .expect("math fn info missing")
+        .expect("INVARIANT: math fn info missing")
 }
 
 /// Stable identifier for `math.<const>` constants.
@@ -182,7 +182,7 @@ pub fn const_info_for(id: MathConstId) -> &'static MathConstInfo {
     MATH_CONSTANTS
         .iter()
         .find(|c| c.id == id)
-        .expect("math const info missing")
+        .expect("INVARIANT: math const info missing")
 }
 
 const fn info_fn(

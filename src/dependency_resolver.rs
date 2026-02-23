@@ -34,6 +34,7 @@ pub(crate) fn validate_cargo_version_req(version: &str) -> Result<(), String> {
 #[derive(Debug, Clone)]
 pub struct InlineRustImport {
     pub crate_name: String,
+    pub import_path: String,
     pub version: Option<String>,
     pub features: Vec<String>,
     pub span: Span,
@@ -51,6 +52,12 @@ pub struct DependencyError {
 pub struct ResolvedDependencies {
     pub dependencies: Vec<DependencySpec>,
     pub dev_dependencies: Vec<DependencySpec>,
+}
+
+fn with_rust_import_context(error: CompileError, import: &InlineRustImport) -> CompileError {
+    error
+        .with_note(format!("import site: `{}`", import.import_path))
+        .with_hint("Verify the Rust crate/module/item path in the import statement")
 }
 
 pub fn resolve_dependencies(
@@ -144,14 +151,17 @@ fn merge_inline_imports(
             if version.trim().is_empty() {
                 errors.push(DependencyError {
                     file_path: import.file_path.clone(),
-                    error: CompileError::new(
-                        format!(
-                            "Rust import for `{}` has an empty version requirement",
-                            import.crate_name
-                        ),
-                        import.span,
-                    )
-                    .with_hint("Use a non-empty Cargo SemVer requirement string."),
+                    error: with_rust_import_context(
+                        CompileError::new(
+                            format!(
+                                "Rust import for `{}` has an empty version requirement",
+                                import.crate_name
+                            ),
+                            import.span,
+                        )
+                        .with_hint("Use a non-empty Cargo SemVer requirement string."),
+                        import,
+                    ),
                 });
                 continue;
             }
@@ -159,7 +169,10 @@ fn merge_inline_imports(
             if let Err(msg) = validate_cargo_version_req(version) {
                 errors.push(DependencyError {
                     file_path: import.file_path.clone(),
-                    error: CompileError::new(format!("Rust import for `{}`: {msg}", import.crate_name), import.span),
+                    error: with_rust_import_context(
+                        CompileError::new(format!("Rust import for `{}`: {msg}", import.crate_name), import.span),
+                        import,
+                    ),
                 });
                 continue;
             }
@@ -169,14 +182,17 @@ fn merge_inline_imports(
             if has_inline_spec {
                 errors.push(DependencyError {
                     file_path: import.file_path.clone(),
-                    error: CompileError::new(
-                        format!(
-                            "inline Rust dependency annotation for `{}` is not allowed because it is configured in incan.toml",
-                            import.crate_name
-                        ),
-                        import.span,
-                    )
-                    .with_hint("Remove the inline annotation or update incan.toml."),
+                    error: with_rust_import_context(
+                        CompileError::new(
+                            format!(
+                                "inline Rust dependency annotation for `{}` is not allowed because it is configured in incan.toml",
+                                import.crate_name
+                            ),
+                            import.span,
+                        )
+                        .with_hint("Remove the inline annotation or update incan.toml."),
+                        import,
+                    ),
                 });
             }
 
@@ -186,14 +202,17 @@ fn merge_inline_imports(
             {
                 errors.push(DependencyError {
                     file_path: import.file_path.clone(),
-                    error: CompileError::new(
-                        format!(
-                            "Rust crate `{}` is dev-only and cannot be imported from production code",
-                            import.crate_name
-                        ),
-                        import.span,
-                    )
-                    .with_hint("Move the dependency to [dependencies], or import it only from tests."),
+                    error: with_rust_import_context(
+                        CompileError::new(
+                            format!(
+                                "Rust crate `{}` is dev-only and cannot be imported from production code",
+                                import.crate_name
+                            ),
+                            import.span,
+                        )
+                        .with_hint("Move the dependency to [dependencies], or import it only from tests."),
+                        import,
+                    ),
                 });
             }
 
@@ -212,10 +231,13 @@ fn merge_inline_imports(
         if let Err(conflict) = merge_inline_spec(entry, import) {
             errors.push(DependencyError {
                 file_path: import.file_path.clone(),
-                error: CompileError::new(conflict, import.span).with_note(format!(
-                    "first declaration was in {}",
-                    entry.first_site.file_path.display()
-                )),
+                error: CompileError::new(conflict, import.span)
+                    .with_note(format!(
+                        "first declaration was in {}",
+                        entry.first_site.file_path.display()
+                    ))
+                    .with_note(format!("first import site: `{}`", entry.first_site.import_path))
+                    .with_note(format!("conflicting import site: `{}`", import.import_path)),
             });
             continue;
         }
@@ -232,11 +254,14 @@ fn merge_inline_imports(
             if !merged_spec.spec.features.is_empty() {
                 errors.push(DependencyError {
                     file_path: merged_spec.first_site.file_path.clone(),
-                    error: CompileError::new(
-                        format!("Rust import features for `{}` require a version annotation", crate_name),
-                        merged_spec.first_site.span,
-                    )
-                    .with_hint("Add `@ \"version\"` to the rust import."),
+                    error: with_rust_import_context(
+                        CompileError::new(
+                            format!("Rust import features for `{}` require a version annotation", crate_name),
+                            merged_spec.first_site.span,
+                        )
+                        .with_hint("Add `@ \"version\"` to the rust import."),
+                        &merged_spec.first_site,
+                    ),
                 });
                 continue;
             }
@@ -244,13 +269,16 @@ fn merge_inline_imports(
             let Some(default) = known_good_spec(&crate_name) else {
                 errors.push(DependencyError {
                     file_path: merged_spec.first_site.file_path.clone(),
-                    error: CompileError::new(
-                        format!("unknown Rust crate `{}`: no version specified", crate_name),
-                        merged_spec.first_site.span,
-                    )
-                    .with_hint(format!(
-                        "Add a version annotation: `import rust::{crate_name} @ \"1.0\"` or add it to incan.toml."
-                    )),
+                    error: with_rust_import_context(
+                        CompileError::new(
+                            format!("unknown Rust crate `{}`: no version specified", crate_name),
+                            merged_spec.first_site.span,
+                        )
+                        .with_hint(format!(
+                            "Add a version annotation: `import rust::{crate_name} @ \"1.0\"` or add it to incan.toml."
+                        )),
+                        &merged_spec.first_site,
+                    ),
                 });
                 continue;
             };
@@ -456,6 +484,7 @@ mod tests {
     fn inline(crate_name: &str, version: Option<&str>, features: &[&str], test: bool) -> InlineRustImport {
         InlineRustImport {
             crate_name: crate_name.to_string(),
+            import_path: format!("rust::{}", crate_name),
             version: version.map(|v| v.to_string()),
             features: features.iter().map(|f| f.to_string()).collect(),
             span: dummy_span(),
@@ -600,6 +629,35 @@ test_lib = "0.5"
             err[0].error.message.contains("unknown Rust crate"),
             "expected unknown crate error, got: {}",
             err[0].error.message
+        );
+        assert!(
+            err[0].error.notes.iter().any(|n| n.contains("import site:")),
+            "expected import-site note, got: {:?}",
+            err[0].error.notes
+        );
+        assert!(
+            err[0]
+                .error
+                .hints
+                .iter()
+                .any(|h| h.contains("Verify the Rust crate/module/item path")),
+            "expected path/item verification hint, got: {:?}",
+            err[0].error.hints
+        );
+    }
+
+    #[test]
+    fn rust_std_import_does_not_create_dependency() {
+        let imports = vec![inline("std", None, &[], false)];
+
+        let resolved = resolve_dependencies(None, &imports, false, &default_cargo_features()).unwrap();
+        assert!(
+            !resolved.dependencies.iter().any(|d| d.crate_name == "std"),
+            "rust::std must not be emitted as Cargo dependency"
+        );
+        assert!(
+            !resolved.dev_dependencies.iter().any(|d| d.crate_name == "std"),
+            "rust::std must not be emitted as Cargo dev-dependency"
         );
     }
 

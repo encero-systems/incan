@@ -69,7 +69,13 @@ impl IncanLanguageServer {
 
         // Step 2: Parse
         let ast = match parser::parse(&tokens) {
-            Ok(ast) => ast,
+            Ok(ast) => {
+                // Forward non-fatal parser warnings (e.g. RFC 005 dot-notation nudges) to the LSP.
+                for warn in &ast.warnings {
+                    diagnostics.push(compile_error_to_diagnostic(warn, source, uri));
+                }
+                ast
+            }
             Err(errors) => {
                 // Convert all parse errors to diagnostics
                 for error in &errors {
