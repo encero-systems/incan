@@ -1493,6 +1493,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#parenthesized-import-lists-single-line-or-multi-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parenthesized import lists (single-line or multi-line)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rust-style-import-moduleitem" class="md-nav__link">
     <span class="md-ellipsis">
       Rust-style: import module::item
@@ -4190,6 +4199,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#parenthesized-import-lists-single-line-or-multi-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parenthesized import lists (single-line or multi-line)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rust-style-import-moduleitem" class="md-nav__link">
     <span class="md-ellipsis">
       Rust-style: import module::item
@@ -4461,6 +4479,23 @@
 <span class="c1"># Import with aliases</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">format_currency</span> <span class="k">as</span> <span class="n">fmt</span><span class="p">,</span> <span class="n">validate_email</span> <span class="k">as</span> <span class="n">check_email</span>
 </code></pre></div>
+<h3 id="parenthesized-import-lists-single-line-or-multi-line">Parenthesized import lists (single-line or multi-line)<a class="headerlink" href="#parenthesized-import-lists-single-line-or-multi-line" title="Permanent link">&para;</a></h3>
+<p>Use parentheses when the list is long or for readability. This works for both regular modules and <code>rust::</code> imports.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">some_lib</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+  <span class="n">module_a</span> <span class="k">as</span> <span class="nc">A</span><span class="p">,</span>
+  <span class="n">module_b</span><span class="p">,</span>
+  <span class="n">module_c</span> <span class="k">as</span> <span class="nc">C</span><span class="p">,</span>
+  <span class="n">module_d</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">polars</span> <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+  <span class="nc">A</span><span class="p">,</span>
+  <span class="nc">B</span> <span class="k">as</span> <span class="n">b</span><span class="p">,</span>
+  <span class="n">pandas</span> <span class="k">as</span> <span class="n">pd</span><span class="p">,</span>
+  <span class="n">foo</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Trailing commas are allowed in parenthesized lists.</p>
 <h3 id="rust-style-import-moduleitem">Rust-style: <code>import module::item</code><a class="headerlink" href="#rust-style-import-moduleitem" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Import a specific item</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">models</span><span class="p">::</span><span class="nc">User</span>

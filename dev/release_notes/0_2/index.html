@@ -4201,6 +4201,8 @@ They are not intended as runtime function calls.</p>
 <h2 id="features-and-enhancements">Features and Enhancements<a class="headerlink" href="#features-and-enhancements" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Compiler</strong>: Namespaced stdlib imports under <code>std.*</code> — all stdlib modules use qualified paths (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>).</li>
+<li><strong>Parser/formatter</strong>: Parenthesized multi-line import lists are supported for both <code>from module import (...)</code>
+  and <code>from rust::crate import (...)</code>, with optional per-item aliases and formatter-aware wrapping (#116).</li>
 <li><strong>Compiler</strong>: Import-activated soft keywords — <code>async</code> and <code>await</code> are identifiers by default and become reserved only
   when <code>import std.async</code> (or <code>from std.async...</code>) is present. Forgetting the import produces a targeted diagnostic with
   a fix suggestion. Similarly, <code>std.testing</code> activates the <code>assert</code> statement syntax (<a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
@@ -4258,7 +4260,6 @@ They are not intended as runtime function calls.</p>
 </ul>
 <h2 id="known-limitations-02">Known limitations (0.2)<a class="headerlink" href="#known-limitations-02" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Multi-line parenthesized imports are not yet supported (#116).</li>
 <li>Web route handlers and their request models must be declared <code>pub</code> for cross-module wrapper generation (#117).</li>
 <li>Rust macro syntax (e.g., <code>serde_json::json!(...)</code>) is not supported in Incan source — use Rust crate functions
   and types directly instead.</li>
