@@ -1436,6 +1436,21 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Type Mapping">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#string-arguments-and-borrowing" class="md-nav__link">
+    <span class="md-ellipsis">
+      String arguments and borrowing
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4249,6 +4264,21 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Type Mapping">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#string-arguments-and-borrowing" class="md-nav__link">
+    <span class="md-ellipsis">
+      String arguments and borrowing
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4312,9 +4342,12 @@
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Import entire crate</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">serde_json</span> <span class="k">as</span> <span class="n">json</span>
 
-<span class="c1"># Import specific items</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">time</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Instant</span><span class="o">,</span><span class="w"> </span><span class="nn">Duration</span>
+<span class="c1"># Import specific items from Rust&#39;s standard library</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">time</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Instant</span><span class="o">,</span><span class="w"> </span><span class="nn">Duration</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">collections</span> <span class="kn">import</span><span class="w"> </span><span class="nn">HashMap</span><span class="o">,</span><span class="w"> </span><span class="nn">HashSet</span>
+
+<span class="c1"># Import from an external crate</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">uuid</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Uuid</span>
 
 <span class="c1"># Import nested items</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">serde_json</span><span class="p">::</span><span class="nc">Value</span>
@@ -4329,6 +4362,10 @@
 <span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">collections</span><span class="p">::</span><span class="nc">BTreeMap</span>
 </code></pre></div>
 <p>For example, if you would use <code>import std::fs</code>, this would refer to Incan's stdlib, <strong>not</strong> Rust's!</p>
+<blockquote>
+<p><strong>Note:</strong> <code>rust::core::...</code> and <code>rust::alloc::...</code> are reserved for future <code>no_std</code>/target work and are not yet
+supported. The compiler will tell you to use <code>rust::std::...</code> instead.</p>
+</blockquote>
 <h2 id="dependency-management">Dependency Management<a class="headerlink" href="#dependency-management" title="Permanent link">&para;</a></h2>
 <p>When you use <code>import rust::crate_name</code>, Incan automatically adds the dependency to your generated <code>Cargo.toml</code>.
 Dependencies are resolved using a three-tier precedence system:</p>
@@ -4537,7 +4574,7 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
     <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Name: </span><span class="si">{</span><span class="n">parsed</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="working-with-time">Working with Time<a class="headerlink" href="#working-with-time" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">time</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Instant</span><span class="o">,</span><span class="w"> </span><span class="nn">Duration</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">time</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Instant</span><span class="o">,</span><span class="w"> </span><span class="nn">Duration</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">measure_operation</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">start</span> <span class="o">=</span> <span class="nc">Instant</span><span class="o">.</span><span class="n">now</span><span class="p">()</span>
@@ -4640,6 +4677,22 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
 </tr>
 </tbody>
 </table>
+<h3 id="string-arguments-and-borrowing">String arguments and borrowing<a class="headerlink" href="#string-arguments-and-borrowing" title="Permanent link">&para;</a></h3>
+<div class="admonition tip">
+<p class="admonition-title">Coming from Rust?</p>
+<p>You never write <code>&amp;str</code> or lifetimes in Incan. When you pass a <code>str</code> value to an external Rust function, the
+compiler automatically passes it as a borrowed <code>&amp;str</code> — the most common pattern in Rust APIs.</p>
+<p>If a Rust function requires an owned <code>String</code> instead, append <code>.to_string()</code> at the call site:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">fs</span> <span class="kn">import</span><span class="w"> </span><span class="nn">write</span>
+
+<span class="c1"># Incan passes `path` and `content` as &amp;str automatically</span>
+<span class="n">write</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">content</span><span class="p">)</span>
+
+<span class="c1"># Force an owned String if the API requires it</span>
+<span class="n">some_fn</span><span class="p">(</span><span class="n">path</span><span class="o">.</span><span class="nb">to_string</span><span class="p">())</span>
+</code></pre></div>
+<p>This keeps interop ergonomic without exposing Rust borrow syntax in Incan code.</p>
+</div>
 <h2 id="understanding-rust-types-optional">Understanding Rust types (optional)<a class="headerlink" href="#understanding-rust-types-optional" title="Permanent link">&para;</a></h2>
 <details class="tip">
 <summary>Coming from Python?</summary>
@@ -4666,6 +4719,11 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
 </ol>
 <h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
 <ol>
+<li>
+<p><strong>Use <code>incan fmt</code> to fix import style</strong>: the formatter always normalizes <code>rust::</code> imports to <code>::</code> notation.
+    If you (or a collaborator) wrote <code>from rust.serde_json import Value</code>, running <code>incan fmt</code> silently rewrites it
+    to <code>from rust::serde_json import Value</code>.</p>
+</li>
 <li>
 <p><strong>Prefer Incan types</strong>: Use Incan's built-in types when possible. Use Rust types only when you need
     specific functionality.</p>

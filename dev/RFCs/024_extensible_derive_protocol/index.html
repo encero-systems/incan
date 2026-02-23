@@ -4716,7 +4716,7 @@ formats define similarly-named traits (each module has its own <code>Serialize</
         <span class="k">return</span> <span class="n">from_str</span><span class="p">(</span><span class="n">json_str</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
 <p>No <code>rust.module()</code>, no <code>@rust.extern</code> — the <code>.incn</code> file is the complete implementation. <code>@rust.derive</code> declares the
-Rust struct-level derive needed for the <code>rust::</code> interop calls to work. The <code>rust::</code> interop (<a href="/dev/RFCs/005_rust_interop">RFC 005</a>) provides access
+Rust struct-level derive needed for the <code>rust::</code> interop calls to work. The <code>rust::</code> interop (<a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a>) provides access
 to the underlying Rust codec library.</p>
 <h4 id="2-schema-generators-type-shape-out">2. Schema generators (type shape out)<a class="headerlink" href="#2-schema-generators-type-shape-out" title="Permanent link">&para;</a></h4>
 <p>These generate schema artifacts from the model's type definition. They operate on field metadata via <code>__fields__()</code>
@@ -5009,7 +5009,7 @@ protocol is for library-level functionality.</p>
 </ol>
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="/dev/RFCs/005_rust_interop">RFC 005</a> — Rust Interop</li>
+<li><a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a> — Rust Interop</li>
 <li><a href="/dev/RFCs/012_json_value">RFC 012</a> — <code>JsonValue</code> Type and Enum Methods</li>
 <li><a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a> — Multi-Instantiation Trait Dispatch</li>
 <li><a href="/dev/RFCs/closed/implemented/021_model_field_metadata_and_aliases">RFC 021</a> — Model field metadata and schema-safe aliases</li>
