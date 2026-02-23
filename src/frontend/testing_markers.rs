@@ -161,13 +161,12 @@ fn load_testing_marker_semantics_from_stdlib() -> Result<TestingMarkerSemantics,
 /// Find the absolute path for a stdlib file given its relative path (e.g. `"stdlib/testing.incn"`).
 ///
 /// Search order:
-/// 1. `$INCAN_STDLIB_DIR/<relative>` if the env var is set
-/// 2. `$CARGO_MANIFEST_DIR/crates/incan_stdlib/<relative>` (stdlib crate-local stubs)
-/// 3. `$CARGO_MANIFEST_DIR/<relative>` (workspace-root stubs)
-/// 4. `$CWD/crates/incan_stdlib/<relative>`
-/// 5. `$CWD/<relative>`
+/// 1. `$INCAN_STDLIB_DIR/<relative>` if the env var is set (runtime)
+/// 2. `$CARGO_MANIFEST_DIR/crates/incan_stdlib/<relative>` (compile-time workspace path)
+/// 3. `$CWD/crates/incan_stdlib/<relative>`
+/// 4. `$CWD/<relative>`
 fn find_stdlib_file(relative: &str) -> Option<PathBuf> {
-    // 1. Explicit override root.
+    // 1. Explicit override root (runtime).
     if let Ok(dir) = std::env::var("INCAN_STDLIB_DIR") {
         let p = PathBuf::from(dir).join(relative);
         if p.exists() {
@@ -175,20 +174,16 @@ fn find_stdlib_file(relative: &str) -> Option<PathBuf> {
         }
     }
 
-    // 2-3. Development builds (CARGO_MANIFEST_DIR points to workspace root for `incan`).
-    if let Ok(dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        let manifest_dir = PathBuf::from(dir);
-        let crate_local = manifest_dir.join("crates/incan_stdlib").join(relative);
-        if crate_local.exists() {
-            return Some(crate_local);
-        }
-        let workspace_local = manifest_dir.join(relative);
-        if workspace_local.exists() {
-            return Some(workspace_local);
-        }
+    // 2. Development build: workspace-relative (compile-time path).
+    // CARGO_MANIFEST_DIR is captured at compile time and points to the workspace root.
+    let workspace_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("crates/incan_stdlib")
+        .join(relative);
+    if workspace_path.exists() {
+        return Some(workspace_path);
     }
 
-    // 4-5. Relative to current working directory.
+    // 3-4. Relative to current working directory.
     if let Ok(cwd) = std::env::current_dir() {
         let crate_local = cwd.join("crates/incan_stdlib").join(relative);
         if crate_local.exists() {

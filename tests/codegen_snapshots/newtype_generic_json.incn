@@ -1,0 +1,18 @@
+"""Test generic newtype with trait delegation"""
+
+# Import Axum's Json type
+from rust::axum @ "0.8" import Json as AxumJson
+
+# Generic newtype wrapper
+type Json[T] = newtype AxumJson[T]:
+    def custom_method(self) -> str:
+        return "custom"
+
+# Example usage
+@derive(Serialize)
+model User:
+    id: int
+    name: str
+
+def main() -> None:
+    print("Generic newtype codegen test")

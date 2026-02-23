@@ -50,12 +50,14 @@ pub struct IrEmitter<'a> {
     add_clippy_allows: bool,
     /// Whether to emit the Zen of Incan in main
     emit_zen_in_main: bool,
-    /// Whether serde is needed (for Serialize/Deserialize derives)
-    needs_serde: bool,
+    /// Whether serde is needed (for Serialize/Deserialize derives or trait bridges)
+    needs_serde: RefCell<bool>,
     /// Whether tokio is needed (for async runtime)
     needs_tokio: bool,
     /// Whether axum web framework is needed
     needs_axum: bool,
+    /// Required imports from trait bridges (e.g., "std::future::Future")
+    trait_bridge_imports: RefCell<std::collections::HashSet<String>>,
     /// Function registry for call-site type checking
     function_registry: &'a FunctionRegistry,
     /// Track struct derives for generating serde methods in impl blocks
@@ -95,6 +97,22 @@ pub struct IrEmitter<'a> {
     /// When set, `@rust.extern` functions emit delegation calls to `<rust_module_path>::<fn_name>()` instead of
     /// compiling their Incan bodies.
     rust_module_path: Option<String>,
+    /// Trait bridge overrides: tracks which types have user-provided dunder methods that map to trait bridges.
+    ///
+    /// Key: type name (e.g., "Response")
+    /// Value: set of dunder method names (e.g., "__into_response__")
+    ///
+    /// When emitting auto-delegation for newtypes, we skip any trait where the user provided an override.
+    /// Uses RefCell for interior mutability (populated during impl emission, read during struct emission).
+    trait_bridge_overrides: RefCell<std::collections::HashMap<String, std::collections::HashSet<String>>>,
+    /// Rust import path tracking: maps imported type names (incl. aliases) to their original module paths.
+    ///
+    /// Key: type name as seen in Incan code (e.g., "AxumResponse" for `import Response as AxumResponse`)
+    /// Value: original module path (e.g., ["axum", "response"])
+    ///
+    /// Used for trait bridge applicability: newtypes wrapping Rust types need the original path to match
+    /// trait bridge patterns (e.g., "axum::response::" for IntoResponse).
+    rust_import_paths: RefCell<std::collections::HashMap<String, Vec<String>>>,
 }
 
 impl<'a> IrEmitter<'a> {
@@ -106,9 +124,10 @@ impl<'a> IrEmitter<'a> {
             // - unused_variables: pattern bindings like `_x` in destructuring
             add_clippy_allows: true,
             emit_zen_in_main: false,
-            needs_serde: false,
+            needs_serde: RefCell::new(false),
             needs_tokio: false,
             needs_axum: false,
+            trait_bridge_imports: RefCell::new(std::collections::HashSet::new()),
             function_registry,
             struct_derives: std::collections::HashMap::new(),
             current_function_return_type: RefCell::new(None),
@@ -126,6 +145,8 @@ impl<'a> IrEmitter<'a> {
             ambiguous_type_names: HashSet::new(),
             internal_module_roots: HashSet::new(),
             rust_module_path: None,
+            trait_bridge_overrides: RefCell::new(std::collections::HashMap::new()),
+            rust_import_paths: RefCell::new(std::collections::HashMap::new()),
         }
     }
 
@@ -160,7 +181,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Set whether serde is needed.
     pub fn set_needs_serde(&mut self, needs: bool) {
-        self.needs_serde = needs;
+        *self.needs_serde.borrow_mut() = needs;
     }
 
     /// Set whether tokio is needed.

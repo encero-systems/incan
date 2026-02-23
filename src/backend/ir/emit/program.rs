@@ -291,7 +291,7 @@ impl<'a> IrEmitter<'a> {
             (false, false) => {}
         }
 
-        if self.needs_serde {
+        if *self.needs_serde.borrow() {
             items.push(quote! { use serde::{Serialize, Deserialize}; });
         }
 
@@ -306,9 +306,22 @@ impl<'a> IrEmitter<'a> {
             items.push(self.emit_web_router_macro()?);
         }
 
+        // Emit all declarations first (this populates trait_bridge_imports as a side effect)
+        let mut decl_items = Vec::new();
         for decl in &program.declarations {
-            items.push(self.emit_decl(decl)?);
+            decl_items.push(self.emit_decl(decl)?);
         }
+
+        // Now emit trait bridge imports (collected during declaration emission)
+        for import_path in self.trait_bridge_imports.borrow().iter() {
+            let import_tokens: syn::Path = syn::parse_str(import_path).unwrap_or_else(|_| {
+                syn::parse_quote! { compile_error!("Invalid trait bridge import") }
+            });
+            items.push(quote! { use #import_tokens; });
+        }
+
+        // Add the declarations after imports
+        items.extend(decl_items);
 
         Ok(quote! {
             #(#items)*

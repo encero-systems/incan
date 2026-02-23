@@ -11,6 +11,7 @@
 //! - `format` — Source formatting
 //! - `init` — Project scaffolding
 //! - `lock` — Lock file generation and resolution
+//! - `stdlib_loader` — RFC 023: Stdlib module loading for compilation
 
 pub mod build;
 pub mod common;
@@ -18,6 +19,7 @@ pub mod debug;
 pub mod format;
 pub mod init;
 pub mod lock;
+pub mod stdlib_loader;
 
 // Re-export public API so callers can use `commands::build_file()` etc.
 pub use build::{build_file, run_file};

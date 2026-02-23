@@ -11,18 +11,13 @@ expression: rust_code
 incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.2");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
-#[derive(Debug, Clone, Copy)]
-struct UserId(pub i64);
-#[derive(Debug, Clone, Copy)]
-struct Ratio(pub f64);
-#[derive(Debug, Clone, Copy)]
-struct Attempts(pub i64);
-impl Attempts {
-    fn from_underlying(n: i64) -> Result<Attempts, String> {
-        if n <= 0 {
-            return Err("attempts must be >= 1".to_string());
-        }
-        return Ok(Attempts(n));
+use serde::{Serialize, Deserialize};
+use axum::Json as AxumJson;
+#[derive(Debug)]
+struct Json<T>(pub AxumJson<T>);
+impl<T> Json<T> {
+    fn custom_method(&self) -> String {
+        return "custom".to_string();
     }
     /// Returns field metadata for this type.
     pub fn __fields__(
@@ -34,7 +29,7 @@ impl Attempts {
                 alias: None,
                 description: None,
                 wire_name: incan_stdlib::frozen::FrozenStr::new("0"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("AxumJson[T]"),
                 has_default: false,
                 extra: incan_stdlib::frozen::FrozenDict::new(&[]),
             },
@@ -42,25 +37,35 @@ impl Attempts {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-#[derive(Debug)]
-struct Email(pub String);
-impl Email {
-    fn from_str(v: String) -> Result<Email, String> {
-        if !incan_stdlib::strings::str_contains(&v, &"@") {
-            return Err("missing @".to_string());
-        }
-        return Ok(Email(incan_stdlib::strings::str_lower(&v)));
-    }
+#[derive(serde::Serialize, Debug, Clone, FieldInfo, IncanClass)]
+struct User {
+    id: i64,
+    name: String,
+}
+#[allow(non_snake_case, clippy::too_many_arguments)]
+fn User(id: i64, name: String) -> User {
+    User { id, name }
+}
+impl User {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
             incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("0"),
+                name: incan_stdlib::frozen::FrozenStr::new("id"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("0"),
+                wire_name: incan_stdlib::frozen::FrozenStr::new("id"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("name"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("name"),
                 type_name: incan_stdlib::frozen::FrozenStr::new("str"),
                 has_default: false,
                 extra: incan_stdlib::frozen::FrozenDict::new(&[]),
@@ -68,18 +73,14 @@ impl Email {
         ];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
+    /// Serialize this model to a JSON string
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self)
+            .unwrap_or_else(|_| {
+                incan_stdlib::errors::raise_json_serialization_error(stringify!(User))
+            })
+    }
 }
 fn main() {
-    let uid = UserId(42);
-    let ratio = Ratio(0.5f64);
-    let attempts = Attempts::from_underlying(5)
-        .expect("validated newtype construction failed: Attempts::from_underlying");
-    let email = Email::from_str("alice@example.com".to_string())
-        .expect("validated newtype construction failed: Email::from_str");
-    println!(
-        "{}", { let __parts : [& str; 5usize] = ["", " ", " ", " ", ""]; let __args : Vec
-        < String > = vec![format!("{}", uid.0), format!("{}", ratio.0), format!("{}",
-        attempts.0), format!("{}", email.0)]; incan_stdlib::strings::fstring(& __parts, &
-        __args) }
-    );
+    println!("{}", "Generic newtype codegen test");
 }

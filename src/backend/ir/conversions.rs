@@ -89,7 +89,6 @@
 //! Return values must match the function signature:
 //!
 //! ```text
-//! 
 //! Incan:  def get_name() -> str: return "Alice"
 //! Rust:   fn get_name() -> String { return "Alice".to_string(); }
 //!                                           ^^^^^^^^^^^^^^^^^^ convert to owned
@@ -160,7 +159,6 @@
 //! Generated Rust:
 //!
 //! ```rust,ignore
-//! 
 //! let content: String = "data.txt".to_string();
 //! let data = std::fs::read_to_string(&content);  // ← borrow applied
 //! ```

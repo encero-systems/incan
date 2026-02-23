@@ -13,22 +13,37 @@ Example:
     
     @route("/users", methods=[POST])
     async def create_user(body: Json[CreateUser]) -> Json[User]:
-        user = User(id=1, name=body.value.name)
+        user = User(id=1, name=body.0.name)
         return Json(user)
 """
 
+# NOTE: This module provides compile-time markers and constants.
+# The @route decorator is processed by the compiler to generate Axum routes.
+# At runtime, these are just type hints - the actual routing is Axum-native.
+
 
 # HTTP method constants
-GET: str = "GET"
-POST: str = "POST"
-PUT: str = "PUT"
-DELETE: str = "DELETE"
-PATCH: str = "PATCH"
-HEAD: str = "HEAD"
-OPTIONS: str = "OPTIONS"
+pub const GET: str = "GET"
+pub const POST: str = "POST"
+pub const PUT: str = "PUT"
+pub const DELETE: str = "DELETE"
+pub const PATCH: str = "PATCH"
+pub const HEAD: str = "HEAD"
+pub const OPTIONS: str = "OPTIONS"
 
 
-def route(path: str, methods: list[str] = [GET]) -> Callable:
+pub enum HttpMethod:
+    """HTTP method enumeration for route definitions."""
+    GET
+    POST
+    PUT
+    DELETE
+    PATCH
+    HEAD
+    OPTIONS
+
+
+pub def route(path: str, methods: list[HttpMethod] = [HttpMethod.GET]) -> Callable:
     """
     Decorator to register a function as an HTTP route handler.
     

@@ -424,6 +424,7 @@ mod tests {
         let newtype = NewtypeDecl {
             visibility: Visibility::Public,
             name: "UserId".to_string(),
+            type_params: vec![],
             underlying: make_spanned(Type::Simple("i64".to_string())),
             methods: vec![],
         };

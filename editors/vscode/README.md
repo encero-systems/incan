@@ -94,36 +94,51 @@ syntax supported by your current checkout (e.g. `pub const`).
 
 ## Installation
 
-### Option 1: Symlink (Development)
+### Option 1: Install from VSIX (Recommended for VS Code)
+
+1. Build the VSIX package:
+
+    ```bash
+    cd editors/vscode
+    npm install
+    npm run compile
+    npm install -g @vscode/vsce
+    vsce package
+    ```
+
+    This will create a file like `incan-0.1.0.vsix` in the `editors/vscode` directory.
+
+2. Open VS Code, go to the Extensions sidebar (Cmd+Shift+X), click the three-dot menu (…), and choose **Install from VSIX…**.
+   Select your `.vsix` file.
+
+3. Fully restart VS Code after installing.
+
+4. Open a `.incn` file to verify highlighting and language features.
+
+---
+
+### Option 2: Symlink (Development, for Cursor or advanced users)
 
 ```bash
 # For Cursor
 ln -sf /path/to/incan-programming-language/editors/vscode ~/.cursor/extensions/incan-language
 
-# For VS Code  
-ln -sf /path/to/incan-programming-language/editors/vscode ~/.vscode/extensions/incan-language
+# For VS Code (only if you know the extension folder naming rules)
+ln -sf /path/to/incan-programming-language/editors/vscode ~/.vscode/extensions/<name-from-package.json>
 ```
 
-Then restart your editor.
+Make sure the symlink name matches the `name` field in `package.json`. Then restart your editor.
 
-### Option 2: Copy Extension
+---
+
+### Option 3: Copy Extension Folder (Development)
 
 Copy the `editors/vscode` folder to:
 
 - **Cursor**: `~/.cursor/extensions/incan-language`
-- **VS Code**: `~/.vscode/extensions/incan-language`
+- **VS Code**: `~/.vscode/extensions/<name-from-package.json>`
 
-### Option 3: Build VSIX
-
-```bash
-cd editors/vscode
-npm install
-npm run compile
-npm install -g @vscode/vsce
-vsce package
-```
-
-Then install the `.vsix` file via Extensions → Install from VSIX.
+Then restart your editor.
 
 ## LSP Setup
 

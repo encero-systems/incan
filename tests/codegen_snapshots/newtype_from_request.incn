@@ -1,0 +1,28 @@
+"""Test std.web extractor codegen (FromRequestParts trait delegation)
+
+This test verifies that:
+1. std.web.request.Query uses newtype wrapping axum::extract::Query
+2. The compiler auto-generates FromRequestParts trait impl via trait bridge
+3. The async static function signature is correctly generated
+4. Associated types (Rejection) are properly delegated
+5. Custom delegation pattern with .await.map(Self) works
+
+Note: This tests CODEGEN VERIFICATION, not runtime execution.
+"""
+
+# Import from stdlib submodule - cleaner API than direct axum imports
+from std.web.request import Query
+
+# Import serde explicitly (needed for DeserializeOwned bound in generated where clause)
+from rust::serde @ "1.0" import Deserialize
+
+# Example usage: Query[SearchParams] will have FromRequestParts<S> auto-generated
+@derive(Deserialize)
+model SearchParams:
+    q: str
+    limit: int = 10
+
+def main() -> None:
+    println("std.web extractor codegen test")
+    # In a real handler: async def search(params: Query[SearchParams]) -> ...
+

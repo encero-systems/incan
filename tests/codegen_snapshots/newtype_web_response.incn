@@ -1,0 +1,12 @@
+"""Test web response newtypes compile without E0761 module ambiguity"""
+
+from std.web import Json, Html, Response
+
+@derive(Serialize)
+model User:
+    id: int
+    name: str
+
+# Test that newtypes are accessible and compile
+def main() -> None:
+    println("Newtype imports successful - no E0761 module ambiguity")

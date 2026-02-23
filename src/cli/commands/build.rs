@@ -18,6 +18,7 @@ use super::common::{
     resolve_project_root, validate_output_dir,
 };
 use super::lock::resolve_lock_payload;
+use super::stdlib_loader;
 
 // ============================================================================
 // Project Preparation (shared between build and run)
@@ -61,16 +62,24 @@ fn prepare_project(
 
     let dep_modules = &modules[..modules.len() - 1];
 
+    // ---- RFC 023: Load stdlib modules ----
+    let stdlib_modules = stdlib_loader::load_stdlib_modules(&modules)?;
+
     let path = Path::new(file_path);
     let project_root = resolve_project_root(path);
 
     let manifest = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))?;
 
-    // Type check all modules (dependencies first), so diagnostics are associated with the correct file.
+    // Type check all modules (dependencies + stdlib first), so diagnostics are associated with the correct file.
     let declared = manifest.as_ref().map(|m| m.declared_crate_names());
     let mut all_errors: String = String::new();
     for (idx, module) in modules.iter().enumerate() {
-        let deps_for_module: Vec<(&str, &Program)> = modules[..idx].iter().map(|m| (m.name.as_str(), &m.ast)).collect();
+        // Include both user dependencies and stdlib modules as available imports
+        let mut deps_for_module: Vec<(&str, &Program)> =
+            modules[..idx].iter().map(|m| (m.name.as_str(), &m.ast)).collect();
+        for stdlib_mod in &stdlib_modules {
+            deps_for_module.push((&stdlib_mod.name, &stdlib_mod.ast));
+        }
 
         let mut checker = typechecker::TypeChecker::new();
         if let Some(names) = declared.clone() {
@@ -124,9 +133,16 @@ fn prepare_project(
     if let Some(m) = manifest.as_ref() {
         codegen.set_declared_crate_names(m.declared_crate_names());
     }
+    // Add user dependency modules
     for module in dep_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
+    // RFC 023: Add stdlib modules
+    for stdlib_mod in &stdlib_modules {
+        codegen.add_module_with_path_segments(&stdlib_mod.name, &stdlib_mod.ast, stdlib_mod.path_segments.clone());
+    }
+
+    // Scan for feature requirements (serde, async, web, list helpers)
     codegen.scan_for_serde(&main_module.ast);
     codegen.scan_for_async(&main_module.ast);
     codegen.scan_for_web(&main_module.ast);
@@ -136,6 +152,13 @@ fn prepare_project(
         codegen.scan_for_async(&module.ast);
         codegen.scan_for_web(&module.ast);
         codegen.scan_for_list_helpers(&module.ast);
+    }
+    // RFC 023: Scan stdlib modules for features too
+    for stdlib_mod in &stdlib_modules {
+        codegen.scan_for_serde(&stdlib_mod.ast);
+        codegen.scan_for_async(&stdlib_mod.ast);
+        codegen.scan_for_web(&stdlib_mod.ast);
+        codegen.scan_for_list_helpers(&stdlib_mod.ast);
     }
 
     let needs_serde = codegen.needs_serde();
@@ -158,6 +181,8 @@ fn prepare_project(
     for module in dep_modules {
         inline_imports.extend(collect_inline_rust_imports(module, false));
     }
+    // RFC 023: Stdlib modules should not have inline rust imports (they use rust.module() + @rust.extern instead),
+    // so we skip collecting from them.
 
     let cargo_features = CargoFeatureSelection {
         cargo_features,

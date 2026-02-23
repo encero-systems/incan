@@ -171,6 +171,30 @@ fn collect_serde_derives(main: &Program, deps: &[(&str, &Program)]) -> (bool, bo
 
 fn add_serde_to_newtypes(ir_program: &mut super::IrProgram, add_serialize: bool, add_deserialize: bool) {
     use super::decl::IrDeclKind;
+    use super::types::IrType;
+
+    fn is_conservative_serde_safe_newtype_inner(ty: &IrType) -> bool {
+        match ty {
+            IrType::Unit
+            | IrType::Bool
+            | IrType::Int
+            | IrType::Float
+            | IrType::String
+            | IrType::StaticStr
+            | IrType::StaticBytes
+            | IrType::FrozenStr
+            | IrType::FrozenBytes
+            | IrType::StrRef => true,
+            IrType::List(inner) | IrType::Set(inner) | IrType::Option(inner) => {
+                is_conservative_serde_safe_newtype_inner(inner)
+            }
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                is_conservative_serde_safe_newtype_inner(key) && is_conservative_serde_safe_newtype_inner(value)
+            }
+            IrType::Tuple(items) => items.iter().all(is_conservative_serde_safe_newtype_inner),
+            _ => false,
+        }
+    }
 
     let serialize = derives::as_str(DeriveId::Serialize);
     let deserialize = derives::as_str(DeriveId::Deserialize);
@@ -180,6 +204,12 @@ fn add_serde_to_newtypes(ir_program: &mut super::IrProgram, add_serialize: bool,
             && s.fields.len() == 1
             && s.fields[0].name == "0"
         {
+            if !s.type_params.is_empty() {
+                continue;
+            }
+            if !is_conservative_serde_safe_newtype_inner(&s.fields[0].ty) {
+                continue;
+            }
             if add_serialize && !s.derives.iter().any(|d| d == serialize) {
                 s.derives.push(serialize.to_string());
             }
@@ -434,6 +464,8 @@ impl<'a> IrCodegen<'a> {
     pub fn scan_for_web(&mut self, program: &Program) {
         if detect_web_usage(program) {
             self.needs_axum = true;
+            // Axum's FromRequest trait bridge requires serde::de::DeserializeOwned
+            self.needs_serde = true;
         }
     }
 
@@ -761,7 +793,6 @@ impl<'a> IrCodegen<'a> {
             .collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
         let (type_module_paths, ambiguous_type_names) = collect_type_module_paths(&self.dependency_modules);
-        let (needs_serialize, needs_deserialize) = collect_serde_derives(program, &deps);
 
         // Generate module files
         let mut modules = HashMap::new();
@@ -781,9 +812,9 @@ impl<'a> IrCodegen<'a> {
                 let mut lowering = AstLowering::new_with_type_info(module_type_info);
                 lowering.seed_struct_field_aliases(global_aliases.clone());
                 let mut ir = lowering.lower_program(ast)?;
-                if self.needs_serde {
-                    add_serde_to_newtypes(&mut ir, needs_serialize, needs_deserialize);
-                }
+                // Do not auto-add serde derives to dependency modules.
+                // Global serde usage in the main module must not mutate unrelated dependency
+                // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
                 // RFC 023: Infer trait bounds for generic functions.
                 super::trait_bound_inference::infer_trait_bounds(&mut ir);
                 let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
@@ -888,7 +919,6 @@ impl<'a> IrCodegen<'a> {
             .collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
         let (type_module_paths, ambiguous_type_names) = collect_type_module_paths(&self.dependency_modules);
-        let (needs_serialize, needs_deserialize) = collect_serde_derives(program, &deps);
 
         // Generate module files by path
         let mut modules = HashMap::new();
@@ -912,9 +942,9 @@ impl<'a> IrCodegen<'a> {
                     let mut lowering = AstLowering::new_with_type_info(module_type_info);
                     lowering.seed_struct_field_aliases(global_aliases.clone());
                     let mut ir = lowering.lower_program(ast)?;
-                    if self.needs_serde {
-                        add_serde_to_newtypes(&mut ir, needs_serialize, needs_deserialize);
-                    }
+                    // Do not auto-add serde derives to dependency modules.
+                    // Global serde usage in the main module must not mutate unrelated dependency
+                    // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
                     // RFC 023: Infer trait bounds for generic functions.
                     super::trait_bound_inference::infer_trait_bounds(&mut ir);
                     let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");

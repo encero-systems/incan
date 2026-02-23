@@ -9,6 +9,7 @@ impl<'a> Parser<'a> {
             self.expect_keyword(KeywordId::Type, "Expected 'type' or 'newtype'")?;
         }
         let name = self.identifier()?;
+        let type_params = self.type_params()?;
         self.expect_op(OperatorId::Eq, "Expected '=' after type name")?;
         // Skip optional 'newtype' keyword if present (for "type X = newtype T" form)
         self.match_keyword(KeywordId::Newtype);
@@ -35,6 +36,7 @@ impl<'a> Parser<'a> {
         Ok(NewtypeDecl {
             visibility,
             name,
+            type_params,
             underlying,
             methods,
         })

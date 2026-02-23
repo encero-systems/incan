@@ -15,6 +15,7 @@ impl AstLowering {
     pub(in crate::backend::ir::lower) fn lower_model_methods(
         &mut self,
         type_name: &str,
+        type_params: &[ast::TypeParam],
         methods: &[Spanned<ast::MethodDecl>],
     ) -> Result<IrImpl, LoweringError> {
         let prev = self.current_impl_type.replace(type_name.to_string());
@@ -29,6 +30,7 @@ impl AstLowering {
 
         Ok(IrImpl {
             target_type: type_name.to_string(),
+            type_params: Self::lower_type_params(type_params),
             trait_name: None,
             methods: lowered_methods,
         })
@@ -40,6 +42,7 @@ impl AstLowering {
     pub(in crate::backend::ir::lower) fn lower_trait_impl(
         &mut self,
         type_name: &str,
+        type_params: &[ast::TypeParam],
         trait_name: &str,
         impl_methods: &[Spanned<ast::MethodDecl>],
     ) -> Result<IrImpl, LoweringError> {
@@ -84,6 +87,7 @@ impl AstLowering {
 
         Ok(IrImpl {
             target_type: type_name.to_string(),
+            type_params: Self::lower_type_params(type_params),
             trait_name: Some(trait_name.to_string()),
             methods,
         })
@@ -159,6 +163,7 @@ impl AstLowering {
     pub(in crate::backend::ir::lower) fn lower_class_methods(
         &mut self,
         type_name: &str,
+        type_params: &[ast::TypeParam],
         methods: &[Spanned<ast::MethodDecl>],
     ) -> Result<IrImpl, LoweringError> {
         let prev = self.current_impl_type.replace(type_name.to_string());
@@ -173,6 +178,7 @@ impl AstLowering {
 
         Ok(IrImpl {
             target_type: type_name.to_string(),
+            type_params: Self::lower_type_params(type_params),
             trait_name: None,
             methods: lowered_methods,
         })

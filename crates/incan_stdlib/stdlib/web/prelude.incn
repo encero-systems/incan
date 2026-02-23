@@ -25,18 +25,54 @@ Example:
 Compiles to Axum with Tokio — native Rust performance, no GC.
 """
 
-# Application
-from std.web.app import App
+# ============================================================================
+# Core definitions (newtypes and app marker type)
+# ============================================================================
+
+# Import Axum wrapper types from runtime
+from rust::incan_stdlib::web::wrappers @ "0.2" import AxumJson, AxumHtml, AxumResponse
+from rust::axum::extract @ "0.8" import Query as AxumQuery
+from rust::axum::extract @ "0.8" import Path as AxumPath
+
+# Response builders
+pub type Json[T] = newtype AxumJson[T]
+"""JSON response wrapper. Serializes T to JSON and sets Content-Type."""
+
+pub type Html = newtype AxumHtml
+"""HTML response wrapper. Sets Content-Type: text/html."""
+
+pub type Response = newtype AxumResponse
+"""HTTP response builder for full control over status/headers."""
+
+# Request extractors
+pub type Query[T] = newtype AxumQuery[T]
+"""Query string extractor. Parses URL params into typed model T."""
+
+pub type Path[T] = newtype AxumPath[T]
+"""Path parameter extractor. Extracts typed params from URL path."""
+
+# Web application container
+pub class App:
+    """
+    Web application container.
+    Routes are registered via the `route` decorator from `std.web`.
+    """
+    
+    def run(self, host: str = "127.0.0.1", port: int = 8080) -> None:
+        """
+        Start the web server.
+        This method blocks until the server is shut down.
+        """
+        ...
+
+# ============================================================================
+# Re-exports from submodules (routing only for now)
+# ============================================================================
 
 # Routing
 from std.web.routing import route
 from std.web.routing import GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS
 
-# Request extractors
-from std.web.request import Request, Query, Path, Body
-
-# Response builders
-from std.web.response import Response, Json, Html
-from std.web.response import HTTP_OK, HTTP_CREATED, HTTP_NO_CONTENT
-from std.web.response import HTTP_BAD_REQUEST, HTTP_UNAUTHORIZED, HTTP_FORBIDDEN
-from std.web.response import HTTP_NOT_FOUND, HTTP_INTERNAL_ERROR
+# NOTE: HTTP status constants from response.incn are not re-exported yet
+# due to re-export syntax limitations. Import directly if needed:
+# from std.web.response import HTTP_OK, HTTP_CREATED, etc.

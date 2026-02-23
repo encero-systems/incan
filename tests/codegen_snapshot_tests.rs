@@ -469,6 +469,48 @@ fn test_newtype_checked_construction_codegen() {
     insta::assert_snapshot!("newtype_checked_construction", rust_code);
 }
 
+#[test]
+fn test_newtype_builder_methods_codegen() {
+    let source = load_test_file("newtype_builder_methods");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("newtype_builder_methods", rust_code);
+}
+
+#[test]
+fn test_newtype_with_override_codegen() {
+    let source = load_test_file("newtype_with_override");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("newtype_with_override", rust_code);
+}
+
+#[test]
+fn test_newtype_axum_response_codegen() {
+    let source = load_test_file("newtype_axum_response");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("newtype_axum_response", rust_code);
+}
+
+#[test]
+fn test_newtype_generic_json_codegen() {
+    let source = load_test_file("newtype_generic_json");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("newtype_generic_json", rust_code);
+}
+
+#[test]
+fn test_newtype_generic_simple_codegen() {
+    let source = load_test_file("newtype_generic_simple");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("newtype_generic_simple", rust_code);
+}
+
+#[test]
+fn test_newtype_web_response_codegen() {
+    let source = load_test_file("newtype_web_response");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("newtype_web_response", rust_code);
+}
+
 // ============================================================================
 /// RFC 023: `rust.module()` + `@rust.extern` delegation codegen.
 // ============================================================================

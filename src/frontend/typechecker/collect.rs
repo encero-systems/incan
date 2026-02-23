@@ -179,14 +179,28 @@ impl TypeChecker {
     /// Register a newtype declaration with its underlying type and methods.
     fn collect_newtype(&mut self, nt: &NewtypeDecl, span: Span) {
         let underlying = self.resolve_type_checked(&nt.underlying);
-        let methods = collect_methods(&nt.methods, self);
 
+        // Define a placeholder symbol FIRST so methods can reference the newtype name
         self.symbols.define(Symbol {
             name: nt.name.clone(),
-            kind: SymbolKind::Type(TypeInfo::Newtype(NewtypeInfo { underlying, methods })),
+            kind: SymbolKind::Type(TypeInfo::Newtype(NewtypeInfo {
+                underlying: underlying.clone(),
+                methods: HashMap::new(), // Empty for now
+            })),
             span,
             scope: 0,
         });
+
+        // Now collect methods - they can reference the newtype name
+        let methods = collect_methods(&nt.methods, self);
+
+        // Update the symbol with the collected methods
+        if let Some(sym_id) = self.symbols.lookup(&nt.name)
+            && let Some(sym) = self.symbols.get_mut(sym_id)
+            && let SymbolKind::Type(TypeInfo::Newtype(info)) = &mut sym.kind
+        {
+            info.methods = methods;
+        }
     }
 
     /// Register an enum declaration and define symbols for each variant.

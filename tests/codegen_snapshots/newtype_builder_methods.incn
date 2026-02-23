@@ -1,0 +1,21 @@
+# Test newtype with static builder methods (RFC 017 foundation for std.web migration)
+
+type Response = newtype str:  # XXX: should this even be a type and not a class? Need to verify the pattern...
+    def ok() -> Response:
+        return Response("200 OK")
+    
+    def created() -> Response:
+        return Response("201 Created")
+    
+    def status(code: int, body: str) -> Response:
+        return Response(str(code) + " " + body)
+
+def main() -> None:
+    # Test static builders
+    r1 = Response.ok()
+    r2 = Response.created()
+    r3 = Response.status(404, "Not Found")
+    
+    println(r1.0)
+    println(r2.0)
+    println(r3.0)

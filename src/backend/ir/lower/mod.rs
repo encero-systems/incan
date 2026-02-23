@@ -460,7 +460,7 @@ impl AstLowering {
                                 .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())));
 
                             // Generate impl block (may be empty if no methods, serde methods added during emission)
-                            match self.lower_model_methods(&struct_ir.name, &m.methods) {
+                            match self.lower_model_methods(&struct_ir.name, &m.type_params, &m.methods) {
                                 Ok(impl_ir) => {
                                     ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
                                 }
@@ -469,7 +469,12 @@ impl AstLowering {
 
                             // Generate trait impls for each trait this model implements
                             for trait_ref in &m.traits {
-                                match self.lower_trait_impl(&struct_ir.name, trait_ref.node.as_str(), &m.methods) {
+                                match self.lower_trait_impl(
+                                    &struct_ir.name,
+                                    &m.type_params,
+                                    trait_ref.node.as_str(),
+                                    &m.methods,
+                                ) {
                                     Ok(trait_impl) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
                                     }
@@ -502,7 +507,7 @@ impl AstLowering {
 
                             // Generate impl block for all methods (inherited + own)
                             if !all_methods.is_empty() {
-                                match self.lower_class_methods(&struct_ir.name, &all_methods) {
+                                match self.lower_class_methods(&struct_ir.name, &c.type_params, &all_methods) {
                                     Ok(impl_ir) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
                                     }
@@ -512,7 +517,12 @@ impl AstLowering {
 
                             // Generate trait impls for each trait this class implements
                             for trait_ref in &c.traits {
-                                match self.lower_trait_impl(&struct_ir.name, trait_ref.node.as_str(), &all_methods) {
+                                match self.lower_trait_impl(
+                                    &struct_ir.name,
+                                    &c.type_params,
+                                    trait_ref.node.as_str(),
+                                    &all_methods,
+                                ) {
                                     Ok(trait_impl) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
                                     }
@@ -535,7 +545,7 @@ impl AstLowering {
 
                             // Generate impl block for newtype methods (if any).
                             if !n.methods.is_empty() {
-                                match self.lower_model_methods(&struct_ir.name, &n.methods) {
+                                match self.lower_model_methods(&struct_ir.name, &n.type_params, &n.methods) {
                                     Ok(impl_ir) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
                                     }

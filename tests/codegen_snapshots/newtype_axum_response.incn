@@ -1,0 +1,26 @@
+"""Test newtype wrapping axum::response types (Phase 4: real IntoResponse delegation)
+
+This test demonstrates that:
+1. Newtypes wrapping types from axum::response:: module get auto-generated IntoResponse trait impls
+2. The type path matching in trait_bridges.rs correctly identifies these types
+3. Generated code includes `impl axum::response::IntoResponse for NewtypeName`
+
+Note: This test focuses on CODEGEN VERIFICATION, not runtime execution.
+The generated Rust may not compile due to trait bounds on the wrapped types,
+but the key is verifying that our trait delegation system emits the IntoResponse impl.
+"""
+
+# Import actual Axum Response type
+# Path: axum::response::Response - matches trait_bridges pattern "axum::response::"
+from rust::axum::response @ "0.8" import Response as AxumResponse
+
+# Newtype wrapping AxumResponse
+# Expected: Auto-generated `impl axum::response::IntoResponse for MyResponse`
+type MyResponse = newtype AxumResponse:
+    # Static constructor (simplified - won't actually work at runtime)
+    def placeholder() -> MyResponse:
+        pass
+
+def main() -> None:
+    # This is a codegen test - we're verifying the emitted Rust code, not the runtime behavior
+    println("Newtype codegen test")

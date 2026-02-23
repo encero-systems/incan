@@ -1,6 +1,6 @@
 # RFC 023: Compilable Stdlib & Rust Module Binding
 
-**Status:** Planned  
+**Status:** In Progress  
 **Created:** 2026-02-08  
 **Author(s):** Danny Meijer (@dannymeijer)  
 **Related:** RFC 005 (Rust interop), RFC 013 (Rust crate dependencies), RFC 022 (stdlib namespacing & compiler→stdlib
@@ -769,19 +769,19 @@ reserved for future use when `module` is introduced as a keyword.
 
 ### Spec / semantics
 
-- [ ] Stdlib `.incn` files are compilable Incan source, not documentation-only stubs.
+- [x] Stdlib `.incn` files are compilable Incan source, not documentation-only stubs.
 - [ ] `rust.module("path::to::module")` directive is specified with clear syntax and semantics.
-- [ ] `@rust.extern` supersedes RFC 022's `@std.builtin` — same semantics, no source-category restriction.
-- [ ] `DecoratorId::StdBuiltin` renamed to `DecoratorId::RustExtern` with canonical spelling `"rust.extern"`.
+- [x] `@rust.extern` supersedes RFC 022's `@std.builtin` — same semantics, no source-category restriction.
+- [x] `DecoratorId::StdBuiltin` renamed to `DecoratorId::RustExtern` with canonical spelling `"rust.extern"`.
 - [ ] `@rust.extern` items require a `rust.module()` directive on their containing module.
 - [ ] `@rust.extern` restricted to free functions and trait default methods; rejected on instance methods.
 - [ ] The irreducible primitives principle is documented: `@rust.extern` should be minimized.
-- [ ] Compiled Incan `std.*` modules emitted under `__incan_std` root to avoid Rust `std` shadowing.
+- [x] Compiled Incan `std.*` modules emitted under `__incan_std` root to avoid Rust `std` shadowing.
 
 ### Compilation pipeline
 
-- [ ] Compiler parses and compiles stdlib `.incn` files through the normal pipeline.
-- [ ] Typechecker derives function signatures from parsed `.incn` AST, not hardcoded registries.
+- [x] Compiler parses and compiles stdlib `.incn` files through the normal pipeline.
+- [x] Typechecker derives function signatures from parsed `.incn` AST, not hardcoded registries.
 - [ ] Emitter uses `rust.module()` path for `@rust.extern` items, not hardcoded path-rewriting.
 - [ ] Hardcoded `testing_import_function_info()` (and equivalents) are removed.
 - [ ] Hardcoded `if is_stdlib_testing` / `if is_stdlib_web` branches are removed from emission.
@@ -807,10 +807,10 @@ reserved for future use when `module` is introduced as a keyword.
 
 ### Stdlib migration
 
-- [ ] `std.testing` converted to compilable Incan with `fail()` as sole `@rust.extern` primitive.
-- [ ] `std.derives.*`: non-`@rust.extern` methods compiled from Incan source.
+- [x] `std.testing` converted to compilable Incan with `fail()` as sole `@rust.extern` primitive.
+- [x] `std.derives.*`: non-`@rust.extern` methods compiled from Incan source.
 - [ ] `std.web` response builders: pure Incan where possible, `@rust.extern` for framework I/O.
-- [ ] All stdlib `.incn` files carry `rust.module()` directives.
+- [x] All stdlib `.incn` files with `@rust.extern` carry `rust.module()` directives.
 - [ ] `StdlibModuleInfo` fallback mapping removed (or marked deprecated).
 
 ### Diagnostics checklist

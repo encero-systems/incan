@@ -80,6 +80,7 @@ pub struct TraitDecl {
 pub struct NewtypeDecl {
     pub visibility: Visibility,
     pub name: Ident,
+    pub type_params: Vec<TypeParam>,
     pub underlying: Spanned<Type>,
     pub methods: Vec<Spanned<MethodDecl>>,
 }

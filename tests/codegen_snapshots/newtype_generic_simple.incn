@@ -1,0 +1,10 @@
+"""Test generic newtype without external dependencies"""
+
+# Simple generic newtype wrapper
+type Box[T] = newtype T:
+    def kind(self) -> str:
+        return "Box"
+
+def main() -> None:
+    b = Box(42)
+    print(b.kind())

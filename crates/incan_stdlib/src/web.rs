@@ -6,6 +6,8 @@
 //! - `Json<T>` wrapper that implements `IntoResponse`
 //! - HTTP method constants (`GET`, ...)
 
+pub mod wrappers;
+
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::sync::OnceLock;
@@ -115,36 +117,10 @@ impl App {
         })
     }
 }
-
-/// JSON response wrapper (mirrors `axum::Json`).
-///
-/// Incan-generated handlers can return `Json<T>` to emit a JSON response.
-pub struct Json<T> {
-    pub value: T,
-}
-
-impl<T> Json<T> {
-    pub fn new(value: T) -> Self {
-        Self { value }
-    }
-}
-
-impl<T> Deref for Json<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.value
-    }
-}
-
-impl<T> IntoResponse for Json<T>
-where
-    T: Serialize,
-{
-    fn into_response(self) -> AxumResponse {
-        axum::Json(self.value).into_response()
-    }
-}
+// Re-export wrapper types with their public-facing names
+pub use wrappers::AxumHtml as Html;
+pub use wrappers::AxumJson as Json;
+pub use wrappers::AxumResponse as Response;
 
 /// Query string extractor wrapper (mirrors `axum::extract::Query`).
 pub struct Query<T> {
@@ -162,117 +138,6 @@ impl<T> Deref for Query<T> {
 
     fn deref(&self) -> &Self::Target {
         &self.value
-    }
-}
-
-/// HTML response wrapper (mirrors the Incan `Html` surface type).
-///
-/// In Incan, handlers can return `Html` directly:
-///
-/// ```text
-/// @route("/")
-/// async def index() -> Html:
-///   return Html("<h1>Hello</h1>")
-/// ```
-///
-/// At runtime this is emitted as an axum HTML response with `text/html` content type.
-#[derive(Debug, Clone)]
-pub struct Html(pub String);
-
-impl IntoResponse for Html {
-    fn into_response(self) -> AxumResponse {
-        AxumHtml(self.0).into_response()
-    }
-}
-
-/// Response wrapper returned by helper constructors like `Response::html`.
-pub struct Response(pub AxumResponse);
-
-impl Response {
-    /// Create an HTML response.
-    pub fn html<S: Into<String>>(content: S) -> Self {
-        Response(AxumHtml(content.into()).into_response())
-    }
-
-    /// Create an empty 200 OK response.
-    pub fn ok() -> Self {
-        Response(AxumResponse::new(axum::body::Body::empty()))
-    }
-
-    /// Create a plain text response (200 OK).
-    pub fn text<S: Into<String>>(content: S) -> Self {
-        Response(content.into().into_response())
-    }
-
-    /// Create an empty 201 Created response.
-    pub fn created() -> Self {
-        Self::status(HTTP_CREATED, "")
-    }
-
-    /// Create a 204 No Content response.
-    pub fn no_content() -> Self {
-        // Safety: StatusCode::NO_CONTENT and an empty body are always valid inputs to the response builder, so this
-        // cannot fail in practice.
-        let Ok(response) = AxumResponse::builder()
-            .status(StatusCode::NO_CONTENT)
-            .body(axum::body::Body::empty())
-        else {
-            panic!("building a 204 No Content response should never fail");
-        };
-        Response(response)
-    }
-
-    /// Create a 400 Bad Request response.
-    pub fn bad_request<S: Into<String>>(message: S) -> Self {
-        Response((StatusCode::BAD_REQUEST, message.into()).into_response())
-    }
-
-    /// Create a 404 Not Found response.
-    pub fn not_found<S: Into<String>>(message: S) -> Self {
-        Response((StatusCode::NOT_FOUND, message.into()).into_response())
-    }
-
-    /// Create a 500 Internal Server Error response.
-    pub fn internal_error<S: Into<String>>(message: S) -> Self {
-        Response((StatusCode::INTERNAL_SERVER_ERROR, message.into()).into_response())
-    }
-
-    /// Create a response with custom status code.
-    ///
-    /// If `code` is not a valid HTTP status code (e.g. negative, > 999, or not a recognized status), this falls back to
-    /// 500 Internal Server Error and includes a diagnostic message in the response body.
-    pub fn status<S: Into<String>>(code: i64, body: S) -> Self {
-        let body = body.into();
-        match u16::try_from(code).ok().and_then(|v| StatusCode::from_u16(v).ok()) {
-            Some(status) => Response((status, body).into_response()),
-            None => {
-                let msg = format!("invalid HTTP status code {code}: {body}");
-                eprintln!("[incan] warning: {msg}");
-                Response((StatusCode::INTERNAL_SERVER_ERROR, msg).into_response())
-            }
-        }
-    }
-
-    /// Create a 302 redirect response.
-    pub fn redirect<S: Into<String>>(location: S) -> Self {
-        let location = location.into();
-        // Safety: StatusCode::FOUND and a string Location header are always valid inputs.
-        // The only failure mode would be non-ASCII bytes in the location, which is a caller bug.
-        let Ok(response) = AxumResponse::builder()
-            .status(StatusCode::FOUND)
-            .header(header::LOCATION, location)
-            .body(axum::body::Body::empty())
-        else {
-            panic!("building a 302 redirect response should never fail");
-        };
-        Response(response)
-    }
-}
-
-/// Allow `Response` to be returned from handlers.
-impl IntoResponse for Response {
-    fn into_response(self) -> AxumResponse {
-        self.0
     }
 }
 

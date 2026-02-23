@@ -4,20 +4,26 @@ Web Application Framework
 Provides a Flask/FastAPI-like API that compiles to Axum (Rust).
 
 Example:
-    from std.web import App, route, Response
-    
-    app = App()
-    
-    @route("/")
-    async def index() -> Response:
-        return Response.html("<h1>Hello!</h1>")
-    
-    def main():
-        app.run(port=8080)
+```incan
+from std.web import App, route, Response
+
+app = App()
+
+@route("/")
+async def index() -> Response:
+    return Response.html("<h1>Hello!</h1>")
+
+def main():
+    app.run(port=8080)
+```
 """
 
 
-model App:
+# NOTE: App is a compile-time marker type.
+# The compiler collects @route decorators and generates the Axum router.
+# At runtime, app.run() is replaced by the generated router + server startup.
+
+pub class App:
     """
     Web application container.
     

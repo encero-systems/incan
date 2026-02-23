@@ -1,7 +1,6 @@
 //! Newtype declaration lowering.
 
 use super::super::super::decl::{IrStruct, StructField, Visibility};
-use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast;
@@ -24,18 +23,17 @@ impl AstLowering {
             alias: None,
             description: None,
         }];
-        // Newtypes auto-derive Debug, Clone
-        // Only add Copy if underlying type is Copy (int, float, bool)
+        // Newtypes auto-derive only Debug by default
+        // This is conservative - external types (like Axum extractors) may not support Clone/PartialEq
+        // Users can explicitly add derives if needed: @derive(Clone, PartialEq)
         let debug = derives::as_str(DeriveId::Debug).to_string();
-        let clone = derives::as_str(DeriveId::Clone).to_string();
-        let partial_eq = derives::as_str(DeriveId::PartialEq).to_string();
-        let eq = derives::as_str(DeriveId::Eq).to_string();
-        let mut derives = vec![debug, clone, partial_eq];
-        if !matches!(underlying_ty, IrType::Float) {
-            derives.push(eq);
-        }
+        let mut derives = vec![debug];
+        // Add Copy only if underlying type is Copy (int, float, bool)
         if underlying_ty.is_copy() {
-            derives.push(derives::as_str(DeriveId::Copy).to_string());
+            let copy = derives::as_str(DeriveId::Copy).to_string();
+            let clone = derives::as_str(DeriveId::Clone).to_string();
+            derives.push(clone);
+            derives.push(copy);
         }
         // Note: Serialize/Deserialize derives for newtypes are added post-lowering by `add_serde_to_newtypes` in
         // codegen.rs, which selectively adds only the derives that are actually needed (Serialize, Deserialize, or
@@ -45,7 +43,7 @@ impl AstLowering {
             fields,
             derives,
             visibility: Self::map_visibility(n.visibility),
-            type_params: vec![],
+            type_params: Self::lower_type_params(&n.type_params),
         })
     }
 }

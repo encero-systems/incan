@@ -17,87 +17,71 @@ Example:
         return Json(find_user(id))
 """
 
+# Import Axum extractor types
+# Version annotations ensure correct trait signatures (FromRequestParts in 0.8+)
+from rust::axum::extract @ "0.8" import Query as AxumQuery
+from rust::axum::extract @ "0.8" import Path as AxumPath
 
-model Query[T]:
-    """
-    Query string extractor.
-    
-    Parses URL query parameters into a typed model.
-    The inner type T must implement Deserialize.
-    
-    Example:
-    ```incan
-    from std.web import route, Json, Query
-    
-    @derive(Deserialize)
-    model SearchParams:
-        q: str
-        limit: int = 10
-    
-    @route("/search")
-    async def search(params: Query[SearchParams]) -> Json[list[Item]]:
-        # Access: params.q, params.limit
-        return Json(search_items(params.q, params.limit))
-    ```
-    
-    Compiles to: axum::extract::Query<T>
-    """
+# Incan newtypes wrapping Axum extractors
+# The compiler auto-generates FromRequestParts trait impls via trait bridges
+# See: crates/incan_core/src/lang/trait_bridges.rs
 
+pub type Query[T] = newtype AxumQuery[T]
+"""
+Query string extractor.
 
-model Path[T]:
-    """
-    Path parameter extractor for multiple params.
-    
-    For single path parameters, use the type directly in function signature.
-    For multiple parameters, use Path with a tuple.
-    
-    Example:
-    ```incan
-    from std.web import route, Json, Path
-    
-    # Single param - just use the type
-    @route("/users/{id}")
-    async def get_user(id: int) -> Json[User]:
-        ...
-    
-    # Multiple params - use Path with tuple
-    @route("/users/{user_id}/posts/{post_id}")
-    async def get_post(ids: Path[tuple[int, int]]) -> Json[Post]:
-        user_id, post_id = ids
-        ...
-    ```
-    
-    Compiles to: axum::extract::Path<T>
-    """
+Parses URL query parameters into a typed model.
+The inner type T must implement Deserialize.
+
+The compiler auto-generates the FromRequestParts trait impl,
+so you can use this directly in route handlers.
+
+Example:
+```incan
+from std.web import route, Json, Query
+
+@derive(Deserialize)
+model SearchParams:
+    q: str
+    limit: int = 10
+
+@route("/search")
+async def search(params: Query[SearchParams]) -> Json[list[Item]]:
+    # Access fields via .0 (wrapped value)
+    return Json(search_items(params.0.q, params.0.limit))
+```
+
+Compiles to: Query<T> wrapping axum::extract::Query<T>
+Trait impl: FromRequestParts<S> is auto-delegated to AxumQuery<T>
+"""
 
 
-model Body[T]:
-    """
-    Request body extractor (raw bytes or text).
-    
-    For JSON bodies, use Json[T] instead.
-    The inner type T must implement Deserialize.
-    
-    Compiles to: axum::body::Body or String
-    """
+pub type Path[T] = newtype AxumPath[T]
+"""
+Path parameter extractor.
 
+Extracts typed parameters from the URL path.
+The inner type T can be a single value or tuple for multiple params.
 
-model Request:
-    """
-    Full HTTP request access.
-    
-    Usually you'll use specific extractors (Query, Path, Json) instead,
-    but Request gives full access when needed.
-    
-    Compiles to: axum::extract::Request
-    """
-    method: str
-    path: str
-    
-    def header(self, name: str) -> Option[str]:
-        """Get a request header by name."""
-        ...
-    
-    def headers(self) -> dict[str, str]:
-        """Get all request headers."""
-        ...
+The compiler auto-generates the FromRequestParts trait impl,
+so you can use this directly in route handlers.
+
+Example:
+```incan
+from std.web import route, Json, Path
+
+# Single param
+@route("/users/{id}")
+async def get_user(id: Path[int]) -> Json[User]:
+    return Json(find_user(id.0))
+
+# Multiple params with tuple
+@route("/users/{user_id}/posts/{post_id}")
+async def get_post(path: Path[tuple[int, int]]) -> Json[Post]:
+    user_id, post_id = path.0  # Unpack wrapped tuple
+    return Json(fetch_post(user_id, post_id))
+```
+
+Compiles to: Path<T> wrapping axum::extract::Path<T>
+Trait impl: FromRequestParts<S> is auto-delegated to AxumPath<T>
+"""

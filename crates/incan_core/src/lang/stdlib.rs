@@ -70,7 +70,7 @@ pub struct StdlibNamespace {
 pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     StdlibNamespace {
         name: "web",
-        impl_mode: StdlibImplMode::RuntimeFacade,
+        impl_mode: StdlibImplMode::IncanSource,
         feature: Some("web"),
         submodules: &["app", "routing", "request", "response", "prelude"],
     },

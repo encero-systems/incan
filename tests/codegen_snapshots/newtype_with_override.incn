@@ -1,0 +1,17 @@
+"""Test newtype with user-provided trait bridge dunder (override detection)"""
+
+# Simple newtype wrapping string
+type CustomResponse = newtype str:
+    def ok(message: str) -> CustomResponse:
+        return CustomResponse(message + " OK")
+    
+    # User provides __into_response__ - this should prevent auto-delegation
+    # (even though str doesn't match axum::response:: pattern anyway,
+    # this demonstrates the override detection mechanism)
+    def __into_response__(self) -> str:
+        return "Custom: " + self.0
+
+def main() -> None:
+    response: CustomResponse = CustomResponse.ok("Status")
+    result: str = response.__into_response__()
+    println(result)

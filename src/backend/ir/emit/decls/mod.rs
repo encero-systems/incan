@@ -158,7 +158,7 @@ impl<'a> IrEmitter<'a> {
     ) -> Result<TokenStream, EmitError> {
         // Skip serde imports if we're already importing them automatically.
         // Covers both `from serde import ...` and `from std.serde.json import Serialize, Deserialize`.
-        if self.needs_serde {
+        if *self.needs_serde.borrow() {
             let is_serde_trait = items.iter().any(|item| {
                 matches!(
                     derives::from_str(item.name.as_str()),
@@ -246,6 +246,19 @@ impl<'a> IrEmitter<'a> {
                 use #path_ts as #alias_ident;
             })
         } else if !items.is_empty() {
+            // ---- Track Rust import paths for alias resolution ----
+            // When emitting Rust imports (qualifier=None), record the mapping from alias/name → full module path.
+            // This enables newtype trait delegation to resolve "AxumResponse" back to "axum::response::Response" for
+            // pattern matching.
+            if matches!(qualifier, IrImportQualifier::None) {
+                for item in items {
+                    let key = item.alias.as_ref().unwrap_or(&item.name).clone();
+                    let mut full_path = path.to_vec();
+                    full_path.push(item.name.clone());
+                    self.rust_import_paths.borrow_mut().insert(key, full_path);
+                }
+            }
+
             let item_stmts: Vec<TokenStream> = items
                 .iter()
                 .map(|item| {

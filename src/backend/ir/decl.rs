@@ -109,6 +109,8 @@ pub struct IrTrait {
 pub struct IrImpl {
     /// The type being implemented on (e.g., "Dog")
     pub target_type: String,
+    /// Type parameters for the impl block
+    pub type_params: Vec<IrTypeParam>,
     /// The trait being implemented, if any
     pub trait_name: Option<String>,
     /// Methods in this impl block
