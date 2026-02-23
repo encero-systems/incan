@@ -304,4 +304,69 @@ mod tests {
             "expected trailing newline hint in diff, got: {diff}"
         );
     }
+
+    // ========================================
+    // Issue #116: parenthesized import formatting
+    // ========================================
+
+    /// A short import that fits on one line should be kept (or collapsed to) single-line form.
+    #[test]
+    fn test_format_import_short_stays_single_line() {
+        let source = "from db import (CategoryId, TagId)\n";
+        let config = FormatConfig::new().with_line_length(120);
+        let result = format_source_with_config(source, config).expect("format should succeed");
+        assert_eq!(result.trim_end(), "from db import CategoryId, TagId");
+    }
+
+    /// A comma-separated import that already fits on one line is unchanged.
+    #[test]
+    fn test_format_import_bare_short_unchanged() {
+        let source = "from db import CategoryId, TagId\n";
+        let config = FormatConfig::new().with_line_length(120);
+        let result = format_source_with_config(source, config).expect("format should succeed");
+        assert_eq!(result.trim_end(), "from db import CategoryId, TagId");
+    }
+
+    /// A long multi-item import that exceeds the line length should be wrapped.
+    #[test]
+    fn test_format_import_long_wraps_to_parens() {
+        // Use a very short limit so the list definitely overflows.
+        let source = "from db import CategoryId, TagId, OtherId\n";
+        let config = FormatConfig::new().with_line_length(20).with_trailing_commas(true);
+        let result = format_source_with_config(source, config).expect("format should succeed");
+        assert!(
+            result.contains('('),
+            "expected parenthesized output for long import; got: {result}"
+        );
+        assert!(
+            result.contains("CategoryId,\n"),
+            "expected each item on its own line; got: {result}"
+        );
+    }
+
+    /// A multi-line parenthesized import that fits on one line is collapsed to single-line.
+    #[test]
+    fn test_format_import_multiline_parens_collapses_when_fits() {
+        let source = "from db import (\n    CategoryId,\n    TagId,\n)\n";
+        let config = FormatConfig::new().with_line_length(120);
+        let result = format_source_with_config(source, config).expect("format should succeed");
+        assert_eq!(result.trim_end(), "from db import CategoryId, TagId");
+    }
+
+    /// Trailing comma in parenthesized output is controlled by the `trailing_commas` config.
+    #[test]
+    fn test_format_import_no_trailing_comma_when_disabled() {
+        let source = "from db import CategoryId, TagId, OtherId\n";
+        let config = FormatConfig::new().with_line_length(20).with_trailing_commas(false);
+        let result = format_source_with_config(source, config).expect("format should succeed");
+        // Last item should not have a trailing comma.
+        assert!(
+            !result.contains("OtherId,\n"),
+            "expected no trailing comma after last item; got: {result}"
+        );
+        assert!(
+            result.contains("OtherId\n"),
+            "expected last item without comma; got: {result}"
+        );
+    }
 }
