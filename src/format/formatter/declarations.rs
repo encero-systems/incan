@@ -70,17 +70,7 @@ impl Formatter {
                 self.writer.write("from ");
                 self.format_import_path(module);
                 self.writer.write(" import ");
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        self.writer.write(", ");
-                    }
-                    self.writer.write(&item.name);
-                    if let Some(alias) = &item.alias {
-                        self.writer.write(" as ");
-                        self.writer.write(alias);
-                    }
-                }
-                self.writer.newline();
+                self.format_import_items(items);
             }
             ImportKind::Python(name) => {
                 self.writer.write("import python \"");
@@ -126,19 +116,65 @@ impl Formatter {
                 }
                 self.format_rust_import_spec(version, features);
                 self.writer.write(" import ");
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        self.writer.write(", ");
-                    }
-                    self.writer.write(&item.name);
-                    if let Some(alias) = &item.alias {
-                        self.writer.write(" as ");
-                        self.writer.write(alias);
-                    }
+                self.format_import_items(items);
+            }
+        }
+    }
+
+    /// Format a list of import items with line-length-aware wrapping.
+    ///
+    /// When the full item list fits on the current line (i.e. does not exceed the configured
+    /// `line_length`), it is emitted as a bare comma-separated list and the line is closed.
+    /// When the list would exceed the line limit and there are at least two items, the list is
+    /// wrapped in parentheses with one item per indented line, followed by a trailing comma when
+    /// `trailing_commas` is enabled in the formatter config.
+    ///
+    /// # Parameters
+    ///
+    /// * `items` - The import items to format.
+    fn format_import_items(&mut self, items: &[ImportItem]) {
+        // Build the single-line representation to check whether it fits.
+        let single_line = Self::import_items_single_line(items);
+
+        if items.len() > 1 && self.writer.would_exceed_line_length(single_line.len()) {
+            // ---- Multi-line parenthesized form ----
+            let trailing_commas = self.writer.config().trailing_commas;
+            self.writer.write("(");
+            self.writer.newline();
+            self.writer.indent();
+            for (i, item) in items.iter().enumerate() {
+                self.writer.write(&item.name);
+                if let Some(alias) = &item.alias {
+                    self.writer.write(" as ");
+                    self.writer.write(alias);
+                }
+                if trailing_commas || i + 1 < items.len() {
+                    self.writer.write(",");
                 }
                 self.writer.newline();
             }
+            self.writer.dedent();
+            self.writer.write(")");
+        } else {
+            // ---- Single-line form ----
+            self.writer.write(&single_line);
         }
+        self.writer.newline();
+    }
+
+    /// Build a single-line string representation of import items: `Name, Other as alias, ...`.
+    fn import_items_single_line(items: &[ImportItem]) -> String {
+        items
+            .iter()
+            .map(|item| {
+                if let Some(alias) = &item.alias {
+                    format!("{} as {}", item.name, alias)
+                } else {
+                    item.name.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     fn format_rust_import_spec(&mut self, version: &Option<String>, features: &[String]) {

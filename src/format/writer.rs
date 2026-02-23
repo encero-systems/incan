@@ -100,13 +100,11 @@ impl FormatWriter {
     }
 
     /// Get the configuration
-    #[allow(dead_code)]
     pub fn config(&self) -> &FormatConfig {
         &self.config
     }
 
     /// Check if current line would exceed max length with additional text
-    #[allow(dead_code)]
     pub fn would_exceed_line_length(&self, additional: usize) -> bool {
         let indent_len = if self.at_line_start {
             self.indent_level * self.config.indent_width

@@ -18,6 +18,28 @@ from models import User, Product, Order
 from utils import format_currency as fmt, validate_email as check_email
 ```
 
+### Parenthesized import lists (single-line or multi-line)
+
+Use parentheses when the list is long or for readability. This works for both regular modules and `rust::` imports.
+
+```incan
+from some_lib import (
+  module_a as A,
+  module_b,
+  module_c as C,
+  module_d,
+)
+
+from rust::polars import (
+  A,
+  B as b,
+  pandas as pd,
+  foo,
+)
+```
+
+Trailing commas are allowed in parenthesized lists.
+
 ### Rust-style: `import module::item`
 
 ```incan

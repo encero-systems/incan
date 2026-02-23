@@ -17,21 +17,7 @@ impl<'a> Parser<'a> {
                 let (version, features) = self.rust_import_spec()?;
                 self.expect_keyword(KeywordId::Import, "Expected 'import' after rust crate path")?;
 
-                // Parse import items
-                let mut items = Vec::new();
-                loop {
-                    let name = self.identifier()?;
-                    let alias = if self.match_keyword(KeywordId::As) {
-                        Some(self.identifier()?)
-                    } else {
-                        None
-                    };
-                    items.push(ImportItem { name, alias });
-
-                    if !self.match_punct(PunctuationId::Comma) {
-                        break;
-                    }
-                }
+                let items = self.parse_import_items()?;
 
                 return Ok(ImportDecl {
                     kind: ImportKind::RustFrom {
@@ -49,21 +35,8 @@ impl<'a> Parser<'a> {
             let module = self.import_path()?;
             self.expect_keyword(KeywordId::Import, "Expected 'import' after module path")?;
 
-            // Parse import items: item1, item2 as alias, item3, ...
-            let mut items = Vec::new();
-            loop {
-                let name = self.identifier()?;
-                let alias = if self.match_keyword(KeywordId::As) {
-                    Some(self.identifier()?)
-                } else {
-                    None
-                };
-                items.push(ImportItem { name, alias });
-
-                if !self.match_punct(PunctuationId::Comma) {
-                    break;
-                }
-            }
+            // Parse import items: `ItemA, ItemB as alias` or `(ItemA, ItemB as alias,)`.
+            let items = self.parse_import_items()?;
 
             return Ok(ImportDecl {
                 kind: ImportKind::From { module, items },
@@ -235,5 +208,49 @@ impl<'a> Parser<'a> {
             is_absolute,
             segments,
         })
+    }
+
+    /// Parse a comma-separated list of import items, with optional parenthesization.
+    ///
+    /// Accepts both:
+    /// - Bare list: `ItemA, ItemB as alias, ItemC`
+    /// - Parenthesized list: `(\n    ItemA,\n    ItemB as alias,\n    ItemC,\n)`
+    ///
+    /// The lexer's `bracket_depth` tracking suppresses `Newline`/`Indent`/`Dedent` tokens inside
+    /// `(...)`, so no explicit newline handling is needed here — multi-line layouts parse
+    /// identically to single-line layouts.
+    fn parse_import_items(&mut self) -> Result<Vec<ImportItem>, CompileError> {
+        let parenthesized = self.match_punct(PunctuationId::LParen);
+        let mut items = Vec::new();
+
+        // ---- Empty parenthesized list: `from db import ()` ----
+        if parenthesized && self.match_punct(PunctuationId::RParen) {
+            return Err(errors::import_list_empty(self.current_span()));
+        }
+
+        // ---- Parse one item at a time ----
+        loop {
+            let name = self.identifier()?;
+            let alias = if self.match_keyword(KeywordId::As) {
+                Some(self.identifier()?)
+            } else {
+                None
+            };
+            items.push(ImportItem { name, alias });
+
+            if !self.match_punct(PunctuationId::Comma) {
+                break;
+            }
+            // Allow a trailing comma before `)` without requiring another identifier.
+            if parenthesized && self.check_punct(PunctuationId::RParen) {
+                break;
+            }
+        }
+
+        if parenthesized {
+            self.expect_punct(PunctuationId::RParen, "Expected ')' to close import list")?;
+        }
+
+        Ok(items)
     }
 }

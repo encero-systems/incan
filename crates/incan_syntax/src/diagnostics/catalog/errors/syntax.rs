@@ -93,6 +93,11 @@ pub fn import_path_expected_separator_after_super(span: Span) -> CompileError {
     CompileError::syntax("Expected '::' or '.' after 'super'".to_string(), span)
 }
 
+pub fn import_list_empty(span: Span) -> CompileError {
+    CompileError::syntax("Import list cannot be empty".to_string(), span)
+        .with_hint("Add at least one name to import, e.g. `from module import (Name)`")
+}
+
 pub fn rust_import_features_require_version(span: Span) -> CompileError {
     CompileError::syntax("Rust import features require a version annotation".to_string(), span)
         .with_hint("Use `@ \"version\" with [\"feature\"]` on the rust import")

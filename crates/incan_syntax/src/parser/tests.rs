@@ -790,6 +790,204 @@ def add(a: int, b: int) -> int:
         );
     }
 
+    // ==============================================
+    // Issue #116: parenthesized multi-line imports
+    // ==============================================
+
+    /// Single identifier in parentheses: `from db import (CategoryId)`.
+    #[test]
+    fn test_parse_from_import_parenthesized_single_item() -> Result<(), Vec<CompileError>> {
+        let source = "from db import (CategoryId)\n";
+        let program = parse_str(source)?;
+        assert_eq!(program.declarations.len(), 1);
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::From { items, .. } => {
+                    assert_eq!(items.len(), 1);
+                    assert_eq!(items[0].name, "CategoryId");
+                    assert_eq!(items[0].alias, None);
+                }
+                _ => panic!("Expected From import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    /// Multiple identifiers in parentheses on one line: `from db import (CategoryId, TagId)`.
+    #[test]
+    fn test_parse_from_import_parenthesized_multi_item_single_line() -> Result<(), Vec<CompileError>> {
+        let source = "from db import (CategoryId, TagId)\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::From { items, .. } => {
+                    assert_eq!(items.len(), 2);
+                    assert_eq!(items[0].name, "CategoryId");
+                    assert_eq!(items[1].name, "TagId");
+                }
+                _ => panic!("Expected From import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    /// Multi-line parenthesized import — the lexer drops newlines inside `(...)` so the parser sees the same token
+    /// stream as the single-line version.
+    #[test]
+    fn test_parse_from_import_parenthesized_multi_line() -> Result<(), Vec<CompileError>> {
+        let source = "from db import (\n    CategoryId,\n    TagId,\n    OtherId\n)\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::From { items, .. } => {
+                    assert_eq!(items.len(), 3);
+                    assert_eq!(items[0].name, "CategoryId");
+                    assert_eq!(items[1].name, "TagId");
+                    assert_eq!(items[2].name, "OtherId");
+                }
+                _ => panic!("Expected From import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    /// Trailing comma before `)` is allowed: `from db import (CategoryId, TagId,)`.
+    #[test]
+    fn test_parse_from_import_parenthesized_trailing_comma() -> Result<(), Vec<CompileError>> {
+        let source = "from db import (CategoryId, TagId,)\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::From { items, .. } => {
+                    assert_eq!(items.len(), 2);
+                    assert_eq!(items[0].name, "CategoryId");
+                    assert_eq!(items[1].name, "TagId");
+                }
+                _ => panic!("Expected From import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    /// Items with `as` aliases in a parenthesized list.
+    #[test]
+    fn test_parse_from_import_parenthesized_with_aliases() -> Result<(), Vec<CompileError>> {
+        let source = "from db import (\n    CategoryId as CatId,\n    TagId,\n)\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::From { items, .. } => {
+                    assert_eq!(items.len(), 2);
+                    assert_eq!(items[0].name, "CategoryId");
+                    assert_eq!(items[0].alias, Some("CatId".to_string()));
+                    assert_eq!(items[1].name, "TagId");
+                    assert_eq!(items[1].alias, None);
+                }
+                _ => panic!("Expected From import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    /// Missing `)` produces a parse error that mentions the closing delimiter.
+    #[test]
+    fn test_parse_from_import_parenthesized_unclosed_error() {
+        let source = "from db import (CategoryId, TagId\n";
+        let result = parse_str(source);
+        let err = result.expect_err("Unclosed import list should produce a parse error");
+        assert!(
+            err[0].message.contains(')') || err[0].message.to_lowercase().contains("close"),
+            "Expected error to mention ')'; got: {}",
+            err[0].message
+        );
+    }
+
+    /// Empty parenthesized list `from db import ()` is a parse error.
+    #[test]
+    fn test_parse_from_import_empty_parens_error() {
+        let source = "from db import ()\n";
+        let result = parse_str(source);
+        let err = result.expect_err("Empty import list should produce a parse error");
+        assert!(
+            err[0].message.to_lowercase().contains("empty") || err[0].message.to_lowercase().contains("cannot"),
+            "Expected 'empty' diagnostic; got: {}",
+            err[0].message
+        );
+    }
+
+    /// `from rust::...` also supports parenthesized items.
+    #[test]
+    fn test_parse_rust_from_import_parenthesized() -> Result<(), Vec<CompileError>> {
+        let source = "from rust::serde_json import (\n    Value,\n    Map,\n)\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::RustFrom { crate_name, items, .. } => {
+                    assert_eq!(crate_name, "serde_json");
+                    assert_eq!(items.len(), 2);
+                    assert_eq!(items[0].name, "Value");
+                    assert_eq!(items[1].name, "Map");
+                }
+                _ => panic!("Expected RustFrom import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    /// Mixed aliased/non-aliased items work in parenthesized `from rust::` imports.
+    #[test]
+    fn test_parse_rust_from_import_parenthesized_mixed_aliases() -> Result<(), Vec<CompileError>> {
+        let source = "from rust::polars import (\n    DataFrame,\n    Series as S,\n    LazyFrame as LF,\n    Expr,\n)\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::RustFrom { crate_name, items, .. } => {
+                    assert_eq!(crate_name, "polars");
+                    assert_eq!(items.len(), 4);
+                    assert_eq!(items[0].name, "DataFrame");
+                    assert_eq!(items[0].alias, None);
+                    assert_eq!(items[1].name, "Series");
+                    assert_eq!(items[1].alias, Some("S".to_string()));
+                    assert_eq!(items[2].name, "LazyFrame");
+                    assert_eq!(items[2].alias, Some("LF".to_string()));
+                    assert_eq!(items[3].name, "Expr");
+                    assert_eq!(items[3].alias, None);
+                }
+                _ => panic!("Expected RustFrom import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    /// `from rust::...` with version/feature specifiers also supports parenthesized items.
+    #[test]
+    fn test_parse_rust_from_import_with_version_and_parens() -> Result<(), Vec<CompileError>> {
+        let source = "from rust::serde_json @ \"1.0\" with [\"derive\"] import (\n    Value,\n    Map,\n)\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::RustFrom { crate_name, version, features, items, .. } => {
+                    assert_eq!(crate_name, "serde_json");
+                    assert_eq!(version.as_deref(), Some("1.0"));
+                    assert_eq!(features, &["derive".to_string()]);
+                    assert_eq!(items.len(), 2);
+                    assert_eq!(items[0].name, "Value");
+                    assert_eq!(items[1].name, "Map");
+                }
+                _ => panic!("Expected RustFrom import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
     #[test]
     fn test_parse_match() -> Result<(), Vec<CompileError>> {
         let source = r#"
