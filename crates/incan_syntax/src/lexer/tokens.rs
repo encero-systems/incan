@@ -51,7 +51,11 @@ pub enum TokenKind {
 #[derive(Debug, Clone, PartialEq)]
 pub enum FStringPart {
     Literal(String),
-    Expr(String), // We store the raw expression string; parser will parse it
+    Expr {
+        text: String,
+        /// Byte offset of the opening `{` in source.
+        offset: usize,
+    },
 }
 
 /// A token with its kind and source span.

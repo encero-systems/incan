@@ -133,7 +133,7 @@ pub fn info_for(id: StringLikeId) -> &'static StringLikeInfo {
     STRING_LIKE_TYPES
         .iter()
         .find(|t| t.id == id)
-        .expect("string-like info missing")
+        .expect("INVARIANT: string-like info missing")
 }
 
 const fn info(

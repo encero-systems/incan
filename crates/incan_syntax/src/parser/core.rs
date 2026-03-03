@@ -24,6 +24,8 @@ pub struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
     errors: Vec<CompileError>,
+    /// Non-fatal warnings accumulated during parsing (e.g. style nudges that don't block compilation).
+    warnings: Vec<CompileError>,
     active_soft_keywords: std::collections::HashSet<KeywordId>,
 }
 
@@ -37,6 +39,7 @@ impl<'a> Parser<'a> {
             tokens,
             pos: 0,
             errors: Vec::new(),
+            warnings: Vec::new(),
             active_soft_keywords: std::collections::HashSet::new(),
         }
     }
@@ -107,8 +110,12 @@ impl<'a> Parser<'a> {
             Ok(Program {
                 declarations,
                 rust_module_path,
+                warnings: self.warnings,
             })
         } else {
+            // Fold non-fatal warnings into the error list so callers don't silently lose them when parsing fails.
+            // Warnings retain their `ErrorKind::Warning` kind so callers can still distinguish them from errors if needed.
+            self.errors.append(&mut self.warnings);
             Err(self.errors)
         }
     }

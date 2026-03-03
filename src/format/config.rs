@@ -64,6 +64,12 @@ impl FormatConfig {
         self.quote_style = style;
         self
     }
+
+    /// Set whether trailing commas are emitted in multi-line constructs
+    pub fn with_trailing_commas(mut self, trailing: bool) -> Self {
+        self.trailing_commas = trailing;
+        self
+    }
 }
 
 #[cfg(test)]

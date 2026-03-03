@@ -60,6 +60,20 @@ impl CompileError {
         }
     }
 
+    /// Create a non-fatal warning (kind = [`ErrorKind::Warning`]).
+    ///
+    /// Warnings do not prevent compilation. They surface in the CLI output and LSP diagnostics as yellow squiggles /
+    /// `warning:` labels.
+    pub fn warning(message: String, span: Span) -> Self {
+        Self {
+            message,
+            span,
+            kind: ErrorKind::Warning,
+            notes: Vec::new(),
+            hints: Vec::new(),
+        }
+    }
+
     /// Append a contextual note ("= note: …") to this error.
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult};
 use crate::dependency_resolver::{DependencyError, InlineRustImport};
-use crate::frontend::ast::ImportKind;
+use crate::frontend::ast::{ImportKind, Span};
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
@@ -119,7 +119,14 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
         };
 
         let ast = match parser::parse(&tokens) {
-            Ok(a) => a,
+            Ok(a) => {
+                // Surface any non-fatal parser warnings (e.g. RFC 005 dot-notation nudges) immediately,
+                // so they reach the user regardless of which build/run/debug command was invoked.
+                for warn in &a.warnings {
+                    eprint!("{}", diagnostics::format_error(&file_path, &source, warn));
+                }
+                a
+            }
             Err(errs) => {
                 let mut msg = String::new();
                 for err in &errs {
@@ -336,6 +343,45 @@ pub(crate) fn validate_output_dir(out_dir: &str) -> CliResult<()> {
     Ok(())
 }
 
+/// Format a Rust import base path like `rust::serde_json` or `rust::chrono::naive::date`.
+pub(crate) fn format_rust_import_base_path(crate_name: &str, path: &[String]) -> String {
+    if path.is_empty() {
+        format!("rust::{}", crate_name)
+    } else {
+        format!("rust::{}::{}", crate_name, path.join("::"))
+    }
+}
+
+/// Format a Rust from-import path like `from rust::serde_json import from_str, to_string`.
+pub(crate) fn format_rust_from_import_path(crate_name: &str, path: &[String], imported: &[String]) -> String {
+    format!(
+        "from {} import {}",
+        format_rust_import_base_path(crate_name, path),
+        imported.join(", ")
+    )
+}
+
+/// Build an inline Rust import record for dependency resolution.
+pub(crate) fn build_inline_rust_import(
+    crate_name: &str,
+    import_path: String,
+    version: &Option<String>,
+    features: &[String],
+    span: Span,
+    file_path: &Path,
+    is_test_context: bool,
+) -> InlineRustImport {
+    InlineRustImport {
+        crate_name: crate_name.to_string(),
+        import_path,
+        version: version.clone(),
+        features: features.to_vec(),
+        span,
+        file_path: file_path.to_path_buf(),
+        is_test_context,
+    }
+}
+
 /// Extract inline Rust crate imports from a parsed module.
 pub(crate) fn collect_inline_rust_imports(module: &ParsedModule, is_test_context: bool) -> Vec<InlineRustImport> {
     let mut imports = Vec::new();
@@ -348,33 +394,41 @@ pub(crate) fn collect_inline_rust_imports(module: &ParsedModule, is_test_context
         match &import.kind {
             ImportKind::RustCrate {
                 crate_name,
+                path,
                 version,
                 features,
                 ..
             } => {
-                imports.push(InlineRustImport {
-                    crate_name: crate_name.clone(),
-                    version: version.clone(),
-                    features: features.clone(),
-                    span: decl.span,
-                    file_path: module.file_path.clone(),
+                let import_path = format_rust_import_base_path(crate_name, path);
+                imports.push(build_inline_rust_import(
+                    crate_name,
+                    import_path,
+                    version,
+                    features,
+                    decl.span,
+                    &module.file_path,
                     is_test_context,
-                });
+                ));
             }
             ImportKind::RustFrom {
                 crate_name,
+                path,
+                items,
                 version,
                 features,
                 ..
             } => {
-                imports.push(InlineRustImport {
-                    crate_name: crate_name.clone(),
-                    version: version.clone(),
-                    features: features.clone(),
-                    span: decl.span,
-                    file_path: module.file_path.clone(),
+                let imported = items.iter().map(|item| item.name.clone()).collect::<Vec<_>>();
+                let import_path = format_rust_from_import_path(crate_name, path, &imported);
+                imports.push(build_inline_rust_import(
+                    crate_name,
+                    import_path,
+                    version,
+                    features,
+                    decl.span,
+                    &module.file_path,
                     is_test_context,
-                });
+                ));
             }
             _ => {}
         }

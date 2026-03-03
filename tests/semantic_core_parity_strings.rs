@@ -4,7 +4,7 @@
 use incan::frontend::typechecker::{ConstValue, TypeCheckInfo};
 use incan::frontend::{lexer, parser, typechecker};
 use incan_core::errors::IncanError;
-use incan_core::strings::{str_char_at, str_concat, str_contains, str_slice};
+use incan_core::strings::{StringAccessError, str_char_at, str_concat, str_contains, str_slice};
 use incan_stdlib::strings::{str_concat as rt_str_concat, str_index as rt_str_index, str_slice as rt_str_slice};
 
 fn run_const_eval_with_info(src: &str) -> Result<TypeCheckInfo, Vec<String>> {
@@ -30,36 +30,36 @@ fn semantics_vs_runtime_concat_and_contains() {
 }
 
 #[test]
-fn semantics_vs_runtime_index_and_slice() {
+fn semantics_vs_runtime_index_and_slice() -> Result<(), StringAccessError> {
     let s = "héllo";
     // Index
-    assert_eq!(rt_str_index(s, 1), str_char_at(s, 1).unwrap());
-    assert_eq!(rt_str_index(s, -1), str_char_at(s, -1).unwrap());
+    assert_eq!(rt_str_index(s, 1), str_char_at(s, 1)?);
+    assert_eq!(rt_str_index(s, -1), str_char_at(s, -1)?);
 
     // Slice forward
     assert_eq!(
         rt_str_slice(s, Some(1), Some(4), Some(1)),
-        str_slice(s, Some(1), Some(4), Some(1)).unwrap()
+        str_slice(s, Some(1), Some(4), Some(1))?
     );
     // Slice with step
     assert_eq!(
         rt_str_slice(s, Some(0), Some(5), Some(2)),
-        str_slice(s, Some(0), Some(5), Some(2)).unwrap()
+        str_slice(s, Some(0), Some(5), Some(2))?
     );
     // Slice backwards
     assert_eq!(
         rt_str_slice(s, Some(4), Some(0), Some(-2)),
-        str_slice(s, Some(4), Some(0), Some(-2)).unwrap()
+        str_slice(s, Some(4), Some(0), Some(-2))?
     );
     // Slice backwards with default end (Python-like `[::-1]` behavior)
     assert_eq!(
         rt_str_slice(s, Some(-1), None, Some(-1)),
-        str_slice(s, Some(-1), None, Some(-1)).unwrap()
+        str_slice(s, Some(-1), None, Some(-1))?
     );
     // Negative start
     assert_eq!(
         rt_str_slice(s, Some(-2), None, None),
-        str_slice(s, Some(-2), None, None).unwrap()
+        str_slice(s, Some(-2), None, None)?
     );
 
     // Methods parity
@@ -77,6 +77,7 @@ fn semantics_vs_runtime_index_and_slice() {
     );
     assert!(incan_stdlib::strings::str_starts_with("hello", "he"));
     assert!(incan_stdlib::strings::str_ends_with("hello", "lo"));
+    Ok(())
 }
 
 #[test]
@@ -92,7 +93,7 @@ fn runtime_slice_panics_on_zero_step() {
 }
 
 #[test]
-fn const_eval_computes_string_values() {
+fn const_eval_computes_string_values() -> Result<(), String> {
     let src = r#"
 pub const S: str = "héllo"
 pub const A: str = S[1]
@@ -102,12 +103,12 @@ pub const D: bool = "é" in S
 pub const E: bool = "z" not in S
 pub const F: str = "foo" + "bar"
 "#;
-    let info = run_const_eval_with_info(src).expect("const-eval should succeed");
+    let info = run_const_eval_with_info(src).map_err(|errs| errs.join("; "))?;
 
     let s = "héllo";
-    let expected_a = str_char_at(s, 1).unwrap();
-    let expected_b = str_slice(s, Some(-2), None, None).unwrap();
-    let expected_c = str_slice(s, Some(0), Some(5), Some(2)).unwrap();
+    let expected_a = str_char_at(s, 1).map_err(|e| e.to_string())?;
+    let expected_b = str_slice(s, Some(-2), None, None).map_err(|e| e.to_string())?;
+    let expected_c = str_slice(s, Some(0), Some(5), Some(2)).map_err(|e| e.to_string())?;
     let expected_d = str_contains(s, "é");
     let expected_e = !str_contains(s, "z");
     let expected_f = str_concat("foo", "bar");
@@ -124,6 +125,7 @@ pub const F: str = "foo" + "bar"
         Some(ConstValue::Bool(b)) => assert_eq!(*b, expected_e),
         other => panic!("expected bool const value for E, got {:?}", other),
     }
+    Ok(())
 }
 
 #[test]
@@ -132,7 +134,10 @@ fn const_eval_reports_string_access_errors() {
 pub const S: str = "abc"
 pub const BAD: str = S[99]
 "#;
-    let errs = run_const_eval_with_info(idx_src).unwrap_err();
+    let errs = match run_const_eval_with_info(idx_src) {
+        Err(e) => e,
+        Ok(_) => panic!("expected const-eval to fail for out-of-bounds index"),
+    };
     let expected = IncanError::string_index_out_of_range().to_string();
     assert!(
         errs.iter().any(|e| e.contains(&expected)),
@@ -143,7 +148,10 @@ pub const BAD: str = S[99]
 pub const S: str = "abc"
 pub const BAD: str = S[0:3:0]
 "#;
-    let errs = run_const_eval_with_info(step_src).unwrap_err();
+    let errs = match run_const_eval_with_info(step_src) {
+        Err(e) => e,
+        Ok(_) => panic!("expected const-eval to fail for zero slice step"),
+    };
     let expected = IncanError::slice_step_zero().to_string();
     assert!(
         errs.iter().any(|e| e.contains(&expected)),

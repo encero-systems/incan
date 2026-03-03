@@ -710,6 +710,284 @@ def add(a: int, b: int) -> int:
         );
     }
 
+    /// RFC 005: `from rust.crate import Item` emits a warning and parses successfully.
+    #[test]
+    fn test_parse_rust_from_import_dot_notation_is_warning() {
+        let source = "from rust.chrono import Utc\n";
+        let Ok(program) = parse_str(source) else {
+            panic!("`from rust.crate import ...` dot-notation should parse successfully with a warning");
+        };
+        assert_eq!(program.warnings.len(), 1, "Expected exactly one warning");
+        assert!(
+            program.warnings[0].message.contains("::"),
+            "Expected warning to mention '::' notation; got: {}",
+            program.warnings[0].message
+        );
+    }
+
+    /// RFC 005: `import rust.crate` emits a warning and parses successfully.
+    #[test]
+    fn test_parse_rust_import_dot_notation_is_warning() {
+        let source = "import rust.serde_json\n";
+        let Ok(program) = parse_str(source) else {
+            panic!("`import rust.crate` dot-notation should parse successfully with a warning");
+        };
+        assert_eq!(program.warnings.len(), 1, "Expected exactly one warning");
+        assert!(
+            program.warnings[0].message.contains("::"),
+            "Expected warning to mention '::' notation; got: {}",
+            program.warnings[0].message
+        );
+    }
+
+    /// RFC 005: `import rust.std.time` (multi-segment bare import, dot path) recovers fully.
+    ///
+    /// Mirrors `test_parse_rust_from_import_multi_dot_notation_is_warning` but for the bare  `import rust.X.Y` form,
+    /// ensuring `rust_crate_path()` dot-recovery works on both branches.
+    #[test]
+    fn test_parse_rust_import_multi_dot_notation_is_warning() {
+        let source = "import rust.std.time\n";
+        let Ok(program) = parse_str(source) else {
+            panic!("`import rust.std.time` multi-dot dot-notation should parse successfully with a warning");
+        };
+        assert_eq!(program.warnings.len(), 1, "Expected exactly one warning for the leading dot");
+        assert!(
+            program.warnings[0].message.contains("::"),
+            "Expected warning to mention '::' notation; got: {}",
+            program.warnings[0].message
+        );
+        // Verify the path was correctly decomposed: crate=std, path=[time]
+        if let Some(decl) = program.declarations.first()
+            && let crate::ast::Declaration::Import(import) = &decl.node
+        {
+            assert!(
+                matches!(
+                    &import.kind,
+                    crate::ast::ImportKind::RustCrate { crate_name, path, .. }
+                    if crate_name == "std" && path == &["time".to_string()]
+                ),
+                "Expected RustCrate {{ crate_name: std, path: [time] }}; got: {:?}",
+                import.kind
+            );
+        }
+    }
+
+    /// RFC 005: `from rust.std.time import Instant` (multi-segment dot path) recovers fully.
+    ///
+    /// `rust_crate_path()` accepts both `::` and `.` as separators, so the entire dotted path is consumed and no
+    /// cascading parse error occurs.
+    #[test]
+    fn test_parse_rust_from_import_multi_dot_notation_is_warning() {
+        let source = "from rust.std.time import Instant\n";
+        let Ok(program) = parse_str(source) else {
+            panic!("`from rust.std.time import ...` multi-dot dot-notation should parse successfully with a warning");
+        };
+        assert_eq!(program.warnings.len(), 1, "Expected exactly one warning for the leading dot");
+        assert!(
+            program.warnings[0].message.contains("::"),
+            "Expected warning to mention '::' notation; got: {}",
+            program.warnings[0].message
+        );
+    }
+
+    // ==============================================
+    // Issue #116: parenthesized multi-line imports
+    // ==============================================
+
+    /// Single identifier in parentheses: `from db import (CategoryId)`.
+    #[test]
+    fn test_parse_from_import_parenthesized_single_item() -> Result<(), Vec<CompileError>> {
+        let source = "from db import (CategoryId)\n";
+        let program = parse_str(source)?;
+        assert_eq!(program.declarations.len(), 1);
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::From { items, .. } => {
+                    assert_eq!(items.len(), 1);
+                    assert_eq!(items[0].name, "CategoryId");
+                    assert_eq!(items[0].alias, None);
+                }
+                _ => panic!("Expected From import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    /// Multiple identifiers in parentheses on one line: `from db import (CategoryId, TagId)`.
+    #[test]
+    fn test_parse_from_import_parenthesized_multi_item_single_line() -> Result<(), Vec<CompileError>> {
+        let source = "from db import (CategoryId, TagId)\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::From { items, .. } => {
+                    assert_eq!(items.len(), 2);
+                    assert_eq!(items[0].name, "CategoryId");
+                    assert_eq!(items[1].name, "TagId");
+                }
+                _ => panic!("Expected From import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    /// Multi-line parenthesized import — the lexer drops newlines inside `(...)` so the parser sees the same token
+    /// stream as the single-line version.
+    #[test]
+    fn test_parse_from_import_parenthesized_multi_line() -> Result<(), Vec<CompileError>> {
+        let source = "from db import (\n    CategoryId,\n    TagId,\n    OtherId\n)\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::From { items, .. } => {
+                    assert_eq!(items.len(), 3);
+                    assert_eq!(items[0].name, "CategoryId");
+                    assert_eq!(items[1].name, "TagId");
+                    assert_eq!(items[2].name, "OtherId");
+                }
+                _ => panic!("Expected From import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    /// Trailing comma before `)` is allowed: `from db import (CategoryId, TagId,)`.
+    #[test]
+    fn test_parse_from_import_parenthesized_trailing_comma() -> Result<(), Vec<CompileError>> {
+        let source = "from db import (CategoryId, TagId,)\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::From { items, .. } => {
+                    assert_eq!(items.len(), 2);
+                    assert_eq!(items[0].name, "CategoryId");
+                    assert_eq!(items[1].name, "TagId");
+                }
+                _ => panic!("Expected From import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    /// Items with `as` aliases in a parenthesized list.
+    #[test]
+    fn test_parse_from_import_parenthesized_with_aliases() -> Result<(), Vec<CompileError>> {
+        let source = "from db import (\n    CategoryId as CatId,\n    TagId,\n)\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::From { items, .. } => {
+                    assert_eq!(items.len(), 2);
+                    assert_eq!(items[0].name, "CategoryId");
+                    assert_eq!(items[0].alias, Some("CatId".to_string()));
+                    assert_eq!(items[1].name, "TagId");
+                    assert_eq!(items[1].alias, None);
+                }
+                _ => panic!("Expected From import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    /// Missing `)` produces a parse error that mentions the closing delimiter.
+    #[test]
+    fn test_parse_from_import_parenthesized_unclosed_error() {
+        let source = "from db import (CategoryId, TagId\n";
+        let result = parse_str(source);
+        let err = result.expect_err("Unclosed import list should produce a parse error");
+        assert!(
+            err[0].message.contains(')') || err[0].message.to_lowercase().contains("close"),
+            "Expected error to mention ')'; got: {}",
+            err[0].message
+        );
+    }
+
+    /// Empty parenthesized list `from db import ()` is a parse error.
+    #[test]
+    fn test_parse_from_import_empty_parens_error() {
+        let source = "from db import ()\n";
+        let result = parse_str(source);
+        let err = result.expect_err("Empty import list should produce a parse error");
+        assert!(
+            err[0].message.to_lowercase().contains("empty") || err[0].message.to_lowercase().contains("cannot"),
+            "Expected 'empty' diagnostic; got: {}",
+            err[0].message
+        );
+    }
+
+    /// `from rust::...` also supports parenthesized items.
+    #[test]
+    fn test_parse_rust_from_import_parenthesized() -> Result<(), Vec<CompileError>> {
+        let source = "from rust::serde_json import (\n    Value,\n    Map,\n)\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::RustFrom { crate_name, items, .. } => {
+                    assert_eq!(crate_name, "serde_json");
+                    assert_eq!(items.len(), 2);
+                    assert_eq!(items[0].name, "Value");
+                    assert_eq!(items[1].name, "Map");
+                }
+                _ => panic!("Expected RustFrom import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    /// Mixed aliased/non-aliased items work in parenthesized `from rust::` imports.
+    #[test]
+    fn test_parse_rust_from_import_parenthesized_mixed_aliases() -> Result<(), Vec<CompileError>> {
+        let source = "from rust::polars import (\n    DataFrame,\n    Series as S,\n    LazyFrame as LF,\n    Expr,\n)\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::RustFrom { crate_name, items, .. } => {
+                    assert_eq!(crate_name, "polars");
+                    assert_eq!(items.len(), 4);
+                    assert_eq!(items[0].name, "DataFrame");
+                    assert_eq!(items[0].alias, None);
+                    assert_eq!(items[1].name, "Series");
+                    assert_eq!(items[1].alias, Some("S".to_string()));
+                    assert_eq!(items[2].name, "LazyFrame");
+                    assert_eq!(items[2].alias, Some("LF".to_string()));
+                    assert_eq!(items[3].name, "Expr");
+                    assert_eq!(items[3].alias, None);
+                }
+                _ => panic!("Expected RustFrom import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    /// `from rust::...` with version/feature specifiers also supports parenthesized items.
+    #[test]
+    fn test_parse_rust_from_import_with_version_and_parens() -> Result<(), Vec<CompileError>> {
+        let source = "from rust::serde_json @ \"1.0\" with [\"derive\"] import (\n    Value,\n    Map,\n)\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::RustFrom { crate_name, version, features, items, .. } => {
+                    assert_eq!(crate_name, "serde_json");
+                    assert_eq!(version.as_deref(), Some("1.0"));
+                    assert_eq!(features, &["derive".to_string()]);
+                    assert_eq!(items.len(), 2);
+                    assert_eq!(items[0].name, "Value");
+                    assert_eq!(items[1].name, "Map");
+                }
+                _ => panic!("Expected RustFrom import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
     #[test]
     fn test_parse_match() -> Result<(), Vec<CompileError>> {
         let source = r#"
@@ -774,6 +1052,209 @@ const ANSWER: int = 42
             }
             _ => panic!("Expected const"),
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_fstring_expr_spans_multiple_interpolations() -> Result<(), Vec<CompileError>> {
+        let source = "def greet(name: str, title: str) -> str:\n  return f\"Hello {title} {name}\"\n";
+        let program = parse_str(source)?;
+
+        let function = match &program.declarations[0].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function"),
+        };
+
+        let return_expr = match &function.body[0].node {
+            Statement::Return(Some(expr)) => expr,
+            _ => panic!("Expected return with expression"),
+        };
+
+        let parts = match &return_expr.node {
+            Expr::FString(parts) => parts,
+            _ => panic!("Expected f-string expression"),
+        };
+
+        let first_expected_start = match source.find("{title}") {
+            Some(start) => start,
+            None => panic!("Could not find first interpolation in source"),
+        };
+        let second_expected_start = match source.find("{name}") {
+            Some(start) => start,
+            None => panic!("Could not find second interpolation in source"),
+        };
+
+        let first_expr = match &parts[1] {
+            FStringPart::Expr(expr) => expr,
+            _ => panic!("Expected first interpolation expression"),
+        };
+        assert_eq!(first_expr.span.start, first_expected_start);
+        assert_eq!(first_expr.span.end, first_expected_start + "{title}".len());
+
+        let second_expr = match &parts[3] {
+            FStringPart::Expr(expr) => expr,
+            _ => panic!("Expected second interpolation expression"),
+        };
+        assert_eq!(second_expr.span.start, second_expected_start);
+        assert_eq!(second_expr.span.end, second_expected_start + "{name}".len());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_fstring_expr_span_nested_expression() -> Result<(), Vec<CompileError>> {
+        let source = "def calc(x: int, y: int, z: int) -> str:\n  return f\"value: {x + y * z}\"\n";
+        let program = parse_str(source)?;
+
+        let function = match &program.declarations[0].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function"),
+        };
+
+        let return_expr = match &function.body[0].node {
+            Statement::Return(Some(expr)) => expr,
+            _ => panic!("Expected return with expression"),
+        };
+
+        let parts = match &return_expr.node {
+            Expr::FString(parts) => parts,
+            _ => panic!("Expected f-string expression"),
+        };
+
+        let expected_start = match source.find("{x + y * z}") {
+            Some(start) => start,
+            None => panic!("Could not find interpolation in source"),
+        };
+
+        let interpolation = match &parts[1] {
+            FStringPart::Expr(expr) => expr,
+            _ => panic!("Expected interpolation expression"),
+        };
+
+        assert_eq!(interpolation.span.start, expected_start);
+        assert_eq!(interpolation.span.end, expected_start + "{x + y * z}".len());
+        assert!(matches!(interpolation.node, Expr::Binary(_, _, _)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_fstring_expr_span_method_call_with_index() -> Result<(), Vec<CompileError>> {
+        let source = "def render(users: List[str]) -> str:\n  return f\"user: {users[unknown_idx].upper()}\"\n";
+        let program = parse_str(source)?;
+
+        let function = match &program.declarations[0].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function"),
+        };
+
+        let return_expr = match &function.body[0].node {
+            Statement::Return(Some(expr)) => expr,
+            _ => panic!("Expected return with expression"),
+        };
+
+        let parts = match &return_expr.node {
+            Expr::FString(parts) => parts,
+            _ => panic!("Expected f-string expression"),
+        };
+
+        let expected_start = match source.find("{users[unknown_idx].upper()}") {
+            Some(start) => start,
+            None => panic!("Could not find interpolation in source"),
+        };
+
+        let interpolation = match &parts[1] {
+            FStringPart::Expr(expr) => expr,
+            _ => panic!("Expected interpolation expression"),
+        };
+        assert_eq!(interpolation.span.start, expected_start);
+        assert_eq!(
+            interpolation.span.end,
+            expected_start + "{users[unknown_idx].upper()}".len()
+        );
+
+        let (base, method, args) = match &interpolation.node {
+            Expr::MethodCall(base, method, args) => (base, method, args),
+            _ => panic!("Expected method call interpolation"),
+        };
+        assert_eq!(method, "upper");
+        assert!(args.is_empty());
+
+        let (_, index) = match &base.node {
+            Expr::Index(collection, index) => {
+                assert!(matches!(collection.node, Expr::Ident(ref name) if name == "users"));
+                (collection, index)
+            }
+            _ => panic!("Expected index expression as method base"),
+        };
+
+        let expected_index_start = match source.find("unknown_idx") {
+            Some(start) => start,
+            None => panic!("Could not find unknown_idx in source"),
+        };
+        assert!(matches!(index.node, Expr::Ident(ref name) if name == "unknown_idx"));
+        assert_eq!(index.span.start, expected_index_start);
+        assert_eq!(index.span.end, expected_index_start + "unknown_idx".len());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_fstring_expr_span_list_comp_filter_call() -> Result<(), Vec<CompileError>> {
+        let source = "def render(items: List[int]) -> str:\n  return f\"values: {[x for x in items if unknown_pred(x)]}\"\n";
+        let program = parse_str(source)?;
+
+        let function = match &program.declarations[0].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function"),
+        };
+
+        let return_expr = match &function.body[0].node {
+            Statement::Return(Some(expr)) => expr,
+            _ => panic!("Expected return with expression"),
+        };
+
+        let parts = match &return_expr.node {
+            Expr::FString(parts) => parts,
+            _ => panic!("Expected f-string expression"),
+        };
+
+        let expected_start = match source.find("{[x for x in items if unknown_pred(x)]}") {
+            Some(start) => start,
+            None => panic!("Could not find interpolation in source"),
+        };
+
+        let interpolation = match &parts[1] {
+            FStringPart::Expr(expr) => expr,
+            _ => panic!("Expected interpolation expression"),
+        };
+        assert_eq!(interpolation.span.start, expected_start);
+        assert_eq!(
+            interpolation.span.end,
+            expected_start + "{[x for x in items if unknown_pred(x)]}".len()
+        );
+
+        let comp = match &interpolation.node {
+            Expr::ListComp(comp) => comp,
+            _ => panic!("Expected list comprehension interpolation"),
+        };
+        let filter = match &comp.filter {
+            Some(filter) => filter,
+            None => panic!("Expected list comprehension filter"),
+        };
+        let callee = match &filter.node {
+            Expr::Call(callee, _args) => callee,
+            _ => panic!("Expected filter call expression"),
+        };
+
+        let expected_callee_start = match source.find("unknown_pred") {
+            Some(start) => start,
+            None => panic!("Could not find unknown_pred in source"),
+        };
+        assert!(matches!(callee.node, Expr::Ident(ref name) if name == "unknown_pred"));
+        assert_eq!(callee.span.start, expected_callee_start);
+        assert_eq!(callee.span.end, expected_callee_start + "unknown_pred".len());
+
         Ok(())
     }
 

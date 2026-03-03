@@ -52,6 +52,120 @@ def foo() -> int:
 }
 
 #[test]
+fn test_fstring_unknown_symbol_span_points_to_interpolation() {
+    let source = "def foo() -> str:\n  return f\"value: {unknown_var}\"\n";
+    let result = check_str(source);
+    assert!(result.is_err());
+
+    let errors = match result {
+        Ok(()) => {
+            panic!("Expected typechecker error for unknown symbol in f-string interpolation")
+        }
+        Err(errors) => errors,
+    };
+
+    let error = match errors
+        .iter()
+        .find(|e| e.message.contains("Unknown symbol 'unknown_var'"))
+    {
+        Some(error) => error,
+        None => panic!("Expected unknown symbol error for unknown_var; got: {errors:?}"),
+    };
+
+    let expected_start = match source.find("{unknown_var}") {
+        Some(start) => start,
+        None => panic!("Expected interpolation segment in source"),
+    };
+
+    assert_eq!(error.span.start, expected_start);
+    assert_eq!(error.span.end, expected_start + "{unknown_var}".len());
+}
+
+#[test]
+fn test_fstring_nested_unknown_symbol_span_rebased() {
+    let source = "def foo(x: int) -> str:\n  return f\"sum: {x + unknown_var}\"\n";
+    let result = check_str(source);
+    assert!(result.is_err());
+
+    let errors = match result {
+        Ok(()) => panic!("Expected typechecker error for nested unknown symbol in f-string interpolation"),
+        Err(errors) => errors,
+    };
+
+    let error = match errors
+        .iter()
+        .find(|e| e.message.contains("Unknown symbol 'unknown_var'"))
+    {
+        Some(error) => error,
+        None => panic!("Expected unknown symbol error for unknown_var; got: {errors:?}"),
+    };
+
+    let expected_start = match source.find("unknown_var") {
+        Some(start) => start,
+        None => panic!("Expected unknown symbol segment in source"),
+    };
+
+    assert_eq!(error.span.start, expected_start);
+    assert_eq!(error.span.end, expected_start + "unknown_var".len());
+}
+
+#[test]
+fn test_fstring_unknown_symbol_span_in_index_method_chain() {
+    let source = "def foo(users: List[str]) -> str:\n  return f\"value: {users[unknown_idx].upper()}\"\n";
+    let result = check_str(source);
+    assert!(result.is_err());
+
+    let errors = match result {
+        Ok(()) => panic!("Expected typechecker error for unknown symbol in index interpolation"),
+        Err(errors) => errors,
+    };
+
+    let error = match errors
+        .iter()
+        .find(|e| e.message.contains("Unknown symbol 'unknown_idx'"))
+    {
+        Some(error) => error,
+        None => panic!("Expected unknown symbol error for unknown_idx; got: {errors:?}"),
+    };
+
+    let expected_start = match source.find("unknown_idx") {
+        Some(start) => start,
+        None => panic!("Expected unknown symbol segment in source"),
+    };
+
+    assert_eq!(error.span.start, expected_start);
+    assert_eq!(error.span.end, expected_start + "unknown_idx".len());
+}
+
+#[test]
+fn test_fstring_unknown_symbol_span_in_list_comp_filter_call() {
+    let source = "def foo(items: List[int]) -> str:\n  return f\"value: {[x for x in items if unknown_pred(x)]}\"\n";
+    let result = check_str(source);
+    assert!(result.is_err());
+
+    let errors = match result {
+        Ok(()) => panic!("Expected typechecker error for unknown symbol in list comp interpolation"),
+        Err(errors) => errors,
+    };
+
+    let error = match errors
+        .iter()
+        .find(|e| e.message.contains("Unknown symbol 'unknown_pred'"))
+    {
+        Some(error) => error,
+        None => panic!("Expected unknown symbol error for unknown_pred; got: {errors:?}"),
+    };
+
+    let expected_start = match source.find("unknown_pred") {
+        Some(start) => start,
+        None => panic!("Expected unknown symbol segment in source"),
+    };
+
+    assert_eq!(error.span.start, expected_start);
+    assert_eq!(error.span.end, expected_start + "unknown_pred".len());
+}
+
+#[test]
 fn test_reserved_root_namespace_std() {
     // `std` is a reserved root namespace, so `def std() -> int: return 1` is rejected.
     let source = r#"
@@ -2032,6 +2146,52 @@ fn test_unknown_stdlib_module_from_import() {
         errs.iter().any(|e| e.message.contains("Unknown stdlib module")),
         "Expected unknown stdlib module error; got: {:?}",
         errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+// ========================================================================
+// RFC 005: Rust interop
+// ========================================================================
+
+#[test]
+fn test_rust_core_import_is_rejected() {
+    let source = "from rust::core::fmt import Debug\n";
+    let Err(errs) = check_str(source) else {
+        panic!("should fail: rust::core is reserved and unsupported");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("`rust::core` is not supported yet")),
+        "Expected rust::core unsupported diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    assert!(
+        errs.iter()
+            .flat_map(|e| e.hints.iter())
+            .any(|h| h.contains("rust::std::...")),
+        "Expected rust::std guidance hint; got: {:?}",
+        errs.iter().map(|e| &e.hints).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rust_alloc_import_is_rejected() {
+    let source = "import rust::alloc::vec\n";
+    let Err(errs) = check_str(source) else {
+        panic!("should fail: rust::alloc is reserved and unsupported");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("`rust::alloc` is not supported yet")),
+        "Expected rust::alloc unsupported diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    assert!(
+        errs.iter()
+            .flat_map(|e| e.hints.iter())
+            .any(|h| h.contains("rust::std::...")),
+        "Expected rust::std guidance hint; got: {:?}",
+        errs.iter().map(|e| &e.hints).collect::<Vec<_>>()
     );
 }
 

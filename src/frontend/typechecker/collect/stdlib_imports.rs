@@ -250,16 +250,17 @@ impl TypeChecker {
                 self.define_import_symbol(name, vec![pkg.clone()], true, span);
             }
             ImportKind::RustCrate { crate_name, path, .. } => {
-                // Rust crate import: import rust::serde_json or import rust::serde_json::Value
+                if self.reject_unsupported_rust_core_alloc(crate_name, span) {
+                    return;
+                }
+
+                // Rust crate import: `import rust::serde_json`` or `import rust::serde_json::Value`
                 let name = import
                     .alias
                     .clone()
                     .unwrap_or_else(|| path.last().cloned().unwrap_or_else(|| crate_name.clone()));
-                self.validate_root_namespace(&name, span);
-                let mut full_path = vec![crate_name.clone()];
-                full_path.extend(path.clone());
-                // Mark as "rust" import type for codegen
-                self.define_rust_import_symbol(name, crate_name.clone(), full_path, span);
+                let full_path = self.rust_import_full_path(crate_name, path, None);
+                self.define_rust_import_binding(name, crate_name, full_path, span);
             }
             ImportKind::RustFrom {
                 crate_name,
@@ -267,14 +268,15 @@ impl TypeChecker {
                 items,
                 ..  // version, features: not used here
             } => {
+                if self.reject_unsupported_rust_core_alloc(crate_name, span) {
+                    return;
+                }
+
                 // from rust::time import Instant, Duration
                 for item in items {
                     let name = item.alias.clone().unwrap_or_else(|| item.name.clone());
-                    self.validate_root_namespace(&name, span);
-                    let mut full_path = vec![crate_name.clone()];
-                    full_path.extend(path.clone());
-                    full_path.push(item.name.clone());
-                    self.define_rust_import_symbol(name, crate_name.clone(), full_path, span);
+                    let full_path = self.rust_import_full_path(crate_name, path, Some(&item.name));
+                    self.define_rust_import_binding(name, crate_name, full_path, span);
                 }
             }
         }
@@ -319,6 +321,33 @@ impl TypeChecker {
                 ));
             }
         }
+    }
+
+    /// Emit the RFC 005 diagnostic for unsupported `rust::core` / `rust::alloc` imports.
+    ///
+    /// Returns `true` when the crate is unsupported and an error was emitted.
+    fn reject_unsupported_rust_core_alloc(&mut self, crate_name: &str, span: Span) -> bool {
+        if crate_name == "core" || crate_name == "alloc" {
+            self.errors.push(errors::unsupported_rust_core_alloc(crate_name, span));
+            return true;
+        }
+        false
+    }
+
+    /// Build a full Rust import path vector from crate, optional module path, and optional item name.
+    fn rust_import_full_path(&self, crate_name: &str, path: &[Ident], item: Option<&str>) -> Vec<Ident> {
+        let mut full_path = vec![crate_name.to_string()];
+        full_path.extend(path.to_vec());
+        if let Some(item_name) = item {
+            full_path.push(item_name.to_string());
+        }
+        full_path
+    }
+
+    /// Validate and register a Rust import placeholder symbol for codegen.
+    fn define_rust_import_binding(&mut self, name: Ident, crate_name: &str, full_path: Vec<Ident>, span: Span) {
+        self.validate_root_namespace(&name, span);
+        self.define_rust_import_symbol(name, crate_name.to_string(), full_path, span);
     }
 
     /// Define a symbol for a Rust crate import, skipping if a real definition exists.

@@ -29,6 +29,16 @@ pub fn unknown_stdlib_module(module: &str, span: Span) -> CompileError {
         .with_hint("To import from the Rust standard library, use: `from rust::std::... import ...`")
 }
 
+/// Rust `core`/`alloc` imports are reserved for future no_std/target work.
+pub fn unsupported_rust_core_alloc(crate_name: &str, span: Span) -> CompileError {
+    CompileError::new(
+        format!("`rust::{crate_name}` is not supported yet (reserved for future no_std/target support)"),
+        span,
+    )
+    .with_hint("Use `rust::std::...` for standard-library interop in this release")
+    .with_note("Support for `rust::core` / `rust::alloc` will be introduced in a future RFC")
+}
+
 /// Soft keyword usage requires importing its stdlib namespace.
 pub fn soft_keyword_requires_import(keyword: &str, namespace: &str, span: Span) -> CompileError {
     CompileError::new(

@@ -171,7 +171,7 @@ pub fn info_for(id: CollectionTypeId) -> &'static CollectionTypeInfo {
     COLLECTION_TYPES
         .iter()
         .find(|t| t.id == id)
-        .expect("collection type info missing")
+        .expect("INVARIANT: collection type info missing")
 }
 
 const fn info(

@@ -1,6 +1,14 @@
 # Incan Programming Language - Makefile
 # =====================================
 
+NEXTEST := $(shell command -v cargo-nextest 2>/dev/null)
+
+ifeq ($(strip $(NEXTEST)),)
+TEST_CMD = cargo test --all --verbose
+else
+TEST_CMD = cargo nextest run --all
+endif
+
 .PHONY: help
 help: build-quiet  ## Display this help message
 	@INCAN_NO_BANNER=1 ./target/debug/incan --version
@@ -78,6 +86,28 @@ lint:
 	@echo "\033[1mRunning clippy...\033[0m"
 	@cargo clippy --all-targets --all-features -- -D warnings
 
+.PHONY: lint-fast  ## quality - Run faster clippy profile (workspace + all-features)
+lint-fast:
+	@echo "\033[1mRunning clippy (fast profile)...\033[0m"
+	@cargo clippy --workspace --all-features -- -D warnings
+
+.PHONY: fmt-check-ci
+fmt-check-ci:
+	@cargo +nightly fmt --version >/dev/null 2>&1 || ( \
+		echo "\033[33m⚠ nightly rustfmt is required for this project formatting config.\033[0m"; \
+		echo "\033[33m  Install it via: rustup toolchain install nightly --component rustfmt\033[0m"; \
+		exit 1; \
+	)
+	@cargo +nightly fmt --all -- --check
+
+.PHONY: lint-fast-ci
+lint-fast-ci:
+	@cargo clippy --workspace --all-features -- -D warnings
+
+.PHONY: check-fast-ci
+check-fast-ci:
+	@cargo check --workspace --all-features
+
 .PHONY: check  ## quality - Run all quality checks (fmt + lint)
 check: fmt-check lint
 	@echo "\033[32m✓ All checks passed\033[0m"
@@ -87,19 +117,47 @@ udeps:
 	@echo "\033[1mChecking for unused dependencies...\033[0m"
 	@cargo +nightly udeps --quiet 2>/dev/null || echo "\033[33m⚠ cargo-udeps skipped (requires cargo-udeps + nightly rustc 1.85+. Run `rustup update nightly` if needed.)\033[0m"
 
-.PHONY: pre-commit  ## quality - Fast pre-commit: fmt, lint, and test (no release build, no udeps)
-pre-commit: fmt lint
-	@echo "\033[1mRunning tests...\033[0m"
-	@cargo test --all
-	@echo "\033[32m✓ Pre-commit checks passed\033[0m"
+.PHONY: pre-commit  ## quality - Fast local gate: fmt-check + cargo check with phase timing
+pre-commit:
+	@set -e; \
+	start=$$(date +%s); \
+	printf "\033[1mChecking formatting...\033[0m "; \
+	$(MAKE) -s fmt-check-ci; \
+	echo "\033[32mDONE\033[0m"; \
+	t1=$$(date +%s); \
+	echo "\033[1mRunning cargo check (fast gate)...\033[0m"; \
+	$(MAKE) -s check-fast-ci; \
+	echo "\033[32mDONE\033[0m"; \
+	t2=$$(date +%s); \
+	echo "\033[32m✓ Pre-commit checks passed (fast)\033[0m"; \
+	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, check=$$((t2-t1))s, total=$$((t2-start))s"
 
-.PHONY: pre-commit-full  ## quality - Full CI check: fmt, lint, udeps, test, and release build
-pre-commit-full: fmt lint udeps
+.PHONY: pre-commit-full  ## quality - Full local gate: fmt-check + tests + clippy with phase timing
+pre-commit-full:
+	@set -e; \
+	start=$$(date +%s); \
+	printf "\033[1mChecking formatting...\033[0m "; \
+	$(MAKE) -s fmt-check-ci; \
+	echo "\033[32mDONE\033[0m"; \
+	t1=$$(date +%s); \
+	echo "\033[1mRunning tests...\033[0m"; \
+	$(TEST_CMD); \
+	echo "\033[32mDONE\033[0m"; \
+	t2=$$(date +%s); \
+	echo "\033[1mRunning clippy...\033[0m"; \
+	$(MAKE) -s lint-fast-ci; \
+	echo "\033[32mDONE\033[0m"; \
+	t3=$$(date +%s); \
+	echo "\033[32m✓ Pre-commit checks passed (full)\033[0m"; \
+	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, tests=$$((t2-t1))s, lint=$$((t3-t2))s, total=$$((t3-start))s"
+
+.PHONY: ci-full  ## quality - Full CI check: fmt, lint, udeps, test, and release build
+ci-full: fmt lint udeps
 	@echo "\033[1mRunning tests...\033[0m"
-	@cargo nextest run --all 2>/dev/null || cargo test --all --quiet
+	@$(TEST_CMD)
 	@echo "\033[1mBuilding release...\033[0m"
 	@cargo build --release --quiet
-	@echo "\033[32m✓ Full pre-commit checks passed\033[0m"
+	@echo "\033[32m✓ Full CI checks passed\033[0m"
 
 # =============================================================================
 # Testing
@@ -108,7 +166,7 @@ pre-commit-full: fmt lint udeps
 .PHONY: test  ## test - Run all tests
 test:
 	@echo "\033[1mRunning tests...\033[0m"
-	@cargo nextest run --all 2>/dev/null || cargo test --all --verbose
+	@$(TEST_CMD)
 
 .PHONY: examples  ## test - Smoke test examples (check all, run entrypoints with timeout)
 examples: release
@@ -160,9 +218,9 @@ smoke-test-fast:
 	@$(MAKE) smoke-test-core
 	@echo "\033[32m✓ Smoke-test-fast passed\033[0m"
 
-.PHONY: verify  ## test - Recommended local gate: pre-commit + smoke-test-fast
+.PHONY: verify  ## test - Recommended local gate: pre-commit-full + smoke-test-fast
 verify:
-	@$(MAKE) pre-commit
+	@$(MAKE) pre-commit-full
 	@$(MAKE) smoke-test-fast
 
 .PHONY: test-verbose  ## test - Run tests with output
@@ -174,6 +232,12 @@ test-verbose:
 test-diagnose:
 	@echo "\033[1mRunning tests with live output (Ctrl+C when stuck to see last test)...\033[0m"
 	@cargo test --all --no-fail-fast -- --nocapture --test-threads=1
+
+.PHONY: test-timings  ## test - Generate cargo compile-timing report (target/cargo-timings)
+test-timings:
+	@echo "\033[1mGenerating cargo timing report for test build...\033[0m"
+	@cargo test --all --no-run --timings
+	@echo "\033[32m✓ Timing report generated in target/cargo-timings\033[0m"
 
 .PHONY: test-one  ## test - Run specific test (TEST=name)
 test-one:
@@ -192,13 +256,13 @@ endif
 .PHONY: lsp  ## tool - Build the LSP server
 lsp:
 	@echo "\033[1mBuilding LSP server...\033[0m"
-	@cargo build --release --bin incan-lsp
+	@cargo build --release --features lsp --bin incan-lsp
 	@echo "\033[32m✓ LSP server built: target/release/incan-lsp\033[0m"
 
 .PHONY: install-lsp  ## tool - Install incan-lsp to ~/.cargo/bin
 install-lsp:
 	@echo "\033[1mInstalling incan-lsp...\033[0m"
-	@cargo install --path . --bin incan-lsp --force
+	@cargo install --path . --features lsp --bin incan-lsp --force
 	@echo "\033[32m✓ Installed to ~/.cargo/bin/incan-lsp\033[0m"
 	@echo "\033[33mℹ Ensure ~/.cargo/bin is on your PATH\033[0m"
 

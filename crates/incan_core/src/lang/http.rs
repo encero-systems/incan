@@ -64,7 +64,7 @@ pub fn info_for(id: HttpMethodId) -> &'static HttpMethodInfo {
     HTTP_METHODS
         .iter()
         .find(|m| m.id == id)
-        .expect("http method info missing")
+        .expect("INVARIANT: http method info missing")
 }
 
 const fn info(

@@ -1,9 +1,14 @@
 # RFC 005: Rust Interop
 
-**Status:** Planned  
-**Created:** 2025-12-10  
-**Author(s):** Danny Meijer (@danny-meijer)  
-**Related:** RFC 013 (Rust crate dependencies), RFC 020 (Cargo offline/locked policy)
+- **Status**: Implemented
+- **Author(s)**: Danny Meijer (@dannymeijer)
+- **Issue**: #68
+- **RFC PR**: —
+- **Created**: 2025-12-10
+- **Target version**: 0.2
+- **Related**:
+    - [RFC 013] (Rust crate dependencies)
+    - [RFC 020] (Cargo offline/locked policy)
 
 ## Summary
 
@@ -16,8 +21,8 @@ This RFC tightens the contract so we avoid “it looks like Rust” leakage and 
 - common ownership/borrow friction (especially `str` vs `&str`) is handled without Rust syntax in user code
 - limitations are stated up front (interop is powerful but not “everything in crates.io just works”)
 
-Dependency pinning and lockfiles are specified by RFC 013.  
-Cargo policy enforcement (`--offline/--locked/--frozen`) and generated-project persistence are specified by RFC 020.
+Dependency pinning and lockfiles are specified by [RFC 013].  
+Cargo policy enforcement (`--offline/--locked/--frozen`) and generated-project persistence are specified by [RFC 020].
 
 Prime directive: interop must not force users to learn Rust borrowing/lifetimes/traits at the surface level!
 
@@ -91,8 +96,9 @@ import rust::CRATE[::PATH...] [as ALIAS]
 from rust::CRATE[::PATH...] import ITEM[, ITEM2 ...]
 ```
 
-> Note: Dot-notation is not supported for Rust interop imports (e.g. `from rust.serde_json import ...` is invalid).
-> `::`-notation is the only supported syntax for Rust interop
+> Note: `::` notation is the canonical style for Rust interop imports.
+> Dot-notation (e.g. `from rust.serde_json import ...`) is accepted but emits a non-fatal **compiler warning**
+> suggesting the correct `::` form. The import still resolves correctly. The LSP surfaces this as a yellow squiggle.
 
 AST mapping (informative; matches current parser structure):
 
@@ -227,8 +233,8 @@ Implementation model note (important for determinism):
 
 - Even with a curated `@derive(...)` list, the implementation may emit Rust `#[derive(...)]` for those traits and thus
   execute Rust proc-macros at build time (e.g. serde derives).
-- This is acceptable only in combination with locked/pinned dependency resolution (RFC 013) and reproducible/offline
-  build policy controls (RFC 020).
+- This is acceptable only in combination with locked/pinned dependency resolution ([RFC 013]) and reproducible/offline
+  build policy controls ([RFC 020]).
 - The curated derive list is part of Incan’s compatibility contract (versioned, documented, and stable-by-default).
 
 ### Panic/unwind and error policy (normative)
@@ -315,16 +321,40 @@ Rationale (why these limits exist):
 - Incan’s goal is to remove Rust’s borrow-checker ergonomics from user code. The compiler may adapt borrows internally
   (currently scoped mainly to strings), but users should not be forced to write Rust-like lifetime/borrow annotations.
 
-## Open Questions
+## Design decisions
 
-1. Non-trivial package↔crate mapping: how should we represent cases where the Cargo package name differs from the Rust
-   crate identifier beyond `-`/`_` normalization (e.g. dependency renames or `package = "..."` style overrides)?
-2. How far should the compiler go in adapting non-string borrows for external calls (and/or using Rust signature
-   inspection as a follow-up to reduce friction)?
-3. Should we catch panics at the “Incan runtime boundary” and convert them into an Incan runtime error type (opt-in), or
-   should panics remain “just Rust panics” for interop calls?
-4. How should Rust interop behave under non-native targets (e.g. `wasm32`), and where should those constraints live
-   (likely RFC 003 or a dedicated follow-up RFC)?
+1. **Non-trivial package↔crate mapping**
+
+  Decision: keep `rust::` imports crate-identifier-only; represent non-trivial package renames in `incan.toml`
+  (`package = "..."` / dependency aliasing), not in import syntax.
+
+  Reason: this preserves a simple and deterministic language surface while aligning with RFC 013 ownership of Cargo
+  dependency modeling.
+
+2. **Borrow adaptation scope beyond strings**
+
+  Decision: RFC 005 stays string-focused (`str` ergonomics only). No general non-string borrow inference and no Rust
+  signature inspection in this RFC.
+
+  Reason: broader adaptation requires high-complexity type/signature analysis and risks unpredictable behavior;
+  string-only adaptation captures the dominant interop friction at low complexity.
+
+  Follow-up tracking: incremental non-string ownership/borrow improvements are tracked by issue #121.
+
+3. **Panic handling policy for Rust interop**
+
+  Decision: preserve Rust panic semantics in RFC 005 (no catch-and-convert runtime boundary in this RFC).
+
+  Reason: generated programs are Rust-to-Rust call paths, and preserving native panic behavior avoids hidden control-flow
+  changes. Future opt-in conversion can be introduced in a dedicated RFC.
+
+4. **Non-native target behavior (`wasm32`, etc.)**
+
+  Decision: target-specific interop constraints are out of RFC 005 scope and must be specified in target/toolchain RFCs
+  (e.g., [RFC 003] or a dedicated target-constraints RFC).
+
+  Reason: interop validity is target-dependent (runtime availability, crate support, panic model), so policy belongs in
+  the target model rather than the base Rust interop contract.
 
 ## Appendix: `crate::...` absolute module paths for Incan modules (normative)
 
@@ -339,13 +369,15 @@ from crate::utils import format_date
 Notes:
 
 - `crate::...` is for Incan modules (project root), not for selecting a Rust crate.
-- Parent navigation uses `super::...` / `..` (see RFC 000).
+- Parent navigation uses `super::...` / `..` (see [RFC 000]).
 
 ## Checklist (acceptance)
 
-- [ ] `rust::` import syntax and crate/path decomposition is fully specified and implemented
-- [ ] `rust::std` works without a Cargo dependency, and `rust::core` / `rust::alloc` are rejected with a clear diagnostic
-- [ ] Core type mapping is deterministic (`int=i64`, `float=f64`, `str=String`, collections, `Option`/`Result`)
-- [ ] String borrow/ownership adaptation for external calls works and is documented
-- [ ] Curated derive set is defined and sufficient for common crates (`HashMap`, `serde_json`)
-- [ ] Diagnostics for common failure modes are actionable (crate/path/item + hint toward RFC 013 config)
+- [x] `rust::` import syntax and crate/path decomposition is fully specified and implemented
+- [x] `rust::std` works without a Cargo dependency, and `rust::core` / `rust::alloc` are rejected with a clear diagnostic
+- [x] Core type mapping is deterministic (`int=i64`, `float=f64`, `str=String`, collections, `Option`/`Result`)
+- [x] String borrow/ownership adaptation for external calls works and is documented
+- [x] Curated derive set is defined and sufficient for common crates (`HashMap`, `serde_json`)
+- [x] Diagnostics for common failure modes are actionable (crate/path/item + hint toward [RFC 013] config)
+
+--8<-- "_snippets/rfcs_refs.md"

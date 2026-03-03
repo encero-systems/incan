@@ -112,7 +112,7 @@ pub fn info_for(id: NumericTypeId) -> &'static NumericTypeInfo {
     NUMERIC_TYPES
         .iter()
         .find(|t| t.id == id)
-        .expect("numeric type info missing")
+        .expect("INVARIANT: numeric type info missing")
 }
 
 const fn info(

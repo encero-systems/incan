@@ -138,6 +138,11 @@ pub(super) fn collect_source_modules_for_test(
             }
             msg
         })?;
+        // Surface any non-fatal parser warnings immediately.
+        for warn in &ast.warnings {
+            let fp = file_path.to_string_lossy();
+            eprint!("{}", diagnostics::format_error(&fp, &source, warn));
+        }
 
         // Walk this module's imports for transitive dependencies.
         for decl in &ast.declarations {

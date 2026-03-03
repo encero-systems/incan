@@ -151,7 +151,10 @@ pub fn as_str(id: DeriveId) -> &'static str {
 /// ## Panics
 /// - If the registry is missing an entry for `id` (this indicates a programming error).
 pub fn info_for(id: DeriveId) -> &'static DeriveInfo {
-    DERIVES.iter().find(|d| d.id == id).expect("derive info missing")
+    DERIVES
+        .iter()
+        .find(|d| d.id == id)
+        .expect("INVARIANT: derive info missing")
 }
 
 const fn info(

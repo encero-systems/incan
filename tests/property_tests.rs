@@ -20,7 +20,7 @@ mod format_tests {
 
     /// Property: Formatting is idempotent (format(format(x)) == format(x))
     #[test]
-    fn format_is_idempotent_simple() {
+    fn format_is_idempotent_simple() -> Result<(), String> {
         let source = r#"
 def add(a: int, b: int) -> int:
     return a + b
@@ -30,15 +30,16 @@ def main() -> ():
     print(result)
 "#;
 
-        let formatted1 = format_source(source).expect("First format failed");
-        let formatted2 = format_source(&formatted1).expect("Second format failed");
+        let formatted1 = format_source(source).map_err(|e| e.to_string())?;
+        let formatted2 = format_source(&formatted1).map_err(|e| e.to_string())?;
 
         assert_eq!(formatted1, formatted2, "Formatting should be idempotent");
+        Ok(())
     }
 
     /// Property: Formatting preserves semantic meaning (can parse before and after)
     #[test]
-    fn format_preserves_parseability() {
+    fn format_preserves_parseability() -> Result<(), String> {
         use incan::frontend::{lexer, parser};
 
         let source = r#"
@@ -47,13 +48,17 @@ def greet(name: str) -> str:
 "#;
 
         // Parse original
-        let tokens1 = lexer::lex(source).expect("Lex original failed");
-        let ast1 = parser::parse(&tokens1).expect("Parse original failed");
+        let tokens1 =
+            lexer::lex(source).map_err(|errs| errs.into_iter().map(|e| e.message).collect::<Vec<_>>().join("; "))?;
+        let ast1 = parser::parse(&tokens1)
+            .map_err(|errs| errs.into_iter().map(|e| e.message).collect::<Vec<_>>().join("; "))?;
 
         // Format and parse
-        let formatted = format_source(source).expect("Format failed");
-        let tokens2 = lexer::lex(&formatted).expect("Lex formatted failed");
-        let ast2 = parser::parse(&tokens2).expect("Parse formatted failed");
+        let formatted = format_source(source).map_err(|e| e.to_string())?;
+        let tokens2 = lexer::lex(&formatted)
+            .map_err(|errs| errs.into_iter().map(|e| e.message).collect::<Vec<_>>().join("; "))?;
+        let ast2 = parser::parse(&tokens2)
+            .map_err(|errs| errs.into_iter().map(|e| e.message).collect::<Vec<_>>().join("; "))?;
 
         // AST should have same structure (both should parse to same number of declarations)
         assert_eq!(
@@ -61,6 +66,7 @@ def greet(name: str) -> str:
             ast2.declarations.len(),
             "Formatting changed AST structure"
         );
+        Ok(())
     }
 
     /// Property: Empty or whitespace-only input formats without error

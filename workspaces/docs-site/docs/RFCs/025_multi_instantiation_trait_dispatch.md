@@ -1,11 +1,11 @@
 # RFC 025: Multi-Instantiation Trait Dispatch
 
-- Status: Draft
-- Author(s): Danny Meijer (@dannymeijer)
-- Issue: #150
-- RFC PR: —
-- Created: 2026-02-17
-- Related:
+- **Status**: Draft
+- **Author(s)**: Danny Meijer (@dannymeijer)
+- **Issue**: #150
+- **RFC PR**: —
+- **Created**: 2026-02-17
+- **Related**:
     - [RFC 012] (JsonValue & enum methods)
     - [RFC 023] (compilable stdlib & rust.module binding)
     - [RFC 024] (extensible derive protocol)
