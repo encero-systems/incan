@@ -32,7 +32,8 @@ Where it lives:
 Depending on your change, you will usually run:
 
 - `make test` for the Rust unit/integration test suite (fast feedback)
-- `make pre-commit` before pushing (fmt + clippy + udeps + tests + release build)
+- `make pre-commit` for a fast local gate (fmt-check + cargo check)
+- `make pre-commit-full` before pushing (fmt-check + tests + clippy)
 - `make smoke-test` when you want extra confidence (build + tests + examples + benchmarks-incan)
 
 See:
@@ -45,8 +46,9 @@ When you add a feature:
 
 1. add/adjust a small Rust regression test (parse/typecheck/codegen)
 2. run `make test`
-3. run `make pre-commit` before opening the PR
-4. run `make smoke-test` if the change touches the pipeline end-to-end (parser/typechecker/codegen/tooling)
+3. run `make pre-commit` as a quick local sanity pass
+4. run `make pre-commit-full` before opening the PR
+5. run `make smoke-test` if the change touches the pipeline end-to-end (parser/typechecker/codegen/tooling)
 
 ## Next
 

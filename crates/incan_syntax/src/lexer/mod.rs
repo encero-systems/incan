@@ -659,8 +659,30 @@ mod tests {
             TokenKind::FString(parts) => {
                 assert_eq!(parts.len(), 3);
                 assert!(matches!(&parts[0], FStringPart::Literal(s) if s == "Hello "));
-                assert!(matches!(&parts[1], FStringPart::Expr(s) if s == "name"));
+                assert!(matches!(
+                    &parts[1],
+                    FStringPart::Expr { text, offset } if text == "name" && *offset == 8
+                ));
                 assert!(matches!(&parts[2], FStringPart::Literal(s) if s == "!"));
+            }
+            _ => panic!("Expected FString token"),
+        }
+    }
+
+    #[test]
+    fn test_fstring_multiple_expression_offsets() {
+        let tokens = lex_ok(r#"f"A {x} B {user.name}!""#);
+        match &tokens[0].kind {
+            TokenKind::FString(parts) => {
+                assert_eq!(parts.len(), 5);
+                assert!(matches!(
+                    &parts[1],
+                    FStringPart::Expr { text, offset } if text == "x" && *offset == 4
+                ));
+                assert!(matches!(
+                    &parts[3],
+                    FStringPart::Expr { text, offset } if text == "user.name" && *offset == 10
+                ));
             }
             _ => panic!("Expected FString token"),
         }

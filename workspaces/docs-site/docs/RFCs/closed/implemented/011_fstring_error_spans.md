@@ -1,6 +1,11 @@
 # RFC 011: Precise Error Spans in F-Strings
 
-**Status:** Planned
+- **Status**: Implemented
+- **Author(s)**: Danny Meijer (@dannymeijer)
+- **Issue**: #71
+- **RFC PR**: —
+- **Created**: 2021-12-17
+- **Target version**: 0.2
 
 ## Summary
 
@@ -59,23 +64,23 @@ pub enum FStringPart {
     Literal(String),
     Expr {
         text: String,
-        offset: usize,  // Byte offset from start of f-string content
+        offset: usize,  // Absolute byte offset of the opening `{` in source
     },
 }
 ```
 
-Update `scan_fstring()` to track the current offset within the f-string and store it with each expression.
+Update `scan_fstring()` to track the absolute opening-brace offset for each interpolation expression.
 
 ### 2. Parser Changes
 
 Update `convert_fstring_parts()` to compute precise spans:
 
 ```rust
-fn convert_fstring_parts(&self, parts: &[LexFStringPart], fstring_start: usize) -> Vec<FStringPart> {
+fn convert_fstring_parts(&self, parts: &[LexFStringPart]) -> Vec<FStringPart> {
     parts.iter().map(|p| match p {
         LexFStringPart::Expr { text, offset } => {
-            let start = fstring_start + offset;
-            let end = start + text.len() + 2; // +2 for { }
+            let start = *offset;
+            let end = start + text.len() + 2; // +2 for braces
             FStringPart::Expr(Spanned::new(expr, Span::new(start, end)))
         }
         // ...

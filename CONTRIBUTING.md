@@ -50,7 +50,8 @@ The workspace uses **Cargo workspace package metadata**, so you only bump versio
    - `[workspace.package] version = "..."` (this is the single source of truth)
 2. Verify everything still passes:
    - `cargo test`
-   - `make pre-commit` (recommended)
+   - `make pre-commit` (fast local gate)
+   - `make pre-commit-full` (before pushing / opening PR)
 3. Commit the change.
 
 Notes:

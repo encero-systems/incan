@@ -52,6 +52,120 @@ def foo() -> int:
 }
 
 #[test]
+fn test_fstring_unknown_symbol_span_points_to_interpolation() {
+    let source = "def foo() -> str:\n  return f\"value: {unknown_var}\"\n";
+    let result = check_str(source);
+    assert!(result.is_err());
+
+    let errors = match result {
+        Ok(()) => {
+            panic!("Expected typechecker error for unknown symbol in f-string interpolation")
+        }
+        Err(errors) => errors,
+    };
+
+    let error = match errors
+        .iter()
+        .find(|e| e.message.contains("Unknown symbol 'unknown_var'"))
+    {
+        Some(error) => error,
+        None => panic!("Expected unknown symbol error for unknown_var; got: {errors:?}"),
+    };
+
+    let expected_start = match source.find("{unknown_var}") {
+        Some(start) => start,
+        None => panic!("Expected interpolation segment in source"),
+    };
+
+    assert_eq!(error.span.start, expected_start);
+    assert_eq!(error.span.end, expected_start + "{unknown_var}".len());
+}
+
+#[test]
+fn test_fstring_nested_unknown_symbol_span_rebased() {
+    let source = "def foo(x: int) -> str:\n  return f\"sum: {x + unknown_var}\"\n";
+    let result = check_str(source);
+    assert!(result.is_err());
+
+    let errors = match result {
+        Ok(()) => panic!("Expected typechecker error for nested unknown symbol in f-string interpolation"),
+        Err(errors) => errors,
+    };
+
+    let error = match errors
+        .iter()
+        .find(|e| e.message.contains("Unknown symbol 'unknown_var'"))
+    {
+        Some(error) => error,
+        None => panic!("Expected unknown symbol error for unknown_var; got: {errors:?}"),
+    };
+
+    let expected_start = match source.find("unknown_var") {
+        Some(start) => start,
+        None => panic!("Expected unknown symbol segment in source"),
+    };
+
+    assert_eq!(error.span.start, expected_start);
+    assert_eq!(error.span.end, expected_start + "unknown_var".len());
+}
+
+#[test]
+fn test_fstring_unknown_symbol_span_in_index_method_chain() {
+    let source = "def foo(users: List[str]) -> str:\n  return f\"value: {users[unknown_idx].upper()}\"\n";
+    let result = check_str(source);
+    assert!(result.is_err());
+
+    let errors = match result {
+        Ok(()) => panic!("Expected typechecker error for unknown symbol in index interpolation"),
+        Err(errors) => errors,
+    };
+
+    let error = match errors
+        .iter()
+        .find(|e| e.message.contains("Unknown symbol 'unknown_idx'"))
+    {
+        Some(error) => error,
+        None => panic!("Expected unknown symbol error for unknown_idx; got: {errors:?}"),
+    };
+
+    let expected_start = match source.find("unknown_idx") {
+        Some(start) => start,
+        None => panic!("Expected unknown symbol segment in source"),
+    };
+
+    assert_eq!(error.span.start, expected_start);
+    assert_eq!(error.span.end, expected_start + "unknown_idx".len());
+}
+
+#[test]
+fn test_fstring_unknown_symbol_span_in_list_comp_filter_call() {
+    let source = "def foo(items: List[int]) -> str:\n  return f\"value: {[x for x in items if unknown_pred(x)]}\"\n";
+    let result = check_str(source);
+    assert!(result.is_err());
+
+    let errors = match result {
+        Ok(()) => panic!("Expected typechecker error for unknown symbol in list comp interpolation"),
+        Err(errors) => errors,
+    };
+
+    let error = match errors
+        .iter()
+        .find(|e| e.message.contains("Unknown symbol 'unknown_pred'"))
+    {
+        Some(error) => error,
+        None => panic!("Expected unknown symbol error for unknown_pred; got: {errors:?}"),
+    };
+
+    let expected_start = match source.find("unknown_pred") {
+        Some(start) => start,
+        None => panic!("Expected unknown symbol segment in source"),
+    };
+
+    assert_eq!(error.span.start, expected_start);
+    assert_eq!(error.span.end, expected_start + "unknown_pred".len());
+}
+
+#[test]
 fn test_reserved_root_namespace_std() {
     // `std` is a reserved root namespace, so `def std() -> int: return 1` is rejected.
     let source = r#"

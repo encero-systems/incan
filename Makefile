@@ -104,6 +104,10 @@ fmt-check-ci:
 lint-fast-ci:
 	@cargo clippy --workspace --all-features -- -D warnings
 
+.PHONY: check-fast-ci
+check-fast-ci:
+	@cargo check --workspace --all-features
+
 .PHONY: check  ## quality - Run all quality checks (fmt + lint)
 check: fmt-check lint
 	@echo "\033[32m✓ All checks passed\033[0m"
@@ -113,8 +117,23 @@ udeps:
 	@echo "\033[1mChecking for unused dependencies...\033[0m"
 	@cargo +nightly udeps --quiet 2>/dev/null || echo "\033[33m⚠ cargo-udeps skipped (requires cargo-udeps + nightly rustc 1.85+. Run `rustup update nightly` if needed.)\033[0m"
 
-.PHONY: pre-commit  ## quality - Canonical local gate: fmt-check, lint, and test with phase timing
+.PHONY: pre-commit  ## quality - Fast local gate: fmt-check + cargo check with phase timing
 pre-commit:
+	@set -e; \
+	start=$$(date +%s); \
+	printf "\033[1mChecking formatting...\033[0m "; \
+	$(MAKE) -s fmt-check-ci; \
+	echo "\033[32mDONE\033[0m"; \
+	t1=$$(date +%s); \
+	echo "\033[1mRunning cargo check (fast gate)...\033[0m"; \
+	$(MAKE) -s check-fast-ci; \
+	echo "\033[32mDONE\033[0m"; \
+	t2=$$(date +%s); \
+	echo "\033[32m✓ Pre-commit checks passed (fast)\033[0m"; \
+	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, check=$$((t2-t1))s, total=$$((t2-start))s"
+
+.PHONY: pre-commit-full  ## quality - Full local gate: fmt-check + tests + clippy with phase timing
+pre-commit-full:
 	@set -e; \
 	start=$$(date +%s); \
 	printf "\033[1mChecking formatting...\033[0m "; \
@@ -129,7 +148,7 @@ pre-commit:
 	$(MAKE) -s lint-fast-ci; \
 	echo "\033[32mDONE\033[0m"; \
 	t3=$$(date +%s); \
-	echo "\033[32m✓ Pre-commit checks passed\033[0m"; \
+	echo "\033[32m✓ Pre-commit checks passed (full)\033[0m"; \
 	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, tests=$$((t2-t1))s, lint=$$((t3-t2))s, total=$$((t3-start))s"
 
 .PHONY: ci-full  ## quality - Full CI check: fmt, lint, udeps, test, and release build
@@ -199,9 +218,9 @@ smoke-test-fast:
 	@$(MAKE) smoke-test-core
 	@echo "\033[32m✓ Smoke-test-fast passed\033[0m"
 
-.PHONY: verify  ## test - Recommended local gate: pre-commit + smoke-test-fast
+.PHONY: verify  ## test - Recommended local gate: pre-commit-full + smoke-test-fast
 verify:
-	@$(MAKE) pre-commit
+	@$(MAKE) pre-commit-full
 	@$(MAKE) smoke-test-fast
 
 .PHONY: test-verbose  ## test - Run tests with output
