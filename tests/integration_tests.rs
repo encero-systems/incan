@@ -27,16 +27,14 @@ fn strip_ansi_escapes(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' {
-            if chars.peek() == Some(&'[') {
-                let _ = chars.next();
-                for c in chars.by_ref() {
-                    if c == 'm' {
-                        break;
-                    }
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            let _ = chars.next();
+            for c in chars.by_ref() {
+                if c == 'm' {
+                    break;
                 }
-                continue;
             }
+            continue;
         }
         out.push(ch);
     }
