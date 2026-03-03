@@ -4062,7 +4062,8 @@
 <p>Depending on your change, you will usually run:</p>
 <ul>
 <li><code>make test</code> for the Rust unit/integration test suite (fast feedback)</li>
-<li><code>make pre-commit</code> before pushing (fmt + clippy + udeps + tests + release build)</li>
+<li><code>make pre-commit</code> for a fast local gate (fmt-check + cargo check)</li>
+<li><code>make pre-commit-full</code> before pushing (fmt-check + tests + clippy)</li>
 <li><code>make smoke-test</code> when you want extra confidence (build + tests + examples + benchmarks-incan)</li>
 </ul>
 <p>See:</p>
@@ -4074,7 +4075,8 @@
 <ol>
 <li>add/adjust a small Rust regression test (parse/typecheck/codegen)</li>
 <li>run <code>make test</code></li>
-<li>run <code>make pre-commit</code> before opening the PR</li>
+<li>run <code>make pre-commit</code> as a quick local sanity pass</li>
+<li>run <code>make pre-commit-full</code> before opening the PR</li>
 <li>run <code>make smoke-test</code> if the change touches the pipeline end-to-end (parser/typechecker/codegen/tooling)</li>
 </ol>
 <h2 id="next">Next<a class="headerlink" href="#next" title="Permanent link">&para;</a></h2>

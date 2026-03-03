@@ -4114,7 +4114,8 @@ lowers/emits to a specific Rust pattern.</p>
 <h2 id="running-your-feedback-loop">Running your feedback loop<a class="headerlink" href="#running-your-feedback-loop" title="Permanent link">&para;</a></h2>
 <p>After implementing the builtin, validate it through the toolchain:</p>
 <ul>
-<li><code>make pre-commit</code> still passes (fmt + clippy + udeps + tests + release build)</li>
+<li><code>make pre-commit</code> still passes (fast local gate: fmt-check + cargo check)</li>
+<li><code>make pre-commit-full</code> passes before pushing (fmt-check + tests + clippy)</li>
 <li><code>make smoke-test</code> still passes (end-to-end sanity check)</li>
 <li>the LSP still parses/diagnoses edited files (no syntax drift)</li>
 </ul>
