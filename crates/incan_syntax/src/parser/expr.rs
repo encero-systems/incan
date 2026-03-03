@@ -348,9 +348,8 @@ impl<'a> Parser<'a> {
         // f-string
         if let TokenKind::FString(parts) = &self.peek().kind {
             let parts = parts.clone();
-            let fstring_span = self.peek().span; // Capture span before advancing
             self.advance();
-            let fparts = self.convert_fstring_parts(&parts, fstring_span);
+            let fparts = self.convert_fstring_parts(&parts);
             let end = self.tokens[self.pos - 1].span.end;
             return Ok(Spanned::new(Expr::FString(fparts), Span::new(start, end)));
         }
@@ -425,19 +424,152 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn convert_fstring_parts(&self, parts: &[LexFStringPart], fstring_span: Span) -> Vec<FStringPart> {
+    fn convert_fstring_parts(&self, parts: &[LexFStringPart]) -> Vec<FStringPart> {
         parts
             .iter()
             .map(|p| match p {
                 LexFStringPart::Literal(s) => FStringPart::Literal(s.clone()),
-                LexFStringPart::Expr(s) => {
+                LexFStringPart::Expr { text, offset } => {
                     // Parse simple field access chains like "user.name" or "obj.field.sub"
-                    let expr = self.parse_fstring_expr(s);
-                    // Use the f-string's span so errors point to the f-string, not line 1
-                    FStringPart::Expr(Spanned::new(expr, fstring_span))
+                    let expr_span = Span::new(*offset, offset + text.len() + 2);
+                    let mut expr = self.parse_fstring_expr(text);
+                    self.shift_expr_spans(&mut expr, offset + 1);
+                    FStringPart::Expr(Spanned::new(expr, expr_span))
                 }
             })
             .collect()
+    }
+
+    fn shift_spanned_expr(&self, expr: &mut Spanned<Expr>, offset: usize) {
+        expr.span = Span::new(expr.span.start + offset, expr.span.end + offset);
+        self.shift_expr_spans(&mut expr.node, offset);
+    }
+
+    fn shift_expr_spans(&self, expr: &mut Expr, offset: usize) {
+        match expr {
+            Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) => {}
+            Expr::Binary(left, _, right) => {
+                self.shift_spanned_expr(left, offset);
+                self.shift_spanned_expr(right, offset);
+            }
+            Expr::Unary(_, operand) | Expr::Try(operand) | Expr::Paren(operand) => {
+                self.shift_spanned_expr(operand, offset);
+            }
+            Expr::Call(callee, args) => {
+                self.shift_spanned_expr(callee, offset);
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(value) | CallArg::Named(_, value) => {
+                            self.shift_spanned_expr(value, offset);
+                        }
+                    }
+                }
+            }
+            Expr::Index(base, index) => {
+                self.shift_spanned_expr(base, offset);
+                self.shift_spanned_expr(index, offset);
+            }
+            Expr::Slice(base, slice) => {
+                self.shift_spanned_expr(base, offset);
+                if let Some(start) = &mut slice.start {
+                    self.shift_spanned_expr(start, offset);
+                }
+                if let Some(end) = &mut slice.end {
+                    self.shift_spanned_expr(end, offset);
+                }
+                if let Some(step) = &mut slice.step {
+                    self.shift_spanned_expr(step, offset);
+                }
+            }
+            Expr::Field(base, _) => {
+                self.shift_spanned_expr(base, offset);
+            }
+            Expr::MethodCall(base, _, args) => {
+                self.shift_spanned_expr(base, offset);
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(value) | CallArg::Named(_, value) => {
+                            self.shift_spanned_expr(value, offset);
+                        }
+                    }
+                }
+            }
+            Expr::Match(subject, arms) => {
+                self.shift_spanned_expr(subject, offset);
+                for arm in arms {
+                    arm.span = Span::new(arm.span.start + offset, arm.span.end + offset);
+                    if let Some(guard) = &mut arm.node.guard {
+                        self.shift_spanned_expr(guard, offset);
+                    }
+                    match &mut arm.node.body {
+                        MatchBody::Expr(value) => self.shift_spanned_expr(value, offset),
+                        MatchBody::Block(_) => {}
+                    }
+                }
+            }
+            Expr::If(if_expr) => {
+                self.shift_spanned_expr(&mut if_expr.condition, offset);
+            }
+            Expr::ListComp(comp) => {
+                self.shift_spanned_expr(&mut comp.expr, offset);
+                self.shift_spanned_expr(&mut comp.iter, offset);
+                if let Some(filter) = &mut comp.filter {
+                    self.shift_spanned_expr(filter, offset);
+                }
+            }
+            Expr::DictComp(comp) => {
+                self.shift_spanned_expr(&mut comp.key, offset);
+                self.shift_spanned_expr(&mut comp.value, offset);
+                self.shift_spanned_expr(&mut comp.iter, offset);
+                if let Some(filter) = &mut comp.filter {
+                    self.shift_spanned_expr(filter, offset);
+                }
+            }
+            Expr::Closure(_, body) => {
+                self.shift_spanned_expr(body, offset);
+            }
+            Expr::Tuple(elems) | Expr::List(elems) | Expr::Set(elems) => {
+                for elem in elems {
+                    self.shift_spanned_expr(elem, offset);
+                }
+            }
+            Expr::Dict(entries) => {
+                for (key, value) in entries {
+                    self.shift_spanned_expr(key, offset);
+                    self.shift_spanned_expr(value, offset);
+                }
+            }
+            Expr::Constructor(_, args) => {
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(value) | CallArg::Named(_, value) => {
+                            self.shift_spanned_expr(value, offset);
+                        }
+                    }
+                }
+            }
+            Expr::FString(parts) => {
+                for part in parts {
+                    if let FStringPart::Expr(value) = part {
+                        self.shift_spanned_expr(value, offset);
+                    }
+                }
+            }
+            Expr::Yield(Some(value)) => {
+                self.shift_spanned_expr(value, offset);
+            }
+            Expr::Range {
+                start,
+                end,
+                inclusive: _,
+            } => {
+                self.shift_spanned_expr(start, offset);
+                self.shift_spanned_expr(end, offset);
+            }
+            Expr::Surface(surface_expr) => match &mut surface_expr.payload {
+                SurfaceExprPayload::PrefixUnary(value) => self.shift_spanned_expr(value, offset),
+            },
+        }
     }
 
     fn parse_fstring_expr(&self, s: &str) -> Expr {

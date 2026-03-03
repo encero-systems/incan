@@ -50,7 +50,8 @@ Keep it small: your goal is to learn the pipeline and leave the codebase in a be
 
 After implementing the builtin, validate it through the toolchain:
 
-- `make pre-commit` still passes (fmt + clippy + udeps + tests + release build)
+- `make pre-commit` still passes (fast local gate: fmt-check + cargo check)
+- `make pre-commit-full` passes before pushing (fmt-check + tests + clippy)
 - `make smoke-test` still passes (end-to-end sanity check)
 - the LSP still parses/diagnoses edited files (no syntax drift)
 

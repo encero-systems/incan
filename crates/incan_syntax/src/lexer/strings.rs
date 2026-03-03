@@ -239,13 +239,17 @@ impl<'a> Lexer<'a> {
                         self.advance();
                         literal.push('{');
                     } else {
+                        let expr_offset = self.current_pos.saturating_sub(1);
                         // Push current literal
                         if !literal.is_empty() {
                             parts.push(FStringPart::Literal(std::mem::take(&mut literal)));
                         }
                         // Scan expression
                         let expr = self.scan_fstring_expr();
-                        parts.push(FStringPart::Expr(expr));
+                        parts.push(FStringPart::Expr {
+                            text: expr,
+                            offset: expr_offset,
+                        });
                     }
                 }
                 Some('}') => {

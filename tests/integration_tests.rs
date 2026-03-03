@@ -23,6 +23,24 @@ fn compile_source(source: &str) -> Result<(), Vec<String>> {
     Ok(())
 }
 
+fn strip_ansi_escapes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            let _ = chars.next();
+            for c in chars.by_ref() {
+                if c == 'm' {
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(ch);
+    }
+    out
+}
+
 fn is_incan_fixture(path: &Path) -> bool {
     matches!(path.extension().and_then(|e| e.to_str()), Some("incn") | Some("incan"))
 }
@@ -171,6 +189,58 @@ fn test_parse_error_is_banner_free() {
     assert!(
         !stdout.contains("░░███") && !stderr.contains("░░███"),
         "logo leaked into parse error output"
+    );
+}
+
+#[test]
+fn test_fstring_unknown_symbol_cli_caret_points_to_interpolation() {
+    let source = "def main() -> str:\n  return f\"value: {unknown_var}\"\n";
+    let Ok(output) = Command::new("target/debug/incan").args(["run", "-c", source]).output() else {
+        panic!("failed to run incan with f-string source");
+    };
+
+    assert!(
+        !output.status.success(),
+        "expected unknown symbol compilation failure, status={:?}",
+        output.status
+    );
+
+    let stderr_colored = String::from_utf8_lossy(&output.stderr);
+    let stderr = strip_ansi_escapes(&stderr_colored);
+    assert!(
+        stderr.contains("Unknown symbol 'unknown_var'"),
+        "expected unknown symbol diagnostic in stderr, got:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("return f\"value: {unknown_var}\""),
+        "expected source line in diagnostic, got:\n{}",
+        stderr
+    );
+
+    let caret_line = match stderr.lines().find(|line| line.contains('^')) {
+        Some(line) => line,
+        None => panic!("expected caret line in diagnostic, got:\n{}", stderr),
+    };
+
+    let mut max_caret_run = 0usize;
+    let mut current_run = 0usize;
+    for c in caret_line.chars() {
+        if c == '^' {
+            current_run += 1;
+            if current_run > max_caret_run {
+                max_caret_run = current_run;
+            }
+        } else {
+            current_run = 0;
+        }
+    }
+
+    assert_eq!(
+        max_caret_run,
+        "{unknown_var}".len(),
+        "expected caret width to match interpolation span; stderr:\n{}",
+        stderr
     );
 }
 

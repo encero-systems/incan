@@ -123,11 +123,10 @@ impl Formatter {
 
     /// Format a list of import items with line-length-aware wrapping.
     ///
-    /// When the full item list fits on the current line (i.e. does not exceed the configured
-    /// `line_length`), it is emitted as a bare comma-separated list and the line is closed.
-    /// When the list would exceed the line limit and there are at least two items, the list is
-    /// wrapped in parentheses with one item per indented line, followed by a trailing comma when
-    /// `trailing_commas` is enabled in the formatter config.
+    /// When the full item list fits on the current line (i.e. does not exceed the configured `line_length`), it is
+    /// emitted as a bare comma-separated list and the line is closed. When the list would exceed the line limit and
+    /// there are at least two items, the list is wrapped in parentheses with one item per indented line, followed by a
+    /// trailing comma when `trailing_commas` is enabled in the formatter config.
     ///
     /// # Parameters
     ///
