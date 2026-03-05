@@ -14,11 +14,6 @@ use incan_derive::{FieldInfo, IncanClass};
 use axum::response::Response as AxumResponse;
 #[derive(Debug)]
 struct MyResponse(pub AxumResponse);
-impl axum::response::IntoResponse for MyResponse {
-    fn into_response(self) -> axum::response::Response {
-        self.0.into_response()
-    }
-}
 impl MyResponse {
     fn placeholder() -> MyResponse {
         ();

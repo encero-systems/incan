@@ -30,7 +30,7 @@ impl AstLowering {
             });
         }
 
-        let mut derives = self.extract_derives(&m.decorators);
+        let (mut derives, derive_rust_modules) = self.extract_derives(&m.decorators);
 
         let debug = derives::as_str(DeriveId::Debug);
         let clone = derives::as_str(DeriveId::Clone);
@@ -57,6 +57,7 @@ impl AstLowering {
             derives,
             visibility: Self::map_visibility(m.visibility),
             type_params: Self::lower_type_params(&m.type_params),
+            derive_rust_modules,
         })
     }
 }

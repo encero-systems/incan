@@ -454,6 +454,19 @@ mod codegen_tests {
         }
     }
 
+    fn make_temp_dir(prefix: &str) -> std::path::PathBuf {
+        let mut dir = std::env::temp_dir();
+        let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+            panic!("system time before UNIX epoch");
+        };
+        let uniq = duration.as_nanos();
+        dir.push(format!("{}_{}", prefix, uniq));
+        let Ok(()) = std::fs::create_dir_all(&dir) else {
+            panic!("failed to create temp dir");
+        };
+        dir
+    }
+
     #[test]
     fn test_hello_world_codegen() {
         let path = Path::new("examples/hello.incn");
@@ -505,6 +518,66 @@ mod codegen_tests {
             stdout.contains("The Zen of Incan") && stdout.contains("Readability counts"),
             "stdout missing zen line; got:\n{}",
             stdout
+        );
+    }
+
+    #[test]
+    fn test_build_web_route_uses_proc_macro_passthrough() {
+        let project_dir = make_temp_dir("incan_web_proc_macro_test");
+        let source_path = project_dir.join("main.incn");
+        let out_dir = project_dir.join("out");
+        let source = r#"
+import std.async
+from std.web import route
+
+@route("/health")
+async def health() -> str:
+    return "ok"
+
+def main() -> None:
+    pass
+"#;
+        let Ok(()) = std::fs::write(&source_path, source) else {
+            panic!("failed to write source file");
+        };
+
+        let Ok(output) = Command::new("target/debug/incan")
+            .args([
+                "build",
+                source_path.to_string_lossy().as_ref(),
+                out_dir.to_string_lossy().as_ref(),
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+        else {
+            panic!("failed to run incan build");
+        };
+
+        assert!(
+            output.status.success(),
+            "incan build web route failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let generated_main = out_dir.join("src/main.rs");
+        let Ok(main_rs) = std::fs::read_to_string(&generated_main) else {
+            panic!("failed to read generated Rust source");
+        };
+        assert!(
+            main_rs.contains("#[incan_web_macros::route("),
+            "expected generated web route to use proc macro passthrough:\n{}",
+            main_rs
+        );
+        assert!(
+            !main_rs.contains("__incan_router!"),
+            "legacy __incan_router! macro should not be emitted:\n{}",
+            main_rs
+        );
+        assert!(
+            !main_rs.contains("set_router"),
+            "legacy set_router() call should not be emitted:\n{}",
+            main_rs
         );
     }
 

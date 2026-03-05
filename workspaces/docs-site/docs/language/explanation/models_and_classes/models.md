@@ -198,6 +198,20 @@ model Point:
         return self.x * self.y
 ```
 
+Models also support `@staticmethod` for methods that belong to the type rather than an instance:
+
+```incan
+model Point:
+    x: int
+    y: int
+
+    @staticmethod
+    def origin() -> Point:
+        return Point(x=0, y=0)
+```
+
+See: [Classes: Static methods](classes.md#static-methods-staticmethod) for full details.
+
 ## Serialization
 
 With `@derive(Serialize)` / `@derive(Deserialize)`, a model serializes/deserializes as a JSON object.

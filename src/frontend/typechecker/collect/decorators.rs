@@ -84,8 +84,8 @@ impl TypeChecker {
                     && resolved.len() >= 3
                     && self
                         .stdlib_cache
-                        .lookup_function(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
-                        .is_some();
+                        .lookup_function_meta(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
+                        .is_some_and(|f| f.is_rust_extern && f.rust_module_path.is_some());
                 if is_stdlib_decorator_function {
                     continue;
                 }
@@ -175,6 +175,21 @@ impl TypeChecker {
     /// Validate a single derive name, reporting appropriate errors.
     fn validate_single_derive(&mut self, name: &str, span: Span) {
         if derives::from_str(name).is_some() {
+            return;
+        }
+
+        // Allow custom derives imported from stdlib modules backed by rust.module(...).
+        let resolved = self
+            .import_aliases
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| vec![name.to_string()]);
+        if resolved.len() >= 2
+            && self
+                .stdlib_cache
+                .lookup_trait_meta(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
+                .is_some_and(|t| t.rust_module_path.is_some())
+        {
             return;
         }
 

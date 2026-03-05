@@ -133,6 +133,11 @@ pub struct IrFunction {
     /// When `true`, emission should generate a delegation call to `<rust_module_path>::<name>()` instead of compiling
     /// the Incan body. The `rust_module_path` is stored on `IrProgram`.
     pub is_extern: bool,
+    /// Passthrough Rust attributes collected from decorators.
+    ///
+    /// Example: `@route("/users/{id}")` imported from a `rust.module("incan_web_macros")` stub becomes
+    /// `#[incan_web_macros::route("/users/{id}")]`.
+    pub rust_attributes: Vec<IrRustAttribute>,
 }
 
 /// Function parameter
@@ -155,6 +160,10 @@ pub struct IrStruct {
     pub visibility: Visibility,
     /// Type parameters for generics, with optional trait bounds (RFC 023).
     pub type_params: Vec<IrTypeParam>,
+    /// Derive names that should be qualified with a Rust module path.
+    ///
+    /// Key is the derive name, value is the module path from `rust.module(...)`.
+    pub derive_rust_modules: std::collections::HashMap<String, String>,
 }
 
 /// Struct field
@@ -178,6 +187,25 @@ pub struct IrEnum {
     pub visibility: Visibility,
     /// Type parameters for generics, with optional trait bounds (RFC 023).
     pub type_params: Vec<IrTypeParam>,
+    /// Derive names that should be qualified with a Rust module path.
+    ///
+    /// Key is the derive name, value is the module path from `rust.module(...)`.
+    pub derive_rust_modules: std::collections::HashMap<String, String>,
+}
+
+/// A passthrough Rust attribute generated from an Incan decorator.
+#[derive(Debug, Clone)]
+pub struct IrRustAttribute {
+    pub module_path: String,
+    pub name: String,
+    pub args: Vec<IrRustAttrArg>,
+}
+
+/// Rust attribute argument kinds.
+#[derive(Debug, Clone)]
+pub enum IrRustAttrArg {
+    Positional(String),
+    Named { name: String, value: String },
 }
 
 /// Enum variant

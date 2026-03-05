@@ -58,8 +58,28 @@ pub struct StdlibNamespace {
     pub impl_mode: StdlibImplMode,
     /// Optional Cargo feature gate required for this namespace.
     pub feature: Option<&'static str>,
+    /// Extra crate dependencies required by generated projects when this namespace is enabled.
+    pub extra_crate_deps: &'static [StdlibExtraCrateDep],
     /// Known submodules for validation and LSP completion. Empty for leaf modules.
     pub submodules: &'static [&'static str],
+}
+
+/// Additional crate dependency needed by a stdlib namespace.
+#[derive(Debug, Clone, Copy)]
+pub struct StdlibExtraCrateDep {
+    /// Cargo dependency key.
+    pub crate_name: &'static str,
+    /// Dependency source and version/path metadata.
+    pub source: StdlibExtraCrateSource,
+}
+
+/// Source descriptor for a namespace-provided extra crate dependency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StdlibExtraCrateSource {
+    /// Path dependency rooted at compiler workspace root.
+    Path(&'static str),
+    /// Registry version dependency.
+    Version(&'static str),
 }
 
 /// Registry of top-level stdlib namespaces.
@@ -72,48 +92,69 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         name: "web",
         impl_mode: StdlibImplMode::IncanSource,
         feature: Some("web"),
-        submodules: &["app", "routing", "request", "response", "prelude"],
+        extra_crate_deps: &[
+            StdlibExtraCrateDep {
+                crate_name: "incan_web_macros",
+                source: StdlibExtraCrateSource::Path("crates/incan_web_macros"),
+            },
+            StdlibExtraCrateDep {
+                crate_name: "inventory",
+                source: StdlibExtraCrateSource::Version("0.3"),
+            },
+            StdlibExtraCrateDep {
+                crate_name: "axum",
+                source: StdlibExtraCrateSource::Version("0.8"),
+            },
+        ],
+        submodules: &["app", "routing", "request", "response", "macros", "prelude"],
     },
     StdlibNamespace {
         name: "testing",
         impl_mode: StdlibImplMode::IncanSource,
         feature: None,
+        extra_crate_deps: &[],
         submodules: &[],
     },
     StdlibNamespace {
         name: "async",
         impl_mode: StdlibImplMode::RuntimeFacade,
         feature: None,
+        extra_crate_deps: &[],
         submodules: &["time", "task", "channel", "select", "sync", "prelude"],
     },
     StdlibNamespace {
         name: "serde",
         impl_mode: StdlibImplMode::IncanSource,
         feature: Some("json"),
+        extra_crate_deps: &[],
         submodules: &["json"],
     },
     StdlibNamespace {
         name: "reflection",
         impl_mode: StdlibImplMode::RuntimeFacade,
         feature: None,
+        extra_crate_deps: &[],
         submodules: &[],
     },
     StdlibNamespace {
         name: "derives",
         impl_mode: StdlibImplMode::IncanSource,
         feature: None,
+        extra_crate_deps: &[],
         submodules: &["string", "comparison", "copying", "collection"],
     },
     StdlibNamespace {
         name: "traits",
         impl_mode: StdlibImplMode::RuntimeFacade,
         feature: None,
+        extra_crate_deps: &[],
         submodules: &["convert", "ops", "error", "indexing", "callable"],
     },
     StdlibNamespace {
         name: "math",
         impl_mode: StdlibImplMode::RuntimeFacade,
         feature: None,
+        extra_crate_deps: &[],
         submodules: &[],
     },
 ];
@@ -282,7 +323,7 @@ mod tests {
         );
         assert_eq!(
             stdlib_impl_mode_for(&segs(&["std", "web"])),
-            Some(StdlibImplMode::RuntimeFacade)
+            Some(StdlibImplMode::IncanSource)
         );
         assert_eq!(stdlib_impl_mode_for(&segs(&["not_std", "testing"])), None);
     }

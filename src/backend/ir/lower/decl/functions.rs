@@ -79,6 +79,7 @@ impl AstLowering {
 
         // RFC 023: detect @rust.extern decorator to mark this function as externally-backed.
         let is_extern = Self::has_rust_extern_decorator(&f.decorators);
+        let rust_attributes = self.extract_passthrough_attributes(&f.decorators);
 
         Ok(IrFunction {
             name: f.name.clone(),
@@ -89,6 +90,7 @@ impl AstLowering {
             visibility: Self::map_visibility(f.visibility),
             type_params: Self::lower_type_params(&f.type_params),
             is_extern,
+            rust_attributes,
         })
     }
 }

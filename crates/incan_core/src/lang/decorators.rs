@@ -8,7 +8,7 @@
 //! Decorators are organized into namespaces separated by `.`:
 //!
 //! - `rust.*` — Rust interop decorators (`@rust.extern`, future `@rust.function`, etc.)
-//! - `std.*` — Standard library decorators (`@std.web.route`, `@std.testing.fixture`)
+//! - `std.*` — Standard library decorators
 //! - Top-level — `@derive`, `@requires`
 //!
 //! Known namespace prefixes are registered in [`DECORATOR_NAMESPACES`] so that the validator can distinguish "unknown
@@ -20,7 +20,7 @@ use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
 pub enum DecoratorId {
     Derive,
     RustExtern,
-    Route,
+    StaticMethod,
     Requires,
 }
 
@@ -59,9 +59,6 @@ pub fn decorators_in_namespace(prefix: &str) -> Vec<&'static str> {
         .collect()
 }
 
-/// Named argument for `@route(methods=[...])`.
-pub const ROUTE_METHODS_ARG: &str = "methods";
-
 /// Metadata entry for a decorator.
 pub type DecoratorInfo = LangItemInfo<DecoratorId>;
 
@@ -84,10 +81,10 @@ pub const DECORATORS: &[DecoratorInfo] = &[
         Since(0, 2),
     ),
     info(
-        DecoratorId::Route,
-        "std.web.route",
+        DecoratorId::StaticMethod,
+        "staticmethod",
         &[],
-        "Declare a web route handler.",
+        "Mark a method as static (no self receiver).",
         RFC::_000,
         Since(0, 1),
     ),

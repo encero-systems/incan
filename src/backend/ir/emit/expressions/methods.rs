@@ -11,7 +11,6 @@ use super::super::super::expr::{IrCallArg, IrExprKind, MethodKind, TypedExpr, Va
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 use incan_core::lang::magic_methods;
-use incan_core::lang::surface::web as web_surface;
 
 mod collection_methods;
 mod string_methods;
@@ -209,26 +208,6 @@ impl<'a> IrEmitter<'a> {
 
         // Regular method call
         let m = format_ident!("{}", method);
-        // Temporary targeted support: `app.run(port=8080)` should map to `app.run("127.0.0.1", 8080)`.
-        if method == web_surface::APP_RUN_METHOD
-            && args
-                .iter()
-                .any(|a| a.name.as_deref() == Some(web_surface::APP_RUN_ARG_PORT))
-        {
-            let mut host: Option<TokenStream> = None;
-            let mut port: Option<TokenStream> = None;
-            for a in args {
-                match a.name.as_deref() {
-                    Some(web_surface::APP_RUN_ARG_HOST) => host = Some(self.emit_expr(&a.expr)?),
-                    Some(web_surface::APP_RUN_ARG_PORT) => port = Some(self.emit_expr(&a.expr)?),
-                    _ => {}
-                }
-            }
-            if let Some(port_tokens) = port {
-                let host_tokens = host.unwrap_or_else(|| quote! { "127.0.0.1" });
-                return Ok(quote! { #r.#m(#host_tokens, #port_tokens) });
-            }
-        }
         // Apply Incan-style argument conversions for method calls on Incan-owned types (structs/enums/traits).
         // This is important for `str` literals: we often emit `"x"` as `&'static str`, but many Incan-level method
         // signatures expect owned `String` in Rust.

@@ -11,28 +11,11 @@ expression: rust_code
 incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.2");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
-use serde::{Serialize, Deserialize};
 use incan_stdlib::__private::tokio::time::{sleep, timeout, Duration};
 use incan_stdlib::__private::tokio::sync::{mpsc, Mutex, RwLock};
 use incan_stdlib::__private::tokio::task::JoinHandle;
-incan_stdlib::web::__incan_router! {
-    wrappers : [async fn
-    __incan_web_create(::incan_stdlib::web::__private::extract::Json(req) :
-    ::incan_stdlib::web::__private::extract::Json < Vec < crate
-    ::api::routes::CreateThingRequest > >) -> impl
-    ::incan_stdlib::web::__private::response::IntoResponse { crate
-    ::api::routes::create(incan_stdlib::web::Json::new(req)). await } async fn
-    __incan_web_search(::incan_stdlib::web::__private::extract::Query(params) :
-    ::incan_stdlib::web::__private::extract::Query < crate ::api::routes::SearchParams >)
-    -> impl ::incan_stdlib::web::__private::response::IntoResponse { crate
-    ::api::routes::search(incan_stdlib::web::Query::new(params)). await }], routes :
-    [("/things", post, __incan_web_create), ("/search", get, __incan_web_search)]
-}
-use incan_stdlib::web::App;
+use incan_stdlib::r#async;
 use crate::api::routes;
 fn main() {
-    let __router = __incan_web_router();
-    incan_stdlib::web::set_router(__router);
-    let app = App {};
-    app.run("127.0.0.1", 8080);
+    ();
 }

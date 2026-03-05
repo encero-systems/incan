@@ -26,7 +26,7 @@ impl AstLowering {
             .collect();
 
         // Extract user-specified derives from decorators
-        let mut derives = self.extract_derives(&e.decorators);
+        let (mut derives, derive_rust_modules) = self.extract_derives(&e.decorators);
 
         // Enums always get Debug, Clone, PartialEq by default (if not already specified)
         let debug = derives::as_str(DeriveId::Debug);
@@ -48,6 +48,7 @@ impl AstLowering {
             derives,
             visibility: Self::map_visibility(e.visibility),
             type_params: Self::lower_type_params(&e.type_params),
+            derive_rust_modules,
         })
     }
 }

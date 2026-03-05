@@ -125,12 +125,10 @@ pub(super) fn run_single_test(
     // Scan all modules for feature flags.
     codegen.scan_for_serde(&ast);
     codegen.scan_for_async(&ast);
-    codegen.scan_for_web(&ast);
     codegen.scan_for_list_helpers(&ast);
     for module in &source_modules {
         codegen.scan_for_serde(&module.ast);
         codegen.scan_for_async(&module.ast);
-        codegen.scan_for_web(&module.ast);
         codegen.scan_for_list_helpers(&module.ast);
     }
 
@@ -146,7 +144,6 @@ pub(super) fn run_single_test(
     let mut generator = ProjectGenerator::new(&temp_dir, "test_runner", true);
     generator.set_needs_serde(codegen.needs_serde());
     generator.set_needs_tokio(codegen.needs_tokio());
-    generator.set_needs_axum(codegen.needs_axum());
     generator.set_include_dev_dependencies(true);
     generator.set_dependencies(resolved.dependencies);
     generator.set_dev_dependencies(resolved.dev_dependencies);

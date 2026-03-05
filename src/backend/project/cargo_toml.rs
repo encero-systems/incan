@@ -1,8 +1,7 @@
 //! Cargo.toml generation and dependency formatting
 //!
-//! Renders the `Cargo.toml` for generated Rust projects using typed structs and
-//! [`toml::to_string`] serialization. This replaces manual string formatting with
-//! structured data construction, ensuring valid TOML output by construction.
+//! Renders the `Cargo.toml` for generated Rust projects using typed structs and [`toml::to_string`] serialization. This
+//! replaces manual string formatting with structured data construction, ensuring valid TOML output by construction.
 //!
 //! ## Output format
 //!
@@ -14,6 +13,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use incan_core::lang::stdlib::{STDLIB_NAMESPACES, StdlibExtraCrateSource};
 use serde::Serialize;
 
 use crate::manifest::{DependencySource, DependencySpec, GitReference};
@@ -166,7 +166,7 @@ impl ProjectGenerator {
 
         // Always add incan_stdlib (enable features based on needs)
         let mut stdlib_features: Vec<&str> = Vec::new();
-        if self.needs_axum {
+        if self.needs_web {
             stdlib_features.push("web");
         }
         if self.needs_tokio {
@@ -191,6 +191,32 @@ impl ProjectGenerator {
             deps.insert("serde_json".into(), toml::Value::String("1.0".into()));
             added_crates.insert("serde".into());
             added_crates.insert("serde_json".into());
+        }
+
+        // Add stdlib namespace-specific extra dependencies based on enabled features.
+        let enabled_stdlib_features: std::collections::HashSet<&str> = stdlib_features.iter().copied().collect();
+        for namespace in STDLIB_NAMESPACES {
+            let Some(feature) = namespace.feature else {
+                continue;
+            };
+            if !enabled_stdlib_features.contains(feature) {
+                continue;
+            }
+            for dep in namespace.extra_crate_deps {
+                if added_crates.contains(dep.crate_name) {
+                    continue;
+                }
+                match dep.source {
+                    StdlibExtraCrateSource::Path(relative_path) => {
+                        let dep_path = workspace_root.join(relative_path);
+                        deps.insert(dep.crate_name.into(), path_dependency(&dep_path, &[]));
+                    }
+                    StdlibExtraCrateSource::Version(version) => {
+                        deps.insert(dep.crate_name.into(), toml::Value::String(version.to_string()));
+                    }
+                }
+                added_crates.insert(dep.crate_name.to_string());
+            }
         }
 
         // Add resolved user dependencies
@@ -505,6 +531,24 @@ mod tests {
         assert!(
             toml_with_dev.contains(r#"test_lib = "0.5""#),
             "Expected dev dep in [dev-dependencies]:\n{toml_with_dev}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_cargo_toml_web_feature_adds_namespace_extra_deps() -> Result<(), Box<dyn std::error::Error>> {
+        let mut generator = ProjectGenerator::new("/tmp/test_web_extras", "test_web_extras", true);
+        generator.set_needs_web(true);
+
+        let toml = generator.generate_cargo_toml()?;
+
+        assert!(
+            toml.contains("incan_web_macros"),
+            "Expected incan_web_macros dependency when web feature is enabled, got:\n{toml}"
+        );
+        assert!(
+            toml.contains(r#"inventory = "0.3""#),
+            "Expected inventory dependency when web feature is enabled, got:\n{toml}"
         );
         Ok(())
     }

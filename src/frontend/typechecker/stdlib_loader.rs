@@ -11,6 +11,13 @@
 //!    each `trait`.
 //! 4. **Caching**: results are cached per module path in a `HashMap` to avoid redundant parsing.
 //!
+//! ## Re-export resolution
+//!
+//! Modules with submodules (e.g. `std.web`) resolve to a prelude file (e.g. `stdlib/web/prelude.incn`).
+//! The prelude typically only contains `from std.web.<sub> import ...` re-export statements, not direct declarations.
+//! To support `from std.web import route` (where `route` is declared in `std.web.routing`), the loader follows these
+//! re-export imports and merges the referenced submodule metadata into the parent.
+//!
 //! ## Limitations
 //!
 //! - Function signatures are extracted from top-level `def` declarations (not methods on classes/models).
@@ -25,6 +32,7 @@ use std::path::PathBuf;
 use crate::frontend::ast;
 use crate::frontend::symbols::{FunctionInfo, MethodInfo, ResolvedType, TraitInfo};
 use incan_core::lang::conventions;
+use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::stdlib;
 use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
 use incan_core::lang::types::numerics::{self as numeric_types, NumericTypeId};
@@ -34,6 +42,19 @@ use incan_core::lang::types::stringlike::{self as string_types, StringLikeId};
 struct StdlibModuleData {
     functions: Vec<(String, FunctionInfo)>,
     traits: Vec<(String, TraitInfo)>,
+    function_meta: HashMap<String, FunctionMeta>,
+    trait_meta: HashMap<String, TraitMeta>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct FunctionMeta {
+    pub is_rust_extern: bool,
+    pub rust_module_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TraitMeta {
+    pub rust_module_path: Option<String>,
 }
 
 /// Cached stdlib module signatures keyed by dot-joined module path (e.g. `"std.testing"`).
@@ -76,6 +97,20 @@ impl StdlibAstCache {
             .map(|(_, info)| info.clone())
     }
 
+    /// Look up metadata for a specific function in a stdlib module.
+    pub fn lookup_function_meta(&mut self, module_path: &[String], function_name: &str) -> Option<FunctionMeta> {
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        self.cache.get(&key)?.function_meta.get(function_name).cloned()
+    }
+
+    /// Look up metadata for a specific trait in a stdlib module.
+    pub fn lookup_trait_meta(&mut self, module_path: &[String], trait_name: &str) -> Option<TraitMeta> {
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        self.cache.get(&key)?.trait_meta.get(trait_name).cloned()
+    }
+
     /// Ensure a module is loaded into the cache, loading it on first access.
     fn ensure_loaded(&mut self, module_path: &[String]) {
         let key = module_path.join(".");
@@ -86,6 +121,11 @@ impl StdlibAstCache {
 }
 
 /// Load and parse a stdlib `.incn` file, extracting module data.
+///
+/// For modules with submodules (whose stub path resolves to a prelude file), this function also follows
+/// `from std.<ns>.<submodule> import <name>` re-exports: it loads each referenced submodule and merges
+/// the imported names' metadata into the parent module. This enables `from std.web import route` to resolve
+/// decorator metadata even though `route` is declared in `std.web.routing`, not the prelude itself.
 ///
 /// Returns `None` if the file cannot be found or parsed.
 fn load_stdlib_module_data(module_path: &[String]) -> Option<StdlibModuleData> {
@@ -110,9 +150,95 @@ fn load_stdlib_module_data(module_path: &[String]) -> Option<StdlibModuleData> {
         })
         .ok()?;
 
-    let functions = extract_function_signatures(&program);
-    let traits = extract_trait_signatures(&program);
-    Some(StdlibModuleData { functions, traits })
+    let mut functions = extract_function_signatures(&program);
+    let mut traits = extract_trait_signatures(&program);
+    let mut function_meta = extract_function_meta(&program);
+    let mut trait_meta = extract_trait_meta(&program);
+
+    // ---- Follow prelude re-exports ----
+    // If this module is a prelude (has submodules), its declarations are just `from ... import ...` re-exports.
+    // We recursively load each referenced submodule and merge the imported names' metadata so that
+    // `lookup_function_meta(["std", "web"], "route")` finds `route` even though it's declared in
+    // `std.web.routing`.
+    merge_reexported_metadata(
+        &program,
+        &mut functions,
+        &mut traits,
+        &mut function_meta,
+        &mut trait_meta,
+    );
+
+    Some(StdlibModuleData {
+        functions,
+        traits,
+        function_meta,
+        trait_meta,
+    })
+}
+
+/// Scan a program's import declarations and merge metadata from referenced stdlib submodules.
+///
+/// For each `from std.<ns>.<sub> import name1, name2` statement, loads the submodule and copies the
+/// corresponding function/trait signatures and metadata into the parent module's collections.
+fn merge_reexported_metadata(
+    program: &ast::Program,
+    functions: &mut Vec<(String, FunctionInfo)>,
+    traits: &mut Vec<(String, TraitInfo)>,
+    function_meta: &mut HashMap<String, FunctionMeta>,
+    trait_meta: &mut HashMap<String, TraitMeta>,
+) {
+    for decl in &program.declarations {
+        let ast::Declaration::Import(import) = &decl.node else {
+            continue;
+        };
+        let ast::ImportKind::From { module, items } = &import.kind else {
+            continue;
+        };
+
+        // Only follow stdlib re-exports (paths starting with "std").
+        if module.segments.first().is_none_or(|s| s != stdlib::STDLIB_ROOT) {
+            continue;
+        }
+        if module.segments.len() < 3 {
+            continue;
+        }
+
+        let Some(sub_data) = load_stdlib_module_data(&module.segments) else {
+            continue;
+        };
+
+        for item in items {
+            let effective_name = item.alias.as_deref().unwrap_or(&item.name);
+
+            // Merge function signature.
+            if let Some((_, info)) = sub_data.functions.iter().find(|(n, _)| n == &item.name)
+                && !functions.iter().any(|(n, _)| n == effective_name)
+            {
+                functions.push((effective_name.to_string(), info.clone()));
+            }
+
+            // Merge trait signature.
+            if let Some((_, info)) = sub_data.traits.iter().find(|(n, _)| n == &item.name)
+                && !traits.iter().any(|(n, _)| n == effective_name)
+            {
+                traits.push((effective_name.to_string(), info.clone()));
+            }
+
+            // Merge function meta.
+            if let Some(meta) = sub_data.function_meta.get(&item.name) {
+                function_meta
+                    .entry(effective_name.to_string())
+                    .or_insert_with(|| meta.clone());
+            }
+
+            // Merge trait meta.
+            if let Some(meta) = sub_data.trait_meta.get(&item.name) {
+                trait_meta
+                    .entry(effective_name.to_string())
+                    .or_insert_with(|| meta.clone());
+            }
+        }
+    }
 }
 
 /// Find the absolute path for a stdlib file given its relative path (e.g. `"stdlib/testing.incn"`).
@@ -248,6 +374,56 @@ fn function_decl_to_info(func: &ast::FunctionDecl) -> FunctionInfo {
         is_async: func.is_async(),
         type_params: tp_names,
     }
+}
+
+/// Extract function metadata from a stdlib module's AST.
+///
+/// Walks top-level function declarations and records:
+/// - Whether the function has the `@rust.extern` decorator (indicating delegation to a Rust backing module).
+/// - The `rust.module()` path declared on the program, if any.
+///
+/// This metadata is stored in [`StdlibAstCache`] and used during lowering to decide whether a decorator reference
+/// should be emitted as a Rust attribute (passthrough) or compiled normally.
+fn extract_function_meta(program: &ast::Program) -> HashMap<String, FunctionMeta> {
+    let mut meta = HashMap::new();
+    let rust_module_path = program.rust_module_path.as_ref().map(|sp| sp.node.clone());
+    for decl in &program.declarations {
+        if let ast::Declaration::Function(func) = &decl.node {
+            let is_rust_extern = func
+                .decorators
+                .iter()
+                .any(|d| decorators::from_str(&d.node.path.segments.join(".")) == Some(DecoratorId::RustExtern));
+            meta.insert(
+                func.name.clone(),
+                FunctionMeta {
+                    is_rust_extern,
+                    rust_module_path: rust_module_path.clone(),
+                },
+            );
+        }
+    }
+    meta
+}
+
+/// Extract trait metadata from a stdlib module's AST.
+///
+/// Walks top-level trait declarations and records the `rust.module()` backing path (if any).
+/// This metadata is used by [`LoweringHelpers::resolve_derive_module_path`] to map `@derive(Trait)` references
+/// to their Rust proc-macro crate paths for derive passthrough.
+fn extract_trait_meta(program: &ast::Program) -> HashMap<String, TraitMeta> {
+    let mut meta = HashMap::new();
+    let rust_module_path = program.rust_module_path.as_ref().map(|sp| sp.node.clone());
+    for decl in &program.declarations {
+        if let ast::Declaration::Trait(tr) = &decl.node {
+            meta.insert(
+                tr.name.clone(),
+                TraitMeta {
+                    rust_module_path: rust_module_path.clone(),
+                },
+            );
+        }
+    }
+    meta
 }
 
 /// Convert an AST `Type` to a `ResolvedType`.

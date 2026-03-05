@@ -770,21 +770,21 @@ reserved for future use when `module` is introduced as a keyword.
 ### Spec / semantics
 
 - [x] Stdlib `.incn` files are compilable Incan source, not documentation-only stubs.
-- [ ] `rust.module("path::to::module")` directive is specified with clear syntax and semantics.
+- [x] `rust.module("path::to::module")` directive is specified with clear syntax and semantics.
 - [x] `@rust.extern` supersedes RFC 022's `@std.builtin` — same semantics, no source-category restriction.
 - [x] `DecoratorId::StdBuiltin` renamed to `DecoratorId::RustExtern` with canonical spelling `"rust.extern"`.
-- [ ] `@rust.extern` items require a `rust.module()` directive on their containing module.
-- [ ] `@rust.extern` restricted to free functions and trait default methods; rejected on instance methods.
-- [ ] The irreducible primitives principle is documented: `@rust.extern` should be minimized.
+- [x] `@rust.extern` items require a `rust.module()` directive on their containing module.
+- [x] `@rust.extern` restricted to free functions and trait default methods; rejected on instance methods.
+- [x] The irreducible primitives principle is documented: `@rust.extern` should be minimized.
 - [x] Compiled Incan `std.*` modules emitted under `__incan_std` root to avoid Rust `std` shadowing.
 
 ### Compilation pipeline
 
 - [x] Compiler parses and compiles stdlib `.incn` files through the normal pipeline.
 - [x] Typechecker derives function signatures from parsed `.incn` AST, not hardcoded registries.
-- [ ] Emitter uses `rust.module()` path for `@rust.extern` items, not hardcoded path-rewriting.
-- [ ] Hardcoded `testing_import_function_info()` (and equivalents) are removed.
-- [ ] Hardcoded `if is_stdlib_testing` / `if is_stdlib_web` branches are removed from emission.
+- [x] Emitter uses `rust.module()` path for `@rust.extern` items, not hardcoded path-rewriting.
+- [x] Hardcoded `testing_import_function_info()` (and equivalents) are removed.
+- [x] Hardcoded `if is_stdlib_testing` / `if is_stdlib_web` branches are removed from emission.
 - [ ] `escape_keyword` applied to module declarations, `use`-path segments, and filenames.
 
 ### Trait bound inference and annotation
@@ -798,36 +798,36 @@ reserved for future use when `module` is introduced as a keyword.
 
 ### `rust.module()` directive
 
-- [ ] Parser/AST supports `rust.module("...")` as a module-level directive.
-- [ ] Path validated: must reference `incan_stdlib` or a declared dependency in `incan.toml`.
-- [ ] `@rust.extern` items without a resolvable Rust backing path produce a clear error.
-- [ ] No propagation to nested submodules.
-- [ ] Duplicate `rust.module()` in the same module is a hard error.
-- [ ] `rust.module()` path sanitized: only valid Rust identifier segments separated by `::` are accepted.
+- [x] Parser/AST supports `rust.module("...")` as a module-level directive.
+- [x] Path validated: must reference `incan_stdlib` or a declared dependency in `incan.toml`.
+- [x] `@rust.extern` items without a resolvable Rust backing path produce a clear error.
+- [x] No propagation to nested submodules.
+- [x] Duplicate `rust.module()` in the same module is a hard error.
+- [x] `rust.module()` path sanitized: only valid Rust identifier segments separated by `::` are accepted.
 
 ### Stdlib migration
 
 - [x] `std.testing` converted to compilable Incan with `fail()` as sole `@rust.extern` primitive.
 - [x] `std.derives.*`: non-`@rust.extern` methods compiled from Incan source.
-- [ ] `std.web` response builders: pure Incan where possible, `@rust.extern` for framework I/O.
+- [x] `std.web` response builders: pure Incan where possible, `@rust.extern` for framework I/O.
 - [x] All stdlib `.incn` files with `@rust.extern` carry `rust.module()` directives.
 - [ ] `StdlibModuleInfo` fallback mapping removed (or marked deprecated).
 
 ### Diagnostics checklist
 
-- [ ] Missing `rust.module()` → error with suggestion.
-- [ ] `@rust.extern` with non-trivial body → error suggesting `...` body or removing the decorator.
-- [ ] `@rust.extern` on instance method → error suggesting free-function extraction.
+- [x] Missing `rust.module()` → error with suggestion.
+- [x] `@rust.extern` with non-trivial body → error suggesting `...` body or removing the decorator.
+- [x] `@rust.extern` on instance method → error suggesting free-function extraction.
 - [ ] `@rust.extern` signature mismatches → wrapped `rustc` diagnostic pointing to `.incn` declaration.
-- [ ] Unused `rust.module()` (no `@rust.extern` items) → warning.
-- [ ] Invalid `rust.module()` path (failed sanitization) → error with valid-path hint.
+- [x] Unused `rust.module()` (no `@rust.extern` items) → warning.
+- [x] Invalid `rust.module()` path (failed sanitization) → error with valid-path hint.
 
 ### Tests
 
-- [ ] Typechecker tests: stdlib signatures resolved from `.incn` source.
-- [ ] Codegen snapshot tests: compiled Incan stdlib functions in generated output.
+- [x] Typechecker tests: stdlib signatures resolved from `.incn` source.
+- [x] Codegen snapshot tests: compiled Incan stdlib functions in generated output.
 - [ ] Codegen snapshot tests: generic functions emit correct Rust trait bounds (inferred and explicit).
-- [ ] Integration tests: behavioral equivalence with pre-migration stdlib.
+- [x] Integration tests: behavioral equivalence with pre-migration stdlib.
 - [ ] Negative tests: calling a bounded generic function with a non-conforming type → Incan-level error.
-- [ ] Negative tests: `@rust.extern` with non-trivial body, invalid `rust.module()` path, unused `rust.module()` warning.
+- [x] Negative tests: `@rust.extern` with non-trivial body, invalid `rust.module()` path, unused `rust.module()` warning.
 - [ ] Transitive inference test: `foo[T]` calling `assert_eq[T]` acquires `PartialEq + Display` bounds from callee.

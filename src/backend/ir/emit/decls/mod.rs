@@ -239,12 +239,19 @@ impl<'a> IrEmitter<'a> {
         };
 
         let path_ts = join_path_tokens(&path_tokens);
+        let export_import = is_incan_source_stdlib;
 
         if let Some(alias_name) = alias {
             let alias_ident = Self::rust_ident(alias_name);
-            Ok(quote! {
-                use #path_ts as #alias_ident;
-            })
+            if export_import {
+                Ok(quote! {
+                    pub use #path_ts as #alias_ident;
+                })
+            } else {
+                Ok(quote! {
+                    use #path_ts as #alias_ident;
+                })
+            }
         } else if !items.is_empty() {
             // ---- Track Rust import paths for alias resolution ----
             // When emitting Rust imports (qualifier=None), record the mapping from alias/name → full module path.
@@ -267,7 +274,13 @@ impl<'a> IrEmitter<'a> {
                     let path_ts_clone = join_path_tokens(&path_tokens_clone);
                     if let Some(alias) = &item.alias {
                         let alias_ident = Self::rust_ident(alias);
-                        quote! { use #path_ts_clone :: #name_ident as #alias_ident; }
+                        if export_import {
+                            quote! { pub use #path_ts_clone :: #name_ident as #alias_ident; }
+                        } else {
+                            quote! { use #path_ts_clone :: #name_ident as #alias_ident; }
+                        }
+                    } else if export_import {
+                        quote! { pub use #path_ts_clone :: #name_ident; }
                     } else {
                         quote! { use #path_ts_clone :: #name_ident; }
                     }
@@ -276,6 +289,10 @@ impl<'a> IrEmitter<'a> {
             Ok(quote! { #(#item_stmts)* })
         } else if path.len() == 1 && !is_stdlib {
             Ok(quote! {})
+        } else if export_import {
+            Ok(quote! {
+                pub use #path_ts;
+            })
         } else {
             Ok(quote! {
                 use #path_ts;

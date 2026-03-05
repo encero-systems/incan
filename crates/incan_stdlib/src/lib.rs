@@ -88,5 +88,6 @@ pub use json::{FromJson, ToJson};
 #[cfg(feature = "web")]
 pub use web::{
     App, DELETE, GET, HEAD, HTTP_BAD_REQUEST, HTTP_CREATED, HTTP_FORBIDDEN, HTTP_INTERNAL_ERROR, HTTP_NO_CONTENT,
-    HTTP_NOT_FOUND, HTTP_OK, HTTP_UNAUTHORIZED, Json, OPTIONS, PATCH, POST, PUT, Query, Response,
+    HTTP_NOT_FOUND, HTTP_OK, HTTP_UNAUTHORIZED, OPTIONS, PATCH, POST, PUT, RouteEntry, response_html, response_ok,
+    response_redirect, response_status,
 };

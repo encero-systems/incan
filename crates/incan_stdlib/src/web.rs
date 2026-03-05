@@ -1,22 +1,17 @@
 //! Minimal web runtime for Incan-generated web programs.
 //!
-//! Provided types:
-//! - `App` (dummy holder with blocking `run` that serves the router)
-//! - `Response` helpers (`html`, `ok`)
-//! - `Json<T>` wrapper that implements `IntoResponse`
-//! - HTTP method constants (`GET`, ...)
-
-pub mod wrappers;
+//! Web route registration is inventory-driven. The compiler/proc-macro layer emits `inventory::submit!` calls
+//! containing `RouteEntry` records, and `App::run` builds the router from those records at runtime.
 
 use std::net::SocketAddr;
-use std::ops::Deref;
-use std::sync::OnceLock;
 
+use axum::Router;
 use axum::http::{StatusCode, header};
-use axum::response::{Html as AxumHtml, IntoResponse, Response as AxumResponse};
-use axum::{Router, routing::get};
-use serde::Serialize;
+use axum::response::{Html as AxumHtmlInner, IntoResponse, Response as AxumRawResponse};
 use tokio::runtime::Runtime;
+
+pub type AxumHtml = axum::response::Html<String>;
+pub type AxumJson<T> = axum::Json<T>;
 
 pub const GET: &str = "GET";
 pub const POST: &str = "POST";
@@ -36,48 +31,20 @@ pub const HTTP_FORBIDDEN: i64 = 403;
 pub const HTTP_NOT_FOUND: i64 = 404;
 pub const HTTP_INTERNAL_ERROR: i64 = 500;
 
-static ROUTER: OnceLock<Router> = OnceLock::new();
-
-#[doc(hidden)]
-pub mod __private {
-    pub use axum::Router;
-    pub use axum::extract;
-    pub use axum::response;
-    pub use axum::routing;
+pub struct RouteEntry {
+    pub path: &'static str,
+    pub method: &'static str,
+    pub register: fn(Router) -> Router,
 }
 
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __incan_router {
-    (
-        wrappers: [ $($wrapper:item)* ],
-        routes: [ $( ($path:literal, $method:ident, $wrapper_name:ident) ),* $(,)? ]
-    ) => {
-        $($wrapper)*
-
-        fn __incan_web_router() -> ::incan_stdlib::web::__private::Router {
-            let mut router = ::incan_stdlib::web::__private::Router::new();
-            $(
-                router = router.route(
-                    $path,
-                    ::incan_stdlib::web::__private::routing::$method($wrapper_name)
-                );
-            )*
-            router
-        }
-    };
+impl RouteEntry {
+    #[must_use]
+    pub const fn new(path: &'static str, method: &'static str, register: fn(Router) -> Router) -> Self {
+        Self { path, method, register }
+    }
 }
 
-#[doc(hidden)]
-pub use crate::__incan_router;
-
-/// Register the generated router for the `App::run` entrypoint.
-///
-/// This only captures the first router; subsequent calls are ignored.
-pub fn set_router(router: Router) {
-    // TODO: report duplicate router registration instead of ignoring.
-    let _ = ROUTER.set(router);
-}
+inventory::collect!(RouteEntry);
 
 /// Minimal application handle for generated web programs.
 #[derive(Default)]
@@ -101,10 +68,10 @@ impl App {
             .parse()
             .unwrap_or_else(|e| panic!("invalid bind address: {e}"));
 
-        let router = ROUTER
-            .get()
-            .cloned()
-            .unwrap_or_else(|| Router::new().route("/", get(|| async { "OK" })));
+        let mut router = Router::new();
+        for entry in inventory::iter::<RouteEntry> {
+            router = (entry.register)(router);
+        }
 
         let rt = Runtime::new().unwrap_or_else(|e| panic!("failed to create tokio runtime: {e}"));
         rt.block_on(async move {
@@ -117,31 +84,34 @@ impl App {
         })
     }
 }
-// Re-export wrapper types with their public-facing names
-pub use wrappers::AxumHtml as Html;
-pub use wrappers::AxumJson as Json;
-pub use wrappers::AxumResponse as Response;
 
-/// Query string extractor wrapper (mirrors `axum::extract::Query`).
-pub struct Query<T> {
-    pub value: T,
+#[must_use]
+pub fn response_html(content: String) -> AxumRawResponse {
+    AxumHtmlInner(content).into_response()
 }
 
-impl<T> Query<T> {
-    pub fn new(value: T) -> Self {
-        Self { value }
+#[must_use]
+pub fn response_ok() -> AxumRawResponse {
+    AxumRawResponse::new(axum::body::Body::empty())
+}
+
+#[must_use]
+pub fn response_status(code: i64, body: String) -> AxumRawResponse {
+    let status = u16::try_from(code)
+        .ok()
+        .and_then(|value| StatusCode::from_u16(value).ok())
+        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (status, body).into_response()
+}
+
+#[must_use]
+pub fn response_redirect(location: String) -> AxumRawResponse {
+    match axum::response::Response::builder()
+        .status(StatusCode::FOUND)
+        .header(header::LOCATION, location)
+        .body(axum::body::Body::empty())
+    {
+        Ok(response) => response,
+        Err(_err) => (StatusCode::INTERNAL_SERVER_ERROR, "failed to build redirect response").into_response(),
     }
 }
-
-impl<T> Deref for Query<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.value
-    }
-}
-
-/// No-op placeholder so `from std.web import route` resolves at Rust compile time.
-///
-/// The compiler collects `@route(...)` decorators during codegen; this function is not used at runtime.
-pub fn route(_path: &str) {}

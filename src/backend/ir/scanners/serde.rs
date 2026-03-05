@@ -27,7 +27,10 @@ pub fn detect_serde_usage(program: &Program) -> bool {
         return true;
     }
 
-    // Legacy fallback: detect bare `json_stringify()` builtin calls.
+    // TODO: Remove this legacy fallback once `json_stringify` requires an explicit import
+    // (e.g. `from std.serde.json import json_stringify`). Until then, bare calls activate serde
+    // without an import, which breaks the "imported module → activate its features" invariant
+    // that the rest of the stdlib follows.
     program_has_json_stringify(program)
 }
 

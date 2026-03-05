@@ -3,26 +3,51 @@ HTTP Routing
 
 Decorators and constants for defining web routes.
 
+The ``route`` decorator is backed by the ``incan_web_macros`` proc-macro crate.
+At Rust compile time, ``@route(...)`` is emitted as ``#[incan_web_macros::route(...)]``,
+which expands to Axum handler registration via the ``inventory`` crate.
+
 Example:
-    from std.web import route, Json, Response, GET, POST, DELETE
-    
+    from std.web.routing import route, Json, GET, POST, DELETE
+
     @route("/users/{id}", methods=[GET])
     async def get_user(id: int) -> Json[User]:
         user = find_user(id)?
         return Json(user)
-    
+
     @route("/users", methods=[POST])
     async def create_user(body: Json[CreateUser]) -> Json[User]:
-        user = User(id=1, name=body.0.name)
+        user = User(id=1, name=body.value.name)
         return Json(user)
 """
+rust.module("incan_web_macros")
 
-# NOTE: This module provides compile-time markers and constants.
-# The @route decorator is processed by the compiler to generate Axum routes.
-# At runtime, these are just type hints - the actual routing is Axum-native.
+@rust.extern
+pub def route(path: str, methods: list[str] = ["GET"]) -> None:
+    """
+    Decorator to register a function as an HTTP route handler.
 
+    Args:
+        path: URL path pattern (e.g., "/users/{id}").
+              Path parameters use {name} syntax.
+        methods: List of HTTP methods this route handles (default: [GET]).
 
-# HTTP method constants
+    Path parameters are extracted and passed to the handler function.
+    The parameter name in the path must match the function argument name.
+
+    At Rust compile time this emits ``#[incan_web_macros::route(...)]``, which
+    registers the handler with the Axum router via the ``inventory`` crate.
+
+    Example:
+        from std.web.routing import route, GET, DELETE
+        from std.web import Response, Json
+
+        @route("/api/items/{id}", methods=[GET, DELETE])
+        async def item_handler(id: int) -> Response:
+            return Response.ok()
+    """
+    ...
+
 pub const GET: str = "GET"
 pub const POST: str = "POST"
 pub const PUT: str = "PUT"
@@ -30,44 +55,3 @@ pub const DELETE: str = "DELETE"
 pub const PATCH: str = "PATCH"
 pub const HEAD: str = "HEAD"
 pub const OPTIONS: str = "OPTIONS"
-
-
-pub enum HttpMethod:
-    """HTTP method enumeration for route definitions."""
-    GET
-    POST
-    PUT
-    DELETE
-    PATCH
-    HEAD
-    OPTIONS
-
-
-pub def route(path: str, methods: list[HttpMethod] = [HttpMethod.GET]) -> Callable:
-    """
-    Decorator to register a function as an HTTP route handler.
-    
-    Args:
-        path: URL path pattern (e.g., "/users/{id}")
-              Path parameters use {name} syntax
-        methods: List of HTTP methods this route handles (default: [GET])
-    
-    Path parameters are extracted and passed to the handler function.
-    The parameter name in the path must match the function argument name.
-    
-    Example:
-    ```incan
-    from std.web import route, Response, Json, GET, DELETE
-    
-    @route("/api/items/{id}", methods=[GET, DELETE])
-    async def item_handler(id: int) -> Response:
-        match request_method():
-            "GET" => return Json(get_item(id))
-            "DELETE" => 
-                delete_item(id)
-                return Response.no_content()
-    ```
-    
-    Compiles to: router.route("/api/items/:id", get(item_handler))
-    """
-    ...

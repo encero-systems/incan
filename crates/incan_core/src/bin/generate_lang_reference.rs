@@ -21,7 +21,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use incan_core::lang::types::{collections, numerics, stringlike};
-use incan_core::lang::{builtins, derives, errors, keywords, operators, punctuation, stdlib, surface, traits};
+use incan_core::lang::{
+    builtins, decorators, derives, errors, keywords, operators, punctuation, stdlib, surface, traits,
+};
 
 fn trim_trailing_newlines_to_at_most_two(out: &mut String) {
     let mut count = 0usize;
@@ -88,6 +90,7 @@ fn write_language_reference(path: &Path) {
     out.push_str("- [Standard library namespaces](#standard-library-namespaces)\n");
     out.push_str("- [Builtin exceptions](#builtin-exceptions)\n");
     out.push_str("- [Builtin functions](#builtin-functions)\n");
+    out.push_str("- [Decorators](#decorators)\n");
     out.push_str("- [Derives](#derives)\n");
     out.push_str("- [Builtin traits](#builtin-traits)\n");
     out.push_str("- [Operators](#operators)\n");
@@ -105,6 +108,7 @@ fn write_language_reference(path: &Path) {
     render_stdlib_namespaces_section(&mut out);
     render_exceptions_section(&mut out);
     render_builtins_section(&mut out);
+    render_decorators_section(&mut out);
     render_derives_section(&mut out);
     render_traits_section(&mut out);
     render_operators_section(&mut out);
@@ -331,6 +335,36 @@ fn render_builtins_section(out: &mut String) {
         let rfc = b.introduced_in_rfc;
         let since = b.since;
         let stability = format!("{:?}", b.stability);
+
+        out.push_str(&format!(
+            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
+        ));
+    }
+    out.push('\n');
+}
+
+fn render_decorators_section(out: &mut String) {
+    start_section(out, "## Decorators");
+
+    out.push_str("| Id | Canonical | Aliases | Description | RFC | Since | Stability |\n");
+    out.push_str("|---|---|---|---|---|---|---|\n");
+
+    for d in decorators::DECORATORS {
+        let id = format!("{:?}", d.id);
+        let canonical = format!("`@{}`", d.canonical);
+        let aliases = if d.aliases.is_empty() {
+            String::new()
+        } else {
+            d.aliases
+                .iter()
+                .map(|a| format!("`@{}`", a))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let desc = d.description;
+        let rfc = d.introduced_in_rfc;
+        let since = d.since;
+        let stability = format!("{:?}", d.stability);
 
         out.push_str(&format!(
             "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"

@@ -12,9 +12,9 @@ incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.2");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
 use serde::{Serialize, Deserialize};
-use incan_stdlib::web::Json;
-use incan_stdlib::web::Html;
-use incan_stdlib::web::Response;
+pub use crate::__incan_std::web::Json;
+pub use crate::__incan_std::web::Html;
+pub use crate::__incan_std::web::Response;
 #[derive(serde::Serialize, Debug, Clone, FieldInfo, IncanClass)]
 struct User {
     id: i64,

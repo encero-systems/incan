@@ -144,6 +144,7 @@ impl AstLowering {
 
         // RFC 023: detect @rust.extern decorator to mark this method as externally-backed.
         let is_extern = Self::has_rust_extern_decorator(&m.decorators);
+        let rust_attributes = self.extract_passthrough_attributes(&m.decorators);
 
         self.scopes.pop();
 
@@ -156,6 +157,7 @@ impl AstLowering {
             visibility: Visibility::Private,
             type_params: vec![],
             is_extern,
+            rust_attributes,
         })
     }
 
@@ -268,6 +270,7 @@ impl AstLowering {
             visibility: Visibility::Private,
             type_params: vec![],
             is_extern: false,
+            rust_attributes: self.extract_passthrough_attributes(&m.decorators),
         })
     }
 }

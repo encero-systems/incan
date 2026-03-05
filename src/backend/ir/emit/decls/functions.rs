@@ -7,6 +7,7 @@ use quote::{format_ident, quote};
 
 use incan_core::lang::conventions;
 
+use super::super::super::decl::IrRustAttrArg;
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 use super::{ZEN_TEXT, join_path_tokens};
@@ -72,20 +73,12 @@ impl<'a> IrEmitter<'a> {
             quote! {}
         };
 
-        let web_stmt = if is_main && self.needs_axum && !self.routes.is_empty() {
-            quote! {
-                let __router = __incan_web_router();
-                incan_stdlib::web::set_router(__router);
-            }
-        } else {
-            quote! {}
-        };
-
         let tokio_main_attr = if is_main && func.is_async && self.needs_tokio {
             quote! { #[incan_stdlib::__private::tokio::main] }
         } else {
             quote! {}
         };
+        let rust_attrs = self.emit_rust_attributes(&func.rust_attributes);
 
         // RFC 023: emit generic type parameters with inferred/explicit trait bounds.
         let generics = self.emit_type_params(&func.type_params);
@@ -94,9 +87,9 @@ impl<'a> IrEmitter<'a> {
         if is_main || ret_ty_is_unit {
             Ok(quote! {
                 #tokio_main_attr
+                #(#rust_attrs)*
                 #vis #async_kw fn #name #generics (#(#params),*) {
                     #zen_stmt
-                    #web_stmt
                     #(#body_stmts)*
                 }
             })
@@ -104,6 +97,7 @@ impl<'a> IrEmitter<'a> {
             let ret_ty = self.emit_type(&func.return_type);
             Ok(quote! {
                 #tokio_main_attr
+                #(#rust_attrs)*
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
                     #(#body_stmts)*
                 }
@@ -169,6 +163,31 @@ impl<'a> IrEmitter<'a> {
         } else {
             quote! {}
         };
+
+        // Proc-macro crates expose macros, not callable Rust functions. Keep decorator marker declarations compilable
+        // by emitting a panic stub instead of a delegation call.
+        if module_path == "incan_web_macros" {
+            let generics = self.emit_type_params(&func.type_params);
+            let panic_message = format!(
+                "decorator marker '{}::{}' cannot be called at runtime",
+                module_path, func.name
+            );
+            let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
+            if ret_ty_is_unit {
+                return Ok(quote! {
+                    #vis #async_kw fn #name #generics (#(#params),*) {
+                        panic!(#panic_message)
+                    }
+                });
+            }
+
+            let ret_ty = self.emit_type(&func.return_type);
+            return Ok(quote! {
+                #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
+                    panic!(#panic_message)
+                }
+            });
+        }
 
         let await_kw = if func.is_async {
             quote! { .await }
@@ -264,8 +283,10 @@ impl<'a> IrEmitter<'a> {
         *self.current_function_return_type.borrow_mut() = Some(func.return_type.clone());
         let body_stmts: Vec<TokenStream> = func.body.iter().map(|s| self.emit_stmt(s)).collect::<Result<_, _>>()?;
         *self.current_function_return_type.borrow_mut() = None;
+        let rust_attrs = self.emit_rust_attributes(&func.rust_attributes);
 
         Ok(quote! {
+            #(#rust_attrs)*
             #vis fn #name #generics (#(#params),*) #ret {
                 #(#body_stmts)*
             }
@@ -451,5 +472,37 @@ impl<'a> IrEmitter<'a> {
                 }
             })
         }
+    }
+
+    /// Emit `IrRustAttribute`s as Rust `#[module::path::name(args)]` attribute tokens.
+    ///
+    /// Shared between `emit_function` and `emit_method` to avoid duplicating the attribute rendering logic.
+    fn emit_rust_attributes(&self, attributes: &[super::super::super::decl::IrRustAttribute]) -> Vec<TokenStream> {
+        attributes
+            .iter()
+            .map(|a| {
+                let mut path_tokens: Vec<TokenStream> = a
+                    .module_path
+                    .split("::")
+                    .map(Self::rust_ident)
+                    .map(|ident| quote! { #ident })
+                    .collect::<Vec<_>>();
+                let name = Self::rust_ident(&a.name);
+                path_tokens.push(quote! { #name });
+                let full_path = join_path_tokens(&path_tokens);
+                let args = a.args.iter().map(|arg| match arg {
+                    IrRustAttrArg::Positional(value) => {
+                        let tokens: TokenStream = value.parse().unwrap_or_default();
+                        quote! { #tokens }
+                    }
+                    IrRustAttrArg::Named { name, value } => {
+                        let n = Self::rust_ident(name);
+                        let tokens: TokenStream = value.parse().unwrap_or_default();
+                        quote! { #n = #tokens }
+                    }
+                });
+                quote! { #[#full_path(#(#args),*)] }
+            })
+            .collect()
     }
 }

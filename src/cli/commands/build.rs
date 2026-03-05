@@ -163,13 +163,13 @@ fn prepare_project(
 
     let needs_serde = codegen.needs_serde();
     let needs_tokio = codegen.needs_tokio();
-    let needs_axum = codegen.needs_axum();
+    let needs_web = codegen.needs_web();
 
     // ---- Setup project generator ----
     let mut generator = ProjectGenerator::new(&out_dir, project_name.as_str(), true);
     generator.set_needs_serde(needs_serde);
     generator.set_needs_tokio(needs_tokio);
-    generator.set_needs_axum(needs_axum);
+    generator.set_needs_web(needs_web);
     generator.set_include_dev_dependencies(false);
     generator.set_rust_edition(
         manifest

@@ -13,6 +13,7 @@
 - [Standard library namespaces](#standard-library-namespaces)
 - [Builtin exceptions](#builtin-exceptions)
 - [Builtin functions](#builtin-functions)
+- [Decorators](#decorators)
 - [Derives](#derives)
 - [Builtin traits](#builtin-traits)
 - [Operators](#operators)
@@ -92,7 +93,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 
 | Namespace | Feature gate | Submodules | Activates soft keywords |
 |---|---|---|---|
-| `std.web` | `web` | `std.web.app`, `std.web.routing`, `std.web.request`, `std.web.response`, `std.web.prelude` | - |
+| `std.web` | `web` | `std.web.app`, `std.web.routing`, `std.web.request`, `std.web.response`, `std.web.macros`, `std.web.prelude` | - |
 | `std.testing` | - | - | `assert` |
 | `std.async` | - | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.select`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
 | `std.serde` | `json` | `std.serde.json` | - |
@@ -242,6 +243,15 @@ def main() -> None:
 | WriteFile | `write_file` |  | Write a string/bytes to a file on disk. | RFC 000 | 0.1 | Stable |
 | JsonStringify | `json_stringify` |  | Serialize a value to JSON. | RFC 000 | 0.1 | Stable |
 | Sleep | `sleep` |  | Sleep for a duration. | RFC 000 | 0.1 | Stable |
+
+## Decorators
+
+| Id | Canonical | Aliases | Description | RFC | Since | Stability |
+|---|---|---|---|---|---|---|
+| Derive | `@derive` |  | Derive common trait implementations. | RFC 000 | 0.1 | Stable |
+| RustExtern | `@rust.extern` |  | Mark functions whose body is provided by a Rust module. | RFC 022 | 0.2 | Stable |
+| StaticMethod | `@staticmethod` |  | Mark a method as static (no self receiver). | RFC 000 | 0.1 | Stable |
+| Requires | `@requires` |  | Declare required fields for trait default methods. | RFC 000 | 0.1 | Stable |
 
 ## Derives
 

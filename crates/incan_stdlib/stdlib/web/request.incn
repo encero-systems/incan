@@ -1,87 +1,79 @@
 """
 HTTP Request Extractors
 
-Types for extracting data from HTTP requests.
+Types for extracting data from HTTP requests. These are newtype wrappers around Axum's extractor types, with 
+`@derive(FromRequestParts)` for automatic trait bridging.
 
 Example:
-    from std.web import route, Json, Query
-    
+    ```incan
+    from std.web.routing import route
+    from std.web.request import Query
+    from std.web.response import Json
+
     @route("/search")
     async def search(params: Query[SearchParams]) -> Json[list[Result]]:
         results = do_search(params.q, params.limit)
         return Json(results)
-    
+
     @route("/users/{id}")
     async def get_user(id: int) -> Json[User]:
-        # Path parameters extracted automatically
+        # Single path parameters are extracted automatically from the function signature.
         return Json(find_user(id))
+    ```
 """
-
 # Import Axum extractor types
-# Version annotations ensure correct trait signatures (FromRequestParts in 0.8+)
-from rust::axum::extract @ "0.8" import Query as AxumQuery
-from rust::axum::extract @ "0.8" import Path as AxumPath
+from rust::axum::extract import Query as AxumQuery, Path as AxumPath
 
-# Incan newtypes wrapping Axum extractors
-# The compiler auto-generates FromRequestParts trait impls via trait bridges
-# See: crates/incan_core/src/lang/trait_bridges.rs
+from std.web.macros import FromRequestParts
 
-pub type Query[T] = newtype AxumQuery[T]
-"""
-Query string extractor.
+@derive(FromRequestParts)
+pub type Query[T] = newtype AxumQuery[T]:
+    """
+    Query string extractor.
 
-Parses URL query parameters into a typed model.
-The inner type T must implement Deserialize.
+    Parses URL query parameters into a typed model.
+    The inner type T must implement Deserialize.
 
-The compiler auto-generates the FromRequestParts trait impl,
-so you can use this directly in route handlers.
+    Example:
+        ```incan
+        from std.web import route, Json, Query
 
-Example:
-```incan
-from std.web import route, Json, Query
+        @derive(Deserialize)
+        model SearchParams:
+            q: str
+            limit: int = 10
 
-@derive(Deserialize)
-model SearchParams:
-    q: str
-    limit: int = 10
+        @route("/search")
+        async def search(params: Query[SearchParams]) -> Json[list[Item]]:
+            # Access fields via .0 (wrapped value)
+            return Json(search_items(params.0.q, params.0.limit))
+        ```
 
-@route("/search")
-async def search(params: Query[SearchParams]) -> Json[list[Item]]:
-    # Access fields via .0 (wrapped value)
-    return Json(search_items(params.0.q, params.0.limit))
-```
+    Compiles to: axum::extract::Query<T>
+    """
 
-Compiles to: Query<T> wrapping axum::extract::Query<T>
-Trait impl: FromRequestParts<S> is auto-delegated to AxumQuery<T>
-"""
+@derive(FromRequestParts)
+pub type Path[T] = newtype AxumPath[T]:
+    """
+    Path parameter extractor for multiple params.
 
+    For single path parameters, use the type directly in the function signature.
+    For multiple parameters, use Path with a tuple.
 
-pub type Path[T] = newtype AxumPath[T]
-"""
-Path parameter extractor.
+    Example:
+        ```incan
+        from std.web import route, Json, Path
 
-Extracts typed parameters from the URL path.
-The inner type T can be a single value or tuple for multiple params.
+        # Single param
+        @route("/users/{id}")
+        async def get_user(id: Path[int]) -> Json[User]:
+            return Json(find_user(id.0))
 
-The compiler auto-generates the FromRequestParts trait impl,
-so you can use this directly in route handlers.
+        # Multiple params
+        @route("/users/{user_id}/posts/{post_id}")
+        async def get_post(user_id: Path[int], post_id: Path[int]) -> Json[Post]:
+            return Json(find_post(user_id.0, post_id.0))
+        ```
 
-Example:
-```incan
-from std.web import route, Json, Path
-
-# Single param
-@route("/users/{id}")
-async def get_user(id: Path[int]) -> Json[User]:
-    return Json(find_user(id.0))
-
-# Multiple params with tuple
-@route("/users/{user_id}/posts/{post_id}")
-async def get_post(path: Path[tuple[int, int]]) -> Json[Post]:
-    user_id, post_id = path.0  # Unpack wrapped tuple
-    return Json(fetch_post(user_id, post_id))
-```
-
-Compiles to: Path<T> wrapping axum::extract::Path<T>
-Trait impl: FromRequestParts<S> is auto-delegated to AxumPath<T>
-"""
+    Compiles to: axum::extract::Path<T>
+    """

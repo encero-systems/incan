@@ -15,7 +15,7 @@ use crate::frontend::ast::Span;
 use crate::frontend::diagnostics::CompileError;
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::{DependencySource, DependencySpec, ProjectManifest};
-use incan_core::lang::stdlib;
+use incan_core::lang::stdlib::{self, STDLIB_NAMESPACES, StdlibExtraCrateSource};
 
 /// Validate that a version requirement string uses Cargo SemVer syntax.
 ///
@@ -433,7 +433,7 @@ fn validate_optional_imports(
 // ============================================================================
 
 fn known_good_spec(crate_name: &str) -> Option<DependencySpec> {
-    let (version, features) = match crate_name {
+    let (version, features): (&str, Vec<&str>) = match crate_name {
         "serde" => ("1.0", vec!["derive"]),
         "serde_json" => ("1.0", vec![]),
         "tokio" => ("1", vec!["rt-multi-thread", "macros", "time", "sync"]),
@@ -453,7 +453,10 @@ fn known_good_spec(crate_name: &str) -> Option<DependencySpec> {
         "futures" => ("0.3", vec![]),
         "bytes" => ("1.0", vec![]),
         "itertools" => ("0.12", vec![]),
-        _ => return None,
+        // For any crate not in the hardcoded list above, fall through to the stdlib registry.
+        // STDLIB_NAMESPACES is the single source of truth for stdlib-managed crate versions,
+        // so we derive the spec from there rather than duplicating version strings here.
+        _ => return known_good_spec_from_stdlib(crate_name),
     };
 
     Some(
@@ -468,6 +471,37 @@ fn known_good_spec(crate_name: &str) -> Option<DependencySpec> {
         }
         .normalized(),
     )
+}
+
+/// Look up a known-good spec for crates declared as `extra_crate_deps` in any stdlib namespace.
+///
+/// This makes `STDLIB_NAMESPACES` the single source of truth for stdlib-managed crate versions.
+/// When a stdlib `.incn` file writes `from rust::axum import ...` without an inline version annotation, the resolver
+/// finds the version here rather than requiring a duplicate hardcoded entry in `known_good_spec`.
+fn known_good_spec_from_stdlib(crate_name: &str) -> Option<DependencySpec> {
+    for ns in STDLIB_NAMESPACES {
+        for dep in ns.extra_crate_deps {
+            if dep.crate_name == crate_name {
+                let StdlibExtraCrateSource::Version(version) = dep.source else {
+                    // Path dependencies are not registry crates; skip.
+                    continue;
+                };
+                return Some(
+                    DependencySpec {
+                        crate_name: crate_name.to_string(),
+                        version: Some(version.to_string()),
+                        features: vec![],
+                        default_features: true,
+                        source: DependencySource::Registry,
+                        optional: false,
+                        package: None,
+                    }
+                    .normalized(),
+                );
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]

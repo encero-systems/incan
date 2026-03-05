@@ -39,7 +39,9 @@ use super::expr::VarAccess;
 use super::types::IrType;
 use super::{IrProgram, Mutability};
 use crate::frontend::ast;
+use crate::frontend::decorator_resolution;
 use crate::frontend::typechecker::TypeCheckInfo;
+use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_core::lang::conventions;
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 
@@ -102,6 +104,10 @@ pub struct AstLowering {
     ///
     /// While in a non-linear context, lowering avoids last-use moves.
     pub(super) non_linear_context_depth: usize,
+    /// Import alias map for decorator/derive passthrough resolution.
+    pub(super) import_aliases: HashMap<String, Vec<String>>,
+    /// Cached stdlib metadata used to resolve rust.module-backed decorators/derives.
+    pub(super) stdlib_cache: StdlibAstCache,
 }
 
 impl AstLowering {
@@ -194,6 +200,8 @@ impl AstLowering {
             struct_field_aliases: HashMap::new(),
             remaining_ident_reads: Vec::new(),
             non_linear_context_depth: 0,
+            import_aliases: HashMap::new(),
+            stdlib_cache: StdlibAstCache::new(),
         }
     }
 
@@ -361,6 +369,7 @@ impl AstLowering {
     pub fn lower_program(&mut self, program: &ast::Program) -> Result<IrProgram, LoweringErrors> {
         let mut ir_program = IrProgram::new();
         let mut errors: Vec<LoweringError> = Vec::new();
+        self.import_aliases = decorator_resolution::collect_import_aliases(program);
 
         // RFC 023: propagate rust.module() path from AST to IR.
         ir_program.rust_module_path = program.rust_module_path.as_ref().map(|sp| sp.node.clone());

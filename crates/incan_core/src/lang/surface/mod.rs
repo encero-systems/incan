@@ -16,7 +16,6 @@ pub mod functions;
 pub mod math;
 pub mod methods;
 pub mod types;
-pub mod web;
 
 // Re-export method registries for backwards-compatible paths:
 // `crate::lang::surface::string_methods`, `crate::lang::surface::list_methods`, ...

@@ -111,33 +111,23 @@ fn test_web_route_extractors_codegen() {
 #[test]
 fn test_web_route_extractors_nested_module_codegen() {
     let main_source = r#"
-from std.web import App
+import std.async
 import api::routes
 
 def main() -> None:
-  app = App()
-  app.run(port=8080)
+  pass
 "#;
     let routes_source = r#"
-import std.web as web
-from std.web import Response, Json, Query, POST
 import std.async
+from std.web import route, POST
 
-@derive(Deserialize)
-model CreateThingRequest:
-  name: str
+@route("/things", methods=[POST])
+async def create(id: int) -> int:
+  return id
 
-@derive(Deserialize)
-model SearchParams:
-  q: str
-
-@web.route("/things", methods=[POST])
-async def create(req: Json[list[CreateThingRequest]]) -> Response:
-  return Response.ok()
-
-@web.route("/search")
-async def search(params: Query[SearchParams]) -> Response:
-  return Response.ok()
+@route("/search")
+async def search(id: int) -> int:
+  return id
 "#;
 
     let Ok(main_tokens) = lexer::lex(main_source) else {
@@ -164,48 +154,6 @@ async def search(params: Query[SearchParams]) -> Response:
     insta::assert_snapshot!("web_route_extractors_nested_module", rust_code);
 }
 
-#[test]
-fn test_web_route_path_param_duplicate_errors() {
-    let source = r#"
-from std.web import route, Response
-
-@route("/users/{id}/{id}")
-def get(id: int) -> Response:
-  return Response.ok()
-"#;
-    let Ok(tokens) = lexer::lex(source) else {
-        panic!("lexer failed")
-    };
-    let Ok(ast) = parser::parse(&tokens) else {
-        panic!("parser failed")
-    };
-    let Err(err) = IrCodegen::new().try_generate(&ast) else {
-        panic!("expected codegen error")
-    };
-    assert!(err.to_string().contains("duplicate web route param 'id'"));
-}
-
-#[test]
-fn test_web_route_path_param_unterminated_errors() {
-    let source = r#"
-from std.web import route, Response
-
-@route("/users/{id")
-def get(id: int) -> Response:
-  return Response.ok()
-"#;
-    let Ok(tokens) = lexer::lex(source) else {
-        panic!("lexer failed")
-    };
-    let Ok(ast) = parser::parse(&tokens) else {
-        panic!("parser failed")
-    };
-    let Err(err) = IrCodegen::new().try_generate(&ast) else {
-        panic!("expected codegen error")
-    };
-    assert!(err.to_string().contains("unterminated web route param"));
-}
-
 // ============================================================================
 // RFC 022: Codegen emits incan_stdlib handoff, not framework crate references
 // ============================================================================
@@ -223,8 +171,8 @@ fn test_web_route_codegen_no_framework_crate_leakage() {
         "Generated web code should reference incan_stdlib"
     );
     assert!(
-        rust_code.contains("__incan_router!"),
-        "Generated web code should use __incan_router! macro"
+        rust_code.contains("incan_web_macros::route"),
+        "Generated web code should use incan_web_macros::route passthrough"
     );
 
     // Must NOT directly reference framework crates

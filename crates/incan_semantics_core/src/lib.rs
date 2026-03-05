@@ -36,6 +36,7 @@ pub enum DecoratorFeature {
     TestingMarker,
     Route,
     Derive,
+    StaticMethod,
     Requires,
     StdlibDecoratorFunction,
 }
@@ -308,8 +309,8 @@ impl<'a> SurfaceSemanticsRegistry<'a> {
 pub fn decorator_feature_from_id(id: DecoratorId) -> DecoratorFeature {
     match id {
         DecoratorId::RustExtern => DecoratorFeature::RustExtern,
-        DecoratorId::Route => DecoratorFeature::Route,
         DecoratorId::Derive => DecoratorFeature::Derive,
+        DecoratorId::StaticMethod => DecoratorFeature::StaticMethod,
         DecoratorId::Requires => DecoratorFeature::Requires,
     }
 }

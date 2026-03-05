@@ -11,7 +11,7 @@ expression: rust_code
 incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.2");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
-use crate::__incan_std::testing::assert_eq;
+pub use crate::__incan_std::testing::assert_eq;
 fn check_basics() {
     crate::__incan_std::testing::assert_eq(1 + 1, 2);
     crate::__incan_std::testing::assert_ne(3, 4);

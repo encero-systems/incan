@@ -208,9 +208,15 @@ pub fn resolve_import_path(base_dir: &Path, import: &ImportDecl) -> Option<PathB
     None
 }
 
-/// Extract public symbols exported by a module.
+/// Extract symbols exported by a module.
 ///
-/// Visibility is enforced here: only `pub` declarations are considered exports.
+/// Visibility is enforced for declarations (`pub` only), and module-level `from ... import ...` statements are treated
+/// as re-exports by name (including aliases).
+///
+/// This follows Python semantics: `from foo import bar` at module level makes `bar` part of the module's public
+/// surface. The primary use case is stdlib prelude files (e.g., `std.web/prelude.incn`) that re-export items from
+/// submodules, but it applies uniformly to all modules. The consumer of this list (`validate_import_visibility` in
+/// the typechecker) uses it to check whether `from some_module import X` is valid.
 pub fn exported_symbols(ast: &Program) -> Vec<ExportedSymbol> {
     let mut exports = Vec::new();
 
@@ -258,7 +264,15 @@ pub fn exported_symbols(ast: &Program) -> Vec<ExportedSymbol> {
                     exports.push(ExportedSymbol::Function(f.name.clone()));
                 }
             }
-            Declaration::Import(_) | Declaration::Docstring(_) => {}
+            Declaration::Import(import) => {
+                if let ImportKind::From { items, .. } = &import.kind {
+                    for item in items {
+                        let exported_name = item.alias.as_ref().unwrap_or(&item.name);
+                        exports.push(ExportedSymbol::Reexported(exported_name.clone()));
+                    }
+                }
+            }
+            Declaration::Docstring(_) => {}
         }
     }
 
@@ -271,6 +285,7 @@ pub enum ExportedSymbol {
     Trait(String),
     Function(String),
     Const(String),
+    Reexported(String),
     Variant { enum_name: String, variant_name: String },
 }
 
@@ -278,8 +293,8 @@ pub enum ExportedSymbol {
 mod tests {
     use super::*;
     use crate::frontend::ast::{
-        ClassDecl, ConstDecl, Declaration, EnumDecl, Expr, FunctionDecl, ImportDecl, ImportKind, ImportPath, Literal,
-        ModelDecl, NewtypeDecl, Program, Span, Spanned, TraitDecl, Type, VariantDecl, Visibility,
+        ClassDecl, ConstDecl, Declaration, EnumDecl, Expr, FunctionDecl, ImportDecl, ImportItem, ImportKind,
+        ImportPath, Literal, ModelDecl, NewtypeDecl, Program, Span, Spanned, TraitDecl, Type, VariantDecl, Visibility,
     };
 
     fn make_spanned<T>(node: T) -> Spanned<T> {
@@ -493,7 +508,7 @@ mod tests {
     }
 
     #[test]
-    fn test_exported_symbols_ignores_imports() {
+    fn test_exported_symbols_ignores_module_imports() {
         let import = ImportDecl {
             kind: ImportKind::Module(ImportPath {
                 segments: vec!["std".to_string()],
@@ -509,6 +524,45 @@ mod tests {
         };
         let exports = exported_symbols(&program);
         assert!(exports.is_empty());
+    }
+
+    #[test]
+    fn test_exported_symbols_reexports_from_import_items() {
+        let import = ImportDecl {
+            kind: ImportKind::From {
+                module: ImportPath {
+                    segments: vec!["std".to_string(), "web".to_string(), "routing".to_string()],
+                    is_absolute: false,
+                    parent_levels: 0,
+                },
+                items: vec![
+                    ImportItem {
+                        name: "route".to_string(),
+                        alias: None,
+                    },
+                    ImportItem {
+                        name: "GET".to_string(),
+                        alias: Some("METHOD_GET".to_string()),
+                    },
+                ],
+            },
+            alias: None,
+        };
+        let program = Program {
+            declarations: vec![make_spanned(Declaration::Import(import))],
+            rust_module_path: None,
+            warnings: vec![],
+        };
+        let exports = exported_symbols(&program);
+        assert_eq!(exports.len(), 2);
+        match &exports[0] {
+            ExportedSymbol::Reexported(name) => assert_eq!(name, "route"),
+            _ => panic!("Expected Reexported export"),
+        }
+        match &exports[1] {
+            ExportedSymbol::Reexported(name) => assert_eq!(name, "METHOD_GET"),
+            _ => panic!("Expected Reexported export"),
+        }
     }
 
     #[test]

@@ -293,57 +293,57 @@ def foo(fields: List[FieldInfo]) -> None:
 
 #[test]
 fn test_decorator_resolution_canonical_path() {
-    // Canonical @std.web.route with fully qualified path
+    // Canonical @std.web.routing.route with fully qualified path
     let source = r#"
-from std.web import Response
+from std.web.routing import GET
 import std.async
 
-@std.web.route("/")
-async def index() -> Response:
-  return Response.ok()
+@std.web.routing.route("/", methods=[GET])
+async def index() -> int:
+  return 1
 "#;
     assert_check_ok(source);
 }
 
 #[test]
 fn test_decorator_resolution_module_alias() {
-    // Aliased @web.route after `import std.web as web`
+    // Aliased @web.route after `import std.web.routing as web`
     let source = r#"
-import std.web as web
-from std.web import Response
+import std.web.routing as web
+from std.web.routing import GET
 import std.async
 
-@web.route("/")
-async def index() -> Response:
-  return Response.ok()
+@web.route("/", methods=[GET])
+async def index() -> int:
+  return 1
 "#;
     assert_check_ok(source);
 }
 
 #[test]
 fn test_decorator_resolution_from_import() {
-    // Bare @route after `from std.web import route`
+    // Bare @route after `from std.web import route` (prelude re-export)
     let source = r#"
-from std.web import route, Response
+from std.web import route, GET
 import std.async
 
-@route("/")
-async def index() -> Response:
-  return Response.ok()
+@route("/", methods=[GET])
+async def index() -> int:
+  return 1
 "#;
     assert_check_ok(source);
 }
 
 #[test]
 fn test_decorator_resolution_colcolon_path() {
-    // `::` separator variant: @std::web::route
+    // `::` separator variant: @std::web::routing::route
     let source = r#"
-from std.web import Response
+from std.web.routing import GET
 import std.async
 
-@std::web::route("/")
-async def index() -> Response:
-  return Response.ok()
+@std::web::routing::route("/", methods=[GET])
+async def index() -> int:
+  return 1
 "#;
     assert_check_ok(source);
 }

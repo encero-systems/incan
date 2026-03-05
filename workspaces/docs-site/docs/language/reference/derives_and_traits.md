@@ -152,6 +152,25 @@ Expected: “cannot derive a model/class” with a hint to use `with TraitName` 
 
 ---
 
+## Decorators (`@staticmethod`, `@requires`)
+
+Incan has four built-in decorators. `@derive(...)` is covered [above](#derive-catalog-quick-index); `@rust.extern` is a
+Rust interop decorator (see [RFC 023]). This section covers the two method/trait decorators.
+
+--8<-- "_snippets/rfcs_refs.md"
+
+### `@staticmethod`
+
+--8<-- "_snippets/language/decorators/staticmethod.md"
+
+See also: [Classes: Static methods](../explanation/models_and_classes/classes.md#static-methods-staticmethod)
+
+### `@requires(...)` (adopter contract)
+
+Covered below in [Traits (authoring)](#requires-adopter-contract).
+
+---
+
 ## Traits (authoring)
 
 Traits define reusable capabilities. You opt in with `with TraitName`. Methods can be required (`...`) or have defaults.

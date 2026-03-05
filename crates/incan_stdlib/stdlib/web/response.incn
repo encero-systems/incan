@@ -1,128 +1,112 @@
 """
-HTTP Response Builders
+HTTP Response Types and Builders
 
-Types for building HTTP responses.
+Provides typed response wrappers around Axum's response types, with static factory methods
+for common response patterns.
 
 Example:
-    from std.web import route, Response, Json
-    
+    from std.web.routing import route
+    from std.web.response import Response, Json
+
     @route("/")
     async def index() -> Response:
         return Response.html("<h1>Welcome!</h1>")
-    
+
     @route("/api/users/{id}")
     async def get_user(id: int) -> Json[User]:
         user = find_user(id)?
         return Json(user)
 """
+rust.module("incan_stdlib::web")
 
-# Import Axum wrapper types from runtime
-# (version resolved from crates/incan_stdlib/Cargo.toml)
-from rust::incan_stdlib::web::wrappers @ "0.2" import AxumJson, AxumHtml, AxumResponse
+from rust::axum import Json as AxumJson
+from rust::axum::response import Html as AxumHtml, Response as AxumRawResponse
+from std.web.macros import IntoResponse
 
-# IncanSource newtypes with trait delegation to IntoResponse
-pub type Json[T] = newtype AxumJson[T]
-"""
-JSON response wrapper.
+@rust.extern
+def response_html(content: str) -> AxumRawResponse:
+    """Create an HTML response (200 OK)."""
+    ...
 
-Serializes the inner value to JSON and sets Content-Type: application/json.
-The inner type T must implement Serialize.
+@rust.extern
+def response_ok() -> AxumRawResponse:
+    """Create an empty 200 OK response."""
+    ...
 
-Example:
-```incan
-from std.web import route, Json
+@rust.extern
+def response_status(code: int, body: str) -> AxumRawResponse:
+    """Create a response with a custom status code and body."""
+    ...
 
-@derive(Serialize)
-model User:
-    id: int
-    name: str
+@rust.extern
+def response_redirect(location: str) -> AxumRawResponse:
+    """Create a 302 redirect response."""
+    ...
 
-@route("/api/user")
-async def get_user() -> Json[User]:
-    return Json(User(id=1, name="Alice"))
-```
+@derive(IntoResponse)
+pub type Json[T] = newtype AxumJson[T]:
+    """
+    JSON response wrapper.
 
-Compiles to: Json<T> wrapping AxumJson<T> which wraps axum::Json<T>.
-IntoResponse trait is auto-delegated to the inner type.
-"""
+    Serializes the inner value to JSON and sets Content-Type: application/json.
+    The inner type T must implement Serialize.
 
+    Compiles to: axum::Json<T>
+    """
 
-pub type Html = newtype AxumHtml
-"""
-HTML response wrapper.
+@derive(IntoResponse)
+pub type Html = newtype AxumHtml[str]:
+    """
+    HTML response wrapper.
 
-Sets Content-Type: text/html.
+    Sets Content-Type: text/html.
 
-Example:
-```incan
-from std.web import route, Html
+    Example:
+        from std.web import route, Html
 
-@route("/")
-async def index() -> Html:
-    return Html("<h1>Hello!</h1>")
-```
+        @route("/")
+        async def index() -> Html:
+            return Html("<h1>Hello!</h1>")
 
-Compiles to: Html wrapping AxumHtml which wraps axum::response::Html<String>.
-IntoResponse trait is auto-delegated to the inner type.
-"""
+    Compiles to: axum::response::Html<String>
+    """
 
+@derive(IntoResponse)
+pub type Response = newtype AxumRawResponse:
+    """
+    HTTP response builder.
 
-pub type Response = newtype AxumResponse
-"""
-HTTP response builder.
+    For common cases, use Json or Html directly.
+    Response gives full control over status codes and headers.
 
-For common cases, use Json or Html directly.
-Response gives full control over status codes and headers.
+    Example:
+        from std.web.response import Response
 
-Example:
-```incan
-from std.web import route, Response
+        @route("/redirect")
+        async def redirect() -> Response:
+            return Response.redirect("/new-location")
 
-@route("/redirect")
-async def redirect() -> Response:
-    return Response.redirect("/new-location")
+        @route("/error")
+        async def error() -> Response:
+            return Response.status(500, "Something went wrong")
+    """
 
-@route("/error")
-async def error() -> Response:
-    return Response.status(500, "Something went wrong")
-```
+    @staticmethod
+    def html(content: str) -> Response:
+        """Create an HTML response (200 OK)."""
+        return Response(response_html(content))
 
-Compiles to: Response wrapping AxumResponse which wraps axum::response::Response.
-IntoResponse trait is auto-delegated to the inner type.
-"""
+    @staticmethod
+    def ok() -> Response:
+        """Create an empty 200 OK response."""
+        return Response(response_ok())
 
+    @staticmethod
+    def status(code: int, body: str) -> Response:
+        """Create a response with a custom status code."""
+        return Response(response_status(code, body))
 
-# Status code constants
-const OK: int = 200
-pub const HTTP_OK = OK
-
-const CREATED: int = 201
-pub const HTTP_CREATED = CREATED
-
-const NO_CONTENT: int = 204
-pub const HTTP_NO_CONTENT = NO_CONTENT
-
-const BAD_REQUEST: int = 400
-pub const HTTP_BAD_REQUEST = BAD_REQUEST
-
-const UNAUTHORIZED: int = 401
-pub const HTTP_UNAUTHORIZED = UNAUTHORIZED
-
-const FORBIDDEN: int = 403
-pub const HTTP_FORBIDDEN = FORBIDDEN
-
-const NOT_FOUND: int = 404
-pub const HTTP_NOT_FOUND = NOT_FOUND
-
-const INTERNAL_ERROR: int = 500
-pub const HTTP_INTERNAL_ERROR = INTERNAL_ERROR
-
-pub enum HttpStatus:
-    OK
-    CREATED
-    NO_CONTENT
-    BAD_REQUEST
-    UNAUTHORIZED
-    FORBIDDEN
-    NOT_FOUND
-    INTERNAL_ERROR
+    @staticmethod
+    def redirect(location: str) -> Response:
+        """Create a 302 redirect response."""
+        return Response(response_redirect(location))

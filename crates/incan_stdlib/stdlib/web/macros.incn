@@ -1,0 +1,15 @@
+"""
+Web derive macro traits.
+
+This module exposes trait names used by `@derive(...)` in `std.web` wrappers.
+They are backed by Rust proc macros from `incan_web_macros`.
+"""
+rust.module("incan_web_macros")
+
+pub trait IntoResponse:
+    def __derive_marker_into_response__(self) -> None:
+        pass
+
+pub trait FromRequestParts:
+    def __derive_marker_from_request_parts__(self) -> None:
+        pass

@@ -74,6 +74,7 @@ impl AstLowering {
                     visibility: Visibility::Private,
                     type_params: vec![],
                     is_extern: false,
+                    rust_attributes: self.extract_passthrough_attributes(&m.node.decorators),
                 })
             })
             .collect::<Result<Vec<_>, LoweringError>>()?;

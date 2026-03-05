@@ -9,7 +9,6 @@ use quote::{format_ident, quote};
 use incan_core::lang::conventions;
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods;
-use incan_core::lang::trait_bridges;
 
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
@@ -27,18 +26,6 @@ impl<'a> IrEmitter<'a> {
 
         let mut regular_methods = Vec::new();
         let mut trait_impls = Vec::new();
-
-        // Detect trait bridge overrides (user-provided dunder methods)
-        // This allows skipping auto-delegation for traits the user explicitly implemented
-        for method in &impl_block.methods {
-            if trait_bridges::is_trait_bridge(&method.name) {
-                self.trait_bridge_overrides
-                    .borrow_mut()
-                    .entry(impl_block.target_type.clone())
-                    .or_default()
-                    .insert(method.name.clone());
-            }
-        }
 
         for method in &impl_block.methods {
             match magic_methods::from_str(method.name.as_str()) {

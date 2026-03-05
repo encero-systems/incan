@@ -1,8 +1,11 @@
 //! Shared helpers: type parameter lowering, trait-bound mapping, and derive extraction.
 
-use super::super::super::decl::{IrTraitBound, IrTypeParam};
+use std::collections::HashMap;
+
+use super::super::super::decl::{IrRustAttrArg, IrRustAttribute, IrTraitBound, IrTypeParam};
 use super::super::AstLowering;
 use crate::frontend::ast::{self, Spanned};
+use crate::frontend::decorator_resolution;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::trait_bounds;
@@ -45,8 +48,12 @@ impl AstLowering {
     ///
     /// Parses `@derive(Serialize, Deserialize)` decorators and returns the list of derive names.
     /// Also adds prerequisite derives (e.g., Eq requires PartialEq).
-    pub(in crate::backend::ir::lower) fn extract_derives(&self, decorators: &[Spanned<ast::Decorator>]) -> Vec<String> {
+    pub(in crate::backend::ir::lower) fn extract_derives(
+        &mut self,
+        decorators: &[Spanned<ast::Decorator>],
+    ) -> (Vec<String>, HashMap<String, String>) {
         let mut derives = Vec::new();
+        let mut derive_rust_modules = HashMap::new();
 
         for decorator in decorators {
             if decorators::from_str(decorator.node.name.as_str()) == Some(DecoratorId::Derive) {
@@ -56,6 +63,9 @@ impl AstLowering {
                         // Handle simple identifier expressions
                         if let ast::Expr::Ident(name) = &expr.node {
                             derives.push(name.clone());
+                            if let Some(module_path) = self.resolve_derive_module_path(name) {
+                                derive_rust_modules.insert(name.clone(), module_path);
+                            }
                         }
                     }
                 }
@@ -88,6 +98,149 @@ impl AstLowering {
             }
         }
 
-        derives
+        (derives, derive_rust_modules)
+    }
+
+    /// Extract passthrough Rust attributes from decorators.
+    pub(in crate::backend::ir::lower) fn extract_passthrough_attributes(
+        &mut self,
+        decorators: &[Spanned<ast::Decorator>],
+    ) -> Vec<IrRustAttribute> {
+        let mut attrs = Vec::new();
+        for decorator in decorators {
+            let resolved = decorator_resolution::resolve_decorator_path(&decorator.node, &self.import_aliases);
+            if resolved.len() < 2 {
+                continue;
+            }
+            let module_segments = &resolved[..resolved.len() - 1];
+            let name = resolved[resolved.len() - 1].clone();
+            let Some(fn_info) = self.stdlib_cache.lookup_function_meta(module_segments, &name) else {
+                continue;
+            };
+            if !fn_info.is_rust_extern {
+                continue;
+            }
+            let Some(module_path) = fn_info.rust_module_path else {
+                continue;
+            };
+            if !Self::is_passthrough_rust_module(&module_path) {
+                continue;
+            }
+            attrs.push(IrRustAttribute {
+                module_path,
+                name,
+                args: self.serialize_decorator_args(&decorator.node.args),
+            });
+        }
+        attrs
+    }
+
+    /// Check whether a `rust.module()` path qualifies for decorator passthrough.
+    ///
+    /// `incan_stdlib::*` decorators are runtime/runner markers (e.g. `std.testing.parametrize`) and must not be emitted
+    /// as Rust attributes — they are interpreted by the Incan test runner, not by `rustc`. Passthrough is reserved for
+    /// external Rust-backed proc-macro crates like `incan_web_macros`.
+    fn is_passthrough_rust_module(module_path: &str) -> bool {
+        !module_path.starts_with("incan_stdlib::")
+    }
+
+    /// Resolve the `rust.module()` backing path for a `@derive(Trait)` reference.
+    ///
+    /// Uses the import alias table and the `StdlibAstCache` to map a trait name (e.g. `IntoResponse`) back to its
+    /// owning Rust module path (e.g. `incan_web_macros`). Returns `None` if the trait is not from a `rust.module()`
+    /// stdlib module.
+    fn resolve_derive_module_path(&mut self, derive_name: &str) -> Option<String> {
+        let resolved = decorator_resolution::resolve_decorator_path(
+            &ast::Decorator {
+                path: ast::ImportPath {
+                    segments: vec![derive_name.to_string()],
+                    is_absolute: false,
+                    parent_levels: 0,
+                },
+                name: derive_name.to_string(),
+                args: Vec::new(),
+            },
+            &self.import_aliases,
+        );
+        if resolved.len() < 2 {
+            return None;
+        }
+        let module_segments = &resolved[..resolved.len() - 1];
+        let trait_name = &resolved[resolved.len() - 1];
+        self.stdlib_cache
+            .lookup_trait_meta(module_segments, trait_name)
+            .and_then(|meta| meta.rust_module_path)
+    }
+
+    /// Convert AST decorator arguments into their IR representation for Rust attribute emission.
+    fn serialize_decorator_args(&self, args: &[ast::DecoratorArg]) -> Vec<IrRustAttrArg> {
+        args.iter()
+            .filter_map(|arg| match arg {
+                ast::DecoratorArg::Positional(expr) => Self::serialize_expr(&expr.node).map(IrRustAttrArg::Positional),
+                ast::DecoratorArg::Named(name, value) => match value {
+                    ast::DecoratorArgValue::Expr(expr) => {
+                        Self::serialize_expr(&expr.node).map(|v| IrRustAttrArg::Named {
+                            name: name.clone(),
+                            value: v,
+                        })
+                    }
+                    ast::DecoratorArgValue::Type(ty) => Some(IrRustAttrArg::Named {
+                        name: name.clone(),
+                        value: Self::serialize_type(&ty.node),
+                    }),
+                },
+            })
+            .collect()
+    }
+
+    /// Serialize an AST expression to a string suitable for embedding in a Rust attribute argument.
+    ///
+    /// Supports literals, identifiers, and list expressions. Returns `None` for unsupported expression kinds.
+    fn serialize_expr(expr: &ast::Expr) -> Option<String> {
+        match expr {
+            ast::Expr::Literal(lit) => match lit {
+                ast::Literal::String(s) => Some(format!("{s:?}")),
+                ast::Literal::Int(i) => Some(i.to_string()),
+                ast::Literal::Float(f) => Some(f.to_string()),
+                ast::Literal::Bool(b) => Some(b.to_string()),
+                ast::Literal::Bytes(bytes) => Some(format!("{bytes:?}")),
+                ast::Literal::None => Some("()".to_string()),
+            },
+            ast::Expr::Ident(name) => Some(format!("{name:?}")),
+            ast::Expr::List(items) => {
+                let mut out = Vec::new();
+                for item in items {
+                    out.push(Self::serialize_expr(&item.node)?);
+                }
+                Some(format!("[{}]", out.join(", ")))
+            }
+            _ => None,
+        }
+    }
+
+    /// Serialize an AST type to a string suitable for embedding in a Rust attribute argument.
+    fn serialize_type(ty: &ast::Type) -> String {
+        match ty {
+            ast::Type::Simple(name) => name.clone(),
+            ast::Type::Generic(name, args) => {
+                let inner = args
+                    .iter()
+                    .map(|a| Self::serialize_type(&a.node))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{name}<{inner}>")
+            }
+            ast::Type::Function(_, _) => "fn".to_string(),
+            ast::Type::Unit => "()".to_string(),
+            ast::Type::Tuple(items) => {
+                let inner = items
+                    .iter()
+                    .map(|a| Self::serialize_type(&a.node))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("({inner})")
+            }
+            ast::Type::SelfType => "Self".to_string(),
+        }
     }
 }

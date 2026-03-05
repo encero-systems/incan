@@ -21,6 +21,14 @@ impl<'a> Parser<'a> {
 
             let mut methods = Vec::new();
             self.skip_newlines();
+
+            // Skip optional docstring at the start of the newtype body
+            if let TokenKind::String(_) = &self.peek().kind {
+                self.advance();
+                self.match_token(&TokenKind::Newline);
+                self.skip_newlines();
+            }
+
             while !self.check(&TokenKind::Dedent) && !self.is_at_end() {
                 let method_decorators = self.decorators()?;
                 methods.push(self.method_decl(method_decorators)?);

@@ -134,6 +134,30 @@ class Counter:
         self.value += 1
 ```
 
+## Static methods (`@staticmethod`)
+
+--8<-- "_snippets/language/decorators/staticmethod.md"
+
+Another example — a utility method that doesn't need instance state:
+
+```incan
+class MathUtils:
+    precision: int = 2
+
+    @staticmethod
+    def clamp(value: int, low: int, high: int) -> int:
+        if value < low:
+            return low
+        if value > high:
+            return high
+        return value
+
+def main() -> None:
+    println(MathUtils.clamp(15, 0, 10))  # 10
+```
+
+See also: [Decorators reference](../../reference/derives_and_traits.md#decorators-staticmethod-requires)
+
 ## Inheritance (`extends`) and overrides
 
 Classes support single inheritance:

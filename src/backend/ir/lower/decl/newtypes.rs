@@ -44,6 +44,7 @@ impl AstLowering {
             derives,
             visibility: Self::map_visibility(n.visibility),
             type_params: Self::lower_type_params(&n.type_params),
+            derive_rust_modules: std::collections::HashMap::new(),
         })
     }
 }

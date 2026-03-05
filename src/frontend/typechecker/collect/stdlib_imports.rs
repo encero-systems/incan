@@ -300,7 +300,8 @@ impl TypeChecker {
                 ExportedSymbol::Const(name)
                 | ExportedSymbol::Type(name)
                 | ExportedSymbol::Trait(name)
-                | ExportedSymbol::Function(name) => {
+                | ExportedSymbol::Function(name)
+                | ExportedSymbol::Reexported(name) => {
                     exported_names.insert(name.clone());
                 }
                 ExportedSymbol::Variant { variant_name, .. } => {

@@ -51,11 +51,15 @@ pub struct ProjectGenerator {
     /// Whether this is a binary (true) or library (false)
     pub(super) is_binary: bool,
     /// Whether serde is needed (for Serialize/Deserialize derives)
+    // TODO: Replace with manifest-driven feature activation — imported modules should declare
+    // their own required Cargo features rather than the compiler scanning for them. When that
+    // model lands, `needs_serde`, `needs_tokio`, `needs_web`, and their `scan_for_*` counterparts
+    // in `IrCodegen` can all be deleted in favour of a collected set of module-declared features.
     pub(super) needs_serde: bool,
     /// Whether tokio is needed (for async runtime)
     pub(super) needs_tokio: bool,
-    /// Whether web routing support is needed (stdlib feature)
-    pub(super) needs_axum: bool,
+    /// Whether web support is needed (enables the `web` stdlib feature and extra deps like `axum`).
+    pub(super) needs_web: bool,
     /// Resolved Rust crate dependencies.
     pub(super) dependencies: Vec<DependencySpec>,
     /// Resolved dev-only Rust dependencies.
@@ -78,7 +82,7 @@ impl ProjectGenerator {
             is_binary,
             needs_serde: false,
             needs_tokio: false,
-            needs_axum: false,
+            needs_web: false,
             dependencies: Vec::new(),
             dev_dependencies: Vec::new(),
             include_dev_dependencies: false,
@@ -110,15 +114,15 @@ impl ProjectGenerator {
         self.needs_tokio = needs;
     }
 
-    /// Enable axum support (for web framework).
-    pub fn with_axum(mut self) -> Self {
-        self.needs_axum = true;
+    /// Enable web support (stdlib `web` feature + framework dependencies).
+    pub fn with_web(mut self) -> Self {
+        self.needs_web = true;
         self
     }
 
-    /// Set whether axum is needed.
-    pub fn set_needs_axum(&mut self, needs: bool) {
-        self.needs_axum = needs;
+    /// Set whether web support is needed.
+    pub fn set_needs_web(&mut self, needs: bool) {
+        self.needs_web = needs;
     }
 
     /// Set resolved Rust dependencies.
