@@ -13,6 +13,7 @@ impl Formatter {
             Declaration::Model(model) => self.format_model(model),
             Declaration::Class(class) => self.format_class(class),
             Declaration::Trait(tr) => self.format_trait(tr),
+            Declaration::TypeAlias(alias) => self.format_type_alias(alias),
             Declaration::Newtype(nt) => self.format_newtype(nt),
             Declaration::Enum(en) => self.format_enum(en),
             Declaration::Function(func) => self.format_function(func),
@@ -375,6 +376,18 @@ impl Formatter {
             }
             self.writer.write(")");
         }
+        self.writer.newline();
+    }
+
+    fn format_type_alias(&mut self, alias: &TypeAliasDecl) {
+        self.write_visibility(alias.visibility);
+        self.writer.write("type ");
+        self.writer.write(&alias.name);
+        if !alias.type_params.is_empty() {
+            self.format_type_params(&alias.type_params);
+        }
+        self.writer.write(" = ");
+        self.format_type(&alias.target.node);
         self.writer.newline();
     }
 

@@ -12,8 +12,6 @@ config:
   # Enforce consistent table formatting. We prefer aligned tables (readable diffs, aligned columns).
   MD060:
     style: aligned
-  # Match our docs style: allow up to 120 chars per line.
-  MD013:
-    line_length: 120
-    code_blocks: false
-    tables: true
+  # Disabled: WYSIWYG markdown renderers treat hard line breaks as visible breaks.
+  # Prose should flow naturally; let the renderer wrap.
+  MD013: false

@@ -3,12 +3,19 @@
 //! Web route registration is inventory-driven. The compiler/proc-macro layer emits `inventory::submit!` calls
 //! containing `RouteEntry` records, and `App::run` builds the router from those records at runtime.
 
+// FIXME: this module need to be rewritten in incan once the appropriate RFCs are implemented
+
 use std::net::SocketAddr;
 
 use axum::Router;
 use axum::http::{StatusCode, header};
 use axum::response::{Html as AxumHtmlInner, IntoResponse, Response as AxumRawResponse};
 use tokio::runtime::Runtime;
+
+// Re-export axum types so stdlib Incan modules can import them via `incan_stdlib::web::Json`,
+// `incan_stdlib::web::Html`, etc. These are the canonical "web response" types for Incan programs.
+pub use axum::Json;
+pub use axum::response::Html;
 
 pub type AxumHtml = axum::response::Html<String>;
 pub type AxumJson<T> = axum::Json<T>;
@@ -83,6 +90,20 @@ impl App {
                 .unwrap_or_else(|e| panic!("server error: {e}"));
         })
     }
+}
+
+/// Start the web server.
+///
+/// This is the free-function delegate called by the `App::run` static method generated from `app.incn`. It creates a
+/// temporary `App` instance and delegates to the instance method so that the `@staticmethod @rust.extern` wiring works
+/// without an instance in scope.
+///
+/// # Panics
+///
+/// Panics if the bind address is invalid, the Tokio runtime cannot be created, the TCP listener fails to bind, or the
+/// server returns an error.
+pub fn run(host: String, port: i64) {
+    App::new().run(&host, port);
 }
 
 #[must_use]

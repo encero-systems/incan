@@ -89,15 +89,26 @@ impl TypeChecker {
         // ---- Rule 5: Unused rust.module() (no @rust.extern items) ----
         // Push directly to `warnings` (not `errors`) since this is a non-fatal diagnostic.
         //
-        // Suppress for modules that declare traits: `rust.module()` is also used by the `@derive()`
-        // passthrough to resolve the Rust crate path for derive macros (e.g., `std.web.macros` declares
-        // `IntoResponse` backed by `incan_web_macros`).
+        // Suppress when:
+        // - Module declares traits: `rust.module()` is used by `@derive()` passthrough to resolve the Rust crate path
+        //   for derive macros (e.g., `std.web.macros`).
+        // - Module contains Rust crate imports (`from rust::X import Y`): these are facade/re-export modules.
+        //   `rust.module()` ensures the imports are emitted as `pub use`, making the types accessible to importers of
+        //   this stdlib module (e.g., `std.web.request` re-exports `axum::extract::Query` / `Path`).
         let has_trait_declarations = program
             .declarations
             .iter()
             .any(|d| matches!(&d.node, Declaration::Trait(_)));
 
-        if rust_module.is_some() && rust_extern_items.is_empty() && !has_trait_declarations {
+        let has_rust_crate_imports = program.declarations.iter().any(|d| {
+            matches!(
+                &d.node,
+                Declaration::Import(import)
+                    if matches!(&import.kind, ImportKind::RustFrom { .. } | ImportKind::RustCrate { .. })
+            )
+        });
+
+        if rust_module.is_some() && rust_extern_items.is_empty() && !has_trait_declarations && !has_rust_crate_imports {
             let directive_span = rust_module.as_ref().map_or(Span::default(), |d| d.span);
             self.warnings.push(errors::unused_rust_module(directive_span));
         }

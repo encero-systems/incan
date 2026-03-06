@@ -681,6 +681,7 @@ fn is_public_decl(decl: &Spanned<Declaration>) -> bool {
         Declaration::Model(m) => matches!(m.visibility, Visibility::Public),
         Declaration::Class(c) => matches!(c.visibility, Visibility::Public),
         Declaration::Enum(e) => matches!(e.visibility, Visibility::Public),
+        Declaration::TypeAlias(a) => matches!(a.visibility, Visibility::Public),
         Declaration::Newtype(n) => matches!(n.visibility, Visibility::Public),
         Declaration::Trait(t) => matches!(t.visibility, Visibility::Public),
         Declaration::Function(f) => matches!(f.visibility, Visibility::Public),

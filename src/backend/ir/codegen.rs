@@ -88,6 +88,7 @@ fn collect_type_module_paths(
                 Declaration::Model(m) => Some(&m.name),
                 Declaration::Class(c) => Some(&c.name),
                 Declaration::Enum(e) => Some(&e.name),
+                Declaration::TypeAlias(a) => Some(&a.name),
                 Declaration::Newtype(n) => Some(&n.name),
                 _ => None,
             };

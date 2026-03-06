@@ -94,6 +94,12 @@ impl AstLowering {
                     .insert(enum_ir.name.clone(), IrType::Enum(enum_ir.name.clone()));
                 IrDeclKind::Enum(enum_ir)
             }
+            ast::Declaration::TypeAlias(a) => IrDeclKind::TypeAlias {
+                visibility: Self::map_visibility(a.visibility),
+                name: a.name.clone(),
+                type_params: Self::lower_type_params(&a.type_params),
+                ty: self.lower_type(&a.target.node),
+            },
             ast::Declaration::Newtype(n) => {
                 // Note: newtype checked construction hook selection is done in `lower_program` when we see the full
                 // newtype declaration.

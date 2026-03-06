@@ -121,6 +121,7 @@ impl TypeChecker {
             Declaration::Model(model) => self.check_model(model),
             Declaration::Class(class) => self.check_class(class),
             Declaration::Trait(tr) => self.check_trait(tr),
+            Declaration::TypeAlias(_) => {} // Type aliases are transparent; no body to check
             Declaration::Newtype(nt) => self.check_newtype(nt),
             Declaration::Enum(en) => self.check_enum(en),
             Declaration::Function(func) => self.check_function(func),

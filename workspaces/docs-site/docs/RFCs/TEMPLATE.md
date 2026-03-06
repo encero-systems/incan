@@ -1,13 +1,10 @@
 # RFC Template
 
-> Use this template for RFCs in `docs/RFCs/`. Keep the RFC focused: one coherent proposal, with clear motivation,
-> semantics, and implementation strategy.
+> Use this template for RFCs in `docs/RFCs/`. Keep the RFC focused: one coherent proposal, with clear motivation, semantics, and implementation strategy.
 
 ## Title
 
 RFC NNN: \<short descriptive title\>
-
-## Status
 
 <!-- Status descriptions:
 
@@ -21,10 +18,13 @@ RFC NNN: \<short descriptive title\>
 - Rejected: This RFC is rejected.
  -->
 
-- Status: Draft | Planned | In Progress | Blocked | Deferred | Done | Superseded by RFC NNN | Rejected
-- Author(s): \<name/handle\>
-- Issue: \<link to issue\>
-- RFC PR: \<link to PR\>
+- **Status:** Draft
+- **Created:** \<YYYY-MM-DD\>
+- **Author(s):** \<name (@handle)\>
+- **Related:** \<RFC links, if any\>
+- **Issue:** \<link to issue\>
+- **RFC PR:** \<link to PR\>
+- **Target version:** \<version\>  <!-- Optional: records the baseline version this RFC describes (the source of truth). For example, `v0.2` means the RFC reflects the language as of `>= v0.2.0`. It does not mean "the version when this will be released"; it means "the version that was current when this RFC was written". -->
 
 ## Summary
 
@@ -101,3 +101,5 @@ Concrete steps (expected touchpoints):
 ## Unresolved questions
 
 Open questions to decide before implementation lands.
+
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

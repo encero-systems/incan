@@ -40,7 +40,10 @@ impl<'a> Parser<'a> {
         } else if self.check_keyword(KeywordId::Trait) {
             Declaration::Trait(self.trait_decl(decorators, visibility)?)
         } else if self.check_keyword(KeywordId::Type) || self.check_keyword(KeywordId::Newtype) {
-            Declaration::Newtype(self.newtype_decl(visibility)?)
+            match self.type_or_newtype_decl(decorators, visibility)? {
+                TypeOrNewtype::Alias(a) => Declaration::TypeAlias(a),
+                TypeOrNewtype::Newtype(n) => Declaration::Newtype(n),
+            }
         } else if self.check_keyword(KeywordId::Enum) {
             Declaration::Enum(self.enum_decl(decorators, visibility)?)
         } else if self.starts_surface_function_decl() {

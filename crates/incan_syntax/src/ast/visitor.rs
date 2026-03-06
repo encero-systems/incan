@@ -20,6 +20,7 @@ pub trait Visitor {
             Declaration::Model(m) => self.visit_model(m),
             Declaration::Class(c) => self.visit_class(c),
             Declaration::Trait(t) => self.visit_trait(t),
+            Declaration::TypeAlias(a) => self.visit_type_alias(a),
             Declaration::Newtype(n) => self.visit_newtype(n),
             Declaration::Enum(e) => self.visit_enum(e),
             Declaration::Function(f) => self.visit_function(f),
@@ -33,6 +34,7 @@ pub trait Visitor {
     fn visit_model(&mut self, _model: &ModelDecl) {}
     fn visit_class(&mut self, _class: &ClassDecl) {}
     fn visit_trait(&mut self, _trait: &TraitDecl) {}
+    fn visit_type_alias(&mut self, _alias: &TypeAliasDecl) {}
     fn visit_newtype(&mut self, _newtype: &NewtypeDecl) {}
     fn visit_enum(&mut self, _enum: &EnumDecl) {}
     fn visit_function(&mut self, _func: &FunctionDecl) {}

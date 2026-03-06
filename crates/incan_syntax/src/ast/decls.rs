@@ -72,6 +72,22 @@ pub struct TraitDecl {
 }
 
 // ============================================================================
+// Type aliases (transparent, documentation-bearing wrappers)
+// ============================================================================
+
+/// A type alias declaration: `pub type Query[T] = AxumQuery[T]`.
+///
+/// Compiles to a Rust `type` alias — no extra struct, no extra wrapping layer.
+/// Useful for re-exporting external types under an Incan name while retaining full docstrings and IDE support.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeAliasDecl {
+    pub visibility: Visibility,
+    pub name: Ident,
+    pub type_params: Vec<TypeParam>,
+    pub target: Spanned<Type>,
+}
+
+// ============================================================================
 // Newtypes (zero-cost wrappers with invariants)
 // ============================================================================
 
@@ -79,6 +95,7 @@ pub struct TraitDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewtypeDecl {
     pub visibility: Visibility,
+    pub decorators: Vec<Spanned<Decorator>>,
     pub name: Ident,
     pub type_params: Vec<TypeParam>,
     pub underlying: Spanned<Type>,

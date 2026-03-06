@@ -6,8 +6,6 @@ Re-exports common types for convenient imports.
 Example:
     from std.web import App, route, Response, Json
 
-    app = App()
-
     @route("/")
     async def index() -> Response:
         return Response.html("<h1>Hello from Incan!</h1>")
@@ -20,7 +18,7 @@ Example:
         message: str
 
     def main():
-        app.run(port=8080)
+        App.run(host="127.0.0.1", port=8080)
 
 Compiles to Axum with Tokio — native Rust performance, no GC.
 

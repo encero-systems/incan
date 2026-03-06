@@ -10,33 +10,55 @@ use syn::{
 
 struct RouteArgs {
     path: LitStr,
-    method: Option<LitStr>,
+    methods: Vec<LitStr>,
 }
 
 impl Parse for RouteArgs {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let path: LitStr = input.parse()?;
-        let mut method = None;
+        let mut methods = Vec::new();
         if input.peek(Token![,]) {
             let _ = input.parse::<Token![,]>();
             if input.peek(Ident) {
                 let key: Ident = input.parse()?;
                 let _ = input.parse::<Token![=]>()?;
                 if key == "method" {
-                    method = Some(input.parse()?);
+                    methods.push(input.parse()?);
                 } else if key == "methods" {
                     let list: syn::ExprArray = input.parse()?;
-                    if let Some(Expr::Lit(expr_lit)) = list.elems.first()
-                        && let syn::Lit::Str(first) = &expr_lit.lit
-                    {
-                        method = Some(first.clone());
+                    for expr in list.elems {
+                        match expr {
+                            Expr::Lit(expr_lit) => {
+                                if let syn::Lit::Str(method) = expr_lit.lit {
+                                    methods.push(method);
+                                } else {
+                                    return Err(syn::Error::new(
+                                        expr_lit.span(),
+                                        "methods entries must be string literals",
+                                    ));
+                                }
+                            }
+                            Expr::Path(path) => {
+                                // Be permissive for hand-written Rust usage: methods=[GET, POST]
+                                let Some(ident) = path.path.get_ident() else {
+                                    return Err(syn::Error::new(
+                                        path.span(),
+                                        "methods entries must be simple identifiers or string literals",
+                                    ));
+                                };
+                                methods.push(LitStr::new(&ident.to_string(), ident.span()));
+                            }
+                            other => {
+                                return Err(syn::Error::new(other.span(), "methods entries must be string literals"));
+                            }
+                        }
                     }
                 } else {
                     return Err(syn::Error::new(key.span(), "unsupported route argument"));
                 }
             }
         }
-        Ok(Self { path, method })
+        Ok(Self { path, methods })
     }
 }
 
@@ -51,20 +73,10 @@ pub fn route(args: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 fn expand_route(args: RouteArgs, func: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
-    let method = args
-        .method
-        .map(|m| m.value())
-        .unwrap_or_else(|| "GET".to_string())
-        .to_ascii_uppercase();
-    let router_method = match method.as_str() {
-        "GET" => quote! { get },
-        "POST" => quote! { post },
-        "PUT" => quote! { put },
-        "PATCH" => quote! { patch },
-        "DELETE" => quote! { delete },
-        "HEAD" => quote! { head },
-        "OPTIONS" => quote! { options },
-        _ => quote! { get },
+    let methods: Vec<String> = if args.methods.is_empty() {
+        vec!["GET".to_string()]
+    } else {
+        args.methods.iter().map(|m| m.value().to_ascii_uppercase()).collect()
     };
     let original_path = args.path.value();
     let axum_path = original_path.replace('{', ":").replace('}', "");
@@ -97,15 +109,28 @@ fn expand_route(args: RouteArgs, func: ItemFn) -> syn::Result<proc_macro2::Token
         call_args.push(quote! { #name });
     }
 
-    let submit = quote! {
-        inventory::submit! {
-            incan_stdlib::web::RouteEntry::new(
-                #axum_path,
-                #method,
-                |router| router.route(#axum_path, axum::routing::#router_method(#wrapper_name)),
-            )
-        }
-    };
+    let mut submits = Vec::new();
+    for method in methods {
+        let router_method = match method.as_str() {
+            "GET" => quote! { get },
+            "POST" => quote! { post },
+            "PUT" => quote! { put },
+            "PATCH" => quote! { patch },
+            "DELETE" => quote! { delete },
+            "HEAD" => quote! { head },
+            "OPTIONS" => quote! { options },
+            _ => quote! { get },
+        };
+        submits.push(quote! {
+            inventory::submit! {
+                incan_stdlib::web::RouteEntry::new(
+                    #axum_path,
+                    #method,
+                    |router| router.route(#axum_path, axum::routing::#router_method(#wrapper_name)),
+                )
+            }
+        });
+    }
 
     Ok(quote! {
         #func
@@ -114,7 +139,7 @@ fn expand_route(args: RouteArgs, func: ItemFn) -> syn::Result<proc_macro2::Token
             #fn_name(#(#call_args),*).await
         }
 
-        #submit
+        #(#submits)*
     })
 }
 
@@ -221,4 +246,37 @@ fn is_generic_wrapper(ty: &Type, wrapper_name: &str) -> bool {
         return false;
     }
     matches!(seg.arguments, PathArguments::AngleBracketed(_))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_methods_array_collects_all_methods() -> Result<(), Box<dyn std::error::Error>> {
+        let args: RouteArgs = syn::parse_str("\"/items\", methods=[\"GET\", \"DELETE\"]")?;
+        assert_eq!(args.path.value(), "/items");
+        let collected: Vec<String> = args.methods.iter().map(|m| m.value()).collect();
+        assert_eq!(collected, vec!["GET".to_string(), "DELETE".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn expand_route_emits_submit_for_each_method() -> Result<(), Box<dyn std::error::Error>> {
+        let args: RouteArgs = syn::parse_str("\"/items/{id}\", methods=[\"GET\", \"DELETE\"]")?;
+        let func: ItemFn = syn::parse_str(
+            r#"
+            async fn get_item(id: i64) -> i64 {
+                id
+            }
+        "#,
+        )?;
+        let expanded = expand_route(args, func)?;
+        let expanded_src = expanded.to_string();
+        let submit_count = expanded_src.matches("inventory :: submit !").count();
+        assert_eq!(submit_count, 2);
+        assert!(expanded_src.contains("\"GET\""));
+        assert!(expanded_src.contains("\"DELETE\""));
+        Ok(())
+    }
 }

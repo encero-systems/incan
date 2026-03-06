@@ -1,26 +1,64 @@
 """
 HTTP Response Types and Builders
 
-Provides typed response wrappers around Axum's response types, with static factory methods
-for common response patterns.
+Provides typed response wrappers around Axum's response primitives, plus a
+`Response` builder for full control over status codes and headers.
 
 Example:
+    ```incan
     from std.web.routing import route
-    from std.web.response import Response, Json
+    from std.web.response import Response, Json, Html
 
     @route("/")
-    async def index() -> Response:
-        return Response.html("<h1>Welcome!</h1>")
+    async def index() -> Html:
+        return Html("<h1>Welcome!</h1>")
 
     @route("/api/users/{id}")
     async def get_user(id: int) -> Json[User]:
         user = find_user(id)?
         return Json(user)
+
+    @route("/redirect")
+    async def redirect() -> Response:
+        return Response.redirect("/new-location")
+    ```
 """
 rust.module("incan_stdlib::web")
 
-from rust::axum import Json as AxumJson
-from rust::axum::response import Html as AxumHtml, Response as AxumRawResponse
+# Re-export Axum response tuple structs directly.
+# This preserves constructor ergonomics (`Json(value)`, `Html("<h1>...")`) in user code.
+from rust::axum import Json
+"""
+`Json[T]` — serialize `T` as JSON and set `Content-Type: application/json`.
+
+`T` must implement `serde::Serialize`. Construction uses tuple syntax:
+`Json(value)`.
+
+Example:
+    ```incan
+    from std.web.response import Json
+
+    @route("/api/ping")
+    async def ping() -> Json[str]:
+        return Json("pong")
+    ```
+"""
+
+from rust::axum::response import Html
+"""
+`Html` — return an HTML body with `Content-Type: text/html`.
+
+Example:
+    ```incan
+    from std.web.response import Html
+
+    @route("/hello")
+    async def hello() -> Html:
+        return Html("<h1>Hello, world!</h1>")
+    ```
+"""
+
+from rust::axum::response import Response as AxumRawResponse
 from std.web.macros import IntoResponse
 
 @rust.extern
@@ -44,42 +82,15 @@ def response_redirect(location: str) -> AxumRawResponse:
     ...
 
 @derive(IntoResponse)
-pub type Json[T] = newtype AxumJson[T]:
-    """
-    JSON response wrapper.
-
-    Serializes the inner value to JSON and sets Content-Type: application/json.
-    The inner type T must implement Serialize.
-
-    Compiles to: axum::Json<T>
-    """
-
-@derive(IntoResponse)
-pub type Html = newtype AxumHtml[str]:
-    """
-    HTML response wrapper.
-
-    Sets Content-Type: text/html.
-
-    Example:
-        from std.web import route, Html
-
-        @route("/")
-        async def index() -> Html:
-            return Html("<h1>Hello!</h1>")
-
-    Compiles to: axum::response::Html<String>
-    """
-
-@derive(IntoResponse)
 pub type Response = newtype AxumRawResponse:
     """
     HTTP response builder.
 
-    For common cases, use Json or Html directly.
-    Response gives full control over status codes and headers.
+    For common cases, use `Json` or `Html` directly.  `Response` gives full
+    control over status codes and headers.
 
     Example:
+        ```incan
         from std.web.response import Response
 
         @route("/redirect")
@@ -89,6 +100,7 @@ pub type Response = newtype AxumRawResponse:
         @route("/error")
         async def error() -> Response:
             return Response.status(500, "Something went wrong")
+        ```
     """
 
     @staticmethod

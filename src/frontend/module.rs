@@ -249,6 +249,11 @@ pub fn exported_symbols(ast: &Program) -> Vec<ExportedSymbol> {
                     }
                 }
             }
+            Declaration::TypeAlias(a) => {
+                if matches!(a.visibility, Visibility::Public) {
+                    exports.push(ExportedSymbol::Type(a.name.clone()));
+                }
+            }
             Declaration::Newtype(n) => {
                 if matches!(n.visibility, Visibility::Public) {
                     exports.push(ExportedSymbol::Type(n.name.clone()));
@@ -265,7 +270,15 @@ pub fn exported_symbols(ast: &Program) -> Vec<ExportedSymbol> {
                 }
             }
             Declaration::Import(import) => {
-                if let ImportKind::From { items, .. } = &import.kind {
+                // Both `from module import X` and `from rust::crate import X` are treated as re-exports. This lets
+                // stdlib files like `response.incn` expose axum types (`from rust::axum import Json`) to importers
+                // without needing a newtype wrapper.
+                let items = match &import.kind {
+                    ImportKind::From { items, .. } => Some(items.as_slice()),
+                    ImportKind::RustFrom { items, .. } => Some(items.as_slice()),
+                    _ => None,
+                };
+                if let Some(items) = items {
                     for item in items {
                         let exported_name = item.alias.as_ref().unwrap_or(&item.name);
                         exports.push(ExportedSymbol::Reexported(exported_name.clone()));
@@ -442,6 +455,7 @@ mod tests {
     fn test_exported_symbols_newtype() {
         let newtype = NewtypeDecl {
             visibility: Visibility::Public,
+            decorators: vec![],
             name: "UserId".to_string(),
             type_params: vec![],
             underlying: make_spanned(Type::Simple("i64".to_string())),

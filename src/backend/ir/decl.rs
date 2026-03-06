@@ -38,8 +38,13 @@ pub enum IrDeclKind {
     /// Trait definition
     Trait(IrTrait),
 
-    /// Type alias
-    TypeAlias { name: String, ty: IrType },
+    /// Type alias (`pub type X<T> = Y<T>`)
+    TypeAlias {
+        visibility: Visibility,
+        name: String,
+        type_params: Vec<IrTypeParam>,
+        ty: IrType,
+    },
 
     /// Constant
     Const {

@@ -17,7 +17,7 @@ Example:
         return Response.html("<h1>Hello!</h1>")
 
     def main():
-        app.run(port=8080)
+        App.run(host="127.0.0.1", port=8080)
 """
 rust.module("incan_stdlib::web")
 
@@ -26,21 +26,19 @@ pub class App:
     Web application container.
 
     Routes are registered via the ``route`` decorator from ``std.web.routing``.
-    The app collects all routes and builds an Axum Router at compile time.
+    The app collects all registered routes and builds an Axum Router at runtime.
 
     Example:
         
         ```incan
         from std.web import App, route, Response
 
-        app = App()
-
         @route("/health")
         async def health() -> Response:
             return Response.ok()
 
         def main():
-            app.run(host="0.0.0.0", port=3000)
+            App.run(host="0.0.0.0", port=3000)
         ```
     """
 

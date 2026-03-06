@@ -366,6 +366,16 @@ impl IncanLanguageServer {
                     });
                 }
             }
+            Declaration::TypeAlias(alias) => {
+                if span.start <= offset && offset < span.end {
+                    return Some(SymbolInfo {
+                        name: alias.name.clone(),
+                        kind: "type".to_string(),
+                        detail: format!("type {} = {}", alias.name, format_type(&alias.target.node)),
+                        span,
+                    });
+                }
+            }
             Declaration::Newtype(nt) => {
                 if span.start <= offset && offset < span.end {
                     return Some(SymbolInfo {
@@ -402,6 +412,9 @@ impl IncanLanguageServer {
                     return Some(decl.span);
                 }
                 Declaration::Enum(en) if en.name == name => {
+                    return Some(decl.span);
+                }
+                Declaration::TypeAlias(alias) if alias.name == name => {
                     return Some(decl.span);
                 }
                 Declaration::Newtype(nt) if nt.name == name => {

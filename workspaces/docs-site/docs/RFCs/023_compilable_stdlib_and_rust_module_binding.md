@@ -1,10 +1,9 @@
 # RFC 023: Compilable Stdlib & Rust Module Binding
 
-**Status:** In Progress  
-**Created:** 2026-02-08  
-**Author(s):** Danny Meijer (@dannymeijer)  
-**Related:** RFC 005 (Rust interop), RFC 013 (Rust crate dependencies), RFC 022 (stdlib namespacing & compiler→stdlib
-handoff)
+- **Status:** In Progress
+- **Created:** 2026-02-08
+- **Author(s):** Danny Meijer (@dannymeijer)
+- **Related:** RFC 005 (Rust interop), RFC 013 (Rust crate dependencies), RFC 022 (stdlib namespacing & compiler→stdlib handoff)
 
 ## Summary
 

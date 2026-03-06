@@ -6,7 +6,7 @@ NEXTEST := $(shell command -v cargo-nextest 2>/dev/null)
 ifeq ($(strip $(NEXTEST)),)
 TEST_CMD = cargo test --all --verbose
 else
-TEST_CMD = cargo nextest run --all
+TEST_CMD = cargo nextest run --all --status-level all
 endif
 
 .PHONY: help

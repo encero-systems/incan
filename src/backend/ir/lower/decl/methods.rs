@@ -8,6 +8,7 @@ use super::super::super::{IrSpan, Mutability};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
+use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::keywords::{self, KeywordId};
 
 impl AstLowering {
@@ -261,15 +262,27 @@ impl AstLowering {
         };
         self.scopes.pop();
 
+        // Static methods are public: they form the type's public API and have no self receiver.
+        let is_static = m
+            .decorators
+            .iter()
+            .any(|d| decorators::from_str(d.node.name.as_str()) == Some(DecoratorId::StaticMethod));
+        let visibility = if is_static {
+            Visibility::Public
+        } else {
+            Visibility::Private
+        };
+        let is_extern = Self::has_rust_extern_decorator(&m.decorators);
+
         Ok(IrFunction {
             name: m.name.clone(),
             params,
             return_type,
             body,
             is_async: m.is_async(),
-            visibility: Visibility::Private,
+            visibility,
             type_params: vec![],
-            is_extern: false,
+            is_extern,
             rust_attributes: self.extract_passthrough_attributes(&m.decorators),
         })
     }

@@ -44,6 +44,16 @@ impl TypeChecker {
                 self.validate_root_namespace(&tr.name, decl.span);
                 self.collect_trait(tr, decl.span);
             }
+            Declaration::TypeAlias(a) => {
+                self.validate_root_namespace(&a.name, decl.span);
+                // Register the alias name as a known type so other declarations can reference it.
+                self.symbols.define(Symbol {
+                    name: a.name.clone(),
+                    kind: SymbolKind::Type(TypeInfo::TypeAlias),
+                    span: decl.span,
+                    scope: 0,
+                });
+            }
             Declaration::Newtype(nt) => {
                 self.validate_root_namespace(&nt.name, decl.span);
                 self.collect_newtype(nt, decl.span);

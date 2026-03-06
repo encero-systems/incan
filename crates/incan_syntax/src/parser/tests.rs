@@ -1419,6 +1419,49 @@ const ANSWER: int = 42
         assert!(result.is_ok(), "rust.module with empty string should parse; errors: {:?}", result.err());
     }
 
+    // ---- Type alias tests ----
+
+    #[test]
+    fn test_type_alias_simple() {
+        // `type Foo = Bar` should parse as Declaration::TypeAlias, not Declaration::Newtype.
+        let source = "type Foo = Bar\n";
+        let prog = parse_str(source).expect("simple type alias should parse");
+        assert_eq!(prog.declarations.len(), 1);
+        assert!(
+            matches!(prog.declarations[0].node, Declaration::TypeAlias(_)),
+            "Expected TypeAlias, got: {:?}",
+            prog.declarations[0].node
+        );
+    }
+
+    #[test]
+    fn test_type_alias_generic() {
+        // `pub type Query[T] = AxumQuery[T]` should parse as a public TypeAlias.
+        let source = "pub type Query[T] = AxumQuery[T]\n";
+        let prog = parse_str(source).expect("generic type alias should parse");
+        assert_eq!(prog.declarations.len(), 1);
+        let Declaration::TypeAlias(alias) = &prog.declarations[0].node else {
+            panic!("Expected TypeAlias, got: {:?}", prog.declarations[0].node);
+        };
+        assert_eq!(alias.name, "Query");
+        assert!(matches!(alias.visibility, Visibility::Public));
+        assert_eq!(alias.type_params.len(), 1);
+        assert_eq!(alias.type_params[0].name, "T");
+    }
+
+    #[test]
+    fn test_newtype_still_parses_with_newtype_keyword() {
+        // `type Foo = newtype Bar` must still produce a Newtype.
+        let source = "type Foo = newtype Bar\n";
+        let prog = parse_str(source).expect("newtype should parse");
+        assert_eq!(prog.declarations.len(), 1);
+        assert!(
+            matches!(prog.declarations[0].node, Declaration::Newtype(_)),
+            "Expected Newtype, got: {:?}",
+            prog.declarations[0].node
+        );
+    }
+
     #[test]
     fn test_rust_module_missing_closing_paren() {
         // `rust.module("foo"` — missing closing paren should produce a parse error.

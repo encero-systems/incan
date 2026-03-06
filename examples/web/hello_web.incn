@@ -65,8 +65,6 @@ async def health() -> Response:
 
 def main() -> None:
     """Start the web server."""
-    app = App()
-    
     println("===========================================")
     println("  Incan Web Server - Hello World Example")
     println("===========================================")
@@ -87,5 +85,5 @@ def main() -> None:
     println("")
     println("Press Ctrl+C to stop the server")
     println("-------------------------------------------")
-    
-    app.run(port=8080)
+
+    App.run(host="127.0.0.1", port=8080)

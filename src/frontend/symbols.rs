@@ -363,6 +363,7 @@ pub enum TypeInfo {
     Builtin,
     Class(ClassInfo),
     Model(ModelInfo),
+    TypeAlias,
     Newtype(NewtypeInfo),
     Enum(EnumInfo),
 }

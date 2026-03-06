@@ -52,11 +52,18 @@ impl<'a> IrEmitter<'a> {
             IrDeclKind::Function(func) => self.emit_function(func),
             IrDeclKind::Struct(s) => self.emit_struct(s),
             IrDeclKind::Enum(e) => self.emit_enum(e),
-            IrDeclKind::TypeAlias { name, ty } => {
+            IrDeclKind::TypeAlias {
+                visibility,
+                name,
+                type_params,
+                ty,
+            } => {
+                let vis = self.emit_visibility(visibility);
                 let name_ident = format_ident!("{}", name);
                 let ty_tokens = self.emit_type(ty);
+                let generics = self.emit_type_params(type_params);
                 Ok(quote! {
-                    type #name_ident = #ty_tokens;
+                    #vis type #name_ident #generics = #ty_tokens;
                 })
             }
             IrDeclKind::Const {
@@ -239,7 +246,13 @@ impl<'a> IrEmitter<'a> {
         };
 
         let path_ts = join_path_tokens(&path_tokens);
-        let export_import = is_incan_source_stdlib;
+
+        // `pub use` in two cases:
+        // 1. Stdlib Incan-source imports (std.web.* → crate::__incan_std::web::*)
+        // 2. Rust crate imports inside a `rust.module(...)` file — these are re-exported so users can do `from
+        //    std.web.response import Json` and get axum::Json.
+        let is_rust_crate_reexport = matches!(qualifier, IrImportQualifier::None) && self.rust_module_path.is_some();
+        let export_import = is_incan_source_stdlib || is_rust_crate_reexport;
 
         if let Some(alias_name) = alias {
             let alias_ident = Self::rust_ident(alias_name);
