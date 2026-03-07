@@ -4486,11 +4486,12 @@
 
 
 <h1 id="rfc-023-compilable-stdlib-rust-module-binding">RFC 023: Compilable Stdlib &amp; Rust Module Binding<a class="headerlink" href="#rfc-023-compilable-stdlib-rust-module-binding" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> In Progress<br />
-<strong>Created:</strong> 2026-02-08<br />
-<strong>Author(s):</strong> Danny Meijer (@dannymeijer)<br />
-<strong>Related:</strong> RFC 005 (Rust interop), RFC 013 (Rust crate dependencies), RFC 022 (stdlib namespacing &amp; compiler→stdlib
-handoff)</p>
+<ul>
+<li><strong>Status:</strong> In Progress</li>
+<li><strong>Created:</strong> 2026-02-08</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong> RFC 005 (Rust interop), RFC 013 (Rust crate dependencies), RFC 022 (stdlib namespacing &amp; compiler→stdlib handoff)</li>
+</ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>This RFC proposes two related changes that reduce the compiler's role as a registry of stdlib implementations, and enable
 an ecosystem of Rust-backed Incan libraries:</p>
@@ -5249,22 +5250,22 @@ reserved for future use when <code>module</code> is introduced as a keyword.</p>
 <h2 id="acceptance-checklist">Acceptance checklist<a class="headerlink" href="#acceptance-checklist" title="Permanent link">&para;</a></h2>
 <h3 id="spec-semantics">Spec / semantics<a class="headerlink" href="#spec-semantics" title="Permanent link">&para;</a></h3>
 <ul>
-<li>[ ] Stdlib <code>.incn</code> files are compilable Incan source, not documentation-only stubs.</li>
-<li>[ ] <code>rust.module("path::to::module")</code> directive is specified with clear syntax and semantics.</li>
-<li>[ ] <code>@rust.extern</code> supersedes RFC 022's <code>@std.builtin</code> — same semantics, no source-category restriction.</li>
-<li>[ ] <code>DecoratorId::StdBuiltin</code> renamed to <code>DecoratorId::RustExtern</code> with canonical spelling <code>"rust.extern"</code>.</li>
-<li>[ ] <code>@rust.extern</code> items require a <code>rust.module()</code> directive on their containing module.</li>
-<li>[ ] <code>@rust.extern</code> restricted to free functions and trait default methods; rejected on instance methods.</li>
-<li>[ ] The irreducible primitives principle is documented: <code>@rust.extern</code> should be minimized.</li>
-<li>[ ] Compiled Incan <code>std.*</code> modules emitted under <code>__incan_std</code> root to avoid Rust <code>std</code> shadowing.</li>
+<li>[x] Stdlib <code>.incn</code> files are compilable Incan source, not documentation-only stubs.</li>
+<li>[x] <code>rust.module("path::to::module")</code> directive is specified with clear syntax and semantics.</li>
+<li>[x] <code>@rust.extern</code> supersedes RFC 022's <code>@std.builtin</code> — same semantics, no source-category restriction.</li>
+<li>[x] <code>DecoratorId::StdBuiltin</code> renamed to <code>DecoratorId::RustExtern</code> with canonical spelling <code>"rust.extern"</code>.</li>
+<li>[x] <code>@rust.extern</code> items require a <code>rust.module()</code> directive on their containing module.</li>
+<li>[x] <code>@rust.extern</code> restricted to free functions and trait default methods; rejected on instance methods.</li>
+<li>[x] The irreducible primitives principle is documented: <code>@rust.extern</code> should be minimized.</li>
+<li>[x] Compiled Incan <code>std.*</code> modules emitted under <code>__incan_std</code> root to avoid Rust <code>std</code> shadowing.</li>
 </ul>
 <h3 id="compilation-pipeline">Compilation pipeline<a class="headerlink" href="#compilation-pipeline" title="Permanent link">&para;</a></h3>
 <ul>
-<li>[ ] Compiler parses and compiles stdlib <code>.incn</code> files through the normal pipeline.</li>
-<li>[ ] Typechecker derives function signatures from parsed <code>.incn</code> AST, not hardcoded registries.</li>
-<li>[ ] Emitter uses <code>rust.module()</code> path for <code>@rust.extern</code> items, not hardcoded path-rewriting.</li>
-<li>[ ] Hardcoded <code>testing_import_function_info()</code> (and equivalents) are removed.</li>
-<li>[ ] Hardcoded <code>if is_stdlib_testing</code> / <code>if is_stdlib_web</code> branches are removed from emission.</li>
+<li>[x] Compiler parses and compiles stdlib <code>.incn</code> files through the normal pipeline.</li>
+<li>[x] Typechecker derives function signatures from parsed <code>.incn</code> AST, not hardcoded registries.</li>
+<li>[x] Emitter uses <code>rust.module()</code> path for <code>@rust.extern</code> items, not hardcoded path-rewriting.</li>
+<li>[x] Hardcoded <code>testing_import_function_info()</code> (and equivalents) are removed.</li>
+<li>[x] Hardcoded <code>if is_stdlib_testing</code> / <code>if is_stdlib_web</code> branches are removed from emission.</li>
 <li>[ ] <code>escape_keyword</code> applied to module declarations, <code>use</code>-path segments, and filenames.</li>
 </ul>
 <h3 id="trait-bound-inference-and-annotation">Trait bound inference and annotation<a class="headerlink" href="#trait-bound-inference-and-annotation" title="Permanent link">&para;</a></h3>
@@ -5278,38 +5279,38 @@ reserved for future use when <code>module</code> is introduced as a keyword.</p>
 </ul>
 <h3 id="rustmodule-directive"><code>rust.module()</code> directive<a class="headerlink" href="#rustmodule-directive" title="Permanent link">&para;</a></h3>
 <ul>
-<li>[ ] Parser/AST supports <code>rust.module("...")</code> as a module-level directive.</li>
-<li>[ ] Path validated: must reference <code>incan_stdlib</code> or a declared dependency in <code>incan.toml</code>.</li>
-<li>[ ] <code>@rust.extern</code> items without a resolvable Rust backing path produce a clear error.</li>
-<li>[ ] No propagation to nested submodules.</li>
-<li>[ ] Duplicate <code>rust.module()</code> in the same module is a hard error.</li>
-<li>[ ] <code>rust.module()</code> path sanitized: only valid Rust identifier segments separated by <code>::</code> are accepted.</li>
+<li>[x] Parser/AST supports <code>rust.module("...")</code> as a module-level directive.</li>
+<li>[x] Path validated: must reference <code>incan_stdlib</code> or a declared dependency in <code>incan.toml</code>.</li>
+<li>[x] <code>@rust.extern</code> items without a resolvable Rust backing path produce a clear error.</li>
+<li>[x] No propagation to nested submodules.</li>
+<li>[x] Duplicate <code>rust.module()</code> in the same module is a hard error.</li>
+<li>[x] <code>rust.module()</code> path sanitized: only valid Rust identifier segments separated by <code>::</code> are accepted.</li>
 </ul>
 <h3 id="stdlib-migration">Stdlib migration<a class="headerlink" href="#stdlib-migration" title="Permanent link">&para;</a></h3>
 <ul>
-<li>[ ] <code>std.testing</code> converted to compilable Incan with <code>fail()</code> as sole <code>@rust.extern</code> primitive.</li>
-<li>[ ] <code>std.derives.*</code>: non-<code>@rust.extern</code> methods compiled from Incan source.</li>
-<li>[ ] <code>std.web</code> response builders: pure Incan where possible, <code>@rust.extern</code> for framework I/O.</li>
-<li>[ ] All stdlib <code>.incn</code> files carry <code>rust.module()</code> directives.</li>
+<li>[x] <code>std.testing</code> converted to compilable Incan with <code>fail()</code> as sole <code>@rust.extern</code> primitive.</li>
+<li>[x] <code>std.derives.*</code>: non-<code>@rust.extern</code> methods compiled from Incan source.</li>
+<li>[x] <code>std.web</code> response builders: pure Incan where possible, <code>@rust.extern</code> for framework I/O.</li>
+<li>[x] All stdlib <code>.incn</code> files with <code>@rust.extern</code> carry <code>rust.module()</code> directives.</li>
 <li>[ ] <code>StdlibModuleInfo</code> fallback mapping removed (or marked deprecated).</li>
 </ul>
 <h3 id="diagnostics-checklist">Diagnostics checklist<a class="headerlink" href="#diagnostics-checklist" title="Permanent link">&para;</a></h3>
 <ul>
-<li>[ ] Missing <code>rust.module()</code> → error with suggestion.</li>
-<li>[ ] <code>@rust.extern</code> with non-trivial body → error suggesting <code>...</code> body or removing the decorator.</li>
-<li>[ ] <code>@rust.extern</code> on instance method → error suggesting free-function extraction.</li>
+<li>[x] Missing <code>rust.module()</code> → error with suggestion.</li>
+<li>[x] <code>@rust.extern</code> with non-trivial body → error suggesting <code>...</code> body or removing the decorator.</li>
+<li>[x] <code>@rust.extern</code> on instance method → error suggesting free-function extraction.</li>
 <li>[ ] <code>@rust.extern</code> signature mismatches → wrapped <code>rustc</code> diagnostic pointing to <code>.incn</code> declaration.</li>
-<li>[ ] Unused <code>rust.module()</code> (no <code>@rust.extern</code> items) → warning.</li>
-<li>[ ] Invalid <code>rust.module()</code> path (failed sanitization) → error with valid-path hint.</li>
+<li>[x] Unused <code>rust.module()</code> (no <code>@rust.extern</code> items) → warning.</li>
+<li>[x] Invalid <code>rust.module()</code> path (failed sanitization) → error with valid-path hint.</li>
 </ul>
 <h3 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h3>
 <ul>
-<li>[ ] Typechecker tests: stdlib signatures resolved from <code>.incn</code> source.</li>
-<li>[ ] Codegen snapshot tests: compiled Incan stdlib functions in generated output.</li>
+<li>[x] Typechecker tests: stdlib signatures resolved from <code>.incn</code> source.</li>
+<li>[x] Codegen snapshot tests: compiled Incan stdlib functions in generated output.</li>
 <li>[ ] Codegen snapshot tests: generic functions emit correct Rust trait bounds (inferred and explicit).</li>
-<li>[ ] Integration tests: behavioral equivalence with pre-migration stdlib.</li>
+<li>[x] Integration tests: behavioral equivalence with pre-migration stdlib.</li>
 <li>[ ] Negative tests: calling a bounded generic function with a non-conforming type → Incan-level error.</li>
-<li>[ ] Negative tests: <code>@rust.extern</code> with non-trivial body, invalid <code>rust.module()</code> path, unused <code>rust.module()</code> warning.</li>
+<li>[x] Negative tests: <code>@rust.extern</code> with non-trivial body, invalid <code>rust.module()</code> path, unused <code>rust.module()</code> warning.</li>
 <li>[ ] Transitive inference test: <code>foo[T]</code> calling <code>assert_eq[T]</code> acquires <code>PartialEq + Display</code> bounds from callee.</li>
 </ul>
 

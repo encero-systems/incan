@@ -1555,6 +1555,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#decorators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Decorators
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#derives" class="md-nav__link">
     <span class="md-ellipsis">
       Derives
@@ -4456,6 +4465,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#decorators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Decorators
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#derives" class="md-nav__link">
     <span class="md-ellipsis">
       Derives
@@ -4745,6 +4763,7 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 <li><a href="#standard-library-namespaces">Standard library namespaces</a></li>
 <li><a href="#builtin-exceptions">Builtin exceptions</a></li>
 <li><a href="#builtin-functions">Builtin functions</a></li>
+<li><a href="#decorators">Decorators</a></li>
 <li><a href="#derives">Derives</a></li>
 <li><a href="#builtin-traits">Builtin traits</a></li>
 <li><a href="#operators">Operators</a></li>
@@ -5368,7 +5387,7 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 <tr>
 <td><code>std.web</code></td>
 <td><code>web</code></td>
-<td><code>std.web.app</code>, <code>std.web.routing</code>, <code>std.web.request</code>, <code>std.web.response</code>, <code>std.web.prelude</code></td>
+<td><code>std.web.app</code>, <code>std.web.routing</code>, <code>std.web.request</code>, <code>std.web.response</code>, <code>std.web.macros</code>, <code>std.web.prelude</code></td>
 <td>-</td>
 </tr>
 <tr>
@@ -5717,6 +5736,58 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 <td><code>sleep</code></td>
 <td></td>
 <td>Sleep for a duration.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h2 id="decorators">Decorators<a class="headerlink" href="#decorators" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Derive</td>
+<td><code>@derive</code></td>
+<td></td>
+<td>Derive common trait implementations.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>RustExtern</td>
+<td><code>@rust.extern</code></td>
+<td></td>
+<td>Mark functions whose body is provided by a Rust module.</td>
+<td>RFC 022</td>
+<td>0.2</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>StaticMethod</td>
+<td><code>@staticmethod</code></td>
+<td></td>
+<td>Mark a method as static (no self receiver).</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Requires</td>
+<td><code>@requires</code></td>
+<td></td>
+<td>Declare required fields for trait default methods.</td>
 <td>RFC 000</td>
 <td>0.1</td>
 <td>Stable</td>

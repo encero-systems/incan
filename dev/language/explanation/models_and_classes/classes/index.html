@@ -2415,6 +2415,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#static-methods-staticmethod" class="md-nav__link">
+    <span class="md-ellipsis">
+      Static methods (@staticmethod)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#inheritance-extends-and-overrides" class="md-nav__link">
     <span class="md-ellipsis">
       Inheritance (extends) and overrides
@@ -4047,6 +4056,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#static-methods-staticmethod" class="md-nav__link">
+    <span class="md-ellipsis">
+      Static methods (@staticmethod)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#inheritance-extends-and-overrides" class="md-nav__link">
     <span class="md-ellipsis">
       Inheritance (extends) and overrides
@@ -4233,6 +4251,48 @@ field name.</p>
     <span class="k">def</span><span class="w"> </span><span class="nf">increment</span><span class="p">(</span><span class="k">mut</span> <span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">value</span> <span class="o">+=</span> <span class="mi">1</span>
 </code></pre></div>
+<h2 id="static-methods-staticmethod">Static methods (<code>@staticmethod</code>)<a class="headerlink" href="#static-methods-staticmethod" title="Permanent link">&para;</a></h2>
+<p>A static method belongs to the type rather than an instance — it has no <code>self</code> receiver.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Temperature</span><span class="p">:</span>
+    <span class="n">celsius</span><span class="p">:</span> <span class="nb">float</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_fahrenheit</span><span class="p">(</span><span class="n">f</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Temperature</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nc">Temperature</span><span class="p">(</span><span class="n">celsius</span><span class="o">=</span><span class="p">(</span><span class="n">f</span> <span class="o">-</span> <span class="mf">32.0</span><span class="p">)</span> <span class="o">/</span> <span class="mf">1.8</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="nc">Temperature</span><span class="o">.</span><span class="n">from_fahrenheit</span><span class="p">(</span><span class="mf">98.6</span><span class="p">)</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">celsius</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>Applies to</strong>: methods on <code>class</code>, <code>model</code>, and <code>newtype</code> declarations.</p>
+<p>Rules:</p>
+<ul>
+<li>A <code>@staticmethod</code> method <strong>must not</strong> have a <code>self</code> or <code>mut self</code> parameter. The compiler rejects this.</li>
+<li>Call static methods via the type name: <code>TypeName.method_name(...)</code>.</li>
+<li><code>@staticmethod</code> can be combined with <code>@rust.extern</code> for Rust-backed static methods on types.</li>
+</ul>
+<p>Use cases:</p>
+<ul>
+<li><strong>Factory methods</strong>: alternative constructors (<code>from_fahrenheit</code>, <code>from_json</code>, <code>parse</code>).</li>
+<li><strong>Utility functions</strong>: logic scoped to a type that doesn't need instance state.</li>
+<li><strong>Rust interop</strong>: <code>@rust.extern</code> on type methods requires <code>@staticmethod</code> (instance delegation is not supported).</li>
+</ul>
+<p>Another example — a utility method that doesn't need instance state:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">MathUtils</span><span class="p">:</span>
+    <span class="n">precision</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">clamp</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">low</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">high</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">value</span> <span class="o">&lt;</span> <span class="n">low</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">low</span>
+        <span class="k">if</span> <span class="n">value</span> <span class="o">&gt;</span> <span class="n">high</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">high</span>
+        <span class="k">return</span> <span class="n">value</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nb">println</span><span class="p">(</span><span class="nc">MathUtils</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">15</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">10</span><span class="p">))</span>  <span class="c1"># 10</span>
+</code></pre></div>
+<p>See also: <a href="../../../reference/derives_and_traits/#decorators-staticmethod-requires">Decorators reference</a></p>
 <h2 id="inheritance-extends-and-overrides">Inheritance (<code>extends</code>) and overrides<a class="headerlink" href="#inheritance-extends-and-overrides" title="Permanent link">&para;</a></h2>
 <p>Classes support single inheritance:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Animal</span><span class="p">:</span>

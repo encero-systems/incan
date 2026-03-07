@@ -4026,7 +4026,7 @@ curl<span class="w"> </span>http://localhost:8080/health
 <h2 id="step-3-understand-what-youre-seeing">Step 3: Understand what you’re seeing<a class="headerlink" href="#step-3-understand-what-youre-seeing" title="Permanent link">&para;</a></h2>
 <p>The example demonstrates:</p>
 <ul>
-<li><code>@std.web.route("/path")</code> for routes</li>
+<li><code>@route("/path")</code> for routes (imported from <code>std.web.routing</code>)</li>
 <li><code>Json[T]</code> for JSON responses</li>
 <li><code>@derive(Serialize)</code> for response models</li>
 <li><code>async def</code> handlers (async/await)</li>

@@ -3871,15 +3871,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#status" class="md-nav__link">
-    <span class="md-ellipsis">
-      Status
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#summary" class="md-nav__link">
     <span class="md-ellipsis">
       Summary
@@ -4022,12 +4013,10 @@
 
 <h1 id="rfc-template">RFC Template<a class="headerlink" href="#rfc-template" title="Permanent link">&para;</a></h1>
 <blockquote>
-<p>Use this template for RFCs in <code>docs/RFCs/</code>. Keep the RFC focused: one coherent proposal, with clear motivation,
-semantics, and implementation strategy.</p>
+<p>Use this template for RFCs in <code>docs/RFCs/</code>. Keep the RFC focused: one coherent proposal, with clear motivation, semantics, and implementation strategy.</p>
 </blockquote>
 <h2 id="title">Title<a class="headerlink" href="#title" title="Permanent link">&para;</a></h2>
 <p>RFC NNN: \&lt;short descriptive title&gt;</p>
-<h2 id="status">Status<a class="headerlink" href="#status" title="Permanent link">&para;</a></h2>
 <!-- Status descriptions:
 
 - Draft: Initial proposal, needs review.
@@ -4041,10 +4030,13 @@ semantics, and implementation strategy.</p>
  -->
 
 <ul>
-<li>Status: Draft | Planned | In Progress | Blocked | Deferred | Done | Superseded by RFC NNN | Rejected</li>
-<li>Author(s): \&lt;name/handle&gt;</li>
-<li>Issue: \&lt;link to issue&gt;</li>
-<li>RFC PR: \&lt;link to PR&gt;</li>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> \&lt;YYYY-MM-DD&gt;</li>
+<li><strong>Author(s):</strong> \&lt;name (@handle)&gt;</li>
+<li><strong>Related:</strong> \&lt;RFC links, if any&gt;</li>
+<li><strong>Issue:</strong> \&lt;link to issue&gt;</li>
+<li><strong>RFC PR:</strong> \&lt;link to PR&gt;</li>
+<li><strong>Target version:</strong> \&lt;version&gt;  <!-- Optional: records the baseline version this RFC describes (the source of truth). For example, <code>v0.2</code> means the RFC reflects the language as of <code>&gt;= v0.2.0</code>. It does not mean "the version when this will be released"; it means "the version that was current when this RFC was written". --></li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>One paragraph describing what this RFC proposes.</p>
@@ -4101,6 +4093,7 @@ semantics, and implementation strategy.</p>
 </ul>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <p>Open questions to decide before implementation lands.</p>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
