@@ -4212,21 +4212,21 @@ They are not intended as runtime function calls.</p>
   and <code>from rust::crate import (...)</code>, with optional per-item aliases and formatter-aware wrapping (#116).</li>
 <li><strong>Compiler</strong>: Import-activated soft keywords — <code>async</code> and <code>await</code> are identifiers by default and become reserved only
   when <code>import std.async</code> (or <code>from std.async...</code>) is present. Forgetting the import produces a targeted diagnostic with
-  a fix suggestion. Similarly, <code>std.testing</code> activates the <code>assert</code> statement syntax (<a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
+  a fix suggestion. Similarly, <code>std.testing</code> activates the <code>assert</code> statement syntax (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Compiler</strong>: Surface Semantics Engine — soft keywords (<code>assert</code>, <code>async</code>, <code>await</code>) and decorator semantics are routed
   through a registry-driven dispatch system (<code>SurfaceSemanticsPack</code>). The parser emits generic <code>Surface</code> AST nodes keyed
   by <code>SurfaceFeatureKey</code>; downstream stages dispatch on that key rather than per-keyword AST variants. Adding a new soft
-  keyword requires no parser, AST, or IR changes — only a keyword descriptor and a semantics-pack handler (<a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
+  keyword requires no parser, AST, or IR changes — only a keyword descriptor and a semantics-pack handler (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Compiler</strong>: Namespaced decorator resolution — decorators resolved by module path
   (e.g., <code>from std.web.routing import route</code> enables <code>@route(...)</code>) with alias support (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>).</li>
 <li><strong>Compiler</strong>: <code>@rust.extern</code> marker for Rust-backed function stubs, replacing the internal <code>@std.builtin</code>
-  decorator (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>, <a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
+  decorator (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>, <a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Compiler</strong>: <code>@staticmethod</code> decorator for type-scoped methods with no <code>self</code> receiver, available on <code>class</code>,
   <code>model</code>, and <code>newtype</code> declarations. Required for <code>@rust.extern</code> methods on types (instance delegation is not
   supported).</li>
 <li><strong>Testing</strong>: <code>std.testing</code> is Incan-first — user-facing API and assertion behavior are defined in
   <code>crates/incan_stdlib/stdlib/testing.incn</code>,
-  with Rust limited to explicit <code>@rust.extern</code> host boundaries (for example <code>fail</code> and <code>fail_t</code>) (<a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
+  with Rust limited to explicit <code>@rust.extern</code> host boundaries (for example <code>fail</code> and <code>fail_t</code>) (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Compiler</strong>: Stdlib namespace registry (<code>STDLIB_NAMESPACES</code>) replaces the flat stdlib-module list — convention-based
   submodule discovery, registry-driven unknown-module diagnostics, and soft-keyword activation metadata.</li>
 <li><strong>Compiler</strong>: Reserved root namespaces — <code>std</code> and <code>rust</code> cannot be used as user declaration names.</li>
@@ -4241,11 +4241,11 @@ They are not intended as runtime function calls.</p>
 <li><strong>Web</strong>: Web-free compiler — all web-specific knowledge (route registration, extractor types, response builders)
   lives in <code>std.web</code> stdlib modules and the <code>incan_web_macros</code> proc-macro crate. The compiler uses generic decorator
   passthrough (<code>@rust.extern</code> + <code>rust.module()</code>) and derive passthrough (<code>@derive(X)</code> from <code>rust.module()</code> traits)
-  with no domain-specific web logic in the compiler core (<a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
+  with no domain-specific web logic in the compiler core (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Web</strong>: Import-driven web feature activation — importing <code>std.web</code> automatically enables <code>axum</code>,
-  <code>incan_web_macros</code>, and <code>inventory</code> dependencies in the generated project (<a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
-<li><strong>Runtime</strong>: <code>incan_stdlib::r#async</code> facade module with <code>time</code>, <code>task</code>, <code>channel</code>, <code>sync</code>, and <code>prelude</code> submodules
-  backed by Tokio re-exports.</li>
+  <code>incan_web_macros</code>, and <code>inventory</code> dependencies in the generated project (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
+<li><strong>Runtime</strong>: <code>incan_stdlib::r#async</code> now provides the narrow Rust runtime leaves behind the source-declared
+  <code>std.async</code> modules, rather than exposing the async surface as a raw Tokio re-export facade.</li>
 <li><strong>Tooling</strong>: <code>incan init</code> scaffolds a full project: <code>src/main.incn</code>, <code>tests/test_main.incn</code>, and <code>incan.toml</code>
   with <code>[project.scripts] main</code> set (<a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a>).</li>
 <li><strong>Tooling</strong>: <code>incan lock</code> generates <code>incan.lock</code> for reproducible builds; <code>--locked</code> and <code>--frozen</code> flags enforce lock
@@ -4254,7 +4254,7 @@ They are not intended as runtime function calls.</p>
   source modules (e.g., <code>from greet import greet</code>) without duplication (<a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a>).</li>
 <li><strong>Tooling</strong>: Test marker semantics (<code>@skip</code>, <code>@xfail</code>, <code>@slow</code>, <code>@fixture</code>, <code>@parametrize</code>) are derived from
   <code>std.testing</code> metadata in <code>crates/incan_stdlib/stdlib/testing.incn</code> instead of brittle string/path hardcoding
-  (<a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
+  (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Parser</strong>: <code>async</code> is allowed as a module path segment in imports (e.g., <code>from std.async.time import sleep</code>).</li>
 <li><strong>Diagnostics</strong>: Clearer error messages for unknown decorators and reserved namespace violations.</li>
 <li><strong>Diagnostics</strong>: Enhanced lock-out-of-date error with expected vs actual fingerprint for easier debugging.</li>
@@ -4285,7 +4285,7 @@ They are not intended as runtime function calls.</p>
 <h2 id="rfcs-implemented">RFCs implemented<a class="headerlink" href="#rfcs-implemented" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Namespaced stdlib modules and compiler-to-stdlib handoff: <a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a></li>
-<li>Compilable stdlib and Rust module binding (web-free compiler): <a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a></li>
+<li>Compilable stdlib and Rust module binding (web-free compiler): <a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a></li>
 <li>Rust crate dependency management: <a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a></li>
 <li>Hatch-like tooling (partial — <code>incan init</code>, project discovery, source root resolution): <a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a></li>
 <li>Rust interop surface (<code>rust::</code> imports, type mapping, string borrow adaptation, curated derives): <a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a></li>

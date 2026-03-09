@@ -4396,7 +4396,7 @@
 <li>Related:<ul>
 <li><a href="/dev/RFCs/012_json_value">RFC 012</a> (JsonValue &amp; enum methods)</li>
 <li><a href="/dev/RFCs/closed/implemented/021_model_field_metadata_and_aliases">RFC 021</a> (field metadata &amp; aliases)</li>
-<li><a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a> (compilable stdlib &amp; rust.module binding)</li>
+<li><a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a> (compilable stdlib &amp; rust.module binding)</li>
 <li><a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a> (multi-instantiation trait dispatch)</li>
 </ul>
 </li>
@@ -4531,7 +4531,7 @@ text-based schema format.</p>
 field-level change tracking — whatever the module's traits declare. The mechanism is the same regardless of whether the
 derive produces bytes, text, or behavior.</p>
 <h3 id="using-trait-bounds-in-generic-functions">Using trait bounds in generic functions<a class="headerlink" href="#using-trait-bounds-in-generic-functions" title="Permanent link">&para;</a></h3>
-<p>Because derives are backed by traits, they compose with the <code>with</code> bound syntax (<a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>):</p>
+<p>Because derives are backed by traits, they compose with the <code>with</code> bound syntax (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>):</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span><span class="p">,</span> <span class="n">yaml</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="kt">Serialize</span><span class="p">,</span> <span class="n">yaml</span><span class="o">.</span><span class="kt">Serialize</span><span class="p">)](</span>
@@ -5013,7 +5013,7 @@ protocol is for library-level functionality.</p>
 <li><a href="/dev/RFCs/012_json_value">RFC 012</a> — <code>JsonValue</code> Type and Enum Methods</li>
 <li><a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a> — Multi-Instantiation Trait Dispatch</li>
 <li><a href="/dev/RFCs/closed/implemented/021_model_field_metadata_and_aliases">RFC 021</a> — Model field metadata and schema-safe aliases</li>
-<li><a href="/dev/RFCs/023_compilable_stdlib_and_rust_module_binding">RFC 023</a> — Compilable Stdlib &amp; Rust Module Binding</li>
+<li><a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a> — Compilable Stdlib &amp; Rust Module Binding</li>
 <li>Rust <code>serde</code> crate (format-agnostic serialization)</li>
 <li>Rust <code>prost</code> crate (Protobuf code generation)</li>
 <li>Rust <code>apache-avro</code> crate (Avro serialization and schema)</li>
