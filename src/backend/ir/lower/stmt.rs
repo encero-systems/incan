@@ -307,15 +307,58 @@ impl AstLowering {
 
             ast::Statement::TupleUnpack(tu) => {
                 let value = self.lower_expr_spanned(&tu.value)?;
-                IrStmtKind::Let {
-                    name: tu.names.join("_"),
-                    ty: value.ty.clone(),
-                    mutability: match tu.binding {
-                        ast::BindingKind::Mutable => Mutability::Mutable,
-                        _ => Mutability::Immutable,
-                    },
-                    value,
+                let temp_name = format!("__incan_tuple_unpack_{}", tu.names.join("_"));
+                let mutability = match tu.binding {
+                    ast::BindingKind::Mutable => Mutability::Mutable,
+                    _ => Mutability::Immutable,
+                };
+
+                if let Some(scope) = self.scopes.last_mut() {
+                    scope.insert(temp_name.clone(), value.ty.clone());
                 }
+
+                let mut stmts = vec![IrStmt::new(IrStmtKind::Let {
+                    name: temp_name.clone(),
+                    ty: value.ty.clone(),
+                    mutability: Mutability::Immutable,
+                    value,
+                })];
+
+                for (idx, name) in tu.names.iter().enumerate() {
+                    let field_expr = TypedExpr::new(
+                        IrExprKind::Field {
+                            object: Box::new(TypedExpr::new(
+                                IrExprKind::Var {
+                                    name: temp_name.clone(),
+                                    access: VarAccess::Copy,
+                                    ref_kind: VarRefKind::Value,
+                                },
+                                self.lookup_var(&temp_name),
+                            )),
+                            field: idx.to_string(),
+                        },
+                        IrType::Unknown,
+                    );
+
+                    if let Some(scope) = self.scopes.last_mut() {
+                        scope.insert(name.clone(), IrType::Unknown);
+                    }
+                    if matches!(mutability, Mutability::Mutable) {
+                        self.mutable_vars.insert(name.clone(), true);
+                    }
+
+                    stmts.push(IrStmt::new(IrStmtKind::Let {
+                        name: name.clone(),
+                        ty: IrType::Unknown,
+                        mutability,
+                        value: field_expr,
+                    }));
+                }
+
+                return Ok(IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
+                    IrExprKind::Block { stmts, value: None },
+                    IrType::Unit,
+                ))));
             }
 
             ast::Statement::TupleAssign(_) => {

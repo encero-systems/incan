@@ -94,3 +94,46 @@ pub fn rust_extern_on_instance_method(method_name: &str, span: Span) -> CompileE
     .with_note("Instance methods cannot be runtime-provided by Rust")
     .with_hint("Extract a free function (e.g. `run_server(app, ...)`) and delegate to it from the method")
 }
+
+/// Downstream Rust build failed because the backing item/module for `@rust.extern` could not be resolved.
+pub fn rust_extern_unresolved_backing_item(item_name: &str, rust_module_path: &str, span: Span) -> CompileError {
+    CompileError::new(
+        format!(
+            "Rust backing item for `@rust.extern` declaration `{}` could not be resolved under `{}`",
+            item_name, rust_module_path
+        ),
+        span,
+    )
+    .with_note("The `.incn` declaration is treated as the contract for the Rust-backed implementation")
+    .with_hint(format!(
+        "Ensure `{rust_module_path}::{item_name}` exists and is exported by the target Rust crate/module"
+    ))
+}
+
+/// Downstream Rust build failed with a likely signature mismatch for an `@rust.extern` item.
+pub fn rust_extern_signature_mismatch(item_name: &str, rust_module_path: &str, span: Span) -> CompileError {
+    CompileError::new(
+        format!(
+            "Likely signature mismatch for `@rust.extern` declaration `{}` backed by `{}`",
+            item_name, rust_module_path
+        ),
+        span,
+    )
+    .with_note("The Incan signature and the Rust function signature must match after Incan-to-Rust type mapping")
+    .with_hint("Compare parameter types/return type between the `.incn` declaration and the Rust implementation")
+}
+
+/// Downstream Rust build failed with a likely feature-gated backing path for an `@rust.extern` item.
+pub fn rust_extern_feature_gated_backing_path(item_name: &str, rust_module_path: &str, span: Span) -> CompileError {
+    CompileError::new(
+        format!(
+            "Rust backing path for `@rust.extern` declaration `{}` appears to be feature-gated (`{}`)",
+            item_name, rust_module_path
+        ),
+        span,
+    )
+    .with_note("Cargo reported that the referenced Rust item/module is configured out")
+    .with_hint(
+        "Enable the required Cargo feature for the backing crate, or point `rust.module()` to an always-enabled path",
+    )
+}

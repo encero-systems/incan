@@ -561,6 +561,7 @@ impl<'a> IrCodegen<'a> {
             self.scan_for_list_helpers(dep_ast);
             self.scan_for_web(dep_ast);
             self.collect_rust_crates(dep_ast);
+            self.collect_external_rust_functions(dep_ast);
         }
 
         // Use the IR pipeline: AST → IR → Rust

@@ -220,6 +220,13 @@ fn merge_inline_imports(
             continue;
         }
 
+        // `incan_stdlib` is always injected as a workspace path dependency for generated projects.
+        // Version-less stdlib-internal `from rust::incan_stdlib::... import ...` leaves should not be forced to add
+        // inline annotations or duplicate manifest entries.
+        if import.crate_name == "incan_stdlib" {
+            continue;
+        }
+
         let entry = merged
             .entry(import.crate_name.clone())
             .or_insert_with(|| InlineMergedSpec {
@@ -693,6 +700,23 @@ test_lib = "0.5"
             !resolved.dev_dependencies.iter().any(|d| d.crate_name == "std"),
             "rust::std must not be emitted as Cargo dev-dependency"
         );
+    }
+
+    #[test]
+    fn incan_stdlib_import_does_not_require_inline_version() -> Result<(), String> {
+        let imports = vec![inline("incan_stdlib", None, &[], false)];
+
+        let resolved = resolve_dependencies(None, &imports, false, &default_cargo_features())
+            .map_err(|errors| format!("{errors:?}"))?;
+        assert!(
+            !resolved.dependencies.iter().any(|d| d.crate_name == "incan_stdlib"),
+            "incan_stdlib should already be provided by generated projects"
+        );
+        assert!(
+            !resolved.dev_dependencies.iter().any(|d| d.crate_name == "incan_stdlib"),
+            "incan_stdlib should not be duplicated in dev-dependencies"
+        );
+        Ok(())
     }
 
     // ---- Phase 3: Resolution precedence (incan.toml > inline > known-good) ----

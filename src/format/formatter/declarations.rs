@@ -40,10 +40,25 @@ impl Formatter {
         if trimmed.is_empty() {
             self.writer.writeln("\"\"\"\"\"\"");
         } else if trimmed.contains('\n') {
+            let lines: Vec<&str> = trimmed.lines().collect();
+            let first = lines[0].trim();
+            let rest = &lines[1..];
+            let common_indent = rest
+                .iter()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| line.chars().take_while(|ch| ch.is_whitespace()).count())
+                .min()
+                .unwrap_or(0);
+
             // Multi-line docstring
             self.writer.writeln("\"\"\"");
-            for line in trimmed.lines() {
-                self.writer.writeln(line);
+            self.writer.writeln(first);
+            for line in rest {
+                if line.trim().is_empty() {
+                    self.writer.newline();
+                } else {
+                    self.writer.writeln(strip_common_indent(line, common_indent).trim_end());
+                }
             }
             self.writer.writeln("\"\"\"");
         } else {
@@ -392,24 +407,61 @@ impl Formatter {
     }
 
     fn format_newtype(&mut self, nt: &NewtypeDecl) {
+        for dec in &nt.decorators {
+            self.format_decorator(&dec.node);
+        }
+
         self.write_visibility(nt.visibility);
         self.writer.write("type ");
         self.writer.write(&nt.name);
+        self.format_type_params(&nt.type_params);
         self.writer.write(" = newtype ");
         self.format_type(&nt.underlying.node);
-        self.writer.newline();
 
-        if !nt.methods.is_empty() {
-            self.writer.indent();
-            for method in &nt.methods {
-                self.writer.newline();
-                self.format_method(&method.node);
-            }
-            self.writer.dedent();
+        let has_body = nt.docstring.is_some() || !nt.methods.is_empty();
+        if !has_body {
+            self.writer.newline();
+            return;
         }
+
+        self.writer.writeln(":");
+        self.writer.indent();
+
+        if let Some(docstring) = &nt.docstring {
+            self.format_docstring(docstring);
+            if !nt.methods.is_empty() {
+                self.writer.newline();
+            }
+        }
+
+        for (idx, method) in nt.methods.iter().enumerate() {
+            if idx > 0 {
+                self.writer.newline();
+            }
+            self.format_method(&method.node);
+        }
+
+        self.writer.dedent();
     }
 
     // ---- Functions and methods ----
+
+    fn split_leading_docstring<'a>(
+        &self,
+        body: &'a [Spanned<Statement>],
+    ) -> (Option<&'a str>, &'a [Spanned<Statement>]) {
+        let Some(first) = body.first() else {
+            return (None, body);
+        };
+
+        match &first.node {
+            Statement::Expr(expr) => match &expr.node {
+                Expr::Literal(Literal::String(doc)) => (Some(doc.as_str()), &body[1..]),
+                _ => (None, body),
+            },
+            _ => (None, body),
+        }
+    }
 
     fn format_function(&mut self, func: &FunctionDecl) {
         for dec in &func.decorators {
@@ -434,8 +486,17 @@ impl Formatter {
         if func.body.is_empty() {
             self.writer.writeln("pass");
         } else {
-            for stmt in &func.body {
-                self.format_statement(&stmt.node);
+            let (docstring, body) = self.split_leading_docstring(&func.body);
+            if let Some(docstring) = docstring {
+                self.format_docstring(docstring);
+            }
+
+            if body.is_empty() && docstring.is_none() {
+                self.writer.writeln("pass");
+            } else {
+                for stmt in body {
+                    self.format_statement(&stmt.node);
+                }
             }
         }
 
@@ -479,7 +540,12 @@ impl Formatter {
         self.writer.indent();
 
         if let Some(body) = &method.body {
-            if body.is_empty() {
+            let (docstring, body) = self.split_leading_docstring(body);
+            if let Some(docstring) = docstring {
+                self.format_docstring(docstring);
+            }
+
+            if body.is_empty() && docstring.is_none() {
                 self.writer.writeln("pass");
             } else {
                 for stmt in body {
@@ -641,4 +707,27 @@ impl Formatter {
             self.writer.write("]");
         }
     }
+}
+
+fn strip_common_indent(line: &str, indent: usize) -> &str {
+    let mut chars_to_strip = indent;
+    let mut start = 0usize;
+
+    for (idx, ch) in line.char_indices() {
+        if chars_to_strip == 0 {
+            start = idx;
+            break;
+        }
+
+        if ch.is_whitespace() {
+            chars_to_strip -= 1;
+            start = idx + ch.len_utf8();
+            continue;
+        }
+
+        start = idx;
+        break;
+    }
+
+    &line[start..]
 }

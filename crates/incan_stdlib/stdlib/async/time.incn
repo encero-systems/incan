@@ -1,105 +1,104 @@
 """
-Async Time Primitives
+Async time primitives backed by explicit runtime adapters.
 
-This module provides async timing utilities:
-- sleep: Pause execution for a duration
-- timeout: Run a task with a time limit
-- Duration: Time duration type
+This module is the user-facing timing surface for `std.async`. It exposes:
+
+- `sleep(seconds)` for floating-point second delays
+- `sleep_ms(milliseconds)` for integer millisecond delays
+- `timeout(seconds, task)` for deadline-bound async work
+- `timeout_ms(milliseconds, task)` for integer millisecond deadlines
+
+The public contract lives in this `.incn` file. The executor-facing leaves live in `incan_stdlib::async::time`.
+For now, `timeout()` and `timeout_ms()` remain direct runtime-backed imports because their Rust-side generic `Future`
+bounds are not yet expressible cleanly in local Incan wrappers.
+
+Examples:
+    await sleep(0.25)
+    await sleep_ms(50)
+
+    match await timeout(1.5, fetch_user()):
+        Ok(user) => println(user.name)
+        Err(err) => println(err.message())
+
+    match await timeout_ms(500, poll_once()):
+        Ok(value) => println(value)
+        Err(err) => println(err.message())
 """
 
 import std.async
+from rust::incan_stdlib::async::time import (
+    TimeoutError as RawTimeoutError,
+    sleep as runtime_sleep,
+    sleep_ms as runtime_sleep_ms,
+    timeout,
+    timeout_ms,
+)
 
-# Duration type for time measurements
-# Internally maps to tokio::time::Duration
-model Duration:
-    """Represents a span of time"""
-    secs: int
-    nanos: int
-    
+pub type TimeoutError = newtype RawTimeoutError:
+    """
+    Error returned when a timeout expires before the awaited task completes.
+
+    Example:
+        match await timeout(1.0, work()):
+            Ok(value) => println(value)
+            Err(err) => println(err.message())
+    """
+
+    def message(self) -> str:
+        return self.0.message()
+
+    def source(self) -> Option[str]:
+        return self.0.source()
+
+
+pub model Duration:
+    """
+    A simple duration value for user code and documentation examples.
+
+    `std.async.time` currently accepts primitive `float`/`int` delays directly, but `Duration` remains useful as a
+    lightweight value object when your own APIs want to bundle a span of time explicitly.
+    """
+    pub secs: int
+    pub nanos: int
+
     @staticmethod
     def from_secs(secs: int) -> Duration:
-        """Create a Duration from whole seconds"""
+        """Create a duration from whole seconds."""
         return Duration(secs=secs, nanos=0)
-    
+
     @staticmethod
     def from_millis(millis: int) -> Duration:
-        """Create a Duration from milliseconds"""
-        secs = millis / 1000
-        nanos = (millis % 1000) * 1_000_000
+        """Create a duration from whole milliseconds."""
+        secs = int(millis / 1000)
+        nanos = (millis % 1000) * 1000000
         return Duration(secs=secs, nanos=nanos)
-    
+
     @staticmethod
     def from_secs_f64(secs: float) -> Duration:
-        """Create a Duration from fractional seconds"""
-        ...
+        """Create a duration from floating-point seconds, clamping negatives to zero."""
+        if secs <= 0:
+            return Duration(secs=0, nanos=0)
+        whole = int(secs)
+        fractional = secs - whole
+        nanos = int(fractional * 1000000000)
+        return Duration(secs=whole, nanos=nanos)
 
 
-# Error type for timeout operations
-model TimeoutError with Error:
-    """Error returned when an operation times out"""
-    
-    def message(self) -> str:
-        return "operation timed out"
-
-
-# ============================================================================
-# Async Functions
-# ============================================================================
-
-async def sleep(seconds: float) -> None:
+pub async def sleep(seconds: float) -> None:
     """
-    Pause execution for the specified duration.
-    
+    Sleep for a floating-point second duration.
+
     Example:
-        async def delayed_hello() -> None:
-            println("Starting...")
-            await sleep(1.0)  # Wait 1 second
-            println("Hello after delay!")
-    
-    Maps to: tokio::time::sleep(Duration::from_secs_f64(seconds)).await
+        await sleep(0.1)
     """
-    ...
+    await runtime_sleep(seconds)
 
 
-async def sleep_ms(milliseconds: int) -> None:
+pub async def sleep_ms(milliseconds: int) -> None:
     """
-    Pause execution for the specified milliseconds.
-    
+    Sleep for an integer millisecond duration.
+
     Example:
-        await sleep_ms(500)  # Wait 500 milliseconds
-    
-    Maps to: tokio::time::sleep(Duration::from_millis(ms)).await
+        await sleep_ms(100)
     """
-    ...
-
-
-async def timeout[T](seconds: float, task: async () -> T) -> Result[T, TimeoutError]:
-    """
-    Run an async task with a time limit.
-    
-    Returns Ok(result) if the task completes within the timeout,
-    or Err(TimeoutError) if the timeout expires.
-    
-    Example:
-        async def slow_operation() -> str:
-            await sleep(10.0)
-            return "done"
-        
-        result = await timeout(2.0, slow_operation)
-        match result:
-            Ok(value) => println(f"Got: {value}")
-            Err(e) => println(f"Timed out: {e}")
-    
-    Maps to: tokio::time::timeout(duration, task()).await
-    """
-    ...
-
-
-async def timeout_ms[T](milliseconds: int, task: async () -> T) -> Result[T, TimeoutError]:
-    """
-    Run an async task with a time limit in milliseconds.
-    
-    Example:
-        result = await timeout_ms(500, fetch_data)
-    """
-    ...
+    await runtime_sleep_ms(milliseconds)

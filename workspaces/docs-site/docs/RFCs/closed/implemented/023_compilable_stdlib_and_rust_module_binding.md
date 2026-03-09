@@ -1,25 +1,29 @@
 # RFC 023: Compilable Stdlib & Rust Module Binding
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-02-08
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 005 (Rust interop), RFC 013 (Rust crate dependencies), RFC 022 (stdlib namespacing & compiler→stdlib handoff)
+- **Target version:** 0.1.0
+- **Implemented version:** 0.2.0
+
+> Note: (re-baselined closure criteria: `.incn` source-of-truth, Incan-first stdlib, narrow runtime bridges)
 
 ## Summary
 
-This RFC proposes two related changes that reduce the compiler's role as a registry of stdlib implementations, and enable
-an ecosystem of Rust-backed Incan libraries:
+This RFC proposes two related changes that reduce the compiler's role as a registry of stdlib implementations, and enable an ecosystem of Rust-backed Incan libraries:
 
-1. **Compilable stdlib**: stdlib `.incn` files transition from documentation-only stubs to **real, compilable Incan source
-   code**. The compiler compiles them through the normal pipeline. Only functions marked `@rust.extern` need
-   Rust-provided implementations; everything else is pure Incan.
-2. **`rust.module()` binding**: a new module-level directive that declares an Incan module (or stdlib module) is backed
-   by a specific Rust module path. This replaces hardcoded path-rewriting in the compiler with a data-driven declaration,
-   and enables third-party Incan libraries backed by Rust crates.
+1. **Compilable stdlib**: stdlib `.incn` files transition from documentation-only stubs to **real, compilable Incan source code**. The compiler compiles them through the normal pipeline. Rust-backed leaves are kept narrow and explicit: most use `@rust.extern`, while source-declared wrappers may still use internal `rust::` imports when that keeps the public Incan surface as the source of truth.
+2. **`rust.module()` binding**: a new module-level directive that declares an Incan module (or stdlib module) is backed by a specific Rust module path. This replaces hardcoded path-rewriting in the compiler with a data-driven declaration, and enables third-party Incan libraries backed by Rust crates.
 
-Together, these changes push the Incan stdlib toward being written in **mostly plain Incan**, with a minimal set of
-Rust-backed primitives — and make the same pattern available to the ecosystem, allowing users to write their own
-rust-backed Incan libraries.
+Together, these changes push the Incan stdlib toward being written in **mostly plain Incan**, with a minimal set of Rust-backed primitives — and make the same pattern available to the ecosystem, allowing users to write their own rust-backed Incan libraries.
+
+## Implemented Closeout Notes
+
+- `.incn` source is now the source of truth for migrated stdlib surfaces, including `std.async`, `std.math`, `std.reflection`, and `std.traits`.
+- Build, test, and lock flows derive stdlib-driven feature/extra-dependency activation from shared namespace metadata (for example `std.async` enabling Tokio and `std.math` pulling `libm`).
+- Explicit generic `with` bounds are enforced in the frontend against concrete argument types; backend trait-bound inference remains additive rather than the first place bound violations show up.
+- `@rust.extern` declaration-shape errors are caught in the frontend, and downstream Cargo/`rustc` failures are wrapped back onto the `.incn` declaration site in the CLI build surface.
 
 ## Motivation
 
@@ -766,6 +770,16 @@ reserved for future use when `module` is introduced as a keyword.
 
 ## Acceptance checklist
 
+### Closure definition (re-baselined)
+
+RFC 023 is considered complete only when all three closure gates are true at the same time:
+
+- [x] **Source-of-truth gate:** Stdlib/public Rust-backed module contracts are authored in `.incn`, and the compiler no longer depends on duplicated handwritten signature registries or ad-hoc fallback sources for those contracts.
+- [x] **Dogfooding gate:** The stdlib is aggressively Incan-first; behavior that can reasonably be expressed in current Incan semantics is implemented in `.incn` and compiled through the normal pipeline.
+- [x] **Runtime-bridge gate:** Remaining Rust runtime code is explicit and narrow (`rust.module()` + `@rust.extern` leaves only) and retained only where the boundary is genuinely irreducible at the current language/runtime stage.
+
+Re-baselining note: this closure definition intentionally avoids smuggling unrelated later-RFC scope into RFC 023. Follow-up RFCs can extend semantics, but RFC 023 closes on clean boundaries and single-source ownership.
+
 ### Spec / semantics
 
 - [x] Stdlib `.incn` files are compilable Incan source, not documentation-only stubs.
@@ -784,16 +798,16 @@ reserved for future use when `module` is introduced as a keyword.
 - [x] Emitter uses `rust.module()` path for `@rust.extern` items, not hardcoded path-rewriting.
 - [x] Hardcoded `testing_import_function_info()` (and equivalents) are removed.
 - [x] Hardcoded `if is_stdlib_testing` / `if is_stdlib_web` branches are removed from emission.
-- [ ] `escape_keyword` applied to module declarations, `use`-path segments, and filenames.
+- [x] `escape_keyword` applied to module declarations, `use`-path segments, and filenames.
 
 ### Trait bound inference and annotation
 
-- [ ] Emitter infers Rust trait bounds from operations on generic type parameters (minimum set per table above).
-- [ ] Inferred bounds are combined and emitted as `where` clause / inline bounds on generated Rust functions.
-- [ ] Inference is transitive: calling a generic function that requires bounds propagates those bounds to the caller.
-- [ ] Parser/AST supports explicit trait bound syntax (`[T with (Eq, Debug)]`).
-- [ ] Explicit bounds are additive with inferred bounds.
-- [ ] Trait names in bounds are resolved through normal import/scoping and mapped to Rust trait bounds.
+- [x] Emitter infers Rust trait bounds from operations on generic type parameters (minimum set per table above).
+- [x] Inferred bounds are combined and emitted as `where` clause / inline bounds on generated Rust functions.
+- [x] Inference is transitive: calling a generic function that requires bounds propagates those bounds to the caller.
+- [x] Parser/AST supports explicit trait bound syntax (`[T with (Eq, Debug)]`).
+- [x] Explicit bounds are additive with inferred bounds.
+- [x] Trait names in bounds are resolved through normal import/scoping and mapped to Rust trait bounds.
 
 ### `rust.module()` directive
 
@@ -810,14 +824,16 @@ reserved for future use when `module` is introduced as a keyword.
 - [x] `std.derives.*`: non-`@rust.extern` methods compiled from Incan source.
 - [x] `std.web` response builders: pure Incan where possible, `@rust.extern` for framework I/O.
 - [x] All stdlib `.incn` files with `@rust.extern` carry `rust.module()` directives.
-- [ ] `StdlibModuleInfo` fallback mapping removed (or marked deprecated).
+- [x] `std.async.*` behavior is runtime-backed via narrow `@rust.extern` leaves (no broad `fail_t` placeholder surface).
+    > Note: remaining closeout is concentrated in `std.async.select`; follow-up language/library work is now tracked by RFC 038 and RFC 039 rather than being hand-waved inside RFC 023.
+- [x] `StdlibModuleInfo` fallback mapping removed (or marked deprecated).
 
 ### Diagnostics checklist
 
 - [x] Missing `rust.module()` → error with suggestion.
 - [x] `@rust.extern` with non-trivial body → error suggesting `...` body or removing the decorator.
 - [x] `@rust.extern` on instance method → error suggesting free-function extraction.
-- [ ] `@rust.extern` signature mismatches → wrapped `rustc` diagnostic pointing to `.incn` declaration.
+- [x] `@rust.extern` signature mismatches → wrapped `rustc` diagnostic pointing to `.incn` declaration.
 - [x] Unused `rust.module()` (no `@rust.extern` items) → warning.
 - [x] Invalid `rust.module()` path (failed sanitization) → error with valid-path hint.
 
@@ -825,8 +841,8 @@ reserved for future use when `module` is introduced as a keyword.
 
 - [x] Typechecker tests: stdlib signatures resolved from `.incn` source.
 - [x] Codegen snapshot tests: compiled Incan stdlib functions in generated output.
-- [ ] Codegen snapshot tests: generic functions emit correct Rust trait bounds (inferred and explicit).
-- [x] Integration tests: behavioral equivalence with pre-migration stdlib.
-- [ ] Negative tests: calling a bounded generic function with a non-conforming type → Incan-level error.
+- [x] Codegen snapshot tests: generic functions emit correct Rust trait bounds (inferred and explicit).
+- [ ] Integration tests: behavioral equivalence with pre-migration stdlib.
+- [x] Negative tests: calling a bounded generic function with a non-conforming type → Incan-level error.
 - [x] Negative tests: `@rust.extern` with non-trivial body, invalid `rust.module()` path, unused `rust.module()` warning.
-- [ ] Transitive inference test: `foo[T]` calling `assert_eq[T]` acquires `PartialEq + Display` bounds from callee.
+- [x] Transitive inference test: `foo[T]` calling `assert_eq[T]` acquires `PartialEq + Display` bounds from callee.

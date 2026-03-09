@@ -288,6 +288,40 @@ impl TypeChecker {
         self.symbols.get(id)
     }
 
+    /// Return the generic-parameter name for a type-like placeholder visible in the current scope.
+    ///
+    /// During declaration collection, generic parameters are recorded as `TypeVar`, but inside function / method bodies
+    /// they are introduced into the symbol table as scoped `Type(Builtin)` placeholders so annotations keep resolving.
+    /// For operator and method permissiveness (RFC 023 additive backend inference), both representations should behave
+    /// as "typevar-like" generic placeholders.
+    pub(crate) fn generic_placeholder_name<'a>(&self, ty: &'a ResolvedType) -> Option<&'a str> {
+        match ty {
+            ResolvedType::TypeVar(name) => Some(name.as_str()),
+            ResolvedType::Named(name) => {
+                let sym = self.lookup_symbol(name)?;
+                match &sym.kind {
+                    SymbolKind::Type(TypeInfo::Builtin) if sym.scope > 0 => Some(name.as_str()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether `ty` is a generic placeholder (`TypeVar`) or an in-scope type-parameter placeholder.
+    pub(crate) fn is_generic_placeholder_type(&self, ty: &ResolvedType) -> bool {
+        self.generic_placeholder_name(ty).is_some()
+    }
+
+    /// Whether a concrete named type declares adoption of `trait_name`.
+    pub(crate) fn type_implements_trait(&self, type_name: &str, trait_name: &str) -> bool {
+        match self.lookup_type_info(type_name) {
+            Some(TypeInfo::Model(model)) => model.traits.iter().any(|name| name == trait_name),
+            Some(TypeInfo::Class(class)) => class.traits.iter().any(|name| name == trait_name),
+            _ => false,
+        }
+    }
+
     /// Look up a variable binding by name (in any scope) and return its [`VariableInfo`].
     ///
     /// Returns `None` if the symbol is missing or isn't a variable.
@@ -548,6 +582,16 @@ impl TypeChecker {
     /// variables (generics), and recursive checks for generics, functions, and tuples.
     #[allow(clippy::only_used_in_recursion)]
     pub(crate) fn types_compatible(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
+        let has_generic_params = |name: &str| -> bool {
+            match self.lookup_type_info(name) {
+                Some(TypeInfo::Model(model)) => !model.type_params.is_empty(),
+                Some(TypeInfo::Class(class)) => !class.type_params.is_empty(),
+                Some(TypeInfo::Newtype(newtype)) => !newtype.type_params.is_empty(),
+                Some(TypeInfo::Enum(enum_info)) => !enum_info.type_params.is_empty(),
+                _ => false,
+            }
+        };
+
         if actual == expected {
             return true;
         }
@@ -555,6 +599,16 @@ impl TypeChecker {
         match (actual, expected) {
             (ResolvedType::Unknown, _) | (_, ResolvedType::Unknown) => true,
             (ResolvedType::TypeVar(_), _) | (_, ResolvedType::TypeVar(_)) => true,
+            (ResolvedType::Named(type_name), ResolvedType::Named(trait_name))
+                if self.lookup_trait_info(trait_name).is_some() =>
+            {
+                self.type_implements_trait(type_name, trait_name)
+            }
+            (ResolvedType::Generic(type_name, _), ResolvedType::Named(trait_name))
+                if self.lookup_trait_info(trait_name).is_some() =>
+            {
+                self.type_implements_trait(type_name, trait_name)
+            }
             // Allow bare surface generic types (e.g. `Json`) to match `Json[T]` when used without args.
             (ResolvedType::Named(name), ResolvedType::Generic(generic_name, _))
                 if name == generic_name
@@ -569,6 +623,16 @@ impl TypeChecker {
                     && self.symbols.lookup(name).is_some()
                     && surface_types::from_str(name.as_str())
                         .is_some_and(|id| surface_types::info_for(id).kind == SurfaceTypeKind::Generic) =>
+            {
+                true
+            }
+            (ResolvedType::Named(name), ResolvedType::Generic(generic_name, _))
+                if name == generic_name && has_generic_params(name) =>
+            {
+                true
+            }
+            (ResolvedType::Generic(generic_name, _), ResolvedType::Named(name))
+                if name == generic_name && has_generic_params(name) =>
             {
                 true
             }

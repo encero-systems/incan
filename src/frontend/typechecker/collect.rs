@@ -10,7 +10,6 @@ use super::TypeChecker;
 
 mod decl_helpers;
 pub(super) mod decorators;
-mod stdlib_async;
 mod stdlib_imports;
 
 use self::decl_helpers::{collect_fields, collect_methods, inject_json_methods, inject_validate_methods};
@@ -194,6 +193,7 @@ impl TypeChecker {
         self.symbols.define(Symbol {
             name: nt.name.clone(),
             kind: SymbolKind::Type(TypeInfo::Newtype(NewtypeInfo {
+                type_params: nt.type_params.iter().map(|tp| tp.name.clone()).collect(),
                 underlying: underlying.clone(),
                 methods: HashMap::new(), // Empty for now
             })),
@@ -251,6 +251,17 @@ impl TypeChecker {
     fn collect_function(&mut self, func: &FunctionDecl, span: Span) {
         // Local declaration shadows any imported marker binding with the same name.
         self.testing_marker_import_bindings.remove(&func.name);
+        let type_params: Vec<String> = func.type_params.iter().map(|tp| tp.name.clone()).collect();
+        let type_param_bounds: HashMap<String, Vec<String>> = func
+            .type_params
+            .iter()
+            .map(|tp| {
+                (
+                    tp.name.clone(),
+                    tp.bounds.iter().map(|bound| bound.name.clone()).collect(),
+                )
+            })
+            .collect();
 
         let params: Vec<_> = func
             .params
@@ -265,7 +276,8 @@ impl TypeChecker {
                 params,
                 return_type,
                 is_async: func.is_async(),
-                type_params: Vec::new(),
+                type_params,
+                type_param_bounds,
             }),
             span,
             scope: 0,

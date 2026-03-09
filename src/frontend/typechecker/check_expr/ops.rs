@@ -61,16 +61,13 @@ impl TypeChecker {
                 //
                 // The Rust backend will infer and emit the appropriate trait bounds (e.g. `T: Add<Output = T>`).
                 // Here we keep the typechecker permissive so generic stdlib helpers can typecheck.
-                match (&left_ty, &right_ty) {
-                    (ResolvedType::TypeVar(_), ResolvedType::TypeVar(_)) if left_ty == right_ty => {
-                        return left_ty.clone();
-                    }
-                    (ResolvedType::TypeVar(_), ResolvedType::Unknown) => {
-                        return left_ty.clone();
-                    }
-                    (ResolvedType::Unknown, ResolvedType::TypeVar(_)) => {
-                        return right_ty.clone();
-                    }
+                match (
+                    self.generic_placeholder_name(&left_ty),
+                    self.generic_placeholder_name(&right_ty),
+                ) {
+                    (Some(left_name), Some(right_name)) if left_name == right_name => return left_ty.clone(),
+                    (Some(_), None) if matches!(right_ty, ResolvedType::Unknown) => return left_ty.clone(),
+                    (None, Some(_)) if matches!(left_ty, ResolvedType::Unknown) => return right_ty.clone(),
                     _ => {}
                 }
 

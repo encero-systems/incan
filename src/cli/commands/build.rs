@@ -9,16 +9,18 @@ use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::dependency_resolver::resolve_dependencies;
 use crate::frontend::ast::Program;
+use crate::frontend::ast::{Declaration, Decorator, Span, Spanned};
 use crate::frontend::{diagnostics, typechecker};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
+use std::collections::HashSet;
 
 use super::common::{
-    build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_modules, format_dependency_error,
-    resolve_project_root, validate_output_dir,
+    build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_modules, collect_stdlib_usage,
+    format_dependency_error, merge_stdlib_extra_dependencies, resolve_project_root, validate_output_dir,
 };
-use super::lock::resolve_lock_payload;
-use super::stdlib_loader;
+use super::lock::{LockResolutionRequest, resolve_lock_payload};
+use crate::cli::prelude::ParsedModule;
 
 // ============================================================================
 // Project Preparation (shared between build and run)
@@ -35,6 +37,180 @@ struct PreparedProject {
     out_dir: String,
     /// Project root directory (used as working dir when running)
     project_root: PathBuf,
+    /// Source contexts for `@rust.extern` declarations, used to enrich downstream Rust/Cargo failures.
+    rust_extern_contexts: Vec<RustExternDeclContext>,
+}
+
+#[derive(Debug, Clone)]
+struct RustExternDeclContext {
+    file_path: PathBuf,
+    source: String,
+    item_name: String,
+    rust_module_path: String,
+    span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RustExternBuildFailureKind {
+    UnresolvedBackingItem,
+    SignatureMismatch,
+    FeatureGatedBackingPath,
+}
+
+fn has_rust_extern_decorator(decorators: &[Spanned<Decorator>]) -> bool {
+    decorators
+        .iter()
+        .any(|d| d.node.path.segments.join(".") == "rust.extern")
+}
+
+fn collect_rust_extern_contexts(modules: &[ParsedModule]) -> Vec<RustExternDeclContext> {
+    let mut contexts = Vec::new();
+    for module in modules {
+        let Some(rust_module) = module.ast.rust_module_path.as_ref().map(|p| p.node.clone()) else {
+            continue;
+        };
+        for decl in &module.ast.declarations {
+            match &decl.node {
+                Declaration::Function(func) => {
+                    if has_rust_extern_decorator(&func.decorators) {
+                        contexts.push(RustExternDeclContext {
+                            file_path: module.file_path.clone(),
+                            source: module.source.clone(),
+                            item_name: func.name.clone(),
+                            rust_module_path: rust_module.clone(),
+                            span: decl.span,
+                        });
+                    }
+                }
+                Declaration::Trait(tr) => {
+                    for method in &tr.methods {
+                        if has_rust_extern_decorator(&method.node.decorators) {
+                            contexts.push(RustExternDeclContext {
+                                file_path: module.file_path.clone(),
+                                source: module.source.clone(),
+                                item_name: method.node.name.clone(),
+                                rust_module_path: rust_module.clone(),
+                                span: method.span,
+                            });
+                        }
+                    }
+                }
+                Declaration::Model(model) => {
+                    for method in &model.methods {
+                        if method.node.receiver.is_none() && has_rust_extern_decorator(&method.node.decorators) {
+                            contexts.push(RustExternDeclContext {
+                                file_path: module.file_path.clone(),
+                                source: module.source.clone(),
+                                item_name: method.node.name.clone(),
+                                rust_module_path: rust_module.clone(),
+                                span: method.span,
+                            });
+                        }
+                    }
+                }
+                Declaration::Class(class) => {
+                    for method in &class.methods {
+                        if method.node.receiver.is_none() && has_rust_extern_decorator(&method.node.decorators) {
+                            contexts.push(RustExternDeclContext {
+                                file_path: module.file_path.clone(),
+                                source: module.source.clone(),
+                                item_name: method.node.name.clone(),
+                                rust_module_path: rust_module.clone(),
+                                span: method.span,
+                            });
+                        }
+                    }
+                }
+                Declaration::Newtype(nt) => {
+                    for method in &nt.methods {
+                        if method.node.receiver.is_none() && has_rust_extern_decorator(&method.node.decorators) {
+                            contexts.push(RustExternDeclContext {
+                                file_path: module.file_path.clone(),
+                                source: module.source.clone(),
+                                item_name: method.node.name.clone(),
+                                rust_module_path: rust_module.clone(),
+                                span: method.span,
+                            });
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    contexts
+}
+
+fn classify_rust_extern_build_failure(
+    stderr: &str,
+    item_name: &str,
+    rust_module_path: &str,
+) -> Option<RustExternBuildFailureKind> {
+    if !stderr.contains(item_name) && !stderr.contains(rust_module_path) {
+        return None;
+    }
+    if stderr.contains("gated behind the")
+        || stderr.contains("configured out")
+        || stderr.contains("the item is gated behind")
+    {
+        return Some(RustExternBuildFailureKind::FeatureGatedBackingPath);
+    }
+    if stderr.contains("mismatched types") || stderr.contains("error[E0308]") {
+        return Some(RustExternBuildFailureKind::SignatureMismatch);
+    }
+    if stderr.contains("cannot find")
+        || stderr.contains("failed to resolve")
+        || stderr.contains("unresolved import")
+        || stderr.contains("error[E0425]")
+    {
+        return Some(RustExternBuildFailureKind::UnresolvedBackingItem);
+    }
+    None
+}
+
+fn format_rust_extern_wrapped_diagnostics(stderr: &str, contexts: &[RustExternDeclContext]) -> Option<String> {
+    let mut rendered = String::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for ctx in contexts {
+        let Some(kind) = classify_rust_extern_build_failure(stderr, &ctx.item_name, &ctx.rust_module_path) else {
+            continue;
+        };
+        let key = format!(
+            "{}:{}:{}:{}",
+            ctx.file_path.display(),
+            ctx.item_name,
+            ctx.span.start,
+            ctx.span.end
+        );
+        if !seen.insert(key) {
+            continue;
+        }
+        let err = match kind {
+            RustExternBuildFailureKind::UnresolvedBackingItem => {
+                diagnostics::errors::rust_extern_unresolved_backing_item(
+                    &ctx.item_name,
+                    &ctx.rust_module_path,
+                    ctx.span,
+                )
+            }
+            RustExternBuildFailureKind::SignatureMismatch => {
+                diagnostics::errors::rust_extern_signature_mismatch(&ctx.item_name, &ctx.rust_module_path, ctx.span)
+            }
+            RustExternBuildFailureKind::FeatureGatedBackingPath => {
+                diagnostics::errors::rust_extern_feature_gated_backing_path(
+                    &ctx.item_name,
+                    &ctx.rust_module_path,
+                    ctx.span,
+                )
+            }
+        };
+        rendered.push_str(&diagnostics::format_error(
+            ctx.file_path.to_string_lossy().as_ref(),
+            &ctx.source,
+            &err,
+        ));
+    }
+    if rendered.is_empty() { None } else { Some(rendered) }
 }
 
 /// Prepare an Incan project for building or running.
@@ -55,15 +231,14 @@ fn prepare_project(
     cargo_all_features: bool,
 ) -> CliResult<PreparedProject> {
     let modules = collect_modules(file_path)?;
+    let rust_extern_contexts = collect_rust_extern_contexts(&modules);
 
     let Some(main_module) = modules.last() else {
         return Err(CliError::failure("No modules found"));
     };
 
     let dep_modules = &modules[..modules.len() - 1];
-
-    // ---- RFC 023: Load stdlib modules ----
-    let stdlib_modules = stdlib_loader::load_stdlib_modules(&modules)?;
+    let stdlib_usage = collect_stdlib_usage(&modules);
 
     let path = Path::new(file_path);
     let project_root = resolve_project_root(path);
@@ -74,12 +249,7 @@ fn prepare_project(
     let declared = manifest.as_ref().map(|m| m.declared_crate_names());
     let mut all_errors: String = String::new();
     for (idx, module) in modules.iter().enumerate() {
-        // Include both user dependencies and stdlib modules as available imports
-        let mut deps_for_module: Vec<(&str, &Program)> =
-            modules[..idx].iter().map(|m| (m.name.as_str(), &m.ast)).collect();
-        for stdlib_mod in &stdlib_modules {
-            deps_for_module.push((&stdlib_mod.name, &stdlib_mod.ast));
-        }
+        let deps_for_module: Vec<(&str, &Program)> = modules[..idx].iter().map(|m| (m.name.as_str(), &m.ast)).collect();
 
         let mut checker = typechecker::TypeChecker::new();
         if let Some(names) = declared.clone() {
@@ -137,11 +307,6 @@ fn prepare_project(
     for module in dep_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
-    // RFC 023: Add stdlib modules
-    for stdlib_mod in &stdlib_modules {
-        codegen.add_module_with_path_segments(&stdlib_mod.name, &stdlib_mod.ast, stdlib_mod.path_segments.clone());
-    }
-
     // Scan for feature requirements (serde, async, web, list helpers)
     codegen.scan_for_serde(&main_module.ast);
     codegen.scan_for_async(&main_module.ast);
@@ -153,17 +318,9 @@ fn prepare_project(
         codegen.scan_for_web(&module.ast);
         codegen.scan_for_list_helpers(&module.ast);
     }
-    // RFC 023: Scan stdlib modules for features too
-    for stdlib_mod in &stdlib_modules {
-        codegen.scan_for_serde(&stdlib_mod.ast);
-        codegen.scan_for_async(&stdlib_mod.ast);
-        codegen.scan_for_web(&stdlib_mod.ast);
-        codegen.scan_for_list_helpers(&stdlib_mod.ast);
-    }
-
-    let needs_serde = codegen.needs_serde();
-    let needs_tokio = codegen.needs_tokio();
-    let needs_web = codegen.needs_web();
+    let needs_serde = codegen.needs_serde() || stdlib_usage.needs_serde;
+    let needs_tokio = codegen.needs_tokio() || stdlib_usage.needs_tokio;
+    let needs_web = codegen.needs_web() || stdlib_usage.needs_web;
 
     // ---- Setup project generator ----
     let mut generator = ProjectGenerator::new(&out_dir, project_name.as_str(), true);
@@ -191,7 +348,7 @@ fn prepare_project(
     }
     .normalized();
 
-    let resolved = match resolve_dependencies(manifest.as_ref(), &inline_imports, true, &cargo_features) {
+    let mut resolved = match resolve_dependencies(manifest.as_ref(), &inline_imports, true, &cargo_features) {
         Ok(resolved) => resolved,
         Err(errors) => {
             let mut msg = String::new();
@@ -202,17 +359,19 @@ fn prepare_project(
             return Err(CliError::failure(msg.trim_end()));
         }
     };
+    merge_stdlib_extra_dependencies(&mut resolved, &stdlib_usage);
 
     // Resolve lock payload before moving deps into generator (borrows resolved)
-    let lock_payload = resolve_lock_payload(
-        &project_root,
-        project_name.as_str(),
-        manifest.as_ref(),
-        &resolved,
-        &cargo_features,
+    let lock_payload = resolve_lock_payload(LockResolutionRequest {
+        project_root: &project_root,
+        project_name: project_name.as_str(),
+        manifest: manifest.as_ref(),
+        resolved: &resolved,
+        stdlib_usage: &stdlib_usage,
+        cargo_features: &cargo_features,
         locked,
         frozen,
-    )?;
+    })?;
     generator.set_cargo_lock_payload(lock_payload);
 
     let cargo_flags = cargo_command_flags(locked, frozen, &cargo_features);
@@ -245,6 +404,7 @@ fn prepare_project(
         generator,
         out_dir,
         project_root,
+        rust_extern_contexts,
     })
 }
 
@@ -277,6 +437,14 @@ pub fn build_file(
                 println!("✓ Build successful!");
                 println!("Binary: {}", prepared.generator.binary_path().display());
                 Ok(ExitCode::SUCCESS)
+            } else if let Some(wrapped) =
+                format_rust_extern_wrapped_diagnostics(&result.stderr, &prepared.rust_extern_contexts)
+            {
+                Err(CliError::failure(format!(
+                    "Build failed.\n\n{}\nRaw cargo/rustc output:\n{}",
+                    wrapped.trim_end(),
+                    result.stderr
+                )))
             } else {
                 Err(CliError::failure(format!("Build failed:\n{}", result.stderr)))
             }
@@ -316,5 +484,43 @@ pub fn run_file(
             Ok(ExitCode(result.exit_code.unwrap_or(0)))
         }
         Err(e) => Err(CliError::failure(format!("Error running program: {}", e))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_signature_mismatch_for_rust_extern_context() {
+        let stderr = "error[E0308]: mismatched types in `incan_stdlib::testing::fail`\n  --> src/main.rs:10:5";
+        let kind = classify_rust_extern_build_failure(stderr, "fail", "incan_stdlib::testing");
+        assert_eq!(kind, Some(RustExternBuildFailureKind::SignatureMismatch));
+    }
+
+    #[test]
+    fn classify_unresolved_backing_item_for_rust_extern_context() {
+        let stderr = "error[E0425]: cannot find function `fail` in module `incan_stdlib::testing`";
+        let kind = classify_rust_extern_build_failure(stderr, "fail", "incan_stdlib::testing");
+        assert_eq!(kind, Some(RustExternBuildFailureKind::UnresolvedBackingItem));
+    }
+
+    #[test]
+    fn wraps_rust_extern_failure_back_to_incan_declaration_span() {
+        let stderr = "error[E0425]: cannot find function `fail` in module `incan_stdlib::testing`";
+        let contexts = vec![RustExternDeclContext {
+            file_path: PathBuf::from("stdlib/testing.incn"),
+            source: "rust.module(\"incan_stdlib::testing\")\n@rust.extern\ndef fail(msg: str) -> None:\n  ...\n"
+                .to_string(),
+            item_name: "fail".to_string(),
+            rust_module_path: "incan_stdlib::testing".to_string(),
+            span: Span { start: 35, end: 73 },
+        }];
+        let rendered = format_rust_extern_wrapped_diagnostics(stderr, &contexts);
+        let Some(rendered) = rendered else {
+            panic!("expected wrapped diagnostic");
+        };
+        assert!(rendered.contains("Rust backing item"));
+        assert!(rendered.contains("incan_stdlib::testing::fail"));
     }
 }

@@ -52,7 +52,7 @@ pub def fail(msg: str) -> None:
 
 
 @rust.extern
-def fail_t[T](msg: str) -> T:
+pub def fail_t[T](msg: str) -> T:
     """Generic failure primitive for helper functions returning `T`.
 
     This always fails by delegating to the host panic boundary, but has a generic return type so assertion helpers -

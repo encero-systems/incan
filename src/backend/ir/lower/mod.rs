@@ -419,12 +419,7 @@ impl AstLowering {
                     .params
                     .iter()
                     .map(|p| {
-                        let base_ty = match &p.node.ty.node {
-                            ast::Type::Simple(name) if type_param_names.contains(name.as_str()) => {
-                                IrType::Generic(name.clone())
-                            }
-                            _ => self.lower_type(&p.node.ty.node),
-                        };
+                        let base_ty = self.lower_type_with_type_params(&p.node.ty.node, Some(&type_param_names));
                         FunctionParam {
                             name: p.node.name.clone(),
                             ty: base_ty,
@@ -441,12 +436,7 @@ impl AstLowering {
                         }
                     })
                     .collect();
-                let return_type = match &f.return_type.node {
-                    ast::Type::Simple(name) if type_param_names.contains(name.as_str()) => {
-                        IrType::Generic(name.clone())
-                    }
-                    _ => self.lower_type(&f.return_type.node),
-                };
+                let return_type = self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names));
                 ir_program
                     .function_registry
                     .register(f.name.clone(), params, return_type);

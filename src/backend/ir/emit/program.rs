@@ -294,12 +294,6 @@ impl<'a> IrEmitter<'a> {
             items.push(quote! { use serde::{Serialize, Deserialize}; });
         }
 
-        if self.needs_tokio {
-            items.push(quote! { use incan_stdlib::__private::tokio::time::{sleep, timeout, Duration}; });
-            items.push(quote! { use incan_stdlib::__private::tokio::sync::{mpsc, Mutex, RwLock}; });
-            items.push(quote! { use incan_stdlib::__private::tokio::task::JoinHandle; });
-        }
-
         // Emit all declarations.
         let mut decl_items = Vec::new();
         for decl in &program.declarations {

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::backend::{IrCodegen, ProjectGenerator};
@@ -14,6 +14,24 @@ use crate::manifest::ProjectManifest;
 
 use super::module_graph::collect_source_modules_for_test;
 use super::types::{ParametrizeCall, TestInfo, TestResult};
+
+/// Reuse Cargo artifacts across generated test projects for the same project root.
+///
+/// `incan test` materializes one generated Cargo project per discovered test under `target/incan_tests/<case>`. If each
+/// generated project also gets its own Cargo `target/` directory, dependencies like Tokio and Axum are rebuilt over and
+/// over. Pointing them all at a shared target directory keeps per-test recompiles mostly limited to the tiny generated
+/// crate instead of the full dependency graph.
+fn shared_cargo_target_dir(project_root: &Path) -> PathBuf {
+    let absolute_project_root = if project_root.is_absolute() {
+        project_root.to_path_buf()
+    } else if let Ok(cwd) = std::env::current_dir() {
+        cwd.join(project_root)
+    } else {
+        project_root.to_path_buf()
+    };
+
+    absolute_project_root.join("target").join("incan_test_runner")
+}
 
 /// Run a single test.
 pub(super) fn run_single_test(
@@ -50,7 +68,6 @@ pub(super) fn run_single_test(
         source: source.clone(),
         ast: ast.clone(),
     };
-    let inline_imports = common::collect_inline_rust_imports(&module_for_imports, true);
     let manifest = match ProjectManifest::discover(test.file_path.parent().unwrap_or_else(|| Path::new("."))) {
         Ok(manifest) => manifest,
         Err(err) => {
@@ -64,7 +81,39 @@ pub(super) fn run_single_test(
         cargo_all_features,
     }
     .normalized();
-    let resolved = match resolve_dependencies(manifest.as_ref(), &inline_imports, true, &cargo_feature_selection) {
+
+    // ---- Collect source modules referenced by the test ----
+    let project_root = manifest
+        .as_ref()
+        .map(|m| m.project_root().to_path_buf())
+        .unwrap_or_else(|| test.file_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf());
+    let source_root = common::resolve_source_root(&project_root, manifest.as_ref());
+    let source_modules = match collect_source_modules_for_test(&ast, &source_root) {
+        Ok(m) => m,
+        Err(e) => {
+            return TestResult::Failed(start.elapsed(), format!("Failed to collect source modules: {}", e));
+        }
+    };
+
+    // ---- Collect dependency imports from test + transitive source modules ----
+    let mut dependency_modules: Vec<ParsedModule> = Vec::with_capacity(1 + source_modules.len());
+    dependency_modules.push(module_for_imports);
+    dependency_modules.extend(source_modules.iter().map(|m| ParsedModule {
+        name: m.name.clone(),
+        path_segments: m.path_segments.clone(),
+        file_path: m.file_path.clone(),
+        source: m.source.clone(),
+        ast: m.ast.clone(),
+    }));
+
+    let mut inline_imports = Vec::new();
+    for module in &dependency_modules {
+        inline_imports.extend(common::collect_inline_rust_imports(module, true));
+    }
+
+    let stdlib_usage = common::collect_stdlib_usage(&dependency_modules);
+
+    let mut resolved = match resolve_dependencies(manifest.as_ref(), &inline_imports, true, &cargo_feature_selection) {
         Ok(resolved) => resolved,
         Err(errors) => {
             let mut sources = HashMap::new();
@@ -76,11 +125,8 @@ pub(super) fn run_single_test(
             return TestResult::Failed(start.elapsed(), msg);
         }
     };
+    common::merge_stdlib_extra_dependencies(&mut resolved, &stdlib_usage);
 
-    let project_root = manifest
-        .as_ref()
-        .map(|m| m.project_root().to_path_buf())
-        .unwrap_or_else(|| test.file_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf());
     let project_name = manifest
         .as_ref()
         .and_then(|m| m.project.as_ref().and_then(|p| p.name.clone()))
@@ -91,27 +137,19 @@ pub(super) fn run_single_test(
                 .map(|s| s.to_string())
         })
         .unwrap_or_else(|| "incan_test".to_string());
-    let lock_payload = match commands::resolve_lock_payload(
-        &project_root,
-        &project_name,
-        manifest.as_ref(),
-        &resolved,
-        &cargo_feature_selection,
+    let lock_payload = match commands::resolve_lock_payload(commands::LockResolutionRequest {
+        project_root: &project_root,
+        project_name: &project_name,
+        manifest: manifest.as_ref(),
+        resolved: &resolved,
+        stdlib_usage: &stdlib_usage,
+        cargo_features: &cargo_feature_selection,
         locked,
         frozen,
-    ) {
+    }) {
         Ok(payload) => payload,
         Err(err) => {
             return TestResult::Failed(start.elapsed(), err.message);
-        }
-    };
-
-    // ---- Collect source modules referenced by the test ----
-    let source_root = common::resolve_source_root(&project_root, manifest.as_ref());
-    let source_modules = match collect_source_modules_for_test(&ast, &source_root) {
-        Ok(m) => m,
-        Err(e) => {
-            return TestResult::Failed(start.elapsed(), format!("Failed to collect source modules: {}", e));
         }
     };
 
@@ -125,10 +163,12 @@ pub(super) fn run_single_test(
     // Scan all modules for feature flags.
     codegen.scan_for_serde(&ast);
     codegen.scan_for_async(&ast);
+    codegen.scan_for_web(&ast);
     codegen.scan_for_list_helpers(&ast);
     for module in &source_modules {
         codegen.scan_for_serde(&module.ast);
         codegen.scan_for_async(&module.ast);
+        codegen.scan_for_web(&module.ast);
         codegen.scan_for_list_helpers(&module.ast);
     }
 
@@ -142,8 +182,9 @@ pub(super) fn run_single_test(
     let temp_dir = format!("target/incan_tests/{}", dir_suffix);
 
     let mut generator = ProjectGenerator::new(&temp_dir, "test_runner", true);
-    generator.set_needs_serde(codegen.needs_serde());
-    generator.set_needs_tokio(codegen.needs_tokio());
+    generator.set_needs_serde(codegen.needs_serde() || stdlib_usage.needs_serde);
+    generator.set_needs_tokio(codegen.needs_tokio() || stdlib_usage.needs_tokio);
+    generator.set_needs_web(codegen.needs_web() || stdlib_usage.needs_web);
     generator.set_include_dev_dependencies(true);
     generator.set_dependencies(resolved.dependencies);
     generator.set_dev_dependencies(resolved.dev_dependencies);
@@ -179,12 +220,16 @@ pub(super) fn run_single_test(
     // ---- Run the generated project ----
     // Use `cargo run` rather than `cargo test` — the injected `fn main()` calls the test function directly. A panic
     // (assertion failure) exits non-zero; a clean return exits zero.
+    let shared_target_dir = shared_cargo_target_dir(&project_root);
     let mut command = std::process::Command::new("cargo");
     command.arg("run");
     for flag in common::cargo_command_flags(locked, frozen, &cargo_feature_selection) {
         command.arg(flag);
     }
-    let output = command.current_dir(&temp_dir).output();
+    let output = command
+        .env("CARGO_TARGET_DIR", &shared_target_dir)
+        .current_dir(&temp_dir)
+        .output();
 
     match output {
         Ok(output) => {
@@ -257,6 +302,13 @@ fn inject_test_main(rust_code: &str, function_name: &str, parametrize: Option<&P
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn shared_target_dir_stays_under_project_target() {
+        let target_dir = shared_cargo_target_dir(Path::new("/tmp/incan_project"));
+        assert_eq!(target_dir, PathBuf::from("/tmp/incan_project/target/incan_test_runner"));
+    }
 
     #[test]
     fn inject_main_plain_test() {

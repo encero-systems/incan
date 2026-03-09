@@ -99,6 +99,7 @@ pub struct NewtypeDecl {
     pub name: Ident,
     pub type_params: Vec<TypeParam>,
     pub underlying: Spanned<Type>,
+    pub docstring: Option<String>,
     pub methods: Vec<Spanned<MethodDecl>>,
 }
 

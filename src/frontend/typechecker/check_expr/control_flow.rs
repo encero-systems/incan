@@ -9,6 +9,7 @@ use crate::frontend::symbols::{ResolvedType, ScopeKind};
 
 use super::TypeChecker;
 use crate::frontend::typechecker::helpers::ensure_bool_condition;
+use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
 
 impl TypeChecker {
     /// Type-check an `await` expression.
@@ -20,7 +21,22 @@ impl TypeChecker {
         inner: &Spanned<Expr>,
         _span: Span,
     ) -> ResolvedType {
-        self.check_expr(inner)
+        let inner_ty = self.check_expr(inner);
+
+        if let ResolvedType::Generic(name, args) = &inner_ty
+            && surface_types::from_str(name.as_str()) == Some(SurfaceTypeId::JoinHandle)
+            && let Some(output) = args.first()
+        {
+            return ResolvedType::Generic(
+                "Result".to_string(),
+                vec![
+                    output.clone(),
+                    ResolvedType::Named(TASK_JOIN_ERROR_TYPE_NAME.to_string()),
+                ],
+            );
+        }
+
+        inner_ty
     }
 
     /// Validate the `?` (try) operator.

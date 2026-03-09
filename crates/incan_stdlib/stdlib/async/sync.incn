@@ -1,5 +1,5 @@
 """
-Async Synchronization Primitives
+Async synchronization primitives backed by explicit runtime adapters.
 
 This module provides async-aware synchronization primitives:
 - Mutex: Mutual exclusion lock
@@ -9,216 +9,291 @@ This module provides async-aware synchronization primitives:
 """
 
 import std.async
+from std.traits.error import Error
+from rust::incan_stdlib::async::sync import (
+    RawMutex,
+    RawMutexGuard,
+    RawRwLock,
+    RawRwLockReadGuard,
+    RawRwLockWriteGuard,
+    RawSemaphore,
+    RawSemaphorePermit,
+    RawBarrier,
+    runtime_mutex_new,
+    runtime_mutex_lock,
+    runtime_mutex_try_lock,
+    runtime_mutex_guard_get,
+    runtime_mutex_guard_set,
+    runtime_rwlock_new,
+    runtime_rwlock_read,
+    runtime_rwlock_write,
+    runtime_rwlock_try_read,
+    runtime_rwlock_try_write,
+    runtime_rwlock_read_guard_get,
+    runtime_rwlock_write_guard_get,
+    runtime_rwlock_write_guard_set,
+    runtime_semaphore_new,
+    runtime_semaphore_acquire,
+    runtime_semaphore_try_acquire,
+    runtime_semaphore_available_permits,
+    runtime_barrier_new,
+    runtime_barrier_wait,
+)
+
+pub model SemaphoreAcquireError with Error:
+    """
+    Error returned when a semaphore is closed while waiting for a permit.
+    """
+
+    def message(self) -> str:
+        return "failed to acquire semaphore permit: semaphore closed"
+
+    def source(self) -> Option[str]:
+        return None
+
 
 # ============================================================================
 # Mutex - Mutual Exclusion Lock
 # ============================================================================
-
-model Mutex[T]:
+@derive(Clone)
+pub type Mutex[T with Clone] = newtype RawMutex[T]:
     """
     An async-aware mutex.
-    
+
     Unlike std::sync::Mutex, this mutex can be held across await points.
     The lock is automatically released when the guard is dropped.
-    
+
     Example:
         shared_counter = Mutex.new(0)
-        
+
         async def increment() -> None:
             guard = await shared_counter.lock()
             guard.set(guard.get() + 1)
             # Lock released when guard goes out of scope
+
+    Methods:
+    - `new(value: T) -> Self`: Create a new mutex wrapping the given value
+    - `lock() -> async MutexGuard[T]`: Acquire the lock, blocking until available.
+    - `try_lock() -> Option[MutexGuard[T]]`: Try to acquire the lock without blocking.
+    - `get() -> T`: Get the current value (by reference)
+    - `set(value: T) -> None`: Set a new value
     """
-    
+
     @staticmethod
-    def new(value: T) -> Mutex[T]:
+    def new(value: T) -> Self:
         """Create a new mutex wrapping the given value"""
-        ...
-    
+        return Mutex(runtime_mutex_new(value))
+
     async def lock(self) -> MutexGuard[T]:
         """
         Acquire the lock, blocking until available.
-        
+
         Returns a guard that provides access to the inner value.
         The lock is released when the guard is dropped.
         """
-        ...
-    
+        return MutexGuard(await runtime_mutex_lock(self.0))
+
     def try_lock(self) -> Option[MutexGuard[T]]:
         """
         Try to acquire the lock without blocking.
-        
+
         Returns None immediately if the lock is held.
         """
-        ...
+        match runtime_mutex_try_lock(self.0):
+            Some(guard) => return Some(MutexGuard(guard))
+            None => return None
 
 
-model MutexGuard[T]:
-    """Guard providing access to mutex-protected data"""
-    
+
+pub type MutexGuard[T with Clone] = newtype RawMutexGuard[T]:
+    """
+    Guard providing access to mutex-protected data.
+
+    This guard provides access to the inner value and can be used to read or write the value.
+    The lock is released when the guard is dropped.
+
+    Example:
+        shared_counter = Mutex.new(0)
+        guard = await shared_counter.lock()
+        guard.set(guard.get() + 1)
+    """
+
     def get(self) -> T:
         """Get the current value (by reference)"""
-        ...
-    
+        return runtime_mutex_guard_get(self.0)
+
     def set(self, value: T) -> None:
         """Set a new value"""
-        ...
+        return runtime_mutex_guard_set(self.0, value)
 
 
 # ============================================================================
 # RwLock - Reader-Writer Lock
 # ============================================================================
-
-model RwLock[T]:
+@derive(Clone)
+pub type RwLock[T with Clone] = newtype RawRwLock[T]:
     """
     An async-aware reader-writer lock.
-    
+
     Allows multiple concurrent readers OR a single exclusive writer.
     Useful when reads are much more frequent than writes.
-    
+
     Example:
         shared_config = RwLock.new(Config(debug=False))
-        
+
         async def read_config() -> bool:
             guard = await shared_config.read()
             return guard.get().debug
-        
+
         async def update_config(debug: bool) -> None:
             guard = await shared_config.write()
             guard.set(Config(debug=debug))
     """
-    
+
     @staticmethod
-    def new(value: T) -> RwLock[T]:
+    def new(value: T) -> Self:
         """Create a new RwLock wrapping the given value"""
-        ...
-    
+        return RwLock(runtime_rwlock_new(value))
+
     async def read(self) -> RwLockReadGuard[T]:
         """
         Acquire a read lock.
-        
+
         Multiple readers can hold the lock simultaneously.
         Blocks if a writer holds the lock.
         """
-        ...
-    
+        return RwLockReadGuard(await runtime_rwlock_read(self.0))
+
     async def write(self) -> RwLockWriteGuard[T]:
         """
         Acquire a write lock.
-        
+
         Exclusive access - blocks all readers and other writers.
         """
-        ...
-    
+        return RwLockWriteGuard(await runtime_rwlock_write(self.0))
+
     def try_read(self) -> Option[RwLockReadGuard[T]]:
         """Try to acquire a read lock without blocking"""
-        ...
-    
+        match runtime_rwlock_try_read(self.0):
+            Some(guard) => return Some(RwLockReadGuard(guard))
+            None => return None
+
+
     def try_write(self) -> Option[RwLockWriteGuard[T]]:
         """Try to acquire a write lock without blocking"""
-        ...
+        match runtime_rwlock_try_write(self.0):
+            Some(guard) => return Some(RwLockWriteGuard(guard))
+            None => return None
 
 
-model RwLockReadGuard[T]:
+
+pub type RwLockReadGuard[T with Clone] = newtype RawRwLockReadGuard[T]:
     """Guard for read access to RwLock-protected data"""
-    
+
     def get(self) -> T:
         """Get the current value (read-only)"""
-        ...
+        return runtime_rwlock_read_guard_get(self.0)
 
 
-model RwLockWriteGuard[T]:
+pub type RwLockWriteGuard[T with Clone] = newtype RawRwLockWriteGuard[T]:
     """Guard for write access to RwLock-protected data"""
-    
+
     def get(self) -> T:
-        """Get the current value"""
-        ...
-    
+        """Get the current value (read-only)"""
+        return runtime_rwlock_write_guard_get(self.0)
+
     def set(self, value: T) -> None:
         """Set a new value"""
-        ...
+        return runtime_rwlock_write_guard_set(self.0, value)
 
 
 # ============================================================================
 # Semaphore - Counting Semaphore
 # ============================================================================
-
-model Semaphore:
+@derive(Clone)
+pub type Semaphore = newtype RawSemaphore:
     """
     A counting semaphore.
-    
+
     Limits concurrent access to a resource to N tasks.
-    
+
     Example:
         # Allow max 3 concurrent connections
         connection_limit = Semaphore.new(3)
-        
-        async def make_request() -> Response:
-            permit = await connection_limit.acquire()
-            response = await http_get(url)
-            # Permit released automatically
-            return response
+
+        async def make_request() -> None:
+            match await connection_limit.acquire():
+                Ok(permit) =>
+                    response = await http_get(url)
+                    println(response)
+                Err(err) => println(err.message())
     """
-    
+
     @staticmethod
-    def new(permits: int) -> Semaphore:
-        """Create a semaphore with the given number of permits"""
-        ...
-    
-    async def acquire(self) -> SemaphorePermit:
+    def new(permits: int) -> Self:
+        """Create a new semaphore with the given number of permits"""
+        return Semaphore(runtime_semaphore_new(permits))
+
+    async def acquire(self) -> Result[SemaphorePermit, SemaphoreAcquireError]:
         """
         Acquire a permit, blocking until one is available.
-        
+
+        Returns `Err(SemaphoreAcquireError)` if the semaphore is closed while waiting.
         The permit is released when dropped.
         """
-        ...
-    
+        match await runtime_semaphore_acquire(self.0):
+            Ok(permit) => return Ok(SemaphorePermit(permit))
+            Err(_err) => return Err(SemaphoreAcquireError())
+
     def try_acquire(self) -> Option[SemaphorePermit]:
         """Try to acquire a permit without blocking"""
-        ...
-    
+        match runtime_semaphore_try_acquire(self.0):
+            Some(permit) => return Some(SemaphorePermit(permit))
+            None => return None
+
+
     def available_permits(self) -> int:
         """Get the number of available permits"""
-        ...
+        return runtime_semaphore_available_permits(self.0)
 
 
-model SemaphorePermit:
-    """A permit from a semaphore"""
-    pass
+pub type SemaphorePermit = newtype RawSemaphorePermit:
+    """A permit for a semaphore"""
 
 
 # ============================================================================
 # Barrier - Synchronization Point
 # ============================================================================
-
-model Barrier:
+@derive(Clone)
+pub type Barrier = newtype RawBarrier:
     """
     A synchronization barrier.
-    
+
     All tasks must reach the barrier before any can proceed.
     Useful for coordinating phases of computation.
-    
+
     Example:
         barrier = Barrier.new(3)  # Wait for 3 tasks
-        
+
         async def worker(id: int) -> None:
             println(f"Worker {id} starting phase 1")
             # ... do work ...
-            
+
             await barrier.wait()  # All must reach here
-            
+
             println(f"Worker {id} starting phase 2")
     """
-    
+
     @staticmethod
-    def new(count: int) -> Barrier:
+    def new(count: int) -> Self:
         """Create a barrier that waits for `count` tasks"""
-        ...
-    
+        return Barrier(runtime_barrier_new(count))
+
     async def wait(self) -> int:
         """
         Wait at the barrier until all tasks arrive.
-        
+
         Returns the arrival index (0 to count-1).
         """
-        ...
+        return await runtime_barrier_wait(self.0)
+

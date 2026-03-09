@@ -147,6 +147,7 @@ impl SymbolTable {
                     return_type: ResolvedType::Unit,
                     is_async: false,
                     type_params: vec![],
+                    type_param_bounds: HashMap::new(),
                 }),
                 span: Span::default(),
                 scope: 0,
@@ -159,6 +160,7 @@ impl SymbolTable {
                 return_type: ResolvedType::Int,
                 is_async: false,
                 type_params: vec![],
+                type_param_bounds: HashMap::new(),
             }),
             span: Span::default(),
             scope: 0,
@@ -171,6 +173,7 @@ impl SymbolTable {
                 return_type: ResolvedType::Named("Range".to_string()), // Iterator-like
                 is_async: false,
                 type_params: vec![],
+                type_param_bounds: HashMap::new(),
             }),
             span: Span::default(),
             scope: 0,
@@ -355,6 +358,8 @@ pub struct FunctionInfo {
     pub return_type: ResolvedType,
     pub is_async: bool,
     pub type_params: Vec<String>,
+    /// Explicit source-declared bounds per type parameter (RFC 023), keyed by type parameter name.
+    pub type_param_bounds: HashMap<String, Vec<String>>,
 }
 
 /// Type information
@@ -392,6 +397,7 @@ pub struct ModelInfo {
 /// Newtype information
 #[derive(Debug, Clone)]
 pub struct NewtypeInfo {
+    pub type_params: Vec<String>,
     pub underlying: ResolvedType,
     pub methods: HashMap<String, MethodInfo>,
 }

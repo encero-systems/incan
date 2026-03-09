@@ -8,7 +8,7 @@ expression: rust_code
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.2");
+incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
 pub trait Named {}
@@ -20,8 +20,8 @@ pub trait Shape {
     fn perimeter(&self) -> f64;
 }
 pub trait Comparable {
-    fn compare(&self, other: _) -> i64;
-    fn is_equal(&self, other: _) -> bool;
+    fn compare(&self, other: Self) -> i64;
+    fn is_equal(&self, other: Self) -> bool;
 }
 #[derive(Debug, Clone, FieldInfo, IncanClass)]
 struct Dog {
@@ -42,10 +42,10 @@ fn Rectangle(width: f64, height: f64) -> Rectangle {
     Rectangle { width, height }
 }
 impl Rectangle {
-    fn area(&self) -> f64 {
+    pub fn area(&self) -> f64 {
         return self.width * self.height;
     }
-    fn perimeter(&self) -> f64 {
+    pub fn perimeter(&self) -> f64 {
         return 2f64 * self.width + self.height;
     }
     /// Returns field metadata for this type.
@@ -92,7 +92,7 @@ fn Circle(radius: f64) -> Circle {
     Circle { radius }
 }
 impl Circle {
-    fn draw(&self) -> String {
+    pub fn draw(&self) -> String {
         return {
             let __parts: [&str; 2usize] = ["Circle with radius ", ""];
             let __args: Vec<String> = vec![format!("{}", self.radius)];
@@ -135,13 +135,13 @@ fn Square(side: f64) -> Square {
     Square { side }
 }
 impl Square {
-    fn area(&self) -> f64 {
+    pub fn area(&self) -> f64 {
         return self.side * self.side;
     }
-    fn perimeter(&self) -> f64 {
+    pub fn perimeter(&self) -> f64 {
         return 4f64 * self.side;
     }
-    fn draw(&self) -> String {
+    pub fn draw(&self) -> String {
         return {
             let __parts: [&str; 2usize] = ["Square with side ", ""];
             let __args: Vec<String> = vec![format!("{}", self.side)];
@@ -197,12 +197,12 @@ fn Carton(width: f64, height: f64, depth: f64) -> Carton {
     Carton { width, height, depth }
 }
 impl Carton {
-    fn resize(&self, factor: f64) {
+    pub fn resize(&self, factor: f64) {
         self.width = self.width * factor;
         self.height = self.height * factor;
         self.depth = self.depth * factor;
     }
-    fn volume(&self) -> f64 {
+    pub fn volume(&self) -> f64 {
         return self.width * self.height * self.depth;
     }
     /// Returns field metadata for this type.
@@ -264,7 +264,7 @@ fn Document(title: String, content: String) -> Document {
     Document { title, content }
 }
 impl Document {
-    fn to_string(&self) -> String {
+    pub fn to_string(&self) -> String {
         return {
             let __parts: [&str; 3usize] = ["", ": ", ""];
             let __args: Vec<String> = vec![
@@ -273,7 +273,7 @@ impl Document {
             incan_stdlib::strings::fstring(&__parts, &__args)
         };
     }
-    fn serialize(&self) -> String {
+    pub fn serialize(&self) -> String {
         return {
             let __parts: [&str; 3usize] = ["title=", ",content=", ""];
             let __args: Vec<String> = vec![

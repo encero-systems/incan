@@ -8,7 +8,6 @@ use super::super::super::{IrSpan, Mutability};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
-use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::keywords::{self, KeywordId};
 
 impl AstLowering {
@@ -20,11 +19,12 @@ impl AstLowering {
         methods: &[Spanned<ast::MethodDecl>],
     ) -> Result<IrImpl, LoweringError> {
         let prev = self.current_impl_type.replace(type_name.to_string());
+        let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
         // IMPORTANT: always restore `current_impl_type` even if lowering fails, since lowering continues after
         // collecting errors.
         let lowered = methods
             .iter()
-            .map(|m| self.lower_method(&m.node))
+            .map(|m| self.lower_method_with_type_params(&m.node, Some(&type_param_names)))
             .collect::<Result<Vec<_>, LoweringError>>();
         self.current_impl_type = prev;
         let lowered_methods = lowered?;
@@ -47,11 +47,24 @@ impl AstLowering {
         trait_name: &str,
         impl_methods: &[Spanned<ast::MethodDecl>],
     ) -> Result<IrImpl, LoweringError> {
+        let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
         // Avoid holding an immutable borrow of `self` across lowering calls.
-        let trait_decl = self.trait_decls.get(trait_name).cloned().ok_or_else(|| LoweringError {
-            message: format!("Unknown trait '{trait_name}'"),
-            span: IrSpan::default(),
-        })?;
+        //
+        // In multi-module lowering, imported trait declarations may live in a different module AST and therefore not be
+        // present in `self.trait_decls` for this module. Typechecker already validates trait conformance, so lowering
+        // should stay permissive and emit an impl block from the methods we do have instead of hard-failing.
+        let Some(trait_decl) = self.trait_decls.get(trait_name).cloned() else {
+            let mut methods: Vec<IrFunction> = Vec::new();
+            for method in impl_methods {
+                methods.push(self.lower_impl_method_for_trait(&method.node, Some(&type_param_names))?);
+            }
+            return Ok(IrImpl {
+                target_type: type_name.to_string(),
+                type_params: Self::lower_type_params(type_params),
+                trait_name: Some(trait_name.to_string()),
+                methods,
+            });
+        };
         let trait_methods = trait_decl.methods;
 
         let mut methods: Vec<IrFunction> = Vec::new();
@@ -67,13 +80,13 @@ impl AstLowering {
                 }
             }
             if let Some(m) = found_override {
-                methods.push(self.lower_impl_method_for_trait(m)?);
+                methods.push(self.lower_impl_method_for_trait(m, Some(&type_param_names))?);
                 continue;
             }
 
             // Otherwise, expand a default method body into the impl (RFC 000: defaults may assume adopter fields).
             if trait_method.node.body.is_some() {
-                methods.push(self.lower_impl_method_for_trait(&trait_method.node)?);
+                methods.push(self.lower_impl_method_for_trait(&trait_method.node, Some(&type_param_names))?);
                 continue;
             }
 
@@ -94,7 +107,11 @@ impl AstLowering {
         })
     }
 
-    fn lower_impl_method_for_trait(&mut self, m: &ast::MethodDecl) -> Result<IrFunction, LoweringError> {
+    fn lower_impl_method_for_trait(
+        &mut self,
+        m: &ast::MethodDecl,
+        type_param_names: Option<&std::collections::HashSet<&str>>,
+    ) -> Result<IrFunction, LoweringError> {
         self.scopes.push(HashMap::new());
 
         // Handle receiver (self) parameter
@@ -117,7 +134,7 @@ impl AstLowering {
             .params
             .iter()
             .map(|p| {
-                let base_ty = self.lower_type(&p.node.ty.node);
+                let base_ty = self.lower_type_with_type_params(&p.node.ty.node, type_param_names);
                 FunctionParam {
                     name: p.node.name.clone(),
                     ty: base_ty,
@@ -136,7 +153,7 @@ impl AstLowering {
             .collect();
         params.extend(other_params);
 
-        let return_type = self.lower_type(&m.return_type.node);
+        let return_type = self.lower_type_with_type_params(&m.return_type.node, type_param_names);
         let body = if let Some(ref body_stmts) = m.body {
             self.lower_statements(body_stmts)?
         } else {
@@ -170,11 +187,12 @@ impl AstLowering {
         methods: &[Spanned<ast::MethodDecl>],
     ) -> Result<IrImpl, LoweringError> {
         let prev = self.current_impl_type.replace(type_name.to_string());
+        let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
         // IMPORTANT: always restore `current_impl_type` even if lowering fails, since lowering continues after
         // collecting errors.
         let lowered = methods
             .iter()
-            .map(|m| self.lower_method(&m.node))
+            .map(|m| self.lower_method_with_type_params(&m.node, Some(&type_param_names)))
             .collect::<Result<Vec<_>, LoweringError>>();
         self.current_impl_type = prev;
         let lowered_methods = lowered?;
@@ -187,10 +205,10 @@ impl AstLowering {
         })
     }
 
-    /// Lower a method declaration into a function.
-    pub(in crate::backend::ir::lower) fn lower_method(
+    fn lower_method_with_type_params(
         &mut self,
         m: &ast::MethodDecl,
+        type_param_names: Option<&std::collections::HashSet<&str>>,
     ) -> Result<IrFunction, LoweringError> {
         self.scopes.push(HashMap::new());
 
@@ -221,7 +239,7 @@ impl AstLowering {
             .params
             .iter()
             .map(|p| {
-                let base_ty = self.lower_type(&p.node.ty.node);
+                let base_ty = self.lower_type_with_type_params(&p.node.ty.node, type_param_names);
                 // For mutable parameters, wrap in RefMut
                 let ty = if p.node.is_mut {
                     IrType::RefMut(Box::new(base_ty.clone()))
@@ -253,7 +271,7 @@ impl AstLowering {
             .collect();
         params.extend(other_params);
 
-        let return_type = self.lower_type(&m.return_type.node);
+        let return_type = self.lower_type_with_type_params(&m.return_type.node, type_param_names);
         let body = if let Some(ref body_stmts) = m.body {
             self.lower_statements(body_stmts)?
         } else {
@@ -262,16 +280,9 @@ impl AstLowering {
         };
         self.scopes.pop();
 
-        // Static methods are public: they form the type's public API and have no self receiver.
-        let is_static = m
-            .decorators
-            .iter()
-            .any(|d| decorators::from_str(d.node.name.as_str()) == Some(DecoratorId::StaticMethod));
-        let visibility = if is_static {
-            Visibility::Public
-        } else {
-            Visibility::Private
-        };
+        // Incan methods are part of the type's public surface. Trait-impl methods are handled separately in
+        // `lower_impl_method_for_trait`, so inherent methods can be emitted as public here.
+        let visibility = Visibility::Public;
         let is_extern = Self::has_rust_extern_decorator(&m.decorators);
 
         Ok(IrFunction {

@@ -22,13 +22,17 @@ async def increment_worker(counter: Mutex[int], id: int, times: int) -> None:
 async def mutex_demo() -> None:
     println("=== Mutex Demo ===")
     println("Multiple workers safely incrementing a shared counter:")
-    counter = Mutex(0)
-    
+    counter = Mutex.new(0)
+
     w1 = spawn(increment_worker(counter, 1, 3))
     w2 = spawn(increment_worker(counter, 2, 3))
-    await w1
-    await w2
-    
+    match await w1:
+        Ok(_) => None
+        Err(err) => println(f"  Mutex worker 1 failed: {err.message()}")
+    match await w2:
+        Ok(_) => None
+        Err(err) => println(f"  Mutex worker 2 failed: {err.message()}")
+
     guard = await counter.lock()
     println(f"Final: {guard.get()}")
     println("")
@@ -53,15 +57,21 @@ async def writer(config: RwLock[int]) -> None:
 async def rwlock_demo() -> None:
     println("=== RwLock Demo ===")
     println("Multiple readers and a single writer:")
-    config = RwLock(42)
-    
+    config = RwLock.new(42)
+
     r1 = spawn(reader(config, 1))
     r2 = spawn(reader(config, 2))
     w1 = spawn(writer(config))
-    await r1
-    await r2
-    await w1
-    
+    match await r1:
+        Ok(_) => None
+        Err(err) => println(f"  RwLock reader 1 failed: {err.message()}")
+    match await r2:
+        Ok(_) => None
+        Err(err) => println(f"  RwLock reader 2 failed: {err.message()}")
+    match await w1:
+        Ok(_) => None
+        Err(err) => println(f"  RwLock writer failed: {err.message()}")
+
     guard = await config.read()
     println(f"Final: {guard.get()}")
     println("")
@@ -71,25 +81,27 @@ async def rwlock_demo() -> None:
 
 async def limited_worker(sem: Semaphore, id: int) -> None:
     println(f"  Worker {id}: waiting...")
-    permit = await sem.acquire()
-    println(f"  Worker {id}: working")
-    await sleep(0.15)
-    println(f"  Worker {id}: done")
+    match await sem.acquire():
+        Ok(permit) =>
+            println(f"  Worker {id}: working")
+            await sleep(0.15)
+            println(f"  Worker {id}: done")
+        Err(err) => println(f"  Worker {id}: failed to acquire permit: {err.message()}")
 
 
 async def semaphore_demo() -> None:
     println("=== Semaphore Demo ===")
     println("4 workers, but only 2 permits (max 2 concurrent):")
-    sem = Semaphore(2)
-    
+    sem = Semaphore.new(2)
+
     w1 = spawn(limited_worker(sem, 1))
     w2 = spawn(limited_worker(sem, 2))
     w3 = spawn(limited_worker(sem, 3))
     w4 = spawn(limited_worker(sem, 4))
-    await w1
-    await w2
-    await w3
-    await w4
+    for result in [await w1, await w2, await w3, await w4]:
+        match result:
+            Ok(_) => None
+            Err(err) => println(f"  Semaphore worker failed: {err.message()}")
     println("")
 
 
@@ -106,14 +118,20 @@ async def stage_worker(barrier: Barrier, id: int, delay: float) -> None:
 async def barrier_demo() -> None:
     println("=== Barrier Demo ===")
     println("3 workers sync at a barrier before stage 2:")
-    barrier = Barrier(3)
-    
+    barrier = Barrier.new(3)
+
     w1 = spawn(stage_worker(barrier, 1, 0.1))
     w2 = spawn(stage_worker(barrier, 2, 0.2))
     w3 = spawn(stage_worker(barrier, 3, 0.3))
-    await w1
-    await w2
-    await w3
+    match await w1:
+        Ok(_) => None
+        Err(err) => println(f"  Barrier worker 1 failed: {err.message()}")
+    match await w2:
+        Ok(_) => None
+        Err(err) => println(f"  Barrier worker 2 failed: {err.message()}")
+    match await w3:
+        Ok(_) => None
+        Err(err) => println(f"  Barrier worker 3 failed: {err.message()}")
     println("")
 
 

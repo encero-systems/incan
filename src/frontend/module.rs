@@ -459,6 +459,7 @@ mod tests {
             name: "UserId".to_string(),
             type_params: vec![],
             underlying: make_spanned(Type::Simple("i64".to_string())),
+            docstring: None,
             methods: vec![],
         };
         let program = Program {

@@ -150,9 +150,9 @@ impl<'a> IrEmitter<'a> {
                         IrType::String | IrType::FrozenStr => {
                             Ok(quote! { incan_stdlib::conversions::int_from_str(&#a) })
                         }
-                        IrType::Float => Ok(quote! { #a as i64 }),
+                        IrType::Float => Ok(quote! { (#a) as i64 }),
                         IrType::Bool => Ok(quote! { if #a { 1 } else { 0 } }),
-                        _ => Ok(quote! { #a as i64 }),
+                        _ => Ok(quote! { (#a) as i64 }),
                     }
                 } else {
                     Ok(quote! { 0i64 })
@@ -165,8 +165,8 @@ impl<'a> IrEmitter<'a> {
                         IrType::String | IrType::FrozenStr => {
                             Ok(quote! { incan_stdlib::conversions::float_from_str(&#a) })
                         }
-                        IrType::Int => Ok(quote! { #a as f64 }),
-                        _ => Ok(quote! { #a as f64 }),
+                        IrType::Int => Ok(quote! { (#a) as f64 }),
+                        _ => Ok(quote! { (#a) as f64 }),
                     }
                 } else {
                     Ok(quote! { 0.0f64 })
@@ -411,9 +411,9 @@ impl<'a> IrEmitter<'a> {
                         IrType::String | IrType::FrozenStr => {
                             Ok(Some(quote! { incan_stdlib::conversions::int_from_str(&#a) }))
                         }
-                        IrType::Float => Ok(Some(quote! { #a as i64 })),
+                        IrType::Float => Ok(Some(quote! { (#a) as i64 })),
                         IrType::Bool => Ok(Some(quote! { if #a { 1 } else { 0 } })),
-                        _ => Ok(Some(quote! { #a as i64 })),
+                        _ => Ok(Some(quote! { (#a) as i64 })),
                     }
                 } else {
                     Ok(None)
@@ -426,8 +426,8 @@ impl<'a> IrEmitter<'a> {
                         IrType::String | IrType::FrozenStr => {
                             Ok(Some(quote! { incan_stdlib::conversions::float_from_str(&#a) }))
                         }
-                        IrType::Int => Ok(Some(quote! { #a as f64 })),
-                        _ => Ok(Some(quote! { #a as f64 })),
+                        IrType::Int => Ok(Some(quote! { (#a) as f64 })),
+                        _ => Ok(Some(quote! { (#a) as f64 })),
                     }
                 } else {
                     Ok(None)

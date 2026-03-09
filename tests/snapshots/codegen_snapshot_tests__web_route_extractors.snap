@@ -8,13 +8,10 @@ expression: rust_code
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.2");
+incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
-use incan_stdlib::__private::tokio::time::{sleep, timeout, Duration};
-use incan_stdlib::__private::tokio::sync::{mpsc, Mutex, RwLock};
-use incan_stdlib::__private::tokio::task::JoinHandle;
-use incan_stdlib::r#async;
+pub use crate::__incan_std::r#async;
 pub use crate::__incan_std::web::route;
 pub use crate::__incan_std::web::GET;
 pub use crate::__incan_std::web::POST;

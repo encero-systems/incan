@@ -1,102 +1,47 @@
 """
-Async Task Primitives
+Async task primitives backed by explicit runtime adapters.
 
-This module provides task management utilities:
-- spawn: Run a task concurrently
-- spawn_blocking: Run blocking code on a dedicated thread
-- JoinHandle: Handle to wait for task completion
+This module exposes the core task helpers used to run async or blocking work concurrently:
+
+- `spawn(task)` starts an async task and returns a `JoinHandle[T]`
+- `spawn_blocking(task)` starts blocking work and returns a `JoinHandle[T]`
+- `yield_now()` voluntarily yields back to the scheduler
+
+The public surface is declared here even when some leaves are still imported directly from the runtime bridge. For now,
+`spawn()` and `spawn_blocking()` remain direct imports because their Rust-side `Future` / `Send` bounds are not yet
+expressible cleanly in local Incan wrappers without reintroducing hidden handwritten compiler knowledge.
+
+Examples:
+    handle = spawn(fetch_user())
+    match await handle:
+        Ok(user) => println(user.name)
+        Err(err) => println(err.message())
+
+    def compute_checksum() -> int:
+        return 42
+
+    match await spawn_blocking(compute_checksum):
+        Ok(checksum) => println(checksum)
+        Err(err) => println(err.message())
+
+    await yield_now()
 """
 
 import std.async
+from rust::incan_stdlib::async::task import JoinHandle, TaskJoinError
+from rust::incan_stdlib::async::task import spawn
+from rust::incan_stdlib::async::task import spawn_blocking
+from rust::incan_stdlib::async::task import yield_now as runtime_yield_now
 
-# JoinHandle represents a running async task
-# Can be awaited to get the result
-model JoinHandle[T]:
+pub async def yield_now() -> None:
     """
-    Handle to a spawned async task.
-    
-    Awaiting the handle returns the task's result.
-    If the task panics, awaiting returns an error.
-    """
-    
-    async def await_result(self) -> Result[T, str]:
-        """Wait for the task to complete and get its result"""
-        ...
+    Yield execution back to the scheduler.
 
+    This is useful in long-running async loops when you want to remain cooperative without sleeping for a real duration.
 
-# ============================================================================
-# Task Spawning Functions
-# ============================================================================
-
-def spawn[T](task: async () -> T) -> JoinHandle[T]:
-    """
-    Spawn an async task to run concurrently.
-    
-    The task begins executing immediately and runs concurrently
-    with the calling code. Use await on the returned handle to
-    wait for completion.
-    
     Example:
-        async def background_work() -> int:
-            await sleep(1.0)
-            return 42
-        
-        # Spawn task - runs in background
-        handle = spawn(background_work)
-        
-        # Do other work while task runs...
-        println("Doing other work...")
-        
-        # Wait for result
-        result = await handle
-        println(f"Task returned: {result}")
-    
-    Maps to: tokio::spawn(task())
+        while work_left():
+            step()
+            await yield_now()
     """
-    ...
-
-
-async def spawn_blocking[T](f: () -> T) -> T:
-    """
-    Run a blocking/CPU-intensive function on a dedicated thread.
-    
-    Use this for operations that would block the async runtime,
-    such as CPU-heavy computations or synchronous I/O.
-    
-    Example:
-        def heavy_computation() -> int:
-            # CPU-intensive work
-            result = 0
-            for i in range(1_000_000):
-                result = result + i
-            return result
-        
-        # Run on blocking thread pool
-        result = await spawn_blocking(heavy_computation)
-    
-    Maps to: tokio::task::spawn_blocking(f).await
-    """
-    ...
-
-
-# ============================================================================
-# Task Utilities
-# ============================================================================
-
-async def yield_now() -> None:
-    """
-    Yield execution back to the runtime.
-    
-    Allows other tasks to run. Use sparingly in tight loops
-    to prevent starvation of other tasks.
-    
-    Example:
-        async def cooperative_loop() -> None:
-            for i in range(1000):
-                # Do some work
-                if i % 100 == 0:
-                    await yield_now()  # Let others run
-    
-    Maps to: tokio::task::yield_now().await
-    """
-    ...
+    await runtime_yield_now()

@@ -24,30 +24,46 @@ impl<'a> IrEmitter<'a> {
     ///
     /// ## Returns
     /// - (`bool`): `true` if `ty` (or any nested component) appears unresolved.
-    fn is_unresolved_type(ty: &IrType) -> bool {
-        fn looks_like_type_param(name: &str) -> bool {
-            // Type parameters in this codebase are typically short upper-case names (`T`, `E`, `K`, `V`).
-            name.len() <= 3
-                && name
-                    .chars()
-                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-        }
-
+    pub(super) fn is_unresolved_type(ty: &IrType) -> bool {
         match ty {
-            IrType::Unknown | IrType::Generic(_) => true,
+            IrType::Unknown => true,
+            IrType::Generic(_) => false,
             IrType::Ref(inner) | IrType::RefMut(inner) | IrType::Option(inner) | IrType::List(inner) => {
                 Self::is_unresolved_type(inner)
             }
             IrType::Set(inner) => Self::is_unresolved_type(inner),
             IrType::Dict(k, v) | IrType::Result(k, v) => Self::is_unresolved_type(k) || Self::is_unresolved_type(v),
             IrType::Tuple(items) => items.iter().any(Self::is_unresolved_type),
-            IrType::NamedGeneric(name, args) => {
-                looks_like_type_param(name) || args.iter().any(Self::is_unresolved_type)
-            }
+            IrType::NamedGeneric(_, args) => args.iter().any(Self::is_unresolved_type),
             IrType::Function { params, ret } => {
                 params.iter().any(Self::is_unresolved_type) || Self::is_unresolved_type(ret)
             }
-            IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => looks_like_type_param(name),
+            IrType::Struct(_) | IrType::Enum(_) | IrType::Trait(_) => false,
+            _ => false,
+        }
+    }
+
+    /// Stricter variant used only for call-site literal seeding.
+    ///
+    /// Generic placeholders coming from the callee signature (`Option[T]`, `Result[T, E]`) are not in scope at the
+    /// caller, so they must still be treated as unresolved here even though they are perfectly valid inside the callee
+    /// body or an enclosing generic impl/function.
+    fn is_unresolved_call_seed_type(ty: &IrType) -> bool {
+        match ty {
+            IrType::Unknown | IrType::Generic(_) => true,
+            IrType::Ref(inner) | IrType::RefMut(inner) | IrType::Option(inner) | IrType::List(inner) => {
+                Self::is_unresolved_call_seed_type(inner)
+            }
+            IrType::Set(inner) => Self::is_unresolved_call_seed_type(inner),
+            IrType::Dict(k, v) | IrType::Result(k, v) => {
+                Self::is_unresolved_call_seed_type(k) || Self::is_unresolved_call_seed_type(v)
+            }
+            IrType::Tuple(items) => items.iter().any(Self::is_unresolved_call_seed_type),
+            IrType::NamedGeneric(_, args) => args.iter().any(Self::is_unresolved_call_seed_type),
+            IrType::Function { params, ret } => {
+                params.iter().any(Self::is_unresolved_call_seed_type) || Self::is_unresolved_call_seed_type(ret)
+            }
+            IrType::Struct(_) | IrType::Enum(_) | IrType::Trait(_) => false,
             _ => false,
         }
     }
@@ -74,7 +90,7 @@ impl<'a> IrEmitter<'a> {
     ) -> Result<Option<TokenStream>, EmitError> {
         match (&arg.kind, target_ty) {
             (IrExprKind::None, IrType::Option(inner)) => {
-                let inner_ty = if Self::is_unresolved_type(inner) {
+                let inner_ty = if Self::is_unresolved_call_seed_type(inner) {
                     quote! { () }
                 } else {
                     self.emit_type(inner)
@@ -94,14 +110,14 @@ impl<'a> IrEmitter<'a> {
                 if name == constructors::as_str(ConstructorId::Ok) {
                     // For `Ok`, keep unresolved `T` as `_` so Rust can infer it
                     // from usage while still stabilizing `E`.
-                    let ok_tokens = if Self::is_unresolved_type(ok_ty) {
+                    let ok_tokens = if Self::is_unresolved_call_seed_type(ok_ty) {
                         quote! { _ }
                     } else {
                         self.emit_type(ok_ty)
                     };
                     // Default unresolved error type to `()` for deterministic
                     // fallback in assertion/helper-oriented paths.
-                    let err_tokens = if Self::is_unresolved_type(err_ty) {
+                    let err_tokens = if Self::is_unresolved_call_seed_type(err_ty) {
                         quote! { () }
                     } else {
                         self.emit_type(err_ty)
@@ -118,12 +134,12 @@ impl<'a> IrEmitter<'a> {
                     };
                     // Mirror `Ok` strategy: anchor the opposite side with `()`
                     // and leave the payload side as `_` when unresolved.
-                    let ok_tokens = if Self::is_unresolved_type(ok_ty) {
+                    let ok_tokens = if Self::is_unresolved_call_seed_type(ok_ty) {
                         quote! { () }
                     } else {
                         self.emit_type(ok_ty)
                     };
-                    let err_tokens = if Self::is_unresolved_type(err_ty) {
+                    let err_tokens = if Self::is_unresolved_call_seed_type(err_ty) {
                         quote! { _ }
                     } else {
                         self.emit_type(err_ty)
@@ -140,12 +156,12 @@ impl<'a> IrEmitter<'a> {
                 let inner = self.emit_expr(first_arg)?;
 
                 if name == constructors::as_str(ConstructorId::Ok) {
-                    let ok_tokens = if Self::is_unresolved_type(ok_ty) {
+                    let ok_tokens = if Self::is_unresolved_call_seed_type(ok_ty) {
                         quote! { _ }
                     } else {
                         self.emit_type(ok_ty)
                     };
-                    let err_tokens = if Self::is_unresolved_type(err_ty) {
+                    let err_tokens = if Self::is_unresolved_call_seed_type(err_ty) {
                         quote! { () }
                     } else {
                         self.emit_type(err_ty)
@@ -160,12 +176,12 @@ impl<'a> IrEmitter<'a> {
                     } else {
                         inner
                     };
-                    let ok_tokens = if Self::is_unresolved_type(ok_ty) {
+                    let ok_tokens = if Self::is_unresolved_call_seed_type(ok_ty) {
                         quote! { () }
                     } else {
                         self.emit_type(ok_ty)
                     };
-                    let err_tokens = if Self::is_unresolved_type(err_ty) {
+                    let err_tokens = if Self::is_unresolved_call_seed_type(err_ty) {
                         quote! { _ }
                     } else {
                         self.emit_type(err_ty)
@@ -177,6 +193,55 @@ impl<'a> IrEmitter<'a> {
             }
             _ => Ok(None),
         }
+    }
+
+    pub(super) fn emit_result_constructor_with_context(
+        &self,
+        constructor_name: &str,
+        inner_expr: &TypedExpr,
+        ok_ty: &IrType,
+        err_ty: &IrType,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        let inner = if matches!(inner_expr.kind, IrExprKind::None) && matches!(ok_ty, IrType::Unit) {
+            quote! { () }
+        } else {
+            self.emit_expr(inner_expr)?
+        };
+
+        if constructor_name == constructors::as_str(ConstructorId::Ok) {
+            let ok_tokens = if Self::is_unresolved_type(ok_ty) {
+                quote! { _ }
+            } else {
+                self.emit_type(ok_ty)
+            };
+            let err_tokens = if Self::is_unresolved_type(err_ty) {
+                quote! { () }
+            } else {
+                self.emit_type(err_ty)
+            };
+            return Ok(Some(quote! { Ok::<#ok_tokens, #err_tokens>(#inner) }));
+        }
+
+        if constructor_name == constructors::as_str(ConstructorId::Err) {
+            let inner = if matches!(inner_expr.kind, IrExprKind::String(_)) {
+                quote! { (#inner).to_string() }
+            } else {
+                inner
+            };
+            let ok_tokens = if Self::is_unresolved_type(ok_ty) {
+                quote! { () }
+            } else {
+                self.emit_type(ok_ty)
+            };
+            let err_tokens = if Self::is_unresolved_type(err_ty) {
+                quote! { _ }
+            } else {
+                self.emit_type(err_ty)
+            };
+            return Ok(Some(quote! { Err::<#ok_tokens, #err_tokens>(#inner) }));
+        }
+
+        Ok(None)
     }
 
     /// Emit a function call expression.
@@ -201,6 +266,13 @@ impl<'a> IrEmitter<'a> {
         if let Some(name) = callee_name {
             let positional: Vec<TypedExpr> = args.iter().map(|a| a.expr.clone()).collect();
             if let Some(result) = self.try_emit_builtin_call(name, &positional)? {
+                return Ok(result);
+            }
+
+            if let Some(IrType::Result(ok_ty, err_ty)) = self.current_function_return_type.borrow().as_ref()
+                && let Some(first_arg) = positional.first()
+                && let Some(result) = self.emit_result_constructor_with_context(name, first_arg, ok_ty, err_ty)?
+            {
                 return Ok(result);
             }
         }
@@ -276,7 +348,7 @@ impl<'a> IrEmitter<'a> {
                 let emitted = if let Some(target_ty) = target_ty {
                     if let Some(seed) = self.emit_inference_seeded_literal_arg(a, target_ty)? {
                         seed
-                    } else if Self::is_unresolved_type(target_ty) {
+                    } else if Self::is_unresolved_call_seed_type(target_ty) {
                         // Signature exists but leaves generics unresolved: fallback to the argument's own inferred IR
                         // type to seed constructor literals.
                         if let Some(seed) = self.emit_inference_seeded_literal_arg(a, &a.ty)? {
@@ -349,8 +421,7 @@ impl<'a> IrEmitter<'a> {
                 // Determine conversion context based on whether this is an Incan or Rust function
                 let in_return = *self.in_return_context.borrow();
                 let context = if let IrExprKind::Var { name, ref_kind, .. } = &func.kind {
-                    // External Rust functions: explicit rust imports or collected Rust-from imports
-                    if matches!(ref_kind, VarRefKind::ExternalName) || self.external_rust_functions.contains(name) {
+                    if matches!(ref_kind, VarRefKind::ExternalRustName) || self.external_rust_functions.contains(name) {
                         ConversionContext::ExternalFunctionArg
                     } else if in_return {
                         ConversionContext::IncanFunctionArgInReturn

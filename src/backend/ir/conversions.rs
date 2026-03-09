@@ -557,6 +557,12 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 // String literals → .into() (works for String, &str, PlSmallStr, and any From<&str>)
                 IrExprKind::String(_) => Conversion::Into, // String variables → borrow for external calls (&str param)
                 IrExprKind::Var { .. } if matches!(expr.ty, IrType::String) => Conversion::Borrow,
+                // Rust adapter leaves commonly accept borrowed handles (`&Sender<T>`, `&Mutex<T>`, ...).
+                // When the frontend cannot surface an explicit `&T` parameter type for inline Rust imports,
+                // preserve handle ownership by borrowing field-based wrapper access like `self.0`.
+                IrExprKind::Field { .. } if matches!(expr.ty, IrType::Unknown) || !expr.ty.is_copy() => {
+                    Conversion::Borrow
+                }
                 // Everything else as-is (Rust's type system handles it)
                 _ => Conversion::None,
             }

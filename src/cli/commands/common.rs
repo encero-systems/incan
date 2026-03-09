@@ -9,17 +9,129 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult};
+use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::{DependencyError, InlineRustImport};
 use crate::frontend::ast::{ImportKind, Span};
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
-use incan_core::lang::stdlib;
+use crate::manifest::{DependencySource, DependencySpec};
+use incan_core::lang::stdlib::{self, StdlibExtraCrateSource};
 
 /// Maximum source file size (100 MB)
 ///
 /// Files larger than this are rejected to prevent out-of-memory conditions during compilation.
 const MAX_SOURCE_SIZE: u64 = 100 * 1024 * 1024;
+
+/// Stdlib-derived runtime requirements discovered from parsed modules.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct StdlibUsage {
+    pub needs_serde: bool,
+    pub needs_tokio: bool,
+    pub needs_web: bool,
+    namespaces: HashSet<String>,
+}
+
+/// Derive stdlib namespace usage from import statements across parsed modules.
+///
+/// This is the shared source of truth for build/test/lock behavior:
+/// - runtime feature toggles (`json`, `async`, `web`)
+/// - namespace-driven extra Cargo dependencies
+pub(crate) fn collect_stdlib_usage(modules: &[ParsedModule]) -> StdlibUsage {
+    let mut usage = StdlibUsage::default();
+
+    for module in modules {
+        for decl in &module.ast.declarations {
+            let crate::frontend::ast::Declaration::Import(import) = &decl.node else {
+                continue;
+            };
+            let path = match &import.kind {
+                ImportKind::From { module, .. } => {
+                    if module.parent_levels > 0 || module.is_absolute {
+                        continue;
+                    }
+                    &module.segments
+                }
+                ImportKind::Module(path) => {
+                    if path.parent_levels > 0 || path.is_absolute {
+                        continue;
+                    }
+                    &path.segments
+                }
+                _ => continue,
+            };
+
+            if path.len() < 2 || path[0] != stdlib::STDLIB_ROOT {
+                continue;
+            }
+            usage.namespaces.insert(path[1].clone());
+        }
+    }
+
+    for namespace_name in &usage.namespaces {
+        let Some(namespace) = stdlib::find_namespace(namespace_name) else {
+            continue;
+        };
+        match namespace.feature {
+            Some("json") => usage.needs_serde = true,
+            Some("async") => usage.needs_tokio = true,
+            Some("web") => usage.needs_web = true,
+            _ => {}
+        }
+    }
+
+    usage
+}
+
+/// Merge stdlib namespace-provided extra dependencies into resolved dependencies.
+///
+/// Existing dependency entries win; this function only adds missing stdlib extras.
+pub(crate) fn merge_stdlib_extra_dependencies(resolved: &mut ResolvedDependencies, usage: &StdlibUsage) {
+    let mut known: HashSet<String> = resolved
+        .dependencies
+        .iter()
+        .map(|d| d.crate_name.clone())
+        .chain(resolved.dev_dependencies.iter().map(|d| d.crate_name.clone()))
+        .collect();
+
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    for namespace_name in &usage.namespaces {
+        let Some(namespace) = stdlib::find_namespace(namespace_name) else {
+            continue;
+        };
+        for dep in namespace.extra_crate_deps {
+            if known.contains(dep.crate_name) {
+                continue;
+            }
+            let spec = match dep.source {
+                StdlibExtraCrateSource::Version(version) => DependencySpec {
+                    crate_name: dep.crate_name.to_string(),
+                    version: Some(version.to_string()),
+                    features: vec![],
+                    default_features: true,
+                    source: DependencySource::Registry,
+                    optional: false,
+                    package: None,
+                },
+                StdlibExtraCrateSource::Path(relative_path) => DependencySpec {
+                    crate_name: dep.crate_name.to_string(),
+                    version: None,
+                    features: vec![],
+                    default_features: true,
+                    source: DependencySource::Path {
+                        path: workspace_root.join(relative_path),
+                    },
+                    optional: false,
+                    package: None,
+                },
+            }
+            .normalized();
+            resolved.dependencies.push(spec);
+            known.insert(dep.crate_name.to_string());
+        }
+    }
+}
 
 /// Resolve the source path for a stdlib module path (e.g. `["std", "testing"]`).
 pub(crate) fn resolve_stdlib_module_source_path(module_path: &[String]) -> CliResult<PathBuf> {
@@ -495,6 +607,18 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    fn parsed_module_for_test(source: &str) -> Result<ParsedModule, Box<dyn std::error::Error>> {
+        let tokens = lexer::lex(source).map_err(|errs| format!("lex failed: {errs:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errs| format!("parse failed: {errs:?}"))?;
+        Ok(ParsedModule {
+            name: "main".to_string(),
+            path_segments: vec!["main".to_string()],
+            file_path: PathBuf::from("main.incn"),
+            source: source.to_string(),
+            ast,
+        })
+    }
+
     // ---- resolve_project_root ----
 
     #[test]
@@ -568,6 +692,44 @@ source-root = "lib"
 
         let root = resolve_source_root(&project, Some(&manifest));
         assert_eq!(root, project.join("lib"));
+        Ok(())
+    }
+
+    #[test]
+    fn collect_stdlib_usage_tracks_async_namespace_features() -> Result<(), Box<dyn std::error::Error>> {
+        let module = parsed_module_for_test(
+            r#"
+import std.async
+from std.math import sqrt
+"#,
+        )?;
+
+        let usage = collect_stdlib_usage(&[module]);
+        assert!(usage.needs_tokio, "std.async should enable tokio runtime support");
+        assert!(usage.namespaces.contains("async"));
+        assert!(usage.namespaces.contains("math"));
+        Ok(())
+    }
+
+    #[test]
+    fn merge_stdlib_extra_dependencies_adds_math_runtime_crate() -> Result<(), Box<dyn std::error::Error>> {
+        let module = parsed_module_for_test(
+            r#"
+from std.math import sqrt
+"#,
+        )?;
+        let usage = collect_stdlib_usage(&[module]);
+        let mut resolved = ResolvedDependencies {
+            dependencies: Vec::new(),
+            dev_dependencies: Vec::new(),
+        };
+
+        merge_stdlib_extra_dependencies(&mut resolved, &usage);
+
+        assert!(
+            resolved.dependencies.iter().any(|dep| dep.crate_name == "libm"),
+            "std.math should inject libm for generated projects"
+        );
         Ok(())
     }
 }

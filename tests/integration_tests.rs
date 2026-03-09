@@ -582,6 +582,95 @@ def main() -> None:
     }
 
     #[test]
+    fn test_run_async_channel_facade() {
+        let project_dir = make_temp_dir("incan_async_channel_facade_test");
+        let source_path = project_dir.join("main.incn");
+        let source = r#"
+import std.async
+from std.async.channel import channel, unbounded_channel, oneshot
+
+async def main() -> None:
+    tx, rx = channel(4)
+    cloned = tx.clone()
+
+    match await cloned.send(1):
+        Ok(_) => println("sent")
+        Err(err) => println(err.message())
+
+    match await rx.recv():
+        Some(value) => println(value)
+        None => println("closed")
+
+    tx2, rx2 = unbounded_channel()
+    match await tx2.send(2):
+        Ok(_) => println("sent")
+        Err(err) => println(err.message())
+
+    match rx2.try_recv():
+        Some(value) => println(value)
+        None => println("empty")
+
+    rx2.close()
+    println(tx2.is_closed())
+
+    otx, orx = oneshot()
+    match otx.send(3):
+        Ok(_) => println("delivered")
+        Err(value) => println(value)
+
+    match await orx.recv():
+        Ok(value) => println(value)
+        Err(err) => println(err.message())
+"#;
+        let Ok(()) = std::fs::write(&source_path, source) else {
+            panic!("failed to write source file");
+        };
+
+        let Ok(output) = Command::new("target/debug/incan")
+            .args(["run", source_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+        else {
+            panic!("failed to run incan");
+        };
+
+        assert!(
+            output.status.success(),
+            "incan run async channel facade failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("sent"), "expected send output; got:\n{}", stdout);
+        assert!(
+            stdout.contains("1"),
+            "expected bounded receive output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("2"),
+            "expected unbounded receive output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("true"),
+            "expected closed-state output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("delivered"),
+            "expected oneshot send output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("3"),
+            "expected oneshot receive output; got:\n{}",
+            stdout
+        );
+    }
+
+    #[test]
     fn test_run_repro_model_traits() {
         let Ok(output) = Command::new("target/debug/incan")
             .args(["run", "tests/fixtures/repro_model_traits.incn"])

@@ -4,14 +4,34 @@
 //! their result types.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use super::generator::ProjectGenerator;
 
 impl ProjectGenerator {
+    /// Shared Cargo target directory for generated projects under the same parent folder.
+    ///
+    /// Generated projects like `target/incan/<name>` and `target/incan_tests/<case>` otherwise each get their own
+    /// nested `target/` directory, which forces Cargo to rebuild dependencies repeatedly across examples, smoke
+    /// tests, and benchmark checks. Sharing a parent-scoped target dir lets those generated crates reuse compiled
+    /// dependencies.
+    fn cargo_target_dir(&self) -> PathBuf {
+        let base_dir = self.output_dir.parent().unwrap_or(self.output_dir.as_path());
+        let target_dir = base_dir.join(".cargo-target");
+
+        if target_dir.is_absolute() {
+            target_dir
+        } else if let Ok(cwd) = std::env::current_dir() {
+            cwd.join(target_dir)
+        } else {
+            target_dir
+        }
+    }
+
     /// Build the project using cargo.
     pub fn build(&self) -> io::Result<BuildResult> {
+        let cargo_target_dir = self.cargo_target_dir();
         let mut command = Command::new("cargo");
         command.arg("build").arg("--release");
         for flag in &self.cargo_policy_flags {
@@ -24,6 +44,7 @@ impl ProjectGenerator {
             .env_remove("CURL_CA_BUNDLE")
             .env_remove("REQUESTS_CA_BUNDLE")
             .env_remove("CARGO_HTTP_CAINFO")
+            .env("CARGO_TARGET_DIR", &cargo_target_dir)
             .current_dir(&self.output_dir)
             .output()?;
 
@@ -51,6 +72,7 @@ impl ProjectGenerator {
     /// `target/incan/...` directory.
     pub fn run_with_cwd(&self, cwd: &Path) -> io::Result<RunResult> {
         // Build first so we can run the binary directly with a custom cwd.
+        let cargo_target_dir = self.cargo_target_dir();
         let mut build_command = Command::new("cargo");
         build_command.arg("build").arg("--release");
         for flag in &self.cargo_policy_flags {
@@ -63,6 +85,7 @@ impl ProjectGenerator {
             .env_remove("CURL_CA_BUNDLE")
             .env_remove("REQUESTS_CA_BUNDLE")
             .env_remove("CARGO_HTTP_CAINFO")
+            .env("CARGO_TARGET_DIR", &cargo_target_dir)
             .current_dir(&self.output_dir)
             .output()?;
         if !build_output.status.success() {
@@ -74,14 +97,7 @@ impl ProjectGenerator {
             });
         }
 
-        let binary_path = self.binary_path();
-        let binary_path = if binary_path.is_absolute() {
-            binary_path
-        } else {
-            std::env::current_dir()?.join(binary_path)
-        };
-
-        let mut child = Command::new(binary_path)
+        let mut child = Command::new(self.binary_path())
             .current_dir(cwd)
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
@@ -98,8 +114,8 @@ impl ProjectGenerator {
     }
 
     /// Get the path to the built binary.
-    pub fn binary_path(&self) -> std::path::PathBuf {
-        self.output_dir.join("target").join("release").join(&self.name)
+    pub fn binary_path(&self) -> PathBuf {
+        self.cargo_target_dir().join("release").join(&self.name)
     }
 }
 

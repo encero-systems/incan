@@ -267,6 +267,30 @@ async def foo() -> None:
 }
 
 #[test]
+fn test_await_join_handle_returns_result_task_join_error() {
+    let source = r#"
+from std.async.task import JoinHandle, TaskJoinError
+
+async def wait_for(handle: JoinHandle[int]) -> Result[int, TaskJoinError]:
+  return await handle
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_semaphore_acquire_returns_result_semaphore_acquire_error() {
+    let source = r#"
+from std.async.sync import Semaphore, SemaphoreAcquireError
+
+async def take(sem: Semaphore) -> Result[int, SemaphoreAcquireError]:
+  result = await sem.acquire()
+  permit = result?
+  return Ok(1)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
 fn test_std_reflection_type_requires_import() {
     let source = r#"
 def foo(fields: List[FieldInfo]) -> None:
@@ -1444,6 +1468,29 @@ def foo() -> Option[int]:
 }
 
 #[test]
+fn test_result_none_ok_literal() {
+    let source = r#"
+def ping() -> Result[None, str]:
+  return Ok(None)
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_generic_newtype_static_builder_typechecks() {
+    let source = r#"
+type Box[T] = newtype T:
+  @staticmethod
+  def wrap(value: T) -> Self:
+    return Box(value)
+
+  def duplicate(self) -> Tuple[T, T]:
+    return (self.0, self.0)
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
 fn test_option_match_exhaustive_some_none() {
     let source = r#"
 def foo(value: Option[int]) -> int:
@@ -1488,6 +1535,49 @@ def foo() -> int:
   return add(1, 2)
 "#;
     assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_generic_bound_enforced_at_callsite_negative() {
+    let source = r#"
+@requires(message: str)
+trait Displayable:
+  def display(self) -> str:
+    return self.message
+
+class NotDisplayable:
+  value: int
+
+def show[T with Displayable](value: T) -> T:
+  return value
+
+def main() -> None:
+  _ = show(NotDisplayable(value=1))
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected generic bound failure");
+    };
+    assert!(errs.iter().any(|e| e.message.contains("violates generic bound")));
+}
+
+#[test]
+fn test_generic_bound_enforced_at_callsite_positive() {
+    let source = r#"
+@requires(message: str)
+trait Displayable:
+  def display(self) -> str:
+    return self.message
+
+class User with Displayable:
+  message: str
+
+def show[T with Displayable](value: T) -> T:
+  return value
+
+def main() -> None:
+  _ = show(User(message="ok"))
+"#;
+    assert_check_ok(source);
 }
 
 #[test]
@@ -2196,6 +2286,61 @@ fn test_rust_alloc_import_is_rejected() {
 }
 
 #[test]
+fn test_rust_from_import_numeric_constant_allows_numeric_usage() {
+    let source = r#"
+from rust::std::f64::consts import PI
+
+def area(r: float) -> float:
+  return PI * r * r
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rust_module_alias_constant_chain_allows_numeric_usage() {
+    let source = r#"
+import rust::std::f64::consts as consts
+
+def area(r: float) -> float:
+  return consts.PI * r * r
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rust_from_import_integer_constant_allows_integer_usage() {
+    let source = r#"
+from rust::std::u8 import MAX
+
+def next_limit() -> int:
+  return MAX + 1
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rust_module_alias_integer_constant_chain_allows_integer_usage() {
+    let source = r#"
+import rust::std::u16 as u16
+
+def next_limit() -> int:
+  return u16.MAX + 1
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_math_constant_import_ok() {
+    let source = r#"
+from std.math import PI
+
+def circle_constant() -> float:
+  return PI
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
 fn test_known_stdlib_module_is_accepted() {
     // `from std.testing import fail` should not trigger unknown-module diagnostic.
     let source = "from std.testing import fail\ndef main() -> None:\n    fail(\"oops\")\n";
@@ -2276,5 +2421,58 @@ fn test_unknown_stdlib_module_hint_includes_registry_entries() {
         err.hints.iter().any(|h| h.contains("std.web.app")),
         "Expected hint to include std.web.app; hints: {:?}",
         err.hints
+    );
+}
+
+#[test]
+fn test_explicit_clone_bound_accepts_builtin_clone_types() {
+    let source = r#"
+def identity[T with Clone](value: T) -> T:
+  return value
+
+def main() -> int:
+  return identity(1)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_explicit_clone_bound_rejects_non_clone_model() {
+    let source = r#"
+model Token:
+  value: int
+
+def identity[T with Clone](value: T) -> T:
+  return value
+
+def main() -> Token:
+  return identity(Token(value=1))
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("non-clone model should fail explicit Clone bound");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("violates generic bound")),
+        "Expected explicit generic bound error; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_explicit_eq_bound_rejects_float_arguments() {
+    let source = r#"
+def show_eq[T with Eq](value: T) -> T:
+  return value
+
+def main() -> float:
+  return show_eq(1.5)
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("float should fail explicit Eq bound");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("violates generic bound")),
+        "Expected explicit Eq bound error; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }

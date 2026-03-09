@@ -36,9 +36,11 @@ pub fn derive_incan_class(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
     let name_str = name.to_string();
+    let generics = input.generics.clone();
+    let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
 
     let expanded = quote! {
-        impl #name {
+        impl #impl_generics #name #type_generics #where_clause {
             // TODO: consider all python class' dunders:
             //      '__class__',          -> implemented below
             //      '__delattr__',        -> since we keep things immutable by default, we might not need this.
@@ -113,6 +115,8 @@ pub fn derive_incan_reflect(input: TokenStream) -> TokenStream {
 pub fn derive_field_info(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
+    let generics = input.generics.clone();
+    let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
 
     // Get field names and types
     let (field_names, field_types): (Vec<String>, Vec<String>) = match &input.data {
@@ -149,7 +153,7 @@ pub fn derive_field_info(input: TokenStream) -> TokenStream {
     };
 
     let expanded = quote! {
-        impl incan_stdlib::HasFieldInfo for #name {
+        impl #impl_generics incan_stdlib::HasFieldInfo for #name #type_generics #where_clause {
             fn field_names() -> Vec<&'static str> {
                 vec![#(#field_names),*]
             }

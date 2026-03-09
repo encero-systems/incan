@@ -15,8 +15,6 @@ use incan_core::lang::stdlib;
 use incan_core::lang::surface::types as surface_types;
 use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
 
-use super::stdlib_async;
-
 impl TypeChecker {
     /// Reject names that shadow reserved root namespaces.
     pub(super) fn validate_root_namespace(&mut self, name: &str, span: Span) {
@@ -70,13 +68,6 @@ impl TypeChecker {
                     && module.segments.len() >= 2
                     && module.segments[0] == stdlib::STDLIB_ROOT
                     && module.segments[1] == "async";
-                let std_async_submodule = if is_std_async && module.segments.len() >= 3 {
-                    module.segments.get(2).map(|s| s.as_str())
-                } else {
-                    None
-                };
-                let is_async_prelude =
-                    is_std_async && (module.segments.len() == 2 || std_async_submodule == Some("prelude"));
                 let is_std_reflection = module.parent_levels == 0
                     && !module.is_absolute
                     && module.segments.len() == 2
@@ -116,7 +107,10 @@ impl TypeChecker {
                                 "std.web" => is_std_web,
                                 "std.reflection" => is_std_reflection,
                                 _ if expected_module_path.starts_with("std.async.") => {
-                                    is_std_async && (is_async_prelude || module_path_str == expected_module_path)
+                                    let async_root_or_prelude =
+                                        module_path_str == "std.async" || module_path_str == "std.async.prelude";
+                                    is_std_async
+                                        && (async_root_or_prelude || module_path_str == expected_module_path)
                                 }
                                 _ => false,
                             };
@@ -134,8 +128,7 @@ impl TypeChecker {
                         }
 
                     // RFC 023: for known stdlib modules with `.incn` stubs, prefer AST-derived signatures.
-                    // Async prelude still resolves via dedicated fallback logic below.
-                    if is_known_stdlib_with_stub && !is_async_prelude {
+                    if is_known_stdlib_with_stub {
                         // Try function lookup first.
                         let ast_info = self.stdlib_cache.lookup_function(&module.segments, &item.name);
                         if let Some(info) = ast_info {
@@ -181,41 +174,22 @@ impl TypeChecker {
                             });
                             continue;
                         }
-                    }
 
-                    // Stdlib async helper functions become available when explicitly imported.
-                    // RFC 023: try AST-derived signatures first (from the parsed .incn files), fall back to hardcoded async_import_function_info().
-                    if is_std_async {
-                        let ast_info = if is_async_prelude {
-                            // Prelude import: search all async submodules for the function.
-                            None
-                        } else {
-                            // Direct submodule import (e.g. `from std.async.time import sleep`).
-                            self.stdlib_cache.lookup_function(&module.segments, &item.name)
-                        };
-
-                        let resolved = ast_info.map(|info| (info, true)).or_else(|| {
-                            stdlib_async::async_import_function_info(&item.name).and_then(|(info, expected_module)| {
-                                if is_async_prelude || std_async_submodule == Some(expected_module) {
-                                    Some((info, true))
-                                } else {
-                                    None
-                                }
-                            })
-                        });
-
-                        if let Some((info, _)) = resolved {
+                        // Top-level stdlib const bindings (e.g. `from std.math import PI`).
+                        let const_info = self.stdlib_cache.lookup_constant(&module.segments, &item.name);
+                        if let Some(info) = const_info {
                             let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
                             self.validate_root_namespace(&local_name, span);
                             self.symbols.define(Symbol {
                                 name: local_name,
-                                kind: SymbolKind::Function(info),
+                                kind: SymbolKind::Variable(info),
                                 span,
                                 scope: 0,
                             });
                             continue;
                         }
                     }
+
                     let aliased_type = item.alias.as_ref().and_then(|alias| {
                         if self.symbols.lookup(alias).is_some() {
                             return None;

@@ -8,7 +8,7 @@ expression: rust_code
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.2");
+incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
 use std::collections::HashMap;
@@ -46,11 +46,9 @@ fn test_multiple_targets() {
     let mut x = value;
     let mut y = value;
     let mut z = value;
-    {
-        let z = 5;
-        let y = z;
-        let x = y;
-    };
+    let z = 5;
+    let y = z;
+    let x = y;
 }
 fn main() {
     test_basic_assignments();

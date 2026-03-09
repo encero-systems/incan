@@ -73,20 +73,29 @@ impl<'a> IrEmitter<'a> {
             quote! {}
         };
 
-        let tokio_main_attr = if is_main && func.is_async && self.needs_tokio {
-            quote! { #[incan_stdlib::__private::tokio::main] }
-        } else {
-            quote! {}
-        };
         let rust_attrs = self.emit_rust_attributes(&func.rust_attributes);
 
         // RFC 023: emit generic type parameters with inferred/explicit trait bounds.
         let generics = self.emit_type_params(&func.type_params);
 
+        if is_main && func.is_async {
+            return Ok(quote! {
+                #(#rust_attrs)*
+                #vis fn #name #generics (#(#params),*) {
+                    #zen_stmt
+                    if let Err(error) = incan_stdlib::r#async::runtime::block_on(async move {
+                        #(#body_stmts)*
+                    }) {
+                        eprintln!("{error}");
+                        std::process::exit(1);
+                    }
+                }
+            });
+        }
+
         let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
         if is_main || ret_ty_is_unit {
             Ok(quote! {
-                #tokio_main_attr
                 #(#rust_attrs)*
                 #vis #async_kw fn #name #generics (#(#params),*) {
                     #zen_stmt
@@ -96,7 +105,6 @@ impl<'a> IrEmitter<'a> {
         } else {
             let ret_ty = self.emit_type(&func.return_type);
             Ok(quote! {
-                #tokio_main_attr
                 #(#rust_attrs)*
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
                     #(#body_stmts)*
@@ -279,6 +287,11 @@ impl<'a> IrEmitter<'a> {
 
         // RFC 023: emit generic type parameters with trait bounds.
         let generics = self.emit_type_params(&func.type_params);
+        let async_kw = if func.is_async {
+            quote! { async }
+        } else {
+            quote! {}
+        };
 
         *self.current_function_return_type.borrow_mut() = Some(func.return_type.clone());
         let body_stmts: Vec<TokenStream> = func.body.iter().map(|s| self.emit_stmt(s)).collect::<Result<_, _>>()?;
@@ -287,7 +300,7 @@ impl<'a> IrEmitter<'a> {
 
         Ok(quote! {
             #(#rust_attrs)*
-            #vis fn #name #generics (#(#params),*) #ret {
+            #vis #async_kw fn #name #generics (#(#params),*) #ret {
                 #(#body_stmts)*
             }
         })

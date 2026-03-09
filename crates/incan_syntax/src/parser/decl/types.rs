@@ -41,6 +41,7 @@ impl<'a> Parser<'a> {
         type_params: Vec<TypeParam>,
     ) -> Result<NewtypeDecl, CompileError> {
         let underlying = self.type_expr()?;
+        let mut docstring = None;
 
         let methods = if self.match_punct(PunctuationId::Colon) {
             self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
@@ -49,8 +50,9 @@ impl<'a> Parser<'a> {
             let mut methods = Vec::new();
             self.skip_newlines();
 
-            // Skip optional docstring at the start of the newtype body
-            if let TokenKind::String(_) = &self.peek().kind {
+            // Capture optional docstring at the start of the newtype body.
+            if let TokenKind::String(s) = &self.peek().kind {
+                docstring = Some(s.clone());
                 self.advance();
                 self.match_token(&TokenKind::Newline);
                 self.skip_newlines();
@@ -68,7 +70,15 @@ impl<'a> Parser<'a> {
             Vec::new()
         };
 
-        Ok(NewtypeDecl { visibility, decorators, name, type_params, underlying, methods })
+        Ok(NewtypeDecl {
+            visibility,
+            decorators,
+            name,
+            type_params,
+            underlying,
+            docstring,
+            methods,
+        })
     }
 }
 

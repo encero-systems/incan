@@ -13,7 +13,7 @@ use crate::frontend::typechecker::helpers::{
 use incan_core::lang::conventions;
 use incan_core::lang::magic_methods;
 use incan_core::lang::surface::types as surface_types;
-use incan_core::lang::surface::types::SurfaceTypeId;
+use incan_core::lang::surface::types::{SEMAPHORE_ACQUIRE_ERROR_TYPE_NAME, SEMAPHORE_PERMIT_TYPE_NAME, SurfaceTypeId};
 use incan_core::lang::surface::{
     dict_methods, float_methods, frozen_bytes_methods, frozen_dict_methods, frozen_list_methods, frozen_set_methods,
     list_methods, set_methods,
@@ -81,7 +81,7 @@ impl TypeChecker {
     }
 
     /// Check if a type is copyable.
-    fn is_copy_type(&self, ty: &ResolvedType) -> bool {
+    pub(in crate::frontend::typechecker) fn is_copy_type(&self, ty: &ResolvedType) -> bool {
         matches!(
             ty,
             ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool | ResolvedType::Unit | ResolvedType::Ref(_)
@@ -89,7 +89,7 @@ impl TypeChecker {
     }
 
     /// Check if a type is cloneable.
-    fn is_clone_type(&self, ty: &ResolvedType) -> bool {
+    pub(in crate::frontend::typechecker) fn is_clone_type(&self, ty: &ResolvedType) -> bool {
         match ty {
             ResolvedType::Int
             | ResolvedType::Float
@@ -190,6 +190,18 @@ impl TypeChecker {
             return None;
         }
         Some(idx as usize)
+    }
+
+    fn is_rust_module_chain_expr(&self, expr: &Spanned<Expr>) -> bool {
+        match &expr.node {
+            Expr::Ident(name) => self.lookup_symbol(name).is_some_and(|sym| match &sym.kind {
+                SymbolKind::RustModule { .. } => true,
+                SymbolKind::Module(info) => info.path.first().is_some_and(|seg| seg == "rust"),
+                _ => false,
+            }),
+            Expr::Field(base, _) => self.is_rust_module_chain_expr(base),
+            _ => false,
+        }
     }
 
     /// Type-check an indexing expression (`base[index]`) and return the element type.
@@ -336,6 +348,15 @@ impl TypeChecker {
             }
         }
 
+        // Rust module chains are intentionally permissive so expressions like
+        // `import rust::std::f64::consts as consts; consts.PI` typecheck.
+        //
+        // We deliberately return `Unknown` here instead of guessing a concrete type from the field spelling. Rust
+        // constants can be any type, and the backend only needs to know that this is an external Rust path.
+        if self.is_rust_module_chain_expr(base) {
+            return ResolvedType::Unknown;
+        }
+
         let base_ty = self.check_expr(base);
 
         // Be permissive for unknown receivers: allow field access and continue typechecking.
@@ -458,11 +479,34 @@ impl TypeChecker {
             return ResolvedType::Named(enum_name.clone());
         }
 
-        // External/runtime-provided concurrency primitives: be permissive
+        // External/runtime-provided concurrency primitives: be permissive for surface types that have no local Incan
+        // definition (pure Rust leaves). Types defined in .incn source (e.g. `Semaphore`) have type info and do NOT hit
+        // this early return.
         if let ResolvedType::Named(name) = &base_ty
             && surface_types::from_str(name.as_str()).is_some()
+            && self.lookup_type_info(name).is_none()
         {
             return ResolvedType::Unknown;
+        }
+
+        // `Semaphore` is defined in .incn source so lookup_type_info returns Some, bypassing the permissive
+        // short-circuit above. We must resolve its methods explicitly because the typechecker cannot yet infer return
+        // types through Rust-backed runtime shims.
+        if let ResolvedType::Named(name) = &base_ty
+            && surface_types::from_str(name.as_str()) == Some(SurfaceTypeId::Semaphore)
+        {
+            return match method {
+                "acquire" => ResolvedType::Generic(
+                    "Result".to_string(),
+                    vec![
+                        ResolvedType::Named(SEMAPHORE_PERMIT_TYPE_NAME.to_string()),
+                        ResolvedType::Named(SEMAPHORE_ACQUIRE_ERROR_TYPE_NAME.to_string()),
+                    ],
+                ),
+                "try_acquire" => option_ty(ResolvedType::Named(SEMAPHORE_PERMIT_TYPE_NAME.to_string())),
+                "available_permits" => ResolvedType::Int,
+                _ => ResolvedType::Unknown,
+            };
         }
 
         // Builtin methods for builtin types (so we don't report missing methods).
@@ -615,6 +659,33 @@ impl TypeChecker {
             }
         }
 
+        if let ResolvedType::Generic(type_name, _type_args) = &base_ty
+            && let Some(type_info) = self.lookup_type_info(type_name).cloned()
+        {
+            match type_info {
+                TypeInfo::Model(model) => {
+                    if let Some(ret) =
+                        self.resolve_named_method(&model.methods, Some(&model.traits), method, args, &arg_types)
+                    {
+                        return ret;
+                    }
+                }
+                TypeInfo::Class(class) => {
+                    if let Some(ret) =
+                        self.resolve_named_method(&class.methods, Some(&class.traits), method, args, &arg_types)
+                    {
+                        return ret;
+                    }
+                }
+                TypeInfo::Newtype(newtype) => {
+                    if let Some(ret) = self.resolve_named_method(&newtype.methods, None, method, args, &arg_types) {
+                        return ret;
+                    }
+                }
+                _ => {}
+            }
+        }
+
         // Named types: look up methods from the type definition.
         // If the symbol doesn't exist or isn't a type (e.g., Module/RustModule placeholder), treat it as external and
         // be permissive.
@@ -669,11 +740,17 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
 
+        if let ResolvedType::Generic(name, _args) = &base_ty
+            && self.lookup_type_info(name).is_none()
+        {
+            return ResolvedType::Unknown;
+        }
+
         // RFC 023: Method calls on generic type variables are permissive.
         //
         // The Rust backend infers the required trait bounds (e.g., `x.clone()` → `T: Clone`).
         // At the Incan typechecker level we allow the call and return the same type variable.
-        if matches!(base_ty, ResolvedType::TypeVar(_)) {
+        if self.is_generic_placeholder_type(&base_ty) {
             return base_ty.clone();
         }
 

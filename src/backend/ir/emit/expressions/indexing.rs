@@ -158,7 +158,10 @@ impl<'a> IrEmitter<'a> {
                 let f = format_ident!("{}", field);
                 return Ok(quote! { #type_ident::#f });
             }
-            if matches!(ref_kind, VarRefKind::TypeName | VarRefKind::ExternalName) {
+            if matches!(
+                ref_kind,
+                VarRefKind::TypeName | VarRefKind::ExternalName | VarRefKind::ExternalRustName
+            ) {
                 let type_ident = format_ident!("{}", name);
                 let f = format_ident!("{}", field);
                 return Ok(quote! { #type_ident::#f });

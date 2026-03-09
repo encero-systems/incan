@@ -10,6 +10,8 @@ use crate::frontend::ast;
 impl AstLowering {
     /// Lower a trait declaration.
     pub(in crate::backend::ir::lower) fn lower_trait(&mut self, t: &ast::TraitDecl) -> Result<IrTrait, LoweringError> {
+        let type_param_names: std::collections::HashSet<&str> =
+            t.type_params.iter().map(|tp| tp.name.as_str()).collect();
         let methods: Vec<IrFunction> = t
             .methods
             .iter()
@@ -37,7 +39,7 @@ impl AstLowering {
                     .params
                     .iter()
                     .map(|p| {
-                        let ty = self.lower_type(&p.node.ty.node);
+                        let ty = self.lower_type_with_type_params(&p.node.ty.node, Some(&type_param_names));
                         FunctionParam {
                             name: p.node.name.clone(),
                             ty,
@@ -56,7 +58,7 @@ impl AstLowering {
                     .collect();
                 params.extend(other_params);
 
-                let return_type = self.lower_type(&m.node.return_type.node);
+                let return_type = self.lower_type_with_type_params(&m.node.return_type.node, Some(&type_param_names));
                 // IMPORTANT: We intentionally do NOT emit trait method bodies into the Rust trait itself.
                 // Default methods are expanded into each adopting `impl Trait for Type` block during lowering, which
                 // allows bodies to assume adopter fields (RFC 000) without generating invalid Rust trait default

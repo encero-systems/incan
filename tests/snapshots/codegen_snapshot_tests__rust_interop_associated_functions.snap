@@ -8,12 +8,12 @@ expression: rust_code
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.2");
+incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
-use uuid::Uuid;
-use std::collections::HashMap;
-use std::time::Instant;
+pub use uuid::Uuid;
+pub use std::collections::HashMap;
+pub use std::time::Instant;
 fn main() {
     let _id = Uuid::new_v4().to_string();
     let mut _m = HashMap::new();

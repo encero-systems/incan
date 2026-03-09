@@ -8,7 +8,7 @@ expression: rust_code
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.2");
+incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
 #[derive(Debug, Clone, Copy)]
@@ -18,11 +18,11 @@ struct Ratio(pub f64);
 #[derive(Debug, Clone, Copy)]
 struct Attempts(pub i64);
 impl Attempts {
-    fn from_underlying(n: i64) -> Result<Attempts, String> {
+    pub fn from_underlying(n: i64) -> Result<Attempts, String> {
         if n <= 0 {
-            return Err("attempts must be >= 1".to_string());
+            return Err::<Attempts, String>(("attempts must be >= 1").to_string());
         }
-        return Ok(Attempts(n));
+        return Ok::<Attempts, String>(Attempts(n));
     }
     /// Returns field metadata for this type.
     pub fn __fields__(
@@ -45,11 +45,11 @@ impl Attempts {
 #[derive(Debug)]
 struct Email(pub String);
 impl Email {
-    fn from_str(v: String) -> Result<Email, String> {
+    pub fn from_str(v: String) -> Result<Email, String> {
         if !incan_stdlib::strings::str_contains(&v, &"@") {
-            return Err("missing @".to_string());
+            return Err::<Email, String>(("missing @").to_string());
         }
-        return Ok(Email(incan_stdlib::strings::str_lower(&v)));
+        return Ok::<Email, String>(Email(incan_stdlib::strings::str_lower(&v)));
     }
     /// Returns field metadata for this type.
     pub fn __fields__(

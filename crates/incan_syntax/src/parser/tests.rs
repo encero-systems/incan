@@ -473,6 +473,28 @@ trait Debug:
     }
 
     #[test]
+    fn test_parse_newtype_with_docstring() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+type UserId[T] = newtype int:
+    """Opaque identifier wrapper."""
+
+    def raw(self) -> int:
+        return 1
+"#;
+        let program = parse_str(source)?;
+        let nt = match &program.declarations[0].node {
+            Declaration::Newtype(nt) => nt,
+            _ => panic!("Expected newtype declaration"),
+        };
+        assert_eq!(nt.name, "UserId");
+        assert_eq!(nt.type_params.len(), 1);
+        assert_eq!(nt.docstring.as_deref(), Some("Opaque identifier wrapper."));
+        assert_eq!(nt.methods.len(), 1);
+        assert_eq!(nt.methods[0].node.name, "raw");
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_non_identifier_alias() -> Result<(), Vec<CompileError>> {
         let source = r#"
 model Weird:

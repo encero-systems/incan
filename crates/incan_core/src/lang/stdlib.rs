@@ -117,8 +117,8 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "async",
-        impl_mode: StdlibImplMode::RuntimeFacade,
-        feature: None,
+        impl_mode: StdlibImplMode::IncanSource,
+        feature: Some("async"),
         extra_crate_deps: &[],
         submodules: &["time", "task", "channel", "select", "sync", "prelude"],
     },
@@ -131,7 +131,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "reflection",
-        impl_mode: StdlibImplMode::RuntimeFacade,
+        impl_mode: StdlibImplMode::IncanSource,
         feature: None,
         extra_crate_deps: &[],
         submodules: &[],
@@ -145,16 +145,19 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "traits",
-        impl_mode: StdlibImplMode::RuntimeFacade,
+        impl_mode: StdlibImplMode::IncanSource,
         feature: None,
         extra_crate_deps: &[],
-        submodules: &["convert", "ops", "error", "indexing", "callable"],
+        submodules: &["convert", "ops", "error", "indexing", "callable", "prelude"],
     },
     StdlibNamespace {
         name: "math",
-        impl_mode: StdlibImplMode::RuntimeFacade,
+        impl_mode: StdlibImplMode::IncanSource,
         feature: None,
-        extra_crate_deps: &[],
+        extra_crate_deps: &[StdlibExtraCrateDep {
+            crate_name: "libm",
+            source: StdlibExtraCrateSource::Version("0.2"),
+        }],
         submodules: &[],
     },
 ];
@@ -273,6 +276,8 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "async", "time"])));
         assert!(is_known_stdlib_module(&segs(&["std", "serde", "json"])));
         assert!(is_known_stdlib_module(&segs(&["std", "reflection"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "traits", "prelude"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "math"])));
     }
 
     #[test]

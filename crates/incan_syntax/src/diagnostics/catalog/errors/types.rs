@@ -359,6 +359,26 @@ pub fn trait_not_implemented(type_name: &str, trait_name: &str, span: Span) -> C
     error
 }
 
+pub fn generic_bound_not_satisfied(
+    function_name: &str,
+    type_param: &str,
+    bound: &str,
+    actual: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Call to '{}' violates generic bound: type parameter '{}' requires '{}' but got '{}'",
+            function_name, type_param, bound, actual
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Ensure the argument type implements '{}' or widen '{}' bounds in '{}'",
+        bound, type_param, function_name
+    ))
+}
+
 pub fn cannot_compare(type_name: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!(

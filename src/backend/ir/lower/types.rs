@@ -206,7 +206,7 @@ impl AstLowering {
             },
             ResolvedType::Tuple(items) => IrType::Tuple(items.iter().map(|t| self.lower_resolved_type(t)).collect()),
             ResolvedType::TypeVar(name) => IrType::Generic(name.clone()),
-            ResolvedType::SelfType => IrType::Unknown,
+            ResolvedType::SelfType => IrType::SelfType,
             ResolvedType::Unknown => IrType::Unknown,
         }
     }
@@ -221,9 +221,21 @@ impl AstLowering {
     ///
     /// The corresponding IR type representation.
     pub(super) fn lower_type(&self, ty: &ast::Type) -> IrType {
+        self.lower_type_with_type_params(ty, None)
+    }
+
+    pub(super) fn lower_type_with_type_params(
+        &self,
+        ty: &ast::Type,
+        type_param_names: Option<&std::collections::HashSet<&str>>,
+    ) -> IrType {
         match ty {
             ast::Type::Simple(name) => {
                 let n = name.as_str();
+
+                if type_param_names.is_some_and(|params| params.contains(n)) {
+                    return IrType::Generic(name.clone());
+                }
 
                 if n == conventions::NONE_TYPE_NAME || n == conventions::UNIT_TYPE_NAME {
                     return IrType::Unit;
@@ -256,51 +268,54 @@ impl AstLowering {
                 }
             }
             ast::Type::Generic(base, params) => {
-                let lowered_params: Vec<_> = params.iter().map(|p| self.lower_type(&p.node)).collect();
+                let lowered_params: Vec<_> = params
+                    .iter()
+                    .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
+                    .collect();
                 match classify_generic_base(base.as_str()) {
                     GenericBaseKind::Collection(CollectionTypeId::List) => IrType::List(Box::new(
                         params
                             .first()
-                            .map(|p| self.lower_type(&p.node))
+                            .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
                             .unwrap_or(IrType::Unknown),
                     )),
                     GenericBaseKind::Collection(CollectionTypeId::Dict) => IrType::Dict(
                         Box::new(
                             params
                                 .first()
-                                .map(|p| self.lower_type(&p.node))
+                                .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
                                 .unwrap_or(IrType::Unknown),
                         ),
                         Box::new(
                             params
                                 .get(1)
-                                .map(|p| self.lower_type(&p.node))
+                                .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
                                 .unwrap_or(IrType::Unknown),
                         ),
                     ),
                     GenericBaseKind::Collection(CollectionTypeId::Set) => IrType::Set(Box::new(
                         params
                             .first()
-                            .map(|p| self.lower_type(&p.node))
+                            .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
                             .unwrap_or(IrType::Unknown),
                     )),
                     GenericBaseKind::Collection(CollectionTypeId::Option) => IrType::Option(Box::new(
                         params
                             .first()
-                            .map(|p| self.lower_type(&p.node))
+                            .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
                             .unwrap_or(IrType::Unknown),
                     )),
                     GenericBaseKind::Collection(CollectionTypeId::Result) => IrType::Result(
                         Box::new(
                             params
                                 .first()
-                                .map(|p| self.lower_type(&p.node))
+                                .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
                                 .unwrap_or(IrType::Unknown),
                         ),
                         Box::new(
                             params
                                 .get(1)
-                                .map(|p| self.lower_type(&p.node))
+                                .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
                                 .unwrap_or(IrType::Unknown),
                         ),
                     ),
@@ -315,18 +330,24 @@ impl AstLowering {
                         };
                         IrType::NamedGeneric(collections::as_str(id).to_string(), lowered_params)
                     }
-                    GenericBaseKind::Other => {
-                        IrType::NamedGeneric(base.clone(), params.iter().map(|p| self.lower_type(&p.node)).collect())
-                    }
+                    GenericBaseKind::Other => IrType::NamedGeneric(base.clone(), lowered_params),
                 }
             }
             ast::Type::Function(params, ret) => IrType::Function {
-                params: params.iter().map(|p| self.lower_type(&p.node)).collect(),
-                ret: Box::new(self.lower_type(&ret.node)),
+                params: params
+                    .iter()
+                    .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
+                    .collect(),
+                ret: Box::new(self.lower_type_with_type_params(&ret.node, type_param_names)),
             },
             ast::Type::Unit => IrType::Unit,
-            ast::Type::Tuple(items) => IrType::Tuple(items.iter().map(|t| self.lower_type(&t.node)).collect()),
-            ast::Type::SelfType => IrType::Unknown,
+            ast::Type::Tuple(items) => IrType::Tuple(
+                items
+                    .iter()
+                    .map(|t| self.lower_type_with_type_params(&t.node, type_param_names))
+                    .collect(),
+            ),
+            ast::Type::SelfType => IrType::SelfType,
         }
     }
 

@@ -8,19 +8,19 @@ expression: rust_code
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.2");
+incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
 #[derive(Debug)]
 struct Response(pub String);
 impl Response {
-    fn ok() -> Response {
+    pub fn ok() -> Response {
         return Response("200 OK".to_string());
     }
-    fn created() -> Response {
+    pub fn created() -> Response {
         return Response("201 Created".to_string());
     }
-    fn status(code: i64, body: String) -> Response {
+    pub fn status(code: i64, body: String) -> Response {
         return Response(
             incan_stdlib::strings::str_concat(
                 &incan_stdlib::strings::str_concat(&code.to_string(), &" "),

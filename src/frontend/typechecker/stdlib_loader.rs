@@ -24,16 +24,18 @@
 //! - Trait signatures are extracted from top-level `trait` declarations with their methods.
 //! - Default parameter values are not captured (only the parameter name and type).
 //! - Complex types beyond the common set (`int`, `str`, `bool`, `Option[T]`, etc.) are treated as `Named`.
-//! - Parse failures are logged and cause a graceful fallback to hardcoded registries.
+//! - Parse failures are logged and the module is treated as unavailable for AST-derived signature lookup.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::frontend::ast;
+use crate::frontend::symbols::VariableInfo;
 use crate::frontend::symbols::{FunctionInfo, MethodInfo, ResolvedType, TraitInfo};
 use incan_core::lang::conventions;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::stdlib;
+use incan_core::lang::surface::functions::{self as surface_functions, SurfaceFnId};
 use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
 use incan_core::lang::types::numerics::{self as numeric_types, NumericTypeId};
 use incan_core::lang::types::stringlike::{self as string_types, StringLikeId};
@@ -42,6 +44,7 @@ use incan_core::lang::types::stringlike::{self as string_types, StringLikeId};
 struct StdlibModuleData {
     functions: Vec<(String, FunctionInfo)>,
     traits: Vec<(String, TraitInfo)>,
+    constants: Vec<(String, VariableInfo)>,
     function_meta: HashMap<String, FunctionMeta>,
     trait_meta: HashMap<String, TraitMeta>,
 }
@@ -94,6 +97,18 @@ impl StdlibAstCache {
             .traits
             .iter()
             .find(|(name, _)| name == trait_name)
+            .map(|(_, info)| info.clone())
+    }
+
+    /// Look up a specific const binding in a stdlib module.
+    pub fn lookup_constant(&mut self, module_path: &[String], const_name: &str) -> Option<VariableInfo> {
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        self.cache
+            .get(&key)?
+            .constants
+            .iter()
+            .find(|(name, _)| name == const_name)
             .map(|(_, info)| info.clone())
     }
 
@@ -152,6 +167,7 @@ fn load_stdlib_module_data(module_path: &[String]) -> Option<StdlibModuleData> {
 
     let mut functions = extract_function_signatures(&program);
     let mut traits = extract_trait_signatures(&program);
+    let mut constants = extract_const_signatures(&program);
     let mut function_meta = extract_function_meta(&program);
     let mut trait_meta = extract_trait_meta(&program);
 
@@ -164,6 +180,7 @@ fn load_stdlib_module_data(module_path: &[String]) -> Option<StdlibModuleData> {
         &program,
         &mut functions,
         &mut traits,
+        &mut constants,
         &mut function_meta,
         &mut trait_meta,
     );
@@ -171,6 +188,7 @@ fn load_stdlib_module_data(module_path: &[String]) -> Option<StdlibModuleData> {
     Some(StdlibModuleData {
         functions,
         traits,
+        constants,
         function_meta,
         trait_meta,
     })
@@ -184,6 +202,7 @@ fn merge_reexported_metadata(
     program: &ast::Program,
     functions: &mut Vec<(String, FunctionInfo)>,
     traits: &mut Vec<(String, TraitInfo)>,
+    constants: &mut Vec<(String, VariableInfo)>,
     function_meta: &mut HashMap<String, FunctionMeta>,
     trait_meta: &mut HashMap<String, TraitMeta>,
 ) {
@@ -222,6 +241,13 @@ fn merge_reexported_metadata(
                 && !traits.iter().any(|(n, _)| n == effective_name)
             {
                 traits.push((effective_name.to_string(), info.clone()));
+            }
+
+            // Merge const signature.
+            if let Some((_, info)) = sub_data.constants.iter().find(|(n, _)| n == &item.name)
+                && !constants.iter().any(|(n, _)| n == effective_name)
+            {
+                constants.push((effective_name.to_string(), info.clone()));
             }
 
             // Merge function meta.
@@ -296,9 +322,48 @@ fn extract_function_signatures(program: &ast::Program) -> Vec<(String, FunctionI
         if let ast::Declaration::Function(func) = &decl.node {
             let info = function_decl_to_info(func);
             fns.push((func.name.clone(), info));
+            continue;
+        }
+
+        if let ast::Declaration::Import(import) = &decl.node {
+            let ast::ImportKind::RustFrom { items, .. } = &import.kind else {
+                continue;
+            };
+            for item in items {
+                let local_name = item.alias.as_deref().unwrap_or(&item.name);
+                if let Some(info) = imported_runtime_function_info(local_name)
+                    && !fns.iter().any(|(name, _)| name == local_name)
+                {
+                    fns.push((local_name.to_string(), info));
+                }
+            }
         }
     }
     fns
+}
+
+/// Extract public const bindings from a parsed stdlib `.incn` program.
+fn extract_const_signatures(program: &ast::Program) -> Vec<(String, VariableInfo)> {
+    let mut consts = Vec::new();
+    for decl in &program.declarations {
+        let ast::Declaration::Const(konst) = &decl.node else {
+            continue;
+        };
+        let ty = konst
+            .ty
+            .as_ref()
+            .map(|ty| ast_type_to_resolved(&ty.node, &[]))
+            .unwrap_or(ResolvedType::Unknown);
+        consts.push((
+            konst.name.clone(),
+            VariableInfo {
+                ty,
+                is_mutable: false,
+                is_used: false,
+            },
+        ));
+    }
+    consts
 }
 
 /// Extract trait signatures from a parsed stdlib `.incn` program.
@@ -359,6 +424,16 @@ fn extract_method_signatures(
 fn function_decl_to_info(func: &ast::FunctionDecl) -> FunctionInfo {
     // Extract just the type parameter names for type resolution.
     let tp_names: Vec<String> = func.type_params.iter().map(|tp| tp.name.clone()).collect();
+    let tp_bounds: HashMap<String, Vec<String>> = func
+        .type_params
+        .iter()
+        .map(|tp| {
+            (
+                tp.name.clone(),
+                tp.bounds.iter().map(|bound| bound.name.clone()).collect(),
+            )
+        })
+        .collect();
 
     let params: Vec<(String, ResolvedType)> = func
         .params
@@ -373,7 +448,61 @@ fn function_decl_to_info(func: &ast::FunctionDecl) -> FunctionInfo {
         return_type,
         is_async: func.is_async(),
         type_params: tp_names,
+        type_param_bounds: tp_bounds,
     }
+}
+
+/// Build a lightweight `FunctionInfo` for the remaining generic Rust leaves that still need direct stdlib imports.
+///
+/// We intentionally keep this list narrow: only helpers whose Rust-side bounds are not yet representable by the
+/// language surface stay on this path. Public stdlib functions that can be declared locally should prefer real `.incn`
+/// definitions so their signatures come straight from the AST.
+fn imported_runtime_function_info(name: &str) -> Option<FunctionInfo> {
+    let (params, return_type, is_async) = match surface_functions::from_str(name)? {
+        SurfaceFnId::Timeout => (
+            vec![
+                ("seconds".to_string(), ResolvedType::Float),
+                ("task".to_string(), ResolvedType::Unknown),
+            ],
+            ResolvedType::Unknown,
+            true,
+        ),
+        SurfaceFnId::TimeoutMs => (
+            vec![
+                ("milliseconds".to_string(), ResolvedType::Int),
+                ("task".to_string(), ResolvedType::Unknown),
+            ],
+            ResolvedType::Unknown,
+            true,
+        ),
+        SurfaceFnId::SelectTimeout => (
+            vec![
+                ("seconds".to_string(), ResolvedType::Float),
+                ("task".to_string(), ResolvedType::Unknown),
+            ],
+            ResolvedType::Unknown,
+            true,
+        ),
+        SurfaceFnId::Spawn => (
+            vec![("task".to_string(), ResolvedType::Unknown)],
+            ResolvedType::Unknown,
+            false,
+        ),
+        SurfaceFnId::SpawnBlocking => (
+            vec![("task".to_string(), ResolvedType::Unknown)],
+            ResolvedType::Unknown,
+            true,
+        ),
+        _ => return None,
+    };
+
+    Some(FunctionInfo {
+        params,
+        return_type,
+        is_async,
+        type_params: Vec::new(),
+        type_param_bounds: HashMap::new(),
+    })
 }
 
 /// Extract function metadata from a stdlib module's AST.
@@ -582,19 +711,27 @@ mod tests {
     }
 
     #[test]
-    fn test_load_async_time_module_falls_back() {
-        // stdlib/async/time.incn contains `model Duration:` with methods and `async def`, which the current parser
-        // can't handle in stub extraction mode. The loader returns None and the typechecker uses the hardcoded
-        // async_import_function_info() fallback.
+    fn test_load_async_time_module() -> Result<(), Box<dyn std::error::Error>> {
         let path = vec!["std".to_string(), "async".to_string(), "time".to_string()];
         let module = load_stdlib_module_data(&path);
-        let fns = module.map(|m| m.functions);
-        // Currently returns None because the parser can't handle models + async defs in the same file.
-        // This test documents the current behavior; it will start passing once the parser handles these.
-        assert!(
-            fns.is_none(),
-            "async/time.incn parse currently fails; fallback expected"
-        );
+        let fns = module.ok_or("failed to load stdlib/async/time.incn")?.functions;
+        let sleep_fn = fns.iter().find(|(name, _)| name == "sleep");
+        assert!(sleep_fn.is_some(), "should find 'sleep' function");
+        let timeout_fn = fns.iter().find(|(name, _)| name == "timeout");
+        assert!(timeout_fn.is_some(), "should find 'timeout' function");
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_async_prelude_module() -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "async".to_string()];
+        let module = load_stdlib_module_data(&path);
+        let fns = module.ok_or("failed to load stdlib/async/prelude.incn")?.functions;
+        let sleep_fn = fns.iter().find(|(name, _)| name == "sleep");
+        assert!(sleep_fn.is_some(), "should resolve prelude re-export 'sleep'");
+        let spawn_fn = fns.iter().find(|(name, _)| name == "spawn");
+        assert!(spawn_fn.is_some(), "should resolve prelude re-export 'spawn'");
+        Ok(())
     }
 
     #[test]
@@ -609,6 +746,30 @@ mod tests {
         let oneshot_fn = fns.iter().find(|(name, _)| name == "oneshot");
         assert!(oneshot_fn.is_some(), "should find 'oneshot' function");
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_async_task_module() -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "async".to_string(), "task".to_string()];
+        let module = load_stdlib_module_data(&path);
+        let fns = module.ok_or("failed to load stdlib/async/task.incn")?.functions;
+
+        assert!(fns.iter().any(|(name, _)| name == "spawn"));
+        assert!(fns.iter().any(|(name, _)| name == "spawn_blocking"));
+        assert!(fns.iter().any(|(name, _)| name == "yield_now"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_async_select_module_only_exports_supported_surface() -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "async".to_string(), "select".to_string()];
+        let module = load_stdlib_module_data(&path);
+        let fns = module.ok_or("failed to load stdlib/async/select.incn")?.functions;
+
+        assert!(fns.iter().any(|(name, _)| name == "select_timeout"));
+        assert!(!fns.iter().any(|(name, _)| name == "select2"));
+        assert!(!fns.iter().any(|(name, _)| name == "race"));
         Ok(())
     }
 

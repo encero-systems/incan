@@ -30,4 +30,4 @@ pub use init::init_project;
 pub use lock::lock_project;
 
 // Crate-internal API (used by test_runner and other CLI modules)
-pub(crate) use lock::resolve_lock_payload;
+pub(crate) use lock::{LockResolutionRequest, resolve_lock_payload};

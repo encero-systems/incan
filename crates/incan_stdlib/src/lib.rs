@@ -21,6 +21,9 @@ pub mod version;
 #[cfg(feature = "json")]
 pub mod json;
 
+#[cfg(feature = "async")]
+pub mod r#async;
+
 /// RFC 023: Incan `std.serde` namespace facade.
 ///
 /// The `std.serde.json` module's `rust.module()` directive points here. Re-exports the JSON traits
@@ -37,43 +40,6 @@ pub mod serde {
 pub mod __private {
     #[cfg(any(feature = "async", feature = "web"))]
     pub use tokio;
-}
-
-/// RFC 022/023: Incan `std.async` namespace facade.
-///
-/// Generated Rust may import `incan_stdlib::r#async` when users write `import std.async`.
-/// This module provides a stable namespace surface backed by Tokio re-exports.
-#[cfg(any(feature = "async", feature = "web"))]
-pub mod r#async {
-    pub mod time {
-        pub use crate::__private::tokio::time::{Duration, sleep, timeout};
-    }
-
-    pub mod task {
-        pub use crate::__private::tokio::task::{JoinHandle, spawn, spawn_blocking, yield_now};
-    }
-
-    pub mod channel {
-        pub use crate::__private::tokio::sync::mpsc::{
-            Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel,
-        };
-        pub use crate::__private::tokio::sync::oneshot::{
-            Receiver as OneshotReceiver, Sender as OneshotSender, channel as oneshot,
-        };
-    }
-
-    pub mod sync {
-        pub use crate::__private::tokio::sync::{Barrier, Mutex, RwLock, Semaphore};
-    }
-
-    pub mod prelude {
-        pub use super::channel::{
-            OneshotReceiver, OneshotSender, Receiver, Sender, channel, oneshot, unbounded_channel,
-        };
-        pub use super::sync::{Barrier, Mutex, RwLock, Semaphore};
-        pub use super::task::{JoinHandle, spawn, spawn_blocking, yield_now};
-        pub use super::time::{Duration, sleep, timeout};
-    }
 }
 
 #[cfg(feature = "web")]

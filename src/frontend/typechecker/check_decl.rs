@@ -520,7 +520,8 @@ impl TypeChecker {
                 // Trait default methods are checked against `Self` (the eventual adopter type), not against the trait
                 // name itself. This allows default bodies to reference adopter fields (validated at adoption sites via
                 // `@requires`).
-                self.check_method_with_self_ty(&method.node, ResolvedType::SelfType);
+                let trait_type_params: Vec<String> = tr.type_params.iter().map(|tp| tp.name.clone()).collect();
+                self.check_method_with_self_ty(&method.node, ResolvedType::SelfType, &trait_type_params);
                 self.current_trait_missing_requires_emitted = prev_method_seen;
             }
         }
@@ -570,6 +571,16 @@ impl TypeChecker {
         // TODO(#146): add async-specific validation here (await-outside-async, return-type constraints) via the
         // surface semantics registry — not hardcoded KeywordId checks.
 
+        // Define type parameters so explicit generic bounds are visible in function-level type resolution.
+        for param in &func.type_params {
+            self.symbols.define(Symbol {
+                name: param.name.clone(),
+                kind: SymbolKind::Type(TypeInfo::Builtin), // Type-var placeholder
+                span: Span::default(),
+                scope: 0,
+            });
+        }
+
         // Define parameters
         for param in &func.params {
             let ty = self.resolve_type_checked(&param.node.ty);
@@ -602,14 +613,34 @@ impl TypeChecker {
 
     pub(crate) fn check_method(&mut self, method: &MethodDecl, owner: &str) {
         self.validate_decorators(&method.decorators);
-        self.check_method_with_self_ty(method, ResolvedType::Named(owner.to_string()));
+        let owner_type_params = self
+            .lookup_type_info(owner)
+            .map(|info| match info {
+                TypeInfo::Model(model) => model.type_params.clone(),
+                TypeInfo::Class(class) => class.type_params.clone(),
+                TypeInfo::Newtype(newtype) => newtype.type_params.clone(),
+                TypeInfo::Enum(enum_info) => enum_info.type_params.clone(),
+                TypeInfo::Builtin | TypeInfo::TypeAlias => Vec::new(),
+            })
+            .unwrap_or_default();
+        self.check_method_with_self_ty(method, ResolvedType::Named(owner.to_string()), &owner_type_params);
     }
 
-    fn check_method_with_self_ty(&mut self, method: &MethodDecl, self_ty: ResolvedType) {
+    fn check_method_with_self_ty(&mut self, method: &MethodDecl, self_ty: ResolvedType, owner_type_params: &[String]) {
         self.symbols.enter_scope(ScopeKind::Method {
             receiver: method.receiver,
         });
         // TODO(#146): add async-specific validation for methods via the surface semantics registry.
+
+        // Define owner type parameters so generic wrappers can use them in bodies and annotations.
+        for type_param in owner_type_params {
+            self.symbols.define(Symbol {
+                name: type_param.clone(),
+                kind: SymbolKind::Type(TypeInfo::Builtin),
+                span: Span::default(),
+                scope: 0,
+            });
+        }
 
         // Define self if present
         if let Some(receiver) = method.receiver {
@@ -620,7 +651,7 @@ impl TypeChecker {
             self.symbols.define(Symbol {
                 name: "self".to_string(),
                 kind: SymbolKind::Variable(VariableInfo {
-                    ty: self_ty,
+                    ty: self_ty.clone(),
                     is_mutable,
                     is_used: true,
                 }),
@@ -645,7 +676,18 @@ impl TypeChecker {
         }
 
         let return_type = self.resolve_type_checked(&method.return_type);
-        self.symbols.set_return_type(return_type.clone());
+        let effective_return_type =
+            if matches!(return_type, ResolvedType::SelfType) && !matches!(self_ty, ResolvedType::SelfType) {
+                match &self_ty {
+                    ResolvedType::Named(name) if !owner_type_params.is_empty() => {
+                        ResolvedType::Generic(name.clone(), vec![ResolvedType::Unknown; owner_type_params.len()])
+                    }
+                    _ => self_ty.clone(),
+                }
+            } else {
+                return_type.clone()
+            };
+        self.symbols.set_return_type(effective_return_type);
 
         // Set error type for ? checking
         self.current_return_error_type = return_type.result_err_type().cloned();

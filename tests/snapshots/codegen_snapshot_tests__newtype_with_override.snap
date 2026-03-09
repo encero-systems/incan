@@ -8,16 +8,16 @@ expression: rust_code
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.2");
+incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
 #[derive(Debug)]
 struct CustomResponse(pub String);
 impl CustomResponse {
-    fn ok(message: String) -> CustomResponse {
+    pub fn ok(message: String) -> CustomResponse {
         return CustomResponse(incan_stdlib::strings::str_concat(&message, &" OK"));
     }
-    fn __into_response__(&self) -> String {
+    pub fn __into_response__(&self) -> String {
         return incan_stdlib::strings::str_concat(&"Custom: ", &self.0);
     }
     /// Returns field metadata for this type.

@@ -1,0 +1,13 @@
+"""Test generic newtype static builder methods."""
+
+type Box[T] = newtype T:
+    @staticmethod
+    def wrap(value: T) -> Self:
+        return Box(value)
+
+    def duplicate(self) -> Tuple[T, T]:
+        return (self.0, self.0)
+
+def main() -> None:
+    boxed = Box.wrap(42)
+    print(boxed.duplicate())

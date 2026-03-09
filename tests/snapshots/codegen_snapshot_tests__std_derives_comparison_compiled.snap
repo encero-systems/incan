@@ -8,18 +8,18 @@ expression: rust_code
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.2");
+incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
 pub trait Eq {
-    fn __eq__(&self, other: _) -> bool;
-    fn __ne__(&self, other: _) -> bool;
+    fn __eq__(&self, other: Self) -> bool;
+    fn __ne__(&self, other: Self) -> bool;
 }
 pub trait Ord {
-    fn __lt__(&self, other: _) -> bool;
-    fn __le__(&self, other: _) -> bool;
-    fn __gt__(&self, other: _) -> bool;
-    fn __ge__(&self, other: _) -> bool;
+    fn __lt__(&self, other: Self) -> bool;
+    fn __le__(&self, other: Self) -> bool;
+    fn __gt__(&self, other: Self) -> bool;
+    fn __ge__(&self, other: Self) -> bool;
 }
 pub trait Hash {
     fn __hash__(&self) -> i64;

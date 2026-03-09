@@ -167,13 +167,13 @@ impl<'a> IrEmitter<'a> {
                 // but many Incan-level signatures expect owned `String` in Rust (e.g., newtype `from_underlying(v:
                 // str)`).
                 //
-                // For external Rust types (VarRefKind::ExternalName), use ExternalFunctionArg conversions so that
+                // For external Rust types (VarRefKind::ExternalRustName), use ExternalFunctionArg conversions so that
                 // string literals get `.into()` — this lets the Rust compiler resolve the target type via the Into
                 // trait (e.g., Polars' PlSmallStr, sqlx identifiers, etc.).
                 let is_external = matches!(
                     receiver.kind,
                     IrExprKind::Var {
-                        ref_kind: VarRefKind::ExternalName,
+                        ref_kind: VarRefKind::ExternalRustName,
                         ..
                     }
                 );
@@ -218,7 +218,7 @@ impl<'a> IrEmitter<'a> {
         let is_external_receiver = matches!(
             receiver.kind,
             IrExprKind::Var {
-                ref_kind: VarRefKind::ExternalName,
+                ref_kind: VarRefKind::ExternalRustName,
                 ..
             }
         );

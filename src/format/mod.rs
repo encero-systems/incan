@@ -20,6 +20,7 @@ pub use config::{FormatConfig, QuoteStyle};
 pub use formatter::Formatter;
 
 use crate::frontend::{diagnostics, lexer, parser};
+use std::collections::HashMap;
 use thiserror::Error;
 
 /// Errors that occur during formatting
@@ -27,6 +28,9 @@ use thiserror::Error;
 pub enum FormatError {
     #[error("syntax error (formatting requires valid syntax):\\n{0}")]
     SyntaxError(String),
+
+    #[error("formatter would remove comments (before: {before}, after: {after}); refusing to rewrite source")]
+    CommentLoss { before: usize, after: usize },
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -87,7 +91,280 @@ pub fn format_source_with_config(source: &str, config: FormatConfig) -> Result<S
 
     // Format the AST
     let formatter = Formatter::new(config);
-    Ok(formatter.format(&ast))
+    let formatted = formatter.format(&ast);
+    let formatted = reattach_comments(source, &formatted);
+
+    // Safety guard: never allow the formatter to silently drop comments.
+    let source_comments = count_line_comments(source);
+    let formatted_comments = count_line_comments(&formatted);
+    if formatted_comments < source_comments {
+        return Err(FormatError::CommentLoss {
+            before: source_comments,
+            after: formatted_comments,
+        });
+    }
+
+    Ok(formatted)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StringState {
+    None,
+    SingleQuoted,
+    DoubleQuoted,
+    TripleSingleQuoted,
+    TripleDoubleQuoted,
+}
+
+/// Count `#...` comments outside string literals.
+///
+/// This supports a strict safety check for formatter output:
+/// if formatting would reduce comment count, we refuse to rewrite.
+fn count_line_comments(source: &str) -> usize {
+    let mut state = StringState::None;
+    let mut count = 0usize;
+
+    for line in source.lines() {
+        if comment_start_index(line, &mut state).is_some() {
+            count += 1;
+        }
+        // Single-quoted strings are line-local; triple-quoted strings can span lines.
+        if matches!(state, StringState::SingleQuoted | StringState::DoubleQuoted) {
+            state = StringState::None;
+        }
+    }
+
+    count
+}
+
+fn comment_start_index(line: &str, state: &mut StringState) -> Option<usize> {
+    let mut i = 0usize;
+    while i < line.len() {
+        let rest = &line[i..];
+        let mut chars = rest.chars();
+        let ch = chars.next()?;
+        let ch_len = ch.len_utf8();
+
+        match state {
+            StringState::None => {
+                if rest.starts_with("'''") {
+                    *state = StringState::TripleSingleQuoted;
+                    i += 3;
+                    continue;
+                }
+                if rest.starts_with("\"\"\"") {
+                    *state = StringState::TripleDoubleQuoted;
+                    i += 3;
+                    continue;
+                }
+                if ch == '\'' {
+                    *state = StringState::SingleQuoted;
+                    i += ch_len;
+                    continue;
+                }
+                if ch == '"' {
+                    *state = StringState::DoubleQuoted;
+                    i += ch_len;
+                    continue;
+                }
+                if ch == '#' {
+                    return Some(i);
+                }
+                i += ch_len;
+            }
+            StringState::SingleQuoted => {
+                if ch == '\\' {
+                    if let Some(next) = chars.next() {
+                        i += ch_len + next.len_utf8();
+                    } else {
+                        i += ch_len;
+                    }
+                    continue;
+                }
+                if ch == '\'' {
+                    *state = StringState::None;
+                }
+                i += ch_len;
+            }
+            StringState::DoubleQuoted => {
+                if ch == '\\' {
+                    if let Some(next) = chars.next() {
+                        i += ch_len + next.len_utf8();
+                    } else {
+                        i += ch_len;
+                    }
+                    continue;
+                }
+                if ch == '"' {
+                    *state = StringState::None;
+                }
+                i += ch_len;
+            }
+            StringState::TripleSingleQuoted => {
+                if rest.starts_with("'''") {
+                    *state = StringState::None;
+                    i += 3;
+                } else {
+                    i += ch_len;
+                }
+            }
+            StringState::TripleDoubleQuoted => {
+                if rest.starts_with("\"\"\"") {
+                    *state = StringState::None;
+                    i += 3;
+                } else {
+                    i += ch_len;
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn normalize_code_for_match(code: &str) -> String {
+    code.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+fn reattach_comments(source: &str, formatted: &str) -> String {
+    let mut state = StringState::None;
+    let mut pending_standalone: Vec<String> = Vec::new();
+    let mut anchored_standalone: Vec<(String, usize, Vec<String>)> = Vec::new();
+    let mut trailing_standalone: Vec<String> = Vec::new();
+    let mut inline_comments: Vec<(String, usize, String)> = Vec::new();
+    let mut source_anchor_occurrences: HashMap<String, usize> = HashMap::new();
+
+    // ---- Extract comments from source and anchor them to code lines ----
+    for line in source.lines() {
+        let comment_idx = comment_start_index(line, &mut state);
+        if matches!(state, StringState::SingleQuoted | StringState::DoubleQuoted) {
+            state = StringState::None;
+        }
+
+        let Some(idx) = comment_idx else {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                if !pending_standalone.is_empty() {
+                    pending_standalone.push(String::new());
+                }
+                continue;
+            }
+
+            let anchor = normalize_code_for_match(trimmed);
+            let occurrence = source_anchor_occurrences.get(&anchor).copied().unwrap_or(0) + 1;
+            if !pending_standalone.is_empty() {
+                anchored_standalone.push((
+                    anchor.clone(),
+                    occurrence,
+                    trim_trailing_blank_comment_lines(&pending_standalone),
+                ));
+                pending_standalone.clear();
+            }
+            source_anchor_occurrences.insert(anchor, occurrence);
+            continue;
+        };
+
+        let code_prefix = &line[..idx];
+        let comment_text = line[idx..].trim_end().to_string();
+        if code_prefix.trim().is_empty() {
+            pending_standalone.push(line.trim_end().to_string());
+            continue;
+        }
+
+        let anchor = normalize_code_for_match(code_prefix.trim_end());
+        let occurrence = source_anchor_occurrences.get(&anchor).copied().unwrap_or(0) + 1;
+        if !pending_standalone.is_empty() {
+            anchored_standalone.push((
+                anchor.clone(),
+                occurrence,
+                trim_trailing_blank_comment_lines(&pending_standalone),
+            ));
+            pending_standalone.clear();
+        }
+
+        inline_comments.push((anchor.clone(), occurrence, comment_text));
+        source_anchor_occurrences.insert(anchor, occurrence);
+    }
+
+    if !pending_standalone.is_empty() {
+        trailing_standalone = trim_trailing_blank_comment_lines(&pending_standalone);
+    }
+
+    // ---- Reattach comments into formatted output ----
+    let mut out_lines: Vec<String> = Vec::new();
+    let mut standalone_idx = 0usize;
+    let mut inline_idx = 0usize;
+    let mut formatted_state = StringState::None;
+    let mut formatted_anchor_occurrences: HashMap<String, usize> = HashMap::new();
+
+    for line in formatted.lines() {
+        let line_trimmed = line.trim();
+        let normalized = if line_trimmed.is_empty() {
+            None
+        } else {
+            Some(normalize_code_for_match(line_trimmed))
+        };
+        let occurrence = normalized.as_ref().map(|n| {
+            let next = formatted_anchor_occurrences.get(n).copied().unwrap_or(0) + 1;
+            formatted_anchor_occurrences.insert(n.clone(), next);
+            next
+        });
+
+        if standalone_idx < anchored_standalone.len()
+            && normalized
+                .as_ref()
+                .is_some_and(|n| n == &anchored_standalone[standalone_idx].0)
+            && occurrence.is_some_and(|occ| occ == anchored_standalone[standalone_idx].1)
+        {
+            out_lines.extend(anchored_standalone[standalone_idx].2.iter().cloned());
+            standalone_idx += 1;
+        }
+
+        let mut out_line = line.to_string();
+        let has_existing_comment = comment_start_index(line, &mut formatted_state).is_some();
+        if matches!(formatted_state, StringState::SingleQuoted | StringState::DoubleQuoted) {
+            formatted_state = StringState::None;
+        }
+
+        if !has_existing_comment
+            && inline_idx < inline_comments.len()
+            && let Some(n) = &normalized
+            && n == &inline_comments[inline_idx].0
+            && occurrence.is_some_and(|occ| occ == inline_comments[inline_idx].1)
+        {
+            out_line.push_str("  ");
+            out_line.push_str(&inline_comments[inline_idx].2);
+            inline_idx += 1;
+        }
+
+        out_lines.push(out_line);
+    }
+
+    while standalone_idx < anchored_standalone.len() {
+        out_lines.extend(anchored_standalone[standalone_idx].2.iter().cloned());
+        standalone_idx += 1;
+    }
+
+    if !trailing_standalone.is_empty() {
+        if out_lines.last().is_some_and(|l| !l.is_empty()) {
+            out_lines.push(String::new());
+        }
+        out_lines.extend(trailing_standalone);
+    }
+
+    let mut out = out_lines.join("\n");
+    if formatted.ends_with('\n') || source.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+fn trim_trailing_blank_comment_lines(lines: &[String]) -> Vec<String> {
+    let mut out = lines.to_vec();
+    while out.last().is_some_and(|l| l.trim().is_empty()) {
+        out.pop();
+    }
+    out
 }
 
 /// Check if source code is already formatted.
@@ -216,6 +493,99 @@ mod tests {
         let source = "";
         let result = format_source(source);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_format_source_refuses_comment_loss_inline_comment() -> Result<(), FormatError> {
+        let source = r#"def foo() -> int:
+  x = 1  # keep this comment
+  return x
+"#;
+        let formatted = format_source(source)?;
+        assert!(
+            formatted.contains("# keep this comment"),
+            "expected inline comment to survive formatting; got: {formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_comment_counter_ignores_hash_in_string_literals() {
+        let source = r##"def foo() -> str:
+  return "# not a comment"
+"##;
+        assert_eq!(count_line_comments(source), 0);
+    }
+
+    #[test]
+    fn test_format_source_preserves_standalone_comment_lines() -> Result<(), FormatError> {
+        let source = r#"const A: int = 1
+# ---- marker comment ----
+const B: int = 2
+"#;
+        let formatted = format_source(source)?;
+        assert!(
+            formatted.contains("# ---- marker comment ----"),
+            "expected standalone comment to survive formatting; got: {formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_preserves_function_docstring_statement() -> Result<(), FormatError> {
+        let source = r#"def greet() -> str:
+    """Return a greeting."""
+    return "hi"
+
+"#;
+        let formatted = format_source(source)?;
+        assert_eq!(formatted, source);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_preserves_rich_newtype_round_trip() -> Result<(), FormatError> {
+        let source = r#"@derive(Clone)
+pub type MutexGuard[T with Clone] = newtype RawMutexGuard[T]:
+    # XXX: keep this comment anchored to the type docstring
+    """
+    Guard providing access to mutex-protected data.
+    The lock is released when the guard goes out of scope.
+    """
+
+    def get(self) -> T:
+        """Get the current value (by reference)"""
+        return value
+
+    def example(self) -> None:
+        shared_counter = Mutex.new(0)  # XXX: constructor lives on Mutex
+        return None
+
+"#;
+        let formatted = format_source(source)?;
+        assert_eq!(formatted, source);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_preserves_duplicate_comment_anchors() -> Result<(), FormatError> {
+        let source = r#"# ---- first ----
+@derive(Clone)
+type First = newtype int
+
+
+@derive(Clone)
+type Middle = newtype int
+
+
+# ---- second ----
+@derive(Clone)
+type Second = newtype int
+
+"#;
+        let formatted = format_source(source)?;
+        assert_eq!(formatted, source);
+        Ok(())
     }
 
     // ========================================
@@ -368,5 +738,73 @@ mod tests {
             result.contains("OtherId\n"),
             "expected last item without comma; got: {result}"
         );
+    }
+
+    #[test]
+    fn test_format_top_level_spacing_imports_consts_and_function() -> Result<(), FormatError> {
+        let source = r#"from rust::std::f64::consts import PI, E
+from rust::std::f64 import INFINITY, NAN
+const A: int = 1
+const B: int = 2
+def sum_constants() -> int:
+  return A + B
+"#;
+        let result = format_source(source)?;
+
+        let expected = r#"from rust::std::f64::consts import PI, E
+from rust::std::f64 import INFINITY, NAN
+
+const A: int = 1
+const B: int = 2
+
+
+def sum_constants() -> int:
+    return A + B
+
+"#;
+        assert_eq!(result, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_rust_from_import_with_version_wraps_black_style() -> Result<(), FormatError> {
+        let source = r#"from rust::libm @ "0.2" import sqrt as rust_sqrt, fabs as rust_abs, floor as rust_floor, ceil as rust_ceil, pow as rust_pow, exp as rust_exp
+"#;
+        let config = FormatConfig::new().with_line_length(80).with_trailing_commas(true);
+        let result = format_source_with_config(source, config)?;
+
+        assert!(
+            result.starts_with("from rust::libm @ \"0.2\" import (\n"),
+            "expected parenthesized rust import list; got: {result}"
+        );
+        assert!(
+            result.contains("sqrt as rust_sqrt,\n") && result.contains("pow as rust_pow,\n"),
+            "expected one item per line with trailing commas; got: {result}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_merges_adjacent_rust_from_imports_same_target() -> Result<(), FormatError> {
+        let source = r#"from rust::libm @ "0.2" import sqrt as rust_sqrt, fabs as rust_abs
+from rust::libm @ "0.2" import floor as rust_floor, ceil as rust_ceil
+from rust::libm @ "0.2" import pow as rust_pow, exp as rust_exp
+"#;
+        let config = FormatConfig::new().with_line_length(80).with_trailing_commas(true);
+        let result = format_source_with_config(source, config)?;
+
+        let import_prefix = "from rust::libm @ \"0.2\" import";
+        assert_eq!(
+            result.matches(import_prefix).count(),
+            1,
+            "expected adjacent compatible rust imports to merge; got: {result}"
+        );
+        assert!(
+            result.contains("sqrt as rust_sqrt,\n")
+                && result.contains("floor as rust_floor,\n")
+                && result.contains("pow as rust_pow,\n"),
+            "expected all merged import items present in wrapped output; got: {result}"
+        );
+        Ok(())
     }
 }

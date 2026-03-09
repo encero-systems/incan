@@ -1,139 +1,17 @@
 """
-Async Select - Racing Multiple Futures
+Async select helpers.
 
-This module provides utilities for waiting on multiple async operations
-and handling whichever completes first.
+RFC 023 intentionally keeps this surface minimal: only the timeout-based selection helper is exposed here. Multi-branch
+race/select combinators remain a deliberate follow-up for later awaitable-concurrency RFC work.
 
-Note: Rust's tokio::select! is a powerful macro. We provide a simpler
-function-based interface that covers common use cases.
+`select_timeout(seconds, task)` returns `Some(value)` when the task finishes before the timeout and `None` when the
+deadline expires first.
+
+Example:
+    match await select_timeout(0.5, fetch_user()):
+        Some(user) => println(user.name)
+        None => println("timed out")
 """
 
 import std.async
-
-# Either type for select results
-enum Either[A, B]:
-    """Result of racing two futures - indicates which completed first"""
-    Left(A)
-    Right(B)
-
-
-enum Either3[A, B, C]:
-    """Result of racing three futures"""
-    First(A)
-    Second(B)
-    Third(C)
-
-
-# ============================================================================
-# Select Functions (Racing Futures)
-# ============================================================================
-
-async def select2[A, B](a: async () -> A, b: async () -> B) -> Either[A, B]:
-    """
-    Race two async operations, return whichever completes first.
-    
-    The other operation is dropped (cancelled).
-    
-    Example:
-        async def fast() -> str:
-            await sleep(0.1)
-            return "fast"
-        
-        async def slow() -> str:
-            await sleep(1.0)
-            return "slow"
-        
-        match await select2(fast, slow):
-            Either.Left(result) => println(f"First won: {result}")
-            Either.Right(result) => println(f"Second won: {result}")
-    
-    Maps to: tokio::select! biased
-    """
-    ...
-
-
-async def select3[A, B, C](
-    a: async () -> A,
-    b: async () -> B,
-    c: async () -> C
-) -> Either3[A, B, C]:
-    """
-    Race three async operations, return whichever completes first.
-    
-    Example:
-        result = await select3(op1, op2, op3)
-        match result:
-            Either3.First(v) => println("op1 won")
-            Either3.Second(v) => println("op2 won")
-            Either3.Third(v) => println("op3 won")
-    """
-    ...
-
-
-async def race[T](tasks: List[async () -> T]) -> T:
-    """
-    Race a list of async operations, return the first to complete.
-    
-    All other tasks are dropped (cancelled).
-    
-    Example:
-        async def fetch_from(url: str) -> Response:
-            return await http_get(url)
-        
-        # Race multiple mirrors
-        urls = ["http://mirror1/file", "http://mirror2/file"]
-        tasks = [lambda: fetch_from(url) for url in urls]
-        fastest = await race(tasks)
-    
-    Note: This is more limited than select2/select3 as it requires
-    all tasks to have the same return type.
-    """
-    ...
-
-
-# ============================================================================
-# Timeout Variants
-# ============================================================================
-
-async def select_timeout[T](
-    seconds: float,
-    task: async () -> T
-) -> Option[T]:
-    """
-    Run a task with a timeout, returning None if it times out.
-    
-    Simpler than Result-based timeout() for cases where you
-    just want to discard timed-out results.
-    
-    Example:
-        match await select_timeout(2.0, slow_operation):
-            Some(result) => println(f"Got: {result}")
-            None => println("Timed out, using default")
-    """
-    ...
-
-
-# ============================================================================
-# Select with Channels
-# ============================================================================
-
-async def select_recv[A, B](
-    rx_a: Receiver[A],
-    rx_b: Receiver[B]
-) -> Either[Option[A], Option[B]]:
-    """
-    Wait for a message from either of two channels.
-    
-    Returns Left(msg) if rx_a receives first,
-    or Right(msg) if rx_b receives first.
-    
-    Example:
-        tx_commands, rx_commands = channel[Command](32)
-        tx_data, rx_data = channel[Data](32)
-        
-        match await select_recv(rx_commands, rx_data):
-            Either.Left(Some(cmd)) => handle_command(cmd)
-            Either.Right(Some(data)) => process_data(data)
-            _ => println("A channel closed")
-    """
-    ...
+from rust::incan_stdlib::async::select import select_timeout

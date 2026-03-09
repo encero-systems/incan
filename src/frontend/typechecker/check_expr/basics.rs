@@ -34,9 +34,22 @@ impl TypeChecker {
             SymbolKind::Type(_) => (IdentKind::TypeName, ResolvedType::Named(name.to_string())),
             SymbolKind::Variant(info) => (IdentKind::Variant, ResolvedType::Named(info.enum_name.clone())),
             SymbolKind::Field(info) => (IdentKind::Value, info.ty.clone()),
-            SymbolKind::Module(_) => (IdentKind::Module, ResolvedType::Named(name.to_string())),
+            SymbolKind::Module(info) => {
+                // Some `from rust::... import ...` forms are represented as module symbols instead of dedicated
+                // Rust-module placeholders. Keep them on the external-Rust path, but do not guess a concrete type from
+                // the identifier spelling alone.
+                if info.path.first().is_some_and(|seg| seg == "rust") {
+                    (IdentKind::RustImport, ResolvedType::Unknown)
+                } else {
+                    (IdentKind::Module, ResolvedType::Named(name.to_string()))
+                }
+            }
             SymbolKind::Trait(_) => (IdentKind::Trait, ResolvedType::Named(name.to_string())),
-            SymbolKind::RustModule { .. } => (IdentKind::RustImport, ResolvedType::Named(name.to_string())),
+            SymbolKind::RustModule { .. } => {
+                // Rust imports are intentionally opaque in the frontend: lowering/codegen only needs to know that they
+                // are external Rust names. Concrete Rust types are checked later by Rust itself.
+                (IdentKind::RustImport, ResolvedType::Unknown)
+            }
         };
 
         self.type_info.ident_kinds.insert((span.start, span.end), kind);

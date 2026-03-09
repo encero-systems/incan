@@ -175,12 +175,16 @@ impl TypeChecker {
                 }
                 // Rust imports (e.g. `from rust::std::f64::consts import PI`) are valid const references — Rust can
                 // evaluate them at compile time. We treat them as opaque `RustNative` values with no known Incan value;
-                // the type is inferred from the enclosing const annotation when available, defaulting to Float (the
-                // common case for Rust numeric consts). Any actual type mismatch is caught by Rust's compiler.
+                // the type is inferred from the enclosing const annotation when available, otherwise left `Unknown`.
+                // Any actual type mismatch is caught by Rust's compiler.
                 if let Some(sym) = self.lookup_symbol(name)
-                    && matches!(sym.kind, SymbolKind::RustModule { .. })
+                    && match &sym.kind {
+                        SymbolKind::RustModule { .. } => true,
+                        SymbolKind::Module(info) => info.path.first().is_some_and(|seg| seg == "rust"),
+                        _ => false,
+                    }
                 {
-                    let ty = expected.cloned().unwrap_or(ResolvedType::Float);
+                    let ty = expected.cloned().unwrap_or(ResolvedType::Unknown);
                     return Some(ConstEvalResult {
                         ty,
                         kind: ConstKind::RustNative,
@@ -250,8 +254,22 @@ impl TypeChecker {
                 }
             }
             Expr::Binary(left, op, right) => {
-                let l = self.eval_const_expr(left, None, stack, decl_span)?;
-                let r = self.eval_const_expr(right, None, stack, decl_span)?;
+                let mut l = self.eval_const_expr(left, None, stack, decl_span)?;
+                let mut r = self.eval_const_expr(right, None, stack, decl_span)?;
+
+                // When one operand is a Rust-imported constant whose type couldn't be determined (Unknown), coerce it
+                // to the other operand's numeric type. Rust's own compiler will catch real type mismatches later.
+                if l.kind == ConstKind::RustNative
+                    && l.ty == ResolvedType::Unknown
+                    && numeric_ty_from_resolved(&r.ty).is_some()
+                {
+                    l.ty = r.ty.clone();
+                } else if r.kind == ConstKind::RustNative
+                    && r.ty == ResolvedType::Unknown
+                    && numeric_ty_from_resolved(&l.ty).is_some()
+                {
+                    r.ty = l.ty.clone();
+                }
 
                 // String concatenation (str + str)
                 if matches!(op, BinaryOp::Add) && is_str_like(&l.ty) && is_str_like(&r.ty) {

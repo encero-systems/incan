@@ -14,6 +14,7 @@ use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_core::lang::surface::functions::{self as surface_functions, SurfaceFnId};
 use incan_core::lang::surface::math;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
+use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
 
 use super::TypeChecker;
@@ -96,6 +97,25 @@ impl TypeChecker {
         }
     }
 
+    fn constructor_result_type(&self, name: &str) -> ResolvedType {
+        match self.lookup_type_info(name) {
+            Some(TypeInfo::Model(model)) if !model.type_params.is_empty() => {
+                ResolvedType::Generic(name.to_string(), vec![ResolvedType::Unknown; model.type_params.len()])
+            }
+            Some(TypeInfo::Class(class)) if !class.type_params.is_empty() => {
+                ResolvedType::Generic(name.to_string(), vec![ResolvedType::Unknown; class.type_params.len()])
+            }
+            Some(TypeInfo::Newtype(newtype)) if !newtype.type_params.is_empty() => {
+                ResolvedType::Generic(name.to_string(), vec![ResolvedType::Unknown; newtype.type_params.len()])
+            }
+            Some(TypeInfo::Enum(enum_info)) if !enum_info.type_params.is_empty() => ResolvedType::Generic(
+                name.to_string(),
+                vec![ResolvedType::Unknown; enum_info.type_params.len()],
+            ),
+            _ => ResolvedType::Named(name.to_string()),
+        }
+    }
+
     /// Type-check a JSON/Query constructor call (`Json(...)` / `Query(...)`).
     ///
     /// NOTE: This method is called from multiple dispatch points in the typechecker because
@@ -159,6 +179,318 @@ impl TypeChecker {
             .collect()
     }
 
+    /// Validate a function call against a known function signature and enforce explicit generic bounds.
+    fn validate_function_call(
+        &mut self,
+        func_name: &str,
+        info: &FunctionInfo,
+        args: &[CallArg],
+        call_span: Span,
+    ) -> ResolvedType {
+        let arg_types = self.check_call_arg_types(args);
+        let mut positional: Vec<(ResolvedType, Span)> = Vec::new();
+        let mut named: std::collections::HashMap<&str, (ResolvedType, Span)> = std::collections::HashMap::new();
+
+        for (arg, ty) in args.iter().zip(arg_types.iter()) {
+            let expr = Self::call_arg_expr(arg);
+            match arg {
+                CallArg::Positional(_) => positional.push((ty.clone(), expr.span)),
+                CallArg::Named(name, _) => {
+                    named.insert(name.as_str(), (ty.clone(), expr.span));
+                }
+            }
+        }
+
+        let mut pos_idx = 0usize;
+        let mut type_bindings: std::collections::HashMap<String, ResolvedType> = std::collections::HashMap::new();
+        for (param_name, param_ty) in &info.params {
+            let arg = if let Some(v) = named.get(param_name.as_str()) {
+                Some(v)
+            } else if pos_idx < positional.len() {
+                let v = positional.get(pos_idx);
+                pos_idx += 1;
+                v
+            } else {
+                None
+            };
+
+            if let Some((arg_ty, arg_span)) = arg {
+                self.infer_type_param_bindings(param_ty, arg_ty, &mut type_bindings);
+                if !self.types_compatible(arg_ty, param_ty) {
+                    self.errors.push(errors::type_mismatch(
+                        &param_ty.to_string(),
+                        &arg_ty.to_string(),
+                        *arg_span,
+                    ));
+                }
+            }
+        }
+        self.emit_explicit_bound_errors(func_name, &info.type_param_bounds, &type_bindings, call_span);
+
+        info.return_type.clone()
+    }
+
+    /// Infer concrete type bindings for generic type parameters from a parameter/argument type pair.
+    fn infer_type_param_bindings(
+        &self,
+        expected: &ResolvedType,
+        actual: &ResolvedType,
+        bindings: &mut std::collections::HashMap<String, ResolvedType>,
+    ) {
+        match expected {
+            ResolvedType::TypeVar(name) => {
+                bindings
+                    .entry(name.clone())
+                    .and_modify(|existing| {
+                        if !self.types_compatible(actual, existing) {
+                            *existing = ResolvedType::Unknown;
+                        }
+                    })
+                    .or_insert_with(|| actual.clone());
+            }
+            ResolvedType::Generic(name, expected_args) => {
+                if let ResolvedType::Generic(actual_name, actual_args) = actual
+                    && name == actual_name
+                {
+                    for (e, a) in expected_args.iter().zip(actual_args.iter()) {
+                        self.infer_type_param_bindings(e, a, bindings);
+                    }
+                }
+            }
+            ResolvedType::Function(expected_params, expected_ret) => {
+                if let ResolvedType::Function(actual_params, actual_ret) = actual {
+                    for (e, a) in expected_params.iter().zip(actual_params.iter()) {
+                        self.infer_type_param_bindings(e, a, bindings);
+                    }
+                    self.infer_type_param_bindings(expected_ret, actual_ret, bindings);
+                }
+            }
+            ResolvedType::Tuple(expected_items) => {
+                if let ResolvedType::Tuple(actual_items) = actual {
+                    for (e, a) in expected_items.iter().zip(actual_items.iter()) {
+                        self.infer_type_param_bindings(e, a, bindings);
+                    }
+                }
+            }
+            ResolvedType::FrozenList(inner) => {
+                if let ResolvedType::FrozenList(actual_inner) = actual {
+                    self.infer_type_param_bindings(inner, actual_inner, bindings);
+                }
+            }
+            ResolvedType::FrozenSet(inner) => {
+                if let ResolvedType::FrozenSet(actual_inner) = actual {
+                    self.infer_type_param_bindings(inner, actual_inner, bindings);
+                }
+            }
+            ResolvedType::FrozenDict(k, v) => {
+                if let ResolvedType::FrozenDict(actual_k, actual_v) = actual {
+                    self.infer_type_param_bindings(k, actual_k, bindings);
+                    self.infer_type_param_bindings(v, actual_v, bindings);
+                }
+            }
+            ResolvedType::Ref(inner) => {
+                if let ResolvedType::Ref(actual_inner) = actual {
+                    self.infer_type_param_bindings(inner, actual_inner, bindings);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Emit diagnostics when inferred concrete generic bindings violate explicit `with` bounds.
+    fn emit_explicit_bound_errors(
+        &mut self,
+        func_name: &str,
+        bounds_by_param: &std::collections::HashMap<String, Vec<String>>,
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+        call_span: Span,
+    ) {
+        for (type_param, bounds) in bounds_by_param {
+            let Some(actual_ty) = bindings.get(type_param) else {
+                continue;
+            };
+            for bound in bounds {
+                if !self.type_satisfies_explicit_bound(actual_ty, bound) {
+                    self.errors.push(errors::generic_bound_not_satisfied(
+                        func_name,
+                        type_param,
+                        bound,
+                        &actual_ty.to_string(),
+                        call_span,
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Best-effort check whether a concrete type satisfies an explicit generic bound.
+    fn type_satisfies_explicit_bound(&self, ty: &ResolvedType, bound: &str) -> bool {
+        match ty {
+            // Unknown / still-generic types are kept permissive to avoid cascading errors.
+            ResolvedType::Unknown | ResolvedType::TypeVar(_) => true,
+            ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::Bytes
+            | ResolvedType::FrozenStr
+            | ResolvedType::FrozenBytes
+            | ResolvedType::Unit => self.primitive_type_satisfies_bound(ty, bound),
+            ResolvedType::Tuple(items) => self.tuple_type_satisfies_bound(items, bound),
+            ResolvedType::FrozenList(inner) => self.collection_type_satisfies_bound(
+                CollectionTypeId::FrozenList,
+                std::slice::from_ref(inner.as_ref()),
+                bound,
+            ),
+            ResolvedType::FrozenSet(inner) => self.collection_type_satisfies_bound(
+                CollectionTypeId::FrozenSet,
+                std::slice::from_ref(inner.as_ref()),
+                bound,
+            ),
+            ResolvedType::FrozenDict(k, v) => {
+                let pair = [k.as_ref().clone(), v.as_ref().clone()];
+                self.collection_type_satisfies_bound(CollectionTypeId::FrozenDict, &pair, bound)
+            }
+            ResolvedType::Generic(name, args) => {
+                if let Some(kind) = collection_type_id(name.as_str()) {
+                    self.collection_type_satisfies_bound(kind, args, bound)
+                } else {
+                    self.named_type_satisfies_bound(name, bound)
+                }
+            }
+            ResolvedType::Named(type_name) => self.named_type_satisfies_bound(type_name, bound),
+            ResolvedType::Ref(inner) => self.type_satisfies_explicit_bound(inner, bound),
+            ResolvedType::Function(_, _) | ResolvedType::SelfType => false,
+        }
+    }
+
+    fn primitive_type_satisfies_bound(&self, ty: &ResolvedType, bound: &str) -> bool {
+        if bound == derives::as_str(DeriveId::Copy) {
+            return self.is_copy_type(ty);
+        }
+
+        match builtin_traits::from_str(bound) {
+            Some(TraitId::Clone | TraitId::Debug | TraitId::Display) => matches!(
+                ty,
+                ResolvedType::Int
+                    | ResolvedType::Float
+                    | ResolvedType::Bool
+                    | ResolvedType::Str
+                    | ResolvedType::Bytes
+                    | ResolvedType::FrozenStr
+                    | ResolvedType::FrozenBytes
+                    | ResolvedType::Unit
+            ),
+            Some(TraitId::Default) => matches!(
+                ty,
+                ResolvedType::Int
+                    | ResolvedType::Float
+                    | ResolvedType::Bool
+                    | ResolvedType::Str
+                    | ResolvedType::Bytes
+                    | ResolvedType::FrozenStr
+                    | ResolvedType::FrozenBytes
+                    | ResolvedType::Unit
+            ),
+            Some(TraitId::Eq | TraitId::Ord | TraitId::Hash) => matches!(
+                ty,
+                ResolvedType::Int
+                    | ResolvedType::Bool
+                    | ResolvedType::Str
+                    | ResolvedType::Bytes
+                    | ResolvedType::FrozenStr
+                    | ResolvedType::FrozenBytes
+                    | ResolvedType::Unit
+            ),
+            Some(TraitId::PartialEq | TraitId::PartialOrd) => matches!(
+                ty,
+                ResolvedType::Int
+                    | ResolvedType::Float
+                    | ResolvedType::Bool
+                    | ResolvedType::Str
+                    | ResolvedType::Bytes
+                    | ResolvedType::FrozenStr
+                    | ResolvedType::FrozenBytes
+                    | ResolvedType::Unit
+            ),
+            _ => false,
+        }
+    }
+
+    fn tuple_type_satisfies_bound(&self, items: &[ResolvedType], bound: &str) -> bool {
+        match builtin_traits::from_str(bound) {
+            Some(
+                TraitId::Clone
+                | TraitId::Debug
+                | TraitId::Default
+                | TraitId::Eq
+                | TraitId::PartialEq
+                | TraitId::Ord
+                | TraitId::PartialOrd
+                | TraitId::Hash,
+            ) => items.iter().all(|item| self.type_satisfies_explicit_bound(item, bound)),
+            _ => false,
+        }
+    }
+
+    fn collection_type_satisfies_bound(&self, kind: CollectionTypeId, args: &[ResolvedType], bound: &str) -> bool {
+        let all_args_satisfy = || args.iter().all(|arg| self.type_satisfies_explicit_bound(arg, bound));
+        match builtin_traits::from_str(bound) {
+            Some(TraitId::Clone | TraitId::Debug) => all_args_satisfy(),
+            Some(TraitId::Default) => matches!(
+                kind,
+                CollectionTypeId::List
+                    | CollectionTypeId::FrozenList
+                    | CollectionTypeId::Dict
+                    | CollectionTypeId::FrozenDict
+                    | CollectionTypeId::Set
+                    | CollectionTypeId::FrozenSet
+                    | CollectionTypeId::Option
+            ),
+            Some(TraitId::Eq | TraitId::PartialEq) => all_args_satisfy(),
+            Some(TraitId::Ord | TraitId::PartialOrd) => {
+                matches!(
+                    kind,
+                    CollectionTypeId::List
+                        | CollectionTypeId::FrozenList
+                        | CollectionTypeId::Tuple
+                        | CollectionTypeId::Option
+                ) && all_args_satisfy()
+            }
+            Some(TraitId::Hash) => {
+                matches!(
+                    kind,
+                    CollectionTypeId::List
+                        | CollectionTypeId::FrozenList
+                        | CollectionTypeId::Tuple
+                        | CollectionTypeId::Option
+                ) && all_args_satisfy()
+            }
+            _ => false,
+        }
+    }
+
+    fn named_type_satisfies_bound(&self, type_name: &str, bound: &str) -> bool {
+        match self.lookup_type_info(type_name) {
+            Some(TypeInfo::Builtin) => matches!(builtin_traits::from_str(bound), Some(TraitId::Clone | TraitId::Debug)),
+            Some(TypeInfo::Model(info)) => {
+                info.traits.iter().any(|t| t == bound) || info.derives.iter().any(|d| d == bound)
+            }
+            Some(TypeInfo::Class(info)) => {
+                info.traits.iter().any(|t| t == bound) || info.derives.iter().any(|d| d == bound)
+            }
+            Some(TypeInfo::Enum(info)) => {
+                // Enums do not carry explicit trait adoption; best-effort via derive names in symbol metadata is
+                // absent. Keep conservative and require explicit evidence where available.
+                let _ = info;
+                false
+            }
+            Some(TypeInfo::Newtype(_)) => false,
+            Some(TypeInfo::TypeAlias) => false,
+            None => false,
+        }
+    }
+
     /// Handle a known builtin call (if the callee is a builtin name).
     fn check_builtin_call(&mut self, name: &str, args: &[CallArg], call_span: Span) -> Option<ResolvedType> {
         let has_function_symbol = self
@@ -177,9 +509,28 @@ impl TypeChecker {
                     //   def f() -> Result[T, str]:
                     //     return Ok(value)
                     let current_err = self.current_return_error_type.clone().unwrap_or(ResolvedType::Unknown);
+                    let current_ok = self
+                        .symbols
+                        .current_return_type()
+                        .and_then(ResolvedType::result_ok_type)
+                        .cloned()
+                        .unwrap_or(ResolvedType::Unknown);
 
                     let (ok_ty, err_ty) = if cid == ConstructorId::Ok {
-                        (arg_types.first().cloned().unwrap_or(ResolvedType::Unknown), current_err)
+                        let inferred_ok = arg_types.first().cloned().unwrap_or(ResolvedType::Unknown);
+                        let ok_ty = if current_ok == ResolvedType::Unit
+                            && matches!(
+                                inferred_ok,
+                                ResolvedType::Generic(ref name, ref args)
+                                    if collection_type_id(name.as_str()) == Some(CollectionTypeId::Option)
+                                        && args.len() == 1
+                                        && matches!(args[0], ResolvedType::Unknown)
+                            ) {
+                            ResolvedType::Unit
+                        } else {
+                            inferred_ok
+                        };
+                        (ok_ty, current_err)
                     } else {
                         (
                             ResolvedType::Unknown,
@@ -509,11 +860,11 @@ impl TypeChecker {
                     self.check_call_args(args);
                     Some(ResolvedType::Tuple(vec![
                         ResolvedType::Generic(
-                            surface_types::as_str(SurfaceTypeId::UnboundedSender).to_string(),
+                            surface_types::as_str(SurfaceTypeId::Sender).to_string(),
                             vec![ResolvedType::Unknown],
                         ),
                         ResolvedType::Generic(
-                            surface_types::as_str(SurfaceTypeId::UnboundedReceiver).to_string(),
+                            surface_types::as_str(SurfaceTypeId::Receiver).to_string(),
                             vec![ResolvedType::Unknown],
                         ),
                     ]))
@@ -711,6 +1062,13 @@ impl TypeChecker {
                 return result;
             }
 
+            if let Some(func_info) = self.lookup_symbol(name).and_then(|sym| match &sym.kind {
+                SymbolKind::Function(info) => Some(info.clone()),
+                _ => None,
+            }) {
+                return self.validate_function_call(name, &func_info, args, span);
+            }
+
             let in_scope = self.symbols.lookup(name).is_some();
             if in_scope && let Some(tid) = surface_types::from_str(name) {
                 if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
@@ -753,7 +1111,7 @@ impl TypeChecker {
                         return ResolvedType::Named(surface_types::as_str(tid).to_string());
                     }
                 }
-                return ResolvedType::Named(name.to_string());
+                return self.constructor_result_type(name);
             }
         }
 
@@ -763,7 +1121,7 @@ impl TypeChecker {
         match callee_ty {
             ResolvedType::Function(_, ret) => *ret,
             ResolvedType::Named(name) => match self.lookup_symbol(&name).map(|s| &s.kind) {
-                Some(SymbolKind::Type(_)) => ResolvedType::Named(name),
+                Some(SymbolKind::Type(_)) => self.constructor_result_type(&name),
                 Some(SymbolKind::Variant(info)) => ResolvedType::Named(info.enum_name.clone()),
                 _ => ResolvedType::Unknown,
             },
@@ -792,7 +1150,7 @@ impl TypeChecker {
         }
 
         match self.lookup_symbol(name).map(|s| &s.kind) {
-            Some(SymbolKind::Type(_)) => ResolvedType::Named(name.to_string()),
+            Some(SymbolKind::Type(_)) => self.constructor_result_type(name),
             Some(SymbolKind::Variant(info)) => ResolvedType::Named(info.enum_name.clone()),
             Some(_) => ResolvedType::Unknown,
             None => {

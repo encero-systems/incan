@@ -1,68 +1,152 @@
-# Math module - Standard mathematical functions and constants
-# 
-# This module provides mathematical functions and constants.
-# It is a builtin module - the functions are implemented directly
-# in the compiler's codegen, mapping to Rust's f64 methods.
-#
-# Usage:
-#   import std.math
-#
-#   x = math.sqrt(16.0)  # 4.0
-#   y = math.pi          # 3.14159...
-#
-# Note: Like Python, you must import the module before using it.
+"""
+Math module - standard mathematical helpers.
+
+This module dogfoods direct `rust::` interop:
+- constants come from Rust std modules
+- functions are thin Incan wrappers over direct Rust crate imports
+
+Constants
+=========
+
+math.PI           - The ratio of a circle's circumference to its diameter (π)
+math.E            - Euler's number, the base of natural logarithms
+math.TAU          - Tau = 2π, the ratio of circumference to radius
+math.INFINITY     - Positive infinity
+math.NAN          - Not a Number
+
+Functions
+=========
+
+Basic:
+  math.sqrt(x)    - Square root
+  math.abs(x)     - Absolute value
+  math.floor(x)   - Largest integer ≤ x
+  math.ceil(x)    - Smallest integer ≥ x
+
+Power/Log:
+  math.pow(x, y)  - x raised to power y
+  math.exp(x)     - e raised to power x
+  math.log(x)     - Natural logarithm (base e)
+  math.log10(x)   - Base-10 logarithm
+
+Trigonometric:
+  math.sin(x)     - Sine (radians)
+  math.cos(x)     - Cosine (radians)
+  math.tan(x)     - Tangent (radians)
+  math.asin(x)    - Arc sine
+  math.acos(x)    - Arc cosine
+  math.atan(x)    - Arc tangent
+
+Hyperbolic:
+  math.sinh(x)    - Hyperbolic sine
+  math.cosh(x)    - Hyperbolic cosine
+  math.tanh(x)    - Hyperbolic tangent
+"""
+
+from rust::std::f64::consts import PI as RUST_PI, E as RUST_E, TAU as RUST_TAU
+from rust::std::f64 import INFINITY as RUST_INFINITY, NAN as RUST_NAN
+from rust::libm import (
+    sqrt as rust_sqrt,
+    fabs as rust_abs,
+    floor as rust_floor,
+    ceil as rust_ceil,
+    pow as rust_pow,
+    exp as rust_exp,
+    log as rust_log,
+    log10 as rust_log10,
+    sin as rust_sin,
+    cos as rust_cos,
+    tan as rust_tan,
+    asin as rust_asin,
+    acos as rust_acos,
+    atan as rust_atan,
+    sinh as rust_sinh,
+    cosh as rust_cosh,
+    tanh as rust_tanh,
+)
+
+pub const PI: float = RUST_PI
+pub const E: float = RUST_E
+pub const TAU: float = RUST_TAU
+pub const INFINITY: float = RUST_INFINITY
+pub const NAN: float = RUST_NAN
+
 
 # ============================================================================
-# Constants (accessed as math.pi, math.e, etc.)
+# Basic functions
 # ============================================================================
-#
-# math.pi   - The ratio of a circle's circumference to its diameter (π)
-# math.e    - Euler's number, the base of natural logarithms
-# math.tau  - Tau = 2π, the ratio of circumference to radius
-# math.inf  - Positive infinity
-# math.nan  - Not a Number
+pub def sqrt(x: float) -> float:
+    return rust_sqrt(x)
+
+
+pub def abs(x: float) -> float:
+    return rust_abs(x)
+
+
+pub def floor(x: float) -> float:
+    return rust_floor(x)
+
+
+pub def ceil(x: float) -> float:
+    return rust_ceil(x)
+
 
 # ============================================================================
-# Functions
+# Power/Log functions
 # ============================================================================
-#
-# Basic:
-#   math.sqrt(x)    - Square root
-#   math.abs(x)     - Absolute value
-#   math.floor(x)   - Largest integer ≤ x
-#   math.ceil(x)    - Smallest integer ≥ x
-#
-# Power/Log:
-#   math.pow(x, y)  - x raised to power y
-#   math.exp(x)     - e raised to power x
-#   math.log(x)     - Natural logarithm (base e)
-#   math.log10(x)   - Base-10 logarithm
-#
-# Trigonometric:
-#   math.sin(x)     - Sine (radians)
-#   math.cos(x)     - Cosine (radians)
-#   math.tan(x)     - Tangent (radians)
-#   math.asin(x)    - Arc sine
-#   math.acos(x)    - Arc cosine
-#   math.atan(x)    - Arc tangent
-#
-# Hyperbolic:
-#   math.sinh(x)    - Hyperbolic sine
-#   math.cosh(x)    - Hyperbolic cosine
-#   math.tanh(x)    - Hyperbolic tangent
+pub def pow(x: float, y: float) -> float:
+    return rust_pow(x, y)
+
+
+pub def exp(x: float) -> float:
+    return rust_exp(x)
+
+
+pub def log(x: float) -> float:
+    return rust_log(x)
+
+
+pub def log10(x: float) -> float:
+    return rust_log10(x)
+
 
 # ============================================================================
-# Implementation Note
+# Trigonometric functions
 # ============================================================================
-#
-# The math module is implemented as a compiler builtin. When you write:
-#
-#   import std.math
-#   dist = math.sqrt(x * x + y * y)
-#
-# The compiler generates:
-#
-#   let dist = ((x * x + y * y) as f64).sqrt();
-#
-# This approach was chosen because Rust's f64 methods are not standalone
-# functions that can be imported, but methods on the primitive type.
+pub def sin(x: float) -> float:
+    return rust_sin(x)
+
+
+pub def cos(x: float) -> float:
+    return rust_cos(x)
+
+
+pub def tan(x: float) -> float:
+    return rust_tan(x)
+
+
+pub def asin(x: float) -> float:
+    return rust_asin(x)
+
+
+pub def acos(x: float) -> float:
+    return rust_acos(x)
+
+
+pub def atan(x: float) -> float:
+    return rust_atan(x)
+
+
+# ============================================================================
+# Hyperbolic functions
+# ============================================================================
+pub def sinh(x: float) -> float:
+    return rust_sinh(x)
+
+
+pub def cosh(x: float) -> float:
+    return rust_cosh(x)
+
+
+pub def tanh(x: float) -> float:
+    return rust_tanh(x)

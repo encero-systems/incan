@@ -8,7 +8,7 @@ expression: rust_code
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.2");
+incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
 #[derive(Debug, Clone, FieldInfo, IncanClass)]
@@ -38,10 +38,10 @@ fn Circle(radius: f64) -> Circle {
     Circle { radius }
 }
 impl Circle {
-    fn area(&self) -> f64 {
+    pub fn area(&self) -> f64 {
         return 3.14159f64 * self.radius * self.radius;
     }
-    fn circumference(&self) -> f64 {
+    pub fn circumference(&self) -> f64 {
         return 2f64 * 3.14159f64 * self.radius;
     }
     /// Returns field metadata for this type.
@@ -71,16 +71,16 @@ fn Counter(count: i64) -> Counter {
     Counter { count }
 }
 impl Counter {
-    fn increment(&mut self) {
+    pub fn increment(&mut self) {
         self.count = self.count + 1;
     }
-    fn decrement(&mut self) {
+    pub fn decrement(&mut self) {
         self.count = self.count - 1;
     }
-    fn get_count(&self) -> i64 {
+    pub fn get_count(&self) -> i64 {
         return self.count;
     }
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.count = 0;
     }
     /// Returns field metadata for this type.
@@ -110,19 +110,19 @@ fn Stack(items: Vec<i64>) -> Stack {
     Stack { items }
 }
 impl Stack {
-    fn push(&mut self, item: i64) {
+    pub fn push(&mut self, item: i64) {
         self.items.push(item);
     }
-    fn pop(&self) -> i64 {
+    pub fn pop(&self) -> i64 {
         if self.items.len() as i64 > 0 {
             return self.items.pop().unwrap_or_default();
         }
         return -1;
     }
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         return self.items.len() as i64 == 0;
     }
-    fn size(&self) -> i64 {
+    pub fn size(&self) -> i64 {
         return self.items.len() as i64;
     }
     /// Returns field metadata for this type.
@@ -152,13 +152,13 @@ fn Calculator(name: String) -> Calculator {
     Calculator { name }
 }
 impl Calculator {
-    fn add(&self, a: i64, b: i64) -> i64 {
+    pub fn add(&self, a: i64, b: i64) -> i64 {
         return a + b;
     }
-    fn subtract(&self, a: i64, b: i64) -> i64 {
+    pub fn subtract(&self, a: i64, b: i64) -> i64 {
         return a - b;
     }
-    fn multiply(&self, a: i64, b: i64) -> i64 {
+    pub fn multiply(&self, a: i64, b: i64) -> i64 {
         return a * b;
     }
     /// Returns field metadata for this type.
@@ -189,7 +189,7 @@ fn Person(name: String, age: i64) -> Person {
     Person { name, age }
 }
 impl Person {
-    fn greet(&self) -> String {
+    pub fn greet(&self) -> String {
         return {
             let __parts: [&str; 2usize] = ["Hello, I'm ", ""];
             let __args: Vec<String> = vec![format!("{}", self.name)];
@@ -233,7 +233,7 @@ fn Employee(person: Person, employee_id: i64) -> Employee {
     Employee { person, employee_id }
 }
 impl Employee {
-    fn get_info(&self) -> String {
+    pub fn get_info(&self) -> String {
         let greeting = self.person.greet();
         return {
             let __parts: [&str; 3usize] = ["", " (ID: ", ")"];

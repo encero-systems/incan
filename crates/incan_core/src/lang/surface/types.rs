@@ -22,8 +22,6 @@ pub enum SurfaceTypeId {
     // Channels
     Sender,
     Receiver,
-    UnboundedSender,
-    UnboundedReceiver,
     OneshotSender,
     OneshotReceiver,
 
@@ -121,24 +119,6 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         &[],
         SurfaceTypeKind::Generic,
         "Bounded channel receiver.",
-        RFC::_000,
-        Since(0, 1),
-    ),
-    info(
-        SurfaceTypeId::UnboundedSender,
-        "UnboundedSender",
-        &[],
-        SurfaceTypeKind::Generic,
-        "Unbounded channel sender.",
-        RFC::_000,
-        Since(0, 1),
-    ),
-    info(
-        SurfaceTypeId::UnboundedReceiver,
-        "UnboundedReceiver",
-        &[],
-        SurfaceTypeKind::Generic,
-        "Unbounded channel receiver.",
         RFC::_000,
         Since(0, 1),
     ),
@@ -263,6 +243,18 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
     ),
 ];
 
+/// Canonical Incan name of the task join error type (`"TaskJoinError"`).
+///
+/// Used by the typechecker when wrapping `await JoinHandle[T]` in `Result[T, TaskJoinError]` to avoid scattering the
+/// literal string.
+pub const TASK_JOIN_ERROR_TYPE_NAME: &str = "TaskJoinError";
+
+/// Canonical Incan name of the semaphore acquire error type (`"SemaphoreAcquireError"`).
+pub const SEMAPHORE_ACQUIRE_ERROR_TYPE_NAME: &str = "SemaphoreAcquireError";
+
+/// Canonical Incan name of the semaphore permit type (`"SemaphorePermit"`).
+pub const SEMAPHORE_PERMIT_TYPE_NAME: &str = "SemaphorePermit";
+
 /// Return the stdlib module path that owns this surface type, if it is not globally available.
 ///
 /// This is used by the compiler to enforce RFC 022 “explicit imports” for stdlib-scoped types
@@ -281,8 +273,6 @@ pub fn stdlib_module_path(id: SurfaceTypeId) -> Option<&'static str> {
         // Channels
         SurfaceTypeId::Sender
         | SurfaceTypeId::Receiver
-        | SurfaceTypeId::UnboundedSender
-        | SurfaceTypeId::UnboundedReceiver
         | SurfaceTypeId::OneshotSender
         | SurfaceTypeId::OneshotReceiver => Some("std.async.channel"),
 

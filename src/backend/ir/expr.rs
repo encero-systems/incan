@@ -297,8 +297,10 @@ pub enum VarRefKind {
     Value,
     /// A type name (models/classes/enums/newtypes) in expression position, i.e. `Type.method(...)`.
     TypeName,
-    /// An externally-imported name (e.g. `from rust::... import Foo`) which behaves namespace-like in Rust.
+    /// A non-local imported/module name that behaves namespace-like in emitted Rust.
     ExternalName,
+    /// A `rust::...` imported name that should use Rust interop argument conversion rules.
+    ExternalRustName,
 }
 
 /// Binary operators

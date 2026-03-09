@@ -8,7 +8,7 @@ expression: rust_code
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.2");
+incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
 fn test_print_builtin() {
@@ -66,7 +66,7 @@ fn test_int_builtin() {
 }
 fn test_float_builtin() {
     let whole = 42;
-    let decimal = whole as f64;
+    let decimal = (whole) as f64;
     println!("{}", decimal);
 }
 fn test_bool_builtin() {

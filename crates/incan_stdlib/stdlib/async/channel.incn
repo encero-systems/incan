@@ -1,198 +1,250 @@
 """
-Async Channel Primitives
+Async channel primitives backed by explicit runtime adapters.
 
 This module provides MPSC (Multi-Producer, Single-Consumer) channels for async message passing between tasks.
-
 Channels are the primary way to communicate between concurrent tasks safely.
+
+Contains the following primitives:
+
+- `channel(buffer)`:     create a bounded MPSC channel
+- `unbounded_channel()`: create an unbounded MPSC channel
+- `oneshot()`:           create a one-shot channel for sending a single value
 """
+import std.async  # needed to activate the async prelude
+from std.traits.error import Error
+from rust::incan_stdlib::async::channel import (
+    RawSender,
+    RawReceiver,
+    RawOneshotSender,
+    RawOneshotReceiver,
+    runtime_channel,
+    runtime_unbounded_channel,
+    runtime_oneshot,
+    runtime_sender_send,
+    runtime_sender_try_send,
+    runtime_sender_is_closed,
+    runtime_receiver_recv,
+    runtime_receiver_try_recv,
+    runtime_receiver_close,
+    runtime_oneshot_sender_send,
+    runtime_oneshot_receiver_recv,
+)
 
-import std.async
+# ============================================================================
+# Error Types
+# ============================================================================
 
-# Error types for channel operations
-model SendError[T] with Error:
+pub model SendError[T] with Error:
     """
-    Error when sending on a closed channel.
-    
-    Contains the value that failed to send, allowing recovery:
-    
-    ```incan
-    match await tx.send(my_data):
-        Ok(_) => println("Sent!")
-        Err(e) =>
-            # Recover the unsent value via .value field
-            println(f"Channel closed, couldn't send: {e.value:?}")
-            save_for_retry(e.value)
-    ```
+    Error returned when a send operation fails.
+
+    Preserves the unsent value so callers can recover it or retry. This is used for closed-channel sends and for bounded
+    `try_send()` calls that fail immediately instead of waiting.
+
+    Example:
+        match await tx.send(my_data):
+            Ok(_) => println("sent")
+            Err(err) => println(f"channel closed, retry later: {err.value}")
     """
     value: T
-    
+
     def message(self) -> str:
-        return "channel closed: receiver dropped"
+        return "channel send failed"
+
+    def source(self) -> Option[str]:
+        return None
 
 
-model RecvError with Error:
-    """Error when receiving on a closed channel"""
+pub model RecvError with Error:
+    """
+    Error returned when a one-shot receive fails because the sender was dropped.
     
+    `RecvError` is used by one-shot receivers, where the sender may disappear before producing its single value.
+    
+    Example:
+        match await rx.recv():
+            Ok(value) => println(f"received: {value}")
+            Err(err) => println(err.message())
+    """
     def message(self) -> str:
         return "channel closed: no more messages"
 
+    def source(self) -> Option[str]:
+        return None
 
-# Sender half of a channel
-model Sender[T]:
-    """
-    The sending half of an MPSC channel.
+# ============================================================================
+# Channel Types
+# ============================================================================
 
-    MPSC stands for Multi-Producer, Single-Consumer.
-    
-    Multiple senders can be cloned from a single sender,
-    allowing multiple producers.
+@derive(Clone)
+pub type Sender[T] = newtype RawSender[T]:
     """
-    
+    `Sender[T]` is the sending half of an MPSC channel.
+    Multiple senders can be cloned from a single sender, allowing multiple
+    producers to feed one receiver.
+    """
+
     async def send(self, value: T) -> Result[None, SendError[T]]:
         """
         Send a value through the channel.
-        
-        Blocks if the channel buffer is full (for bounded channels).
-        Returns Err if the receiver has been dropped.
+
+        For bounded channels, this waits for capacity when the buffer is full.
+        Returns `Err(SendError(...))` if the receiver has been dropped.
         """
-        ...
-    
+        match await runtime_sender_send(self.0, value):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(SendError(value=err.into_value()))
+
     def try_send(self, value: T) -> Result[None, SendError[T]]:
         """
         Try to send without blocking.
-        
-        Returns immediately with Err if the channel is full or closed.
+
+        Returns immediately. On bounded channels it fails when the buffer is full;
+        on any channel it fails if the receiver has already closed.
         """
-        ...
-    
+        match runtime_sender_try_send(self.0, value):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(SendError(value=err.into_value()))
+
     def is_closed(self) -> bool:
-        """Check if the receiver has been dropped"""
-        ...
+        """Check whether the receiver side has been closed."""
+        return runtime_sender_is_closed(self.0)
+
+    def clone(self) -> Self:
+        """Create another sending handle for the same channel."""
+        return Sender(self.0.clone())
 
 
-# Receiver half of a channel
-model Receiver[T]:
+
+pub type Receiver[T] = newtype RawReceiver[T]:
     """
-    The receiving half of an MPSC channel.
-    
-    Only one receiver exists per channel.
+    `Receiver[T]` is the receiving half of an MPSC channel.
+    A channel has exactly one receiver, which pulls values in send order.
     """
     
     async def recv(self) -> Option[T]:
         """
         Receive the next value.
-        
-        Returns None if the channel is closed and empty.
-        Blocks until a value is available or channel is closed.
+
+        This waits until a value is available or the channel closes.
+        Returns `None` only after the channel is closed and fully drained.
         """
-        ...
-    
+        return await runtime_receiver_recv(self.0)
+
     def try_recv(self) -> Option[T]:
         """
         Try to receive without blocking.
-        
+
         Returns None immediately if no value is available.
         """
-        ...
-    
-    def close(self) -> None:
-        """Close the channel, preventing further sends"""
-        ...
+        return runtime_receiver_try_recv(self.0)
 
+    def close(self) -> None:
+        """Close the channel, preventing further sends."""
+        return runtime_receiver_close(self.0)
 
 # ============================================================================
 # Channel Creation Functions
 # ============================================================================
 
-def channel[T](buffer: int) -> Tuple[Sender[T], Receiver[T]]:
+pub def channel[T](buffer: int) -> Tuple[Sender[T], Receiver[T]]:
     """
     Create a bounded MPSC channel.
-    
-    The channel can hold up to `buffer` messages before send() will block waiting for capacity.
-    
+
+    The channel can hold up to `buffer` messages before `send()` waits for capacity.
+
     Example:
-    ```incan
-    tx, rx = channel[str](32)  # Buffer of 32 messages
-    
-    # Producer task
-    async def producer() -> None:
-        await tx.send("hello")
-        await tx.send("world")
-    
-    # Consumer task
-    async def consumer() -> None:
-        while True:
-            match await rx.recv():
-                Some(msg) => println(f"Got: {msg}")
-                None => break  # Channel closed
-    ```
-    
-    Maps to: tokio::sync::mpsc::channel(buffer)
+        tx, rx = channel[str](32)
+
+        async def producer(tx: Sender[str]) -> None:
+            match await tx.send("hello"):
+                Ok(_) => println("sent hello")
+                Err(err) => println(err.message())
+
+            match await tx.send("world"):
+                Ok(_) => println("sent world")
+                Err(err) => println(err.message())
+
+        async def consumer(rx: Receiver[str]) -> None:
+            while True:
+                match await rx.recv():
+                    Some(msg) => println(f"got: {msg}")
+                    None => break
     """
-    ...
+    raw_tx, raw_rx = runtime_channel(buffer)
+    return (Sender(raw_tx), Receiver(raw_rx))
 
 
-def unbounded_channel[T]() -> Tuple[Sender[T], Receiver[T]]:
+pub def unbounded_channel[T]() -> Tuple[Sender[T], Receiver[T]]:
     """
     Create an unbounded MPSC channel.
-    
-    The channel has no capacity limit - send() never blocks.
-    Use with caution: can cause memory issues if producers outpace consumers.
-    
+
+    The channel has no capacity limit, so `send()` completes as long as the receiver still exists.
+    Use with caution as it can cause memory issues if producers outpace consumers.
+
     Example:
-    ```incan
-    tx, rx = unbounded_channel[int]()
-    
-    # Sends never block
-    tx.send(1)
-    tx.send(2)
-    tx.send(3)
-    ```
-    
-    Maps to: tokio::sync::mpsc::unbounded_channel()
+        tx, rx = unbounded_channel[int]()
+        match await tx.send(1):
+            Ok(_) => println("sent")
+            Err(err) => println(err.message())
     """
-    ...
-
+    raw_tx, raw_rx = runtime_unbounded_channel()
+    return (Sender(raw_tx), Receiver(raw_rx))
 
 # ============================================================================
-# OneShot Channel (single value)
+# OneShot Channel
 # ============================================================================
+#  A one-shot channel carries exactly one value from one sender to one receiver.
+#  This is useful for returning a single result from a background task.
 
-model OneshotSender[T]:
-    """Sender for a one-shot channel (single value)"""
-    
+pub type OneshotSender[T] = newtype RawOneshotSender[T]:
+    """
+    `OneshotSender[T]` is the sending half of a one-shot channel.
+    It carries exactly one value from one sender to one receiver.
+    This is useful for returning a single result from a background task.
+    """
     def send(self, value: T) -> Result[None, T]:
-        """Send the value, consuming the sender"""
-        ...
+        """
+        Send the single value carried by this one-shot sender.
+        Returns the value back if the receiver is already gone.
+        """
+        match runtime_oneshot_sender_send(self.0, value):
+            Ok(_) => return Ok(None)
+            Err(value) => return Err(value)
 
 
-model OneshotReceiver[T]:
-    """Receiver for a one-shot channel (single value)"""
-    
+pub type OneshotReceiver[T] = newtype RawOneshotReceiver[T]:
+    """
+    `OneshotReceiver[T]` is the receiving half of a one-shot channel.
+    It waits for the one-shot value from the sender.
+    This is useful for returning a single result from a background task.
+    """
+
     async def recv(self) -> Result[T, RecvError]:
-        """Wait for and receive the value"""
-        ...
+        """Wait for the one-shot value or return `RecvError` if the sender was dropped."""
+        match await runtime_oneshot_receiver_recv(self.0):
+            Ok(value) => return Ok(value)
+            Err(_) => return Err(RecvError())
 
 
-def oneshot[T]() -> Tuple[OneshotSender[T], OneshotReceiver[T]]:
+pub def oneshot[T]() -> Tuple[OneshotSender[T], OneshotReceiver[T]]:
     """
     Create a one-shot channel for sending a single value.
-    
-    Useful for returning a result from a spawned task.
-    
+
+    This is useful for returning one result from a background task.
+
     Example:
-    ```incan
-    tx, rx = oneshot[int]()
-    
-    spawn(async () -> None:
-        result = expensive_computation()
-        tx.send(result)
-    )
-    
-    # Wait for the result
-    value = await rx.recv()
-    ```
-    
-    Maps to: tokio::sync::oneshot::channel()
+        tx, rx = oneshot[int]()
+
+        async def produce(tx: OneshotSender[int]) -> None:
+            result = 42
+            match tx.send(result):
+                Ok(_) => println("delivered")
+                Err(value) => println(f"receiver dropped before delivery: {value}")
+
+        match await rx.recv():
+            Ok(value) => println(f"got: {value}")
+            Err(err) => println(err.message())
     """
-    ...
+    raw_tx, raw_rx = runtime_oneshot()
+    return (OneshotSender(raw_tx), OneshotReceiver(raw_rx))

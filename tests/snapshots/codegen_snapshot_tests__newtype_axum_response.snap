@@ -8,14 +8,14 @@ expression: rust_code
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.2");
+incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
-use axum::response::Response as AxumResponse;
+pub use axum::response::Response as AxumResponse;
 #[derive(Debug)]
 struct MyResponse(pub AxumResponse);
 impl MyResponse {
-    fn placeholder() -> MyResponse {
+    pub fn placeholder() -> MyResponse {
         ();
     }
     /// Returns field metadata for this type.

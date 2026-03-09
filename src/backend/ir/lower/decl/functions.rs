@@ -32,14 +32,7 @@ impl AstLowering {
             .params
             .iter()
             .map(|p| {
-                // Preserve generic type variables (`T`) as `IrType::Generic("T")` so trait-bound inference can reason
-                // about operations on them without relying on typechecker span annotations.
-                let base_ty = match &p.node.ty.node {
-                    ast::Type::Simple(name) if type_param_names.contains(name.as_str()) => {
-                        IrType::Generic(name.clone())
-                    }
-                    _ => self.lower_type(&p.node.ty.node),
-                };
+                let base_ty = self.lower_type_with_type_params(&p.node.ty.node, Some(&type_param_names));
                 // For mutable parameters, wrap in RefMut to track that it's a &mut reference
                 let ty = if p.node.is_mut {
                     IrType::RefMut(Box::new(base_ty.clone()))
@@ -70,10 +63,7 @@ impl AstLowering {
             })
             .collect();
 
-        let return_type = match &f.return_type.node {
-            ast::Type::Simple(name) if type_param_names.contains(name.as_str()) => IrType::Generic(name.clone()),
-            _ => self.lower_type(&f.return_type.node),
-        };
+        let return_type = self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names));
         let body = self.lower_statements(&f.body)?;
         self.scopes.pop();
 

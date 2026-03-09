@@ -16,8 +16,9 @@ use crate::lockfile::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint
 use crate::manifest::ProjectManifest;
 
 use super::common::{
-    build_inline_rust_import, build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_modules,
-    format_dependency_error, format_rust_from_import_path, format_rust_import_base_path,
+    StdlibUsage, build_inline_rust_import, build_source_map, cargo_command_flags, collect_inline_rust_imports,
+    collect_modules, collect_stdlib_usage, format_dependency_error, format_rust_from_import_path,
+    format_rust_import_base_path, merge_stdlib_extra_dependencies,
 };
 
 /// Generate or update incan.lock for a project.
@@ -51,6 +52,7 @@ pub fn lock_project(
     };
 
     let modules = collect_modules(&entry_path.to_string_lossy())?;
+    let stdlib_usage = collect_stdlib_usage(&modules);
     let mut inline_imports = Vec::new();
     for module in &modules {
         inline_imports.extend(collect_inline_rust_imports(module, false));
@@ -65,14 +67,16 @@ pub fn lock_project(
     }
     .normalized();
 
-    let resolved = resolve_dependencies(Some(&manifest), &inline_imports, true, &cargo_features).map_err(|errors| {
-        let mut msg = String::new();
-        let sources = build_source_map(&modules);
-        for err in errors {
-            msg.push_str(&format_dependency_error(&err, &sources));
-        }
-        CliError::failure(msg.trim_end())
-    })?;
+    let mut resolved =
+        resolve_dependencies(Some(&manifest), &inline_imports, true, &cargo_features).map_err(|errors| {
+            let mut msg = String::new();
+            let sources = build_source_map(&modules);
+            for err in errors {
+                msg.push_str(&format_dependency_error(&err, &sources));
+            }
+            CliError::failure(msg.trim_end())
+        })?;
+    merge_stdlib_extra_dependencies(&mut resolved, &stdlib_usage);
 
     let project_name = manifest
         .project
@@ -86,6 +90,7 @@ pub fn lock_project(
         &project_name,
         rust_edition,
         &resolved,
+        &stdlib_usage,
         &cargo_features,
     )?;
 
@@ -96,30 +101,46 @@ pub fn lock_project(
 ///
 /// Returns `None` if no manifest is present (standalone file compilation).
 /// Otherwise, loads or regenerates the lock file and returns the Cargo.lock payload.
-pub(crate) fn resolve_lock_payload(
-    project_root: &Path,
-    project_name: &str,
-    manifest: Option<&ProjectManifest>,
-    resolved: &ResolvedDependencies,
-    cargo_features: &CargoFeatureSelection,
-    locked: bool,
-    frozen: bool,
-) -> CliResult<Option<String>> {
+pub(crate) struct LockResolutionRequest<'a> {
+    pub project_root: &'a Path,
+    pub project_name: &'a str,
+    pub manifest: Option<&'a ProjectManifest>,
+    pub resolved: &'a ResolvedDependencies,
+    pub stdlib_usage: &'a StdlibUsage,
+    pub cargo_features: &'a CargoFeatureSelection,
+    pub locked: bool,
+    pub frozen: bool,
+}
+
+pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliResult<Option<String>> {
+    let LockResolutionRequest {
+        project_root,
+        project_name,
+        manifest,
+        resolved,
+        stdlib_usage,
+        cargo_features,
+        locked,
+        frozen,
+    } = request;
+
     if manifest.is_none() {
         return Ok(None);
     }
 
     let lock_path = project_root.join("incan.lock");
     let rust_edition = manifest.and_then(|m| m.build.as_ref().and_then(|b| b.rust_edition.clone()));
+    let mut resolved_with_stdlib = resolved.clone();
+    merge_stdlib_extra_dependencies(&mut resolved_with_stdlib, stdlib_usage);
     let fingerprint = compute_deps_fingerprint(
-        &resolved.dependencies,
-        &resolved.dev_dependencies,
+        &resolved_with_stdlib.dependencies,
+        &resolved_with_stdlib.dev_dependencies,
         cargo_features,
         Some(project_root),
     );
 
     let strict = locked || frozen;
-    if strict && let Some(message) = strict_git_source_error(resolved) {
+    if strict && let Some(message) = strict_git_source_error(&resolved_with_stdlib) {
         return Err(CliError::failure(message));
     }
     if lock_path.exists() {
@@ -146,7 +167,8 @@ pub(crate) fn resolve_lock_payload(
                 project_root,
                 project_name,
                 rust_edition.clone(),
-                resolved,
+                &resolved_with_stdlib,
+                stdlib_usage,
                 cargo_features,
             )?;
             return Ok(Some(lock.cargo_lock_payload));
@@ -158,7 +180,14 @@ pub(crate) fn resolve_lock_payload(
         return Err(CliError::failure("incan.lock is missing; run `incan lock`".to_string()));
     }
 
-    let lock = generate_lockfile(project_root, project_name, rust_edition, resolved, cargo_features)?;
+    let lock = generate_lockfile(
+        project_root,
+        project_name,
+        rust_edition,
+        &resolved_with_stdlib,
+        stdlib_usage,
+        cargo_features,
+    )?;
     Ok(Some(lock.cargo_lock_payload))
 }
 
@@ -168,6 +197,7 @@ pub(crate) fn generate_lockfile(
     project_name: &str,
     rust_edition: Option<String>,
     resolved: &ResolvedDependencies,
+    stdlib_usage: &StdlibUsage,
     cargo_features: &CargoFeatureSelection,
 ) -> CliResult<IncanLock> {
     let lock_dir = project_root.join("target").join("incan_lock");
@@ -176,6 +206,9 @@ pub(crate) fn generate_lockfile(
     generator.set_dev_dependencies(resolved.dev_dependencies.clone());
     generator.set_include_dev_dependencies(true);
     generator.set_rust_edition(rust_edition);
+    generator.set_needs_serde(stdlib_usage.needs_serde);
+    generator.set_needs_tokio(stdlib_usage.needs_tokio);
+    generator.set_needs_web(stdlib_usage.needs_web);
 
     let rust_code = "fn main() {}";
     generator

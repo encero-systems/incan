@@ -87,6 +87,13 @@ impl<'a> IrEmitter<'a> {
     pub(super) fn emit_stmt(&self, stmt: &IrStmt) -> Result<TokenStream, EmitError> {
         match &stmt.kind {
             IrStmtKind::Expr(expr) => {
+                // Lowering currently models tuple-unpack/chained-assignment expansion as a block
+                // expression used in statement position. Emit those inner statements directly so
+                // the introduced bindings remain visible to following statements.
+                if let IrExprKind::Block { stmts, value: None } = &expr.kind {
+                    let inner: Vec<TokenStream> = stmts.iter().map(|s| self.emit_stmt(s)).collect::<Result<_, _>>()?;
+                    return Ok(quote! { #(#inner)* });
+                }
                 let e = self.emit_expr(expr)?;
                 Ok(quote! { #e; })
             }

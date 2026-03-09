@@ -158,7 +158,7 @@ LSP (IDE-facing orchestration)
 Runtime crates (used by generated Rust programs, not the compiler)
   ├──▶ incan_stdlib
   │      - Traits + helpers (prelude, reflection, JSON helpers, etc.)
-  │      - `incan_stdlib::r#async`: `std.async` runtime facade backed by Tokio re-exports
+  │      - `incan_stdlib::r#async`: Rust backing for source-declared `std.async`
   └──▶ incan_derive
         - Proc-macro derives to generate impls for stdlib traits
 ```

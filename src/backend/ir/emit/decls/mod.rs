@@ -247,16 +247,20 @@ impl<'a> IrEmitter<'a> {
 
         let path_ts = join_path_tokens(&path_tokens);
 
-        // `pub use` in two cases:
+        // `pub use` module imports in two cases:
         // 1. Stdlib Incan-source imports (std.web.* → crate::__incan_std::web::*)
         // 2. Rust crate imports inside a `rust.module(...)` file — these are re-exported so users can do `from
         //    std.web.response import Json` and get axum::Json.
+        //
+        // Item imports (`from ... import X`) are always emitted as re-exports. The frontend already treats both
+        // `from module import X` and `from rust::crate import X` as module exports, so the backend must preserve that
+        // contract in generated Rust as well.
         let is_rust_crate_reexport = matches!(qualifier, IrImportQualifier::None) && self.rust_module_path.is_some();
-        let export_import = is_incan_source_stdlib || is_rust_crate_reexport;
+        let export_module_import = is_incan_source_stdlib || is_rust_crate_reexport;
 
         if let Some(alias_name) = alias {
             let alias_ident = Self::rust_ident(alias_name);
-            if export_import {
+            if export_module_import {
                 Ok(quote! {
                     pub use #path_ts as #alias_ident;
                 })
@@ -287,22 +291,16 @@ impl<'a> IrEmitter<'a> {
                     let path_ts_clone = join_path_tokens(&path_tokens_clone);
                     if let Some(alias) = &item.alias {
                         let alias_ident = Self::rust_ident(alias);
-                        if export_import {
-                            quote! { pub use #path_ts_clone :: #name_ident as #alias_ident; }
-                        } else {
-                            quote! { use #path_ts_clone :: #name_ident as #alias_ident; }
-                        }
-                    } else if export_import {
-                        quote! { pub use #path_ts_clone :: #name_ident; }
+                        quote! { pub use #path_ts_clone :: #name_ident as #alias_ident; }
                     } else {
-                        quote! { use #path_ts_clone :: #name_ident; }
+                        quote! { pub use #path_ts_clone :: #name_ident; }
                     }
                 })
                 .collect();
             Ok(quote! { #(#item_stmts)* })
         } else if path.len() == 1 && !is_stdlib {
             Ok(quote! {})
-        } else if export_import {
+        } else if export_module_import {
             Ok(quote! {
                 pub use #path_ts;
             })
