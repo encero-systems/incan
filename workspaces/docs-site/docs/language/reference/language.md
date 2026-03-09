@@ -95,11 +95,11 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 |---|---|---|---|
 | `std.web` | `web` | `std.web.app`, `std.web.routing`, `std.web.request`, `std.web.response`, `std.web.macros`, `std.web.prelude` | - |
 | `std.testing` | - | - | `assert` |
-| `std.async` | - | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.select`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
+| `std.async` | `async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.select`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
 | `std.serde` | `json` | `std.serde.json` | - |
 | `std.reflection` | - | - | - |
 | `std.derives` | - | `std.derives.string`, `std.derives.comparison`, `std.derives.copying`, `std.derives.collection` | - |
-| `std.traits` | - | `std.traits.convert`, `std.traits.ops`, `std.traits.error`, `std.traits.indexing`, `std.traits.callable` | - |
+| `std.traits` | - | `std.traits.convert`, `std.traits.ops`, `std.traits.error`, `std.traits.indexing`, `std.traits.callable`, `std.traits.prelude` | - |
 | `std.math` | - | - | - |
 
 ## Builtin exceptions
@@ -477,8 +477,6 @@ def main() -> None:
 | JoinHandle | `JoinHandle` |  | Generic | Handle to a spawned task. | RFC 000 | 0.1 | Stable |
 | Sender | `Sender` |  | Generic | Bounded channel sender. | RFC 000 | 0.1 | Stable |
 | Receiver | `Receiver` |  | Generic | Bounded channel receiver. | RFC 000 | 0.1 | Stable |
-| UnboundedSender | `UnboundedSender` |  | Generic | Unbounded channel sender. | RFC 000 | 0.1 | Stable |
-| UnboundedReceiver | `UnboundedReceiver` |  | Generic | Unbounded channel receiver. | RFC 000 | 0.1 | Stable |
 | OneshotSender | `OneshotSender` |  | Generic | Oneshot channel sender. | RFC 000 | 0.1 | Stable |
 | OneshotReceiver | `OneshotReceiver` |  | Generic | Oneshot channel receiver. | RFC 000 | 0.1 | Stable |
 | Vec | `Vec` |  | Generic | Rust interop `Vec<T>`. | RFC 005 | 0.1 | Stable |

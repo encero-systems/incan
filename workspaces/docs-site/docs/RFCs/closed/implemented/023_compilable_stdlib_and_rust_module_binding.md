@@ -575,8 +575,7 @@ non-`@rust.extern` async functions are compiled normally.
 
 ### Layering implications
 
-The Incan codebase follows a strict dependency direction
-(see [Layering Rules](../contributing/explanation/layering.md)):
+The Incan codebase follows a strict dependency direction:
 
 ```text
                   ┌────────────────┐
