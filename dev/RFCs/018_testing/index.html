@@ -4129,26 +4129,11 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-plan" class="md-nav__link">
+  <a href="#layers-affected" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation plan
+      Layers affected
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Implementation plan">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#implementation-dependencies-informative" class="md-nav__link">
-    <span class="md-ellipsis">
-      Implementation dependencies (informative)
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -4183,6 +4168,11 @@
 <p><strong>Status:</strong> Planned<br />
 <strong>Created:</strong> 2026-01-14<br />
 <strong>Author(s):</strong> Danny Meijer (@danny-meijer)<br />
+<strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/76">#76</a><br />
+<strong>RFC PR:</strong> —<br />
+<strong>Related:</strong> RFC 019 (test runner and CLI)<br />
+<strong>Written against:</strong> v0.1
+<strong>Shipped in:</strong> —
 <strong>Supersedes:</strong> RFC 001 (language portions), RFC 002 (language portions)  </p>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>Define the language-level testing primitives for Incan:</p>
@@ -4674,7 +4664,6 @@ authoritative.</p>
 <p>Note: this table should be used as a checkmark toward implementation completeness when this RFC is implemented.</p>
 </blockquote>
 <h3 id="language-assertion-api-surface">Language + assertion API surface<a class="headerlink" href="#language-assertion-api-surface" title="Permanent link">&para;</a></h3>
-<!-- markdownlint-disable MD013 -->
 <table>
 <thead>
 <tr>
@@ -4737,58 +4726,21 @@ authoritative.</p>
 </tr>
 </tbody>
 </table>
-<!-- markdownlint-enable MD013 -->
-
-<h2 id="implementation-plan">Implementation plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
-<p>Implement incrementally:</p>
-<ol>
-<li>Parse <code>assert</code> and <code>assert ... raises</code> forms (AST + diagnostics).</li>
-<li>Add a reserved <code>module tests:</code> block in the parser/AST.</li>
-<li>Implement <code>assert</code> lowering to <code>testing.assert_*</code> with message propagation.</li>
-<li>Implement <code>module tests:</code> scoping and stripping in non-test compilation modes.</li>
-<li>Implement <code>testing</code>-gated resolution rules for test constructs (imports/aliases).</li>
-</ol>
-<h3 id="implementation-dependencies-informative">Implementation dependencies (informative)<a class="headerlink" href="#implementation-dependencies-informative" title="Permanent link">&para;</a></h3>
-<p>This section is informative (non-normative). It exists to help contributors implement the RFC in a sensible dependency
-order.</p>
-<p>Suggested dependency order:</p>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>assert</code> parsing + lowering to <code>testing.assert_*</code></li>
-<li><code>module tests:</code> parsing + stripping rules</li>
-<li><code>testing</code>-gated decorator resolution</li>
-</ul>
-<p>Conformance tests to add (turn the guide-level examples into real tests):</p>
-<ul>
-<li>[ ] <code>assert a == b</code> lowers to <code>testing.assert_eq(a, b)</code> (rich equality diagnostics)</li>
-<li>[ ] <code>assert a == b, "msg"</code> lowers to <code>testing.assert_eq(a, b, "msg")</code></li>
-<li>[ ] <code>assert a != b</code> lowers to <code>testing.assert_ne(a, b)</code></li>
-<li>[ ] <code>assert a == b</code> where <code>T</code> lacks <code>Debug</code> emits a diagnostic suggesting <code>@derive(Debug)</code></li>
-<li>[ ] <code>assert x &gt; y, "msg"</code> lowers to <code>testing.assert(x &gt; y, "msg")</code></li>
-<li>[ ] <code>assert x &gt; y</code> lowers to <code>testing.assert(x &gt; y)</code></li>
-<li>[ ] boolean logic: <code>assert a and b</code>, <code>assert not a</code>, <code>assert (a and b) or c</code></li>
-<li>[ ] Option/Result methods: <code>assert opt.is_some()</code>, <code>assert res.is_ok()</code></li>
-<li>[ ] pattern matching: <code>assert opt is Some(_)</code>, <code>assert res is Err(_)</code></li>
-<li>[ ] ensure <code>assert x is y</code> is treated as pattern matching only (no identity semantics)</li>
-<li>[ ] <code>assert opt is Some(v)</code> binds <code>v</code> via <code>testing.assert_is_some</code></li>
-<li>[ ] <code>assert opt is Some(v), "msg"</code> binds <code>v</code> and passes <code>msg</code> through to <code>testing.assert_is_some</code></li>
-<li>[ ] <code>assert opt is None</code> lowers to <code>testing.assert_is_none</code></li>
-<li>[ ] <code>assert res is Ok(v)</code> / <code>assert res is Err(e)</code> binding behavior</li>
-<li>[ ] <code>assert call() raises ErrorType</code> lowers to <code>testing.assert_raises[ErrorType](lambda: call())</code></li>
-<li>[ ] <code>assert call() raises ErrorType, "msg"</code> lowers to <code>testing.assert_raises[ErrorType](lambda: call(), "msg")</code></li>
-<li>[ ] <code>assert call() raises E</code> matches exact runtime error type <code>E</code> (and matches subtypes only if runtime error subtyping
-  is supported)</li>
-<li>[ ] <code>from testing import *</code> is a compile-time error</li>
-<li>[ ] <code>assert opt is Some(v)</code> rejects shadowing <code>v</code> in the same block</li>
-<li>[ ] <code>module tests:</code> is stripped in <code>incan build</code>/<code>incan run</code> and type-checked in <code>incan --check</code></li>
-<li>[ ] only one <code>module tests:</code> per file (duplicate is a compile error)</li>
-<li>[ ] <code>module tests:</code> can access private (non-<code>pub</code>) names from the enclosing module</li>
-<li>[ ] names declared inside <code>module tests:</code> are not visible outside the test block</li>
+<li><strong>Lexer</strong> — <code>assert</code> must be treated as a soft keyword activated by <code>std.testing</code> imports, not a hard keyword. The lexer emits <code>Ident("assert")</code>; the parser promotes it via the keyword registry.</li>
+<li><strong>Parser</strong> — must parse the <code>assert &lt;expr&gt;</code> form, the <code>assert &lt;expr&gt;, &lt;msg&gt;</code> form, and the <code>assert &lt;expr&gt; raises &lt;Type&gt;</code> form as distinct AST nodes; must parse and validate <code>module tests:</code> as a reserved inline block producing a <code>TestModule</code> AST node; must enforce that <code>module tests:</code> appears at most once per file at module scope.</li>
+<li><strong>Typechecker</strong> — must gate resolution of test-only decorators and helpers behind <code>testing</code>-activated import context; must validate that names inside <code>module tests:</code> are not visible outside and that the block has read access to private module members.</li>
+<li><strong>Lowering</strong> — must lower <code>assert &lt;expr&gt;</code> to the appropriate <code>testing.assert_*</code> call based on expression shape (equality, inequality, option/result, pattern binding); must lower <code>assert &lt;expr&gt; raises &lt;Type&gt;</code> to <code>testing.assert_raises</code>; must strip <code>module tests:</code> bodies from non-test compilation modes.</li>
+<li><strong>Stdlib (<code>std.testing</code>)</strong> — <code>assert_eq</code>, <code>assert_ne</code>, <code>assert_is_some</code>, <code>assert_is_none</code>, <code>assert_raises</code>, <code>assert</code>, and their message-accepting overloads must conform to the desugaring rules specified in this RFC.</li>
+<li><strong>CLI</strong> — <code>incan build</code> and <code>incan run</code> must strip <code>module tests:</code> bodies; <code>incan --check</code> must typecheck them; <code>incan test</code> must include them in the compilation unit.</li>
 </ul>
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
 <ul>
-<li>RFC 019: Test Runner, CLI, and Ecosystem (<code>/RFCs/019_runner_testing/</code>)</li>
+<li>RFC 019: Test Runner, CLI, and Ecosystem</li>
 <li>Python <code>assert</code> statement: <code>https://docs.python.org/3/reference/simple_stmts.html#the-assert-statement</code></li>
 </ul>
+<!-- The "Design decisions" section (if present) was renamed from "Unresolved questions" once all open questions were resolved. If new unresolved questions arise during implementation, add an "Unresolved questions" section and move resolved items to "Design decisions" after resolution. -->
 
 
 

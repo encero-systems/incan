@@ -4501,19 +4501,37 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-plan" class="md-nav__link">
+  <a href="#layers-affected" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation plan
+      Layers affected
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Implementation plan">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation Plan
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Plan">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
   <a href="#implementation-dependencies-informative" class="md-nav__link">
     <span class="md-ellipsis">
       Implementation dependencies (informative)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conformance-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Conformance tests
     </span>
   </a>
   
@@ -4555,7 +4573,11 @@
 <p><strong>Status:</strong> Planned<br />
 <strong>Created:</strong> 2026-01-14<br />
 <strong>Author(s):</strong> Danny Meijer (@danny-meijer)<br />
+<strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/77">#77</a><br />
+<strong>RFC PR:</strong> —<br />
 <strong>Related:</strong> RFC 018 (language primitives for testing)<br />
+<strong>Written against:</strong> v0.1<br />
+<strong>Shipped in:</strong> —<br />
 <strong>Supersedes:</strong> RFC 007 (runner semantics), RFC 001/002 (runner portions)  </p>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>Define the test runner and CLI semantics for Incan (pytest-inspired), including:</p>
@@ -4577,8 +4599,7 @@ normative with RFC 018.</p>
 This RFC captures the runner/CLI behavior in one place, while language primitives are specified in RFC 018.</p>
 <h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
 <h3 id="how-to-read-this-rfc">How to read this RFC<a class="headerlink" href="#how-to-read-this-rfc" title="Permanent link">&para;</a></h3>
-<p>This RFC specifies <strong>runner and CLI</strong> behavior: discovery, collection-time evaluation, fixture injection and lifecycle,
-execution model (<code>--jobs</code>), selection (<code>-k</code>/<code>-m</code>), timeouts, and report formats.</p>
+<p>This RFC specifies <strong>runner and CLI</strong> behavior: discovery, collection-time evaluation, fixture injection and lifecycle, execution model (<code>--jobs</code>), selection (<code>-k</code>/<code>-m</code>), timeouts, and report formats.</p>
 <p>Language constructs (<code>assert</code>, <code>module tests:</code>) are specified in RFC 018.</p>
 <p>Scope boundary:</p>
 <ul>
@@ -4608,8 +4629,7 @@ execution model (<code>--jobs</code>), selection (<code>-k</code>/<code>-m</code
 <li>Reporting: stable test ids drive <code>-k</code>, <code>--list</code>, JSON/JUnit.</li>
 </ul>
 <h3 id="differences-from-pytest-cargo-test-jest-important">Differences from pytest / cargo test / jest (important)<a class="headerlink" href="#differences-from-pytest-cargo-test-jest-important" title="Permanent link">&para;</a></h3>
-<p>This RFC is pytest-inspired, but there are a few deliberate differences that are easy to miss if you bring strong
-pytest/Rust/Jest muscle memory:</p>
+<p>This RFC is pytest-inspired, but there are a few deliberate differences that are easy to miss if you bring strong pytest/Rust/Jest muscle memory:</p>
 <ul>
 <li><strong><code>@slow</code> is excluded by default</strong>: you must opt in via <code>incan test --slow</code> (closer to Rust’s ignored tests than pytest
   markers).</li>
@@ -4689,15 +4709,12 @@ pytest/Rust/Jest muscle memory:</p>
 <span class="k">def</span><span class="w"> </span><span class="nf">test_addition</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="nf">assert_eq</span><span class="p">(</span><span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="mi">5</span><span class="p">)</span>
 </code></pre></div>
-<p>Note: In test files, the entire file is already a test context. Do not wrap tests in <code>module tests:</code>; that construct is
-reserved for inline tests in production source files.</p>
+<p>Note: In test files, the entire file is already a test context. Do not wrap tests in <code>module tests:</code>; that construct is reserved for inline tests in production source files.</p>
 <h4 id="2-inline-test-only-module-blocks-recommended-for-unit-tests">2) Inline test-only module blocks (recommended for unit tests)<a class="headerlink" href="#2-inline-test-only-module-blocks-recommended-for-unit-tests" title="Permanent link">&para;</a></h4>
 <p>Inline tests live next to production code, but inside a <strong>test-only module block</strong>.</p>
 <p>See RFC 018 for the language-level <code>module tests:</code> example and scoping details.</p>
-<p>This keeps helpers/fixtures/test imports scoped to the test module. Stripping behavior in non-test builds is defined in
-RFC 018.</p>
-<p>A module block named <code>tests</code> (i.e. <code>module tests:</code>) is an exclusive test context; the language semantics are defined in
-RFC 018.</p>
+<p>This keeps helpers/fixtures/test imports scoped to the test module. Stripping behavior in non-test builds is defined in RFC 018.</p>
+<p>A module block named <code>tests</code> (i.e. <code>module tests:</code>) is an exclusive test context; the language semantics are defined in RFC 018.</p>
 <h3 id="when-to-use-inline-tests-vs-tests-files">When to use inline tests vs <code>tests/</code> files<a class="headerlink" href="#when-to-use-inline-tests-vs-tests-files" title="Permanent link">&para;</a></h3>
 <p>Both test contexts exist on purpose; they serve different goals.</p>
 <p>Use <strong>inline tests</strong> (<code>module tests:</code>) when:</p>
@@ -4811,17 +4828,14 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--durations<span class="w"> </span><span class="m">10</span><span class="w"> </span>tests/
 </code></pre></div>
 <h3 id="parallelism-and-shared-resources">Parallelism and shared resources<a class="headerlink" href="#parallelism-and-shared-resources" title="Permanent link">&para;</a></h3>
-<p>When tests run with <code>--jobs &gt; 1</code>, some tests can interfere with each other if they touch shared state (a database,
-external services, global singletons, etc.). Incan provides two stdlib-gated scheduling decorators:</p>
+<p>When tests run with <code>--jobs &gt; 1</code>, some tests can interfere with each other if they touch shared state (a database, external services, global singletons, etc.). Incan provides two stdlib-gated scheduling decorators:</p>
 <ul>
 <li><code>@serial</code>: run this test <em>alone</em> (exclusive against the entire test suite)</li>
-<li><code>@resource("name")</code>: run tests that share the same resource key exclusively, while allowing unrelated tests to
-  run in parallel</li>
+<li><code>@resource("name")</code>: run tests that share the same resource key exclusively, while allowing unrelated tests to run in parallel</li>
 </ul>
 <p>Important:</p>
 <ul>
-<li>With the worker-process model, <strong>session-scoped fixtures are per worker</strong>, not global to the entire run. Use
-  <code>--jobs 1</code> if you need a single shared session fixture.</li>
+<li>With the worker-process model, <strong>session-scoped fixtures are per worker</strong>, not global to the entire run. Use <code>--jobs 1</code> if you need a single shared session fixture.</li>
 </ul>
 <p>Example:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">module</span> <span class="k">tests</span><span class="p">:</span>
@@ -4839,11 +4853,11 @@ external services, global singletons, etc.). Incan provides two stdlib-gated sch
     <span class="k">def</span><span class="w"> </span><span class="nf">test_uses_fixed_port_8080</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="o">...</span>
 </code></pre></div>
-<p>Note: <code>@mark("db")</code> is <em>classification</em> for selection/reporting; it does not imply locking. Use <code>@resource("db")</code> when
-you need mutual exclusion.</p>
+<blockquote>
+<p>Note: <code>@mark("db")</code> is <em>classification</em> for selection/reporting; it does not imply locking. Use <code>@resource("db")</code> when you need mutual exclusion.</p>
+</blockquote>
 <h3 id="markers-pytest-style-and-marker-selection">Markers (pytest-style) and marker selection<a class="headerlink" href="#markers-pytest-style-and-marker-selection" title="Permanent link">&para;</a></h3>
-<p>Beyond the built-in markers (<code>@skip</code>, <code>@xfail</code>, <code>@slow</code>), Incan supports user-defined markers and marker-based
-selection:</p>
+<p>Beyond the built-in markers (<code>@skip</code>, <code>@xfail</code>, <code>@slow</code>), Incan supports user-defined markers and marker-based selection:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">module</span> <span class="k">tests</span><span class="p">:</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">mark</span>
 
@@ -4856,8 +4870,7 @@ selection:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;db and not flaky&quot;</span><span class="w"> </span>tests/
 </code></pre></div>
 <h3 id="default-marks-file-level-and-subtree-level-via-conftestincn">Default marks (file-level and subtree-level via <code>conftest.incn</code>)<a class="headerlink" href="#default-marks-file-level-and-subtree-level-via-conftestincn" title="Permanent link">&para;</a></h3>
-<p>Sometimes you want to classify a whole <em>group</em> of tests (e.g. everything under <code>tests/integrations/</code> is “integration”),
-without repeating <code>@mark("integration")</code> on every test. Incan supports default marks in the <code>tests/</code> test suite:</p>
+<p>Sometimes you want to classify a whole <em>group</em> of tests (e.g. everything under <code>tests/integrations/</code> is “integration”), without repeating <code>@mark("integration")</code> on every test. Incan supports default marks in the <code>tests/</code> test suite:</p>
 <ul>
 <li><strong>File-level</strong>: apply to all tests collected from a single test file.</li>
 <li><strong>Subtree-level</strong>: apply to all tests collected under a directory subtree, configured via <code>tests/**/conftest.incn</code>.</li>
@@ -4942,9 +4955,7 @@ test runner and contributes fixtures to tests in that directory subtree.</p>
 <span class="k">def</span><span class="w"> </span><span class="nf">test_ping</span><span class="p">(</span><span class="n">base_url</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="nf">assert_eq</span><span class="p">(</span><span class="n">base_url</span><span class="p">,</span> <span class="s2">&quot;http://localhost:8080&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p><code>conftest.incn</code> is only auto-discovered under <code>tests/</code> and only applies to tests located in that subtree.
-Inline tests in production source trees (e.g. <code>src/**</code> <code>module tests:</code> blocks) do not automatically receive <code>conftest</code>
-fixtures; share fixtures via explicit helper modules instead.</p>
+<p><code>conftest.incn</code> is only auto-discovered under <code>tests/</code> and only applies to tests located in that subtree. Inline tests in production source trees (e.g. <code>src/**</code> <code>module tests:</code> blocks) do not automatically receive <code>conftest</code> fixtures; share fixtures via explicit helper modules instead.</p>
 <h3 id="built-in-fixtures">Built-in fixtures<a class="headerlink" href="#built-in-fixtures" title="Permanent link">&para;</a></h3>
 <p>The test runner provides a small set of built-in fixtures:</p>
 <ul>
@@ -4952,10 +4963,7 @@ fixtures; share fixtures via explicit helper modules instead.</p>
 <li><code>tmp_workdir: Path</code>: runs the test with the working directory set to a fresh temp directory (restored afterward)</li>
 <li><code>env: TestEnv</code>: a helper for temporary environment variables (restored afterward)</li>
 </ul>
-<p>Use <code>tmp_path</code> when you just need a scratch directory for files and don’t want to change process state. Use
-<code>tmp_workdir</code> when the code under test relies on relative paths; it switches the process working directory to a fresh
-temp directory and yields its path. Use <code>env</code> to temporarily set/unset environment variables for a test, with automatic
-restoration afterward.</p>
+<p>Use <code>tmp_path</code> when you just need a scratch directory for files and don’t want to change process state. Use <code>tmp_workdir</code> when the code under test relies on relative paths; it switches the process working directory to a fresh temp directory and yields its path. Use <code>env</code> to temporarily set/unset environment variables for a test, with automatic restoration afterward.</p>
 <p>Example:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">module</span> <span class="k">tests</span><span class="p">:</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span><span class="p">,</span> <span class="n">tmp_workdir</span><span class="p">,</span> <span class="n">tmp_path</span><span class="p">,</span> <span class="n">env</span><span class="p">,</span> <span class="nc">TestEnv</span>
@@ -4981,13 +4989,11 @@ restoration afterward.</p>
 <p>Timeouts may be configured globally via CLI and overridden per test with a decorator (see reference-level rules).</p>
 <p>Warning:</p>
 <ul>
-<li>In the worker-process execution model, enforcing timeouts may terminate a worker process. In that case, fixture teardown
-  is best-effort and may not run (this is called out explicitly in the reference-level timeout semantics).</li>
+<li>In the worker-process execution model, enforcing timeouts may terminate a worker process. In that case, fixture teardown is best-effort and may not run (this is called out explicitly in the reference-level timeout semantics).</li>
 </ul>
 <h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
 <h3 id="collection-time-evaluatability-const-evaluable-reference-rules">Collection-time evaluatability (“const-evaluable”) (reference rules)<a class="headerlink" href="#collection-time-evaluatability-const-evaluable-reference-rules" title="Permanent link">&para;</a></h3>
-<p>Several runner features require evaluating expressions at collection time (before executing tests): <code>skipif</code>/<code>xfailif</code>
-conditions, <code>@parametrize</code> data (and ids), <code>TEST_MARKS</code>, and marker registries.</p>
+<p>Several runner features require evaluating expressions at collection time (before executing tests): <code>skipif</code>/<code>xfailif</code> conditions, <code>@parametrize</code> data (and ids), <code>TEST_MARKS</code>, and marker registries.</p>
 <p>In this RFC, “collection-time evaluatable” means “const-evaluable”, using the same rules as <code>const</code> initializers:</p>
 <ul>
 <li>allowed: literals, tuples/lists/dicts/sets of const-evaluable values, simple operators, and references to other consts</li>
@@ -5009,8 +5015,7 @@ conditions, <code>@parametrize</code> data (and ids), <code>TEST_MARKS</code>, a
 </ul>
 <p>Guidance:</p>
 <ul>
-<li>Keep <code>@parametrize</code> data simple and const-evaluable (literals, tuples, lists). Use fixtures or build values inside the
-  test body when you need <code>Path</code>, UUIDs, or domain objects.</li>
+<li>Keep <code>@parametrize</code> data simple and const-evaluable (literals, tuples, lists). Use fixtures or build values inside the test body when you need <code>Path</code>, UUIDs, or domain objects.</li>
 <li>Example: pass a filename as <code>str</code> and construct a <code>Path</code> inside the test.</li>
 </ul>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@parametrize</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;config.json&quot;</span><span class="p">,</span> <span class="s2">&quot;defaults.json&quot;</span><span class="p">])</span>
@@ -5018,13 +5023,10 @@ conditions, <code>@parametrize</code> data (and ids), <code>TEST_MARKS</code>, a
     <span class="k">let</span> <span class="n">path</span> <span class="o">=</span> <span class="n">tmp_path</span> <span class="o">/</span> <span class="n">name</span>
     <span class="k">assert</span> <span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span> <span class="o">==</span> <span class="kc">False</span>
 </code></pre></div>
-<p>If an expression required to be const-evaluable does not meet this, a <strong>test collection error</strong> (<code>TestCollectionError</code>)
-will be raised.</p>
+<p>If an expression required to be const-evaluable does not meet this, a <strong>test collection error</strong> (<code>TestCollectionError</code>) will be raised.</p>
 <p>Evaluation responsibility:</p>
 <ul>
-<li>Collection-time expressions are evaluated by the <strong>test runner</strong> during test collection (not by the compiler at compile
-  time). This allows collection-time probes like <code>platform()</code> and <code>feature(name)</code> to inspect the runtime environment
-  while still requiring the expression structure to be const-evaluable.</li>
+<li>Collection-time expressions are evaluated by the <strong>test runner</strong> during test collection (not by the compiler at compile time). This allows collection-time probes like <code>platform()</code> and <code>feature(name)</code> to inspect the runtime environment while still requiring the expression structure to be const-evaluable.</li>
 <li>The compiler validates that the expression is structurally const-evaluable; the runner evaluates it at collection time.</li>
 </ul>
 <h3 id="error-categories-reference-rules">Error categories (reference rules)<a class="headerlink" href="#error-categories-reference-rules" title="Permanent link">&para;</a></h3>
@@ -5065,8 +5067,7 @@ will be raised.</p>
 </li>
 </ul>
 <h3 id="testing-gated-resolution">Testing-gated resolution<a class="headerlink" href="#testing-gated-resolution" title="Permanent link">&para;</a></h3>
-<p>The runner must only recognize testing constructs when they resolve to the <code>testing</code> module (imports and aliases) as
-specified in RFC 018.</p>
+<p>The runner must only recognize testing constructs when they resolve to the <code>testing</code> module (imports and aliases) as specified in RFC 018.</p>
 <h3 id="test-contexts">Test contexts<a class="headerlink" href="#test-contexts" title="Permanent link">&para;</a></h3>
 <p>Test discovery operates on a set of <code>.incn</code> files selected by the CLI path argument.</p>
 <p>A file contributes tests/fixtures if it contains one or more <strong>test contexts</strong>:</p>
@@ -5079,11 +5080,9 @@ specified in RFC 018.</p>
 <p>A file may contain at most one <code>module tests:</code> block (enforced by the compiler; see RFC 018).</p>
 <p>Restriction:</p>
 <ul>
-<li>A file that is a <strong>test file context</strong> (by name) must not also contain <code>module tests:</code> (restriction defined in RFC 018).
-  This avoids a redundant/ambiguous “test context inside a test context” model and keeps the mental model simple.</li>
+<li>A file that is a <strong>test file context</strong> (by name) must not also contain <code>module tests:</code> (restriction defined in RFC 018). This avoids a redundant/ambiguous “test context inside a test context” model and keeps the mental model simple.</li>
 </ul>
-<p>Rationale: a single inline test block keeps stripping rules, tooling, and scoping simple. This restriction may be
-relaxed in a future RFC once the feature is implemented and exercised in real codebases.</p>
+<p>Rationale: a single inline test block keeps stripping rules, tooling, and scoping simple. This restriction may be relaxed in a future RFC once the feature is implemented and exercised in real codebases.</p>
 <h3 id="what-is-a-test">What is a test?<a class="headerlink" href="#what-is-a-test" title="Permanent link">&para;</a></h3>
 <p>Within a test context, a function is a test if:</p>
 <ul>
@@ -5103,37 +5102,30 @@ relaxed in a future RFC once the feature is implemented and exercised in real co
 <p>Fixture resolution happens at collection time.</p>
 <p>Rules:</p>
 <ul>
-<li>If a test parameter has no matching fixture (including built-in fixtures), it is a <strong>test collection error</strong>
-  (<code>TestCollectionError</code>).</li>
+<li>If a test parameter has no matching fixture (including built-in fixtures), it is a <strong>test collection error</strong> (<code>TestCollectionError</code>).</li>
 <li>If fixture dependencies contain a cycle, it is a <strong>test collection error</strong> (<code>TestCollectionError</code>).</li>
-<li>If multiple fixtures with the same name are visible at the same precedence level (e.g. duplicate definitions in the same
-  file), it is a <strong>test collection error</strong> (<code>TestCollectionError</code>).</li>
+<li>If multiple fixtures with the same name are visible at the same precedence level (e.g. duplicate definitions in the same file), it is a <strong>test collection error</strong> (<code>TestCollectionError</code>).</li>
 </ul>
 <h3 id="fixture-scopes">Fixture scopes<a class="headerlink" href="#fixture-scopes" title="Permanent link">&para;</a></h3>
 <p><code>@fixture(scope="function"|"module"|"session", autouse=true|false)</code>:</p>
 <ul>
 <li><strong>function</strong>: created/teardown per test case</li>
 <li><strong>module</strong>: shared across all tests collected from the same source file</li>
-<li><strong>session</strong>: shared across the entire <code>incan test</code> run (note: under worker-process parallelism, session scope is per
-  worker process unless a global coordinator is introduced)</li>
+<li><strong>session</strong>: shared across the entire <code>incan test</code> run (note: under worker-process parallelism, session scope is per worker process unless a global coordinator is introduced)</li>
 </ul>
 <h3 id="autouse-fixtures-reference-rules">Autouse fixtures (reference rules)<a class="headerlink" href="#autouse-fixtures-reference-rules" title="Permanent link">&para;</a></h3>
 <p>An autouse fixture (<code>@fixture(..., autouse=true)</code>) runs automatically without being listed as a parameter.</p>
 <p>Where autouse applies:</p>
 <ul>
 <li>In a <strong>test file context</strong>, autouse fixtures defined in that file apply to all tests in that file.</li>
-<li>In an <strong>inline <code>module tests:</code> context</strong>, autouse fixtures defined in the test module apply to all tests in that test
-  module.</li>
-<li>In <code>tests/**/conftest.incn</code>, autouse fixtures apply to all tests collected from files in that conftest’s directory
-  subtree (subject to precedence rules already defined for conftest).</li>
+<li>In an <strong>inline <code>module tests:</code> context</strong>, autouse fixtures defined in the test module apply to all tests in that test module.</li>
+<li>In <code>tests/**/conftest.incn</code>, autouse fixtures apply to all tests collected from files in that conftest’s directory subtree (subject to precedence rules already defined for conftest).</li>
 </ul>
 <p>Ordering and dependencies:</p>
 <ul>
 <li>Autouse fixtures may depend on other fixtures via parameters.</li>
-<li>For a given test case, the runner constructs the full fixture dependency graph (explicit + autouse) and executes setup
-  in dependency order (topological order).</li>
-<li>If multiple fixtures are otherwise independent, ordering must be deterministic. The tie-breaker must be fixture name
-  (lexicographic).</li>
+<li>For a given test case, the runner constructs the full fixture dependency graph (explicit + autouse) and executes setup in dependency order (topological order).</li>
+<li>If multiple fixtures are otherwise independent, ordering must be deterministic. The tie-breaker must be fixture name (lexicographic).</li>
 </ul>
 <p>Scope interaction:</p>
 <ul>
@@ -5146,17 +5138,14 @@ relaxed in a future RFC once the feature is implemented and exercised in real co
 </ul>
 <p>Failure behavior:</p>
 <ul>
-<li>If autouse fixture setup fails for a test case, the test is reported as failed due to fixture setup error (the test body
-  does not run). Teardown for already-created fixtures is best-effort.</li>
+<li>If autouse fixture setup fails for a test case, the test is reported as failed due to fixture setup error (the test body does not run). Teardown for already-created fixtures is best-effort.</li>
 </ul>
 <h3 id="fixture-teardown-via-yield-reference-rules">Fixture teardown via <code>yield</code> (reference rules)<a class="headerlink" href="#fixture-teardown-via-yield-reference-rules" title="Permanent link">&para;</a></h3>
 <p>A fixture may optionally provide teardown logic using a <code>yield</code> expression, following Python/pytest's model.</p>
 <p>Design note (Python alignment):</p>
 <ul>
-<li>A fixture that uses <code>yield</code> is a <strong>generator function</strong>. This is the same semantics as Python: <code>yield</code> in a function
-  body makes it a generator.</li>
-<li>The test runner detects generator-based fixtures and consumes them: it calls the generator to get the yielded value
-  (setup), injects that value into tests, and then resumes/exhausts the generator after the test (teardown).</li>
+<li>A fixture that uses <code>yield</code> is a <strong>generator function</strong>. This is the same semantics as Python: <code>yield</code> in a function body makes it a generator.</li>
+<li>The test runner detects generator-based fixtures and consumes them: it calls the generator to get the yielded value (setup), injects that value into tests, and then resumes/exhausts the generator after the test (teardown).</li>
 <li>This means <code>yield</code> has one meaning in the language (generator), and the runner uses that mechanism for setup/teardown.</li>
 </ul>
 <p>Form:</p>
@@ -5183,8 +5172,7 @@ relaxed in a future RFC once the feature is implemented and exercised in real co
 </ul>
 <p>Errors:</p>
 <ul>
-<li>If teardown fails, the test run is considered failed (report as an error tied to the tests that used the fixture; for
-  module/session scope, report at the end of the run).</li>
+<li>If teardown fails, the test run is considered failed (report as an error tied to the tests that used the fixture; for module/session scope, report at the end of the run).</li>
 </ul>
 <h3 id="keyword-selection-k-reference-rules">Keyword selection (<code>-k</code>) (reference rules)<a class="headerlink" href="#keyword-selection-k-reference-rules" title="Permanent link">&para;</a></h3>
 <p>CLI:</p>
@@ -5194,8 +5182,7 @@ relaxed in a future RFC once the feature is implemented and exercised in real co
 <p>Rules:</p>
 <ul>
 <li>Matching is performed against the test’s stable identifier (see “Stable test identifiers” below).</li>
-<li>The match is case-sensitive for now (future extensions may add richer expressions; this RFC only requires substring
-  matching).</li>
+<li>The match is case-sensitive for now (future extensions may add richer expressions; this RFC only requires substring matching).</li>
 </ul>
 <p>Examples:</p>
 <ul>
@@ -5208,11 +5195,9 @@ relaxed in a future RFC once the feature is implemented and exercised in real co
 </ul>
 <p>Rules:</p>
 <ul>
-<li>“Failure” means any result that would make the overall run fail (e.g. <code>FAILED</code>, <code>XPASS</code>, fixture setup error, teardown
-  error).</li>
+<li>“Failure” means any result that would make the overall run fail (e.g. <code>FAILED</code>, <code>XPASS</code>, fixture setup error, teardown error).</li>
 <li><code>XFAIL</code> does not count as a failure for <code>-x</code> (it is an expected failure).</li>
-<li>In sequential runs (<code>--jobs 1</code>), the runner stops executing further tests immediately after the first failure is
-  recorded.</li>
+<li>In sequential runs (<code>--jobs 1</code>), the runner stops executing further tests immediately after the first failure is recorded.</li>
 <li>With worker processes (<code>--jobs &gt; 1</code>):<ul>
 <li>the runner stops scheduling new tests after the first failure is recorded</li>
 <li>in-flight tests may complete and be reported (implementations may choose to terminate workers early, but should
@@ -5237,10 +5222,8 @@ relaxed in a future RFC once the feature is implemented and exercised in real co
 </ul>
 <p>Default marks:</p>
 <ul>
-<li>A <code>const TEST_MARKS: List[str]</code> binding (in a test file or in a <code>module tests:</code> context) adds default marks to all tests
-  collected from that context.</li>
-<li>A <code>const TEST_MARKS: List[str]</code> binding in <code>tests/**/conftest.incn</code> adds default marks to all tests collected from files
-  in that conftest’s directory subtree.</li>
+<li>A <code>const TEST_MARKS: List[str]</code> binding (in a test file or in a <code>module tests:</code> context) adds default marks to all tests collected from that context.</li>
+<li>A <code>const TEST_MARKS: List[str]</code> binding in <code>tests/**/conftest.incn</code> adds default marks to all tests collected from files in that conftest’s directory subtree.</li>
 </ul>
 <p>Unknown markers:</p>
 <ul>
@@ -5308,8 +5291,7 @@ relaxed in a future RFC once the feature is implemented and exercised in real co
 </ul>
 <p>Interaction with <code>-m</code>:</p>
 <ul>
-<li>If <code>--slow</code> is not set, <code>@slow</code> tests are excluded even if they would otherwise match <code>-m</code> (use <code>--slow</code> explicitly to
-  opt in).</li>
+<li>If <code>--slow</code> is not set, <code>@slow</code> tests are excluded even if they would otherwise match <code>-m</code> (use <code>--slow</code> explicitly to  opt in).</li>
 </ul>
 <h3 id="parallel-execution-and-resource-locking-reference-rules">Parallel execution and resource locking (reference rules)<a class="headerlink" href="#parallel-execution-and-resource-locking-reference-rules" title="Permanent link">&para;</a></h3>
 <h4 id="cli-parallelism">CLI parallelism<a class="headerlink" href="#cli-parallelism" title="Permanent link">&para;</a></h4>
@@ -5324,13 +5306,10 @@ relaxed in a future RFC once the feature is implemented and exercised in real co
 </ul>
 <p>Execution model (important for correctness):</p>
 <ul>
-<li>Parallelism in this RFC refers to <strong>multiple worker processes</strong> (xdist-style), not concurrent execution within a single
-  process. Each worker executes <strong>one test case at a time</strong>.</li>
-<li>This keeps process-global state changes (e.g. current working directory, environment variables) isolated per worker and
-  avoids flakiness from thread-level shared state.</li>
+<li>Parallelism in this RFC refers to <strong>multiple worker processes</strong> (xdist-style), not concurrent execution within a single process. Each worker executes <strong>one test case at a time</strong>.</li>
+<li>This keeps process-global state changes (e.g. current working directory, environment variables) isolated per worker and avoids flakiness from thread-level shared state.</li>
 <li>Session-scoped fixtures under worker processes are a common source of surprises. In this RFC:<ul>
-<li>Session-scoped fixtures are <strong>per worker process</strong> (i.e., created once per worker). This is simple, deterministic,
-  and avoids cross-process coordination.</li>
+<li>Session-scoped fixtures are <strong>per worker process</strong> (i.e., created once per worker). This is simple, deterministic, and avoids cross-process coordination.</li>
 <li>A future extension may introduce a coordinator for truly global session fixtures (once per overall run).</li>
 </ul>
 </li>
@@ -5345,13 +5324,9 @@ relaxed in a future RFC once the feature is implemented and exercised in real co
 <ul>
 <li>A test case may declare zero or more resources.</li>
 <li>Two test cases must not execute concurrently if they share any declared resource key.</li>
-<li><code>@serial</code> is equivalent to <code>@resource("__serial__")</code> and additionally conflicts with <em>all</em> other tests (i.e., it runs
-  alone).</li>
-<li>Resource locks apply to expanded parametrized cases as well (each case is scheduled independently but inherits the
-  same declared resources from the test function and/or per-case marks).</li>
-<li>Lock acquisition order: when a test declares multiple resources, the scheduler MUST acquire locks in lexicographic
-  order of resource key. This prevents deadlocks and remains valid if future implementations allow &gt;1 concurrent test per
-  worker.</li>
+<li><code>@serial</code> is equivalent to <code>@resource("__serial__")</code> and additionally conflicts with <em>all</em> other tests (i.e., it runs alone).</li>
+<li>Resource locks apply to expanded parametrized cases as well (each case is scheduled independently but inherits the same declared resources from the test function and/or per-case marks).</li>
+<li>Lock acquisition order: when a test declares multiple resources, the scheduler MUST acquire locks in lexicographic order of resource key. This prevents deadlocks and remains valid if future implementations allow &gt;1 concurrent test per worker.</li>
 </ul>
 <p>Non-goal:</p>
 <ul>
@@ -5359,8 +5334,7 @@ relaxed in a future RFC once the feature is implemented and exercised in real co
 </ul>
 <h3 id="output-reporting-and-runner-ergonomics-reference-rules">Output, reporting, and runner ergonomics (reference rules)<a class="headerlink" href="#output-reporting-and-runner-ergonomics-reference-rules" title="Permanent link">&para;</a></h3>
 <h3 id="stable-test-identifiers">Stable test identifiers<a class="headerlink" href="#stable-test-identifiers" title="Permanent link">&para;</a></h3>
-<p>The test runner must assign a stable identifier (“test id”) to each collected test case. This identifier is used by
-<code>--list</code>, <code>-k</code>, and machine-readable reports.</p>
+<p>The test runner must assign a stable identifier (“test id”) to each collected test case. This identifier is used by <code>--list</code>, <code>-k</code>, and machine-readable reports.</p>
 <p>Format (conceptual):</p>
 <ul>
 <li><code>&lt;relative_path&gt;::&lt;context&gt;::&lt;test_name&gt;[&lt;case_id&gt;]</code></li>
@@ -5482,8 +5456,7 @@ collection-time evaluatable subset:</p>
 <li>The flag may be provided multiple times to enable multiple features.</li>
 </ul>
 <h3 id="parametrization-reference-rules">Parametrization (reference rules)<a class="headerlink" href="#parametrization-reference-rules" title="Permanent link">&para;</a></h3>
-<p><code>@parametrize(argnames: str, argvalues: List[Tuple|case(...)], ids: List[str] | None = None)</code> expands a single test
-function into multiple test cases.</p>
+<p><code>@parametrize(argnames: str, argvalues: List[Tuple|case(...)], ids: List[str] | None = None)</code> expands a single test function into multiple test cases.</p>
 <p>Collection-time evaluatability:</p>
 <ul>
 <li><code>argvalues</code> must be collection-time evaluatable:<ul>
@@ -5495,9 +5468,7 @@ function into multiple test cases.</p>
 </ul>
 <p>Deliberate tightening vs earlier drafts:</p>
 <ul>
-<li>Complex runtime expressions in <code>argvalues</code> (e.g. calling constructors, IO, random) are intentionally disallowed in this
-  RFC because they undermine deterministic collection and stable test ids. Use fixtures to build complex objects from
-  const inputs, or construct values inside the test body.</li>
+<li>Complex runtime expressions in <code>argvalues</code> (e.g. calling constructors, IO, random) are intentionally disallowed in this RFC because they undermine deterministic collection and stable test ids. Use fixtures to build complex objects from const inputs, or construct values inside the test body.</li>
 </ul>
 <p>Case identifiers:</p>
 <ul>
@@ -5506,8 +5477,7 @@ function into multiple test cases.</p>
 <li>it must be collection-time evaluatable</li>
 <li>its length must equal the number of generated cases</li>
 <li>each id must be a <code>str</code></li>
-<li>ids must be unique within a single parametrized test function (duplicates are a <strong>test collection error</strong>
-  (<code>TestCollectionError</code>))</li>
+<li>ids must be unique within a single parametrized test function (duplicates are a <strong>test collection error</strong> (<code>TestCollectionError</code>))</li>
 <li>id format constraints:<ul>
 <li>ids must match the regex <code>^[A-Za-z0-9][A-Za-z0-9_.]*$</code></li>
 <li>ids must not contain <code>[</code> or <code>]</code> (reserved for stable id formatting)</li>
@@ -5525,22 +5495,19 @@ function into multiple test cases.</p>
 <li>The effective set of test cases is the cartesian product of the parameter sets.</li>
 <li>Expansion order is deterministic and follows source order of the decorators (top to bottom).</li>
 <li>Case id composition:<ul>
-<li>If any <code>@parametrize</code> provides <code>ids</code>, the composite case id joins components with <code>-</code> in decorator order (e.g.
-  <code>[lowercase-utf8]</code>).</li>
+<li>If any <code>@parametrize</code> provides <code>ids</code>, the composite case id joins components with <code>-</code> in decorator order (e.g. <code>[lowercase-utf8]</code>).</li>
 <li>Otherwise, join numeric indices with <code>-</code> (e.g. <code>[0-2]</code>).</li>
 </ul>
 </li>
 </ul>
 <p>Empty parameter list:</p>
 <ul>
-<li>If <code>argvalues</code> is empty (or the cartesian product is empty), no tests are generated for that parametrized function and
-  the runner should emit a warning.</li>
+<li>If <code>argvalues</code> is empty (or the cartesian product is empty), no tests are generated for that parametrized function and the runner should emit a warning.</li>
 </ul>
 <p>Errors:</p>
 <ul>
 <li>If the number of values in a case tuple does not match <code>argnames</code>, it is a <strong>test collection error</strong> (<code>TestCollectionError</code>).</li>
-<li>If values do not type-check against the test function’s parameter types, it is a <strong>test collection error</strong>
-  (<code>TestCollectionError</code>).</li>
+<li>If values do not type-check against the test function’s parameter types, it is a <strong>test collection error</strong> (<code>TestCollectionError</code>).</li>
 </ul>
 <h3 id="parametrize-per-case-marks">Parametrize per-case marks<a class="headerlink" href="#parametrize-per-case-marks" title="Permanent link">&para;</a></h3>
 <p><code>@parametrize</code> supports per-case marks via a <code>case(...)</code> helper from the <code>testing</code> module:</p>
@@ -5561,8 +5528,7 @@ function into multiple test cases.</p>
 </ul>
 <p>Resources declared per-case are merged with decorator-level resources for scheduling.</p>
 <h3 id="shared-fixtures-via-conftestincn-reference-rules">Shared fixtures via <code>conftest.incn</code> (reference rules)<a class="headerlink" href="#shared-fixtures-via-conftestincn-reference-rules" title="Permanent link">&para;</a></h3>
-<p>Any file named <code>conftest.incn</code> under <code>tests/</code> is discovered automatically and may contribute fixtures to tests in its
-directory subtree.</p>
+<p>Any file named <code>conftest.incn</code> under <code>tests/</code> is discovered automatically and may contribute fixtures to tests in its directory subtree.</p>
 <p>Recognized constructs in <code>conftest.incn</code>:</p>
 <ul>
 <li><code>@fixture</code>-decorated functions (fixture definitions)</li>
@@ -5570,9 +5536,7 @@ directory subtree.</p>
 <li><code>const TEST_MARKERS: List[str]</code> (marker registry for strict mode)</li>
 <li>imports required by the above</li>
 </ul>
-<p>Arbitrary top-level code in <code>conftest.incn</code> is <strong>not executed</strong> at collection time. Unlike pytest's conftest.py (which
-executes as a normal Python module), <code>conftest.incn</code> is parsed declaratively for fixture and marker definitions only.
-This avoids import-time side effects and keeps collection deterministic.</p>
+<p>Arbitrary top-level code in <code>conftest.incn</code> is <strong>not executed</strong> at collection time. Unlike pytest's conftest.py (which executes as a normal Python module), <code>conftest.incn</code> is parsed declaratively for fixture and marker definitions only. This avoids import-time side effects and keeps collection deterministic.</p>
 <p>Resolution:</p>
 <ul>
 <li>Fixtures defined in the same file as the test take precedence over fixtures from <code>conftest.incn</code>.</li>
@@ -5613,10 +5577,7 @@ This avoids import-time side effects and keeps collection deterministic.</p>
 </ul>
 <p>Concurrency note:</p>
 <ul>
-<li>Because <code>tmp_workdir</code> and <code>env</code> affect process-global state, they are only safe if tests do not run concurrently in the
-  same process. This RFC’s <code>--jobs</code> execution model uses worker processes; if an implementation deviates (e.g. thread-based
-  parallelism), it must add implicit global locking (treat <code>tmp_workdir</code>/<code>env</code> as <code>@serial</code>) or disallow these fixtures
-  under parallel execution.</li>
+<li>Because <code>tmp_workdir</code> and <code>env</code> affect process-global state, they are only safe if tests do not run concurrently in the same process. This RFC’s <code>--jobs</code> execution model uses worker processes; if an implementation deviates (e.g. thread-based parallelism), it must add implicit global locking (treat <code>tmp_workdir</code>/<code>env</code> as <code>@serial</code>) or disallow these fixtures under parallel execution.</li>
 </ul>
 <h3 id="timeouts-reference-rules">Timeouts (reference rules)<a class="headerlink" href="#timeouts-reference-rules" title="Permanent link">&para;</a></h3>
 <p>CLI:</p>
@@ -5630,8 +5591,7 @@ This avoids import-time side effects and keeps collection deterministic.</p>
 <p>Timeout behavior:</p>
 <ul>
 <li>On timeout, the test case is recorded as failed with a timeout reason.</li>
-<li>If a test is executed in its own worker process (the default <code>--jobs</code> model), an implementation may terminate the worker
-  process to enforce the timeout. In that case, fixture teardown is best-effort and may not run.<ul>
+<li>If a test is executed in its own worker process (the default <code>--jobs</code> model), an implementation may terminate the worker process to enforce the timeout. In that case, fixture teardown is best-effort and may not run.<ul>
 <li>This is acceptable for now; stronger teardown guarantees under timeout may be specified in a future RFC.</li>
 </ul>
 </li>
@@ -5683,16 +5643,13 @@ This avoids import-time side effects and keeps collection deterministic.</p>
 </ul>
 <p>CLI reference reconciliation:</p>
 <ul>
-<li>This RFC supersedes the <code>incan test</code> section of the CLI reference (<code>docs/tooling/reference/cli_reference.md</code>) for all
-  flags and behaviors specified here.</li>
-<li>Flags in the current CLI reference that are not mentioned in this RFC (e.g. <code>--fail-on-empty</code>, <code>-v</code>) remain valid unless
-  explicitly contradicted.</li>
+<li>This RFC supersedes the <code>incan test</code> section of the CLI reference (<code>docs/tooling/reference/cli_reference.md</code>) for all flags and behaviors specified here.</li>
+<li>Flags in the current CLI reference that are not mentioned in this RFC (e.g. <code>--fail-on-empty</code>, <code>-v</code>) remain valid unless explicitly contradicted.</li>
 <li>Once this RFC is implemented, the CLI reference must be updated to reflect the authoritative surface defined here.</li>
 </ul>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Top-level <code>@test</code> next to production functions</strong>: rejected; it pollutes the production namespace and makes it hard
-  to keep test-only imports/helpers contained.</li>
+<li><strong>Top-level <code>@test</code> next to production functions</strong>: rejected; it pollutes the production namespace and makes it hard to keep test-only imports/helpers contained.</li>
 <li><strong>Doctest-only</strong>: useful but insufficient for fixtures/parametrize/markers.</li>
 <li><strong>Magic language keywords for tests/fixtures</strong>: rejected; harms tooling and contradicts the “stdlib-gated” principle.</li>
 </ul>
@@ -5703,9 +5660,7 @@ This avoids import-time side effects and keeps collection deterministic.</p>
 <li>a pytest-style plugin ecosystem (revisit once core semantics are stable)</li>
 </ul>
 <h2 id="appendix-testing-surface-inventory-informative">Appendix: testing surface inventory (informative)<a class="headerlink" href="#appendix-testing-surface-inventory-informative" title="Permanent link">&para;</a></h2>
-<p>This appendix is a contributor-oriented inventory of the testing surface <strong>after this RFC is implemented</strong>, with an
-informative snapshot of what exists <strong>today</strong> (at time of writing). It is <strong>not normative</strong>; the spec sections above are
-authoritative.</p>
+<p>This appendix is a contributor-oriented inventory of the testing surface <strong>after this RFC is implemented</strong>, with an informative snapshot of what exists <strong>today</strong> (at time of writing). It is <strong>not normative</strong>; the spec sections above are authoritative.</p>
 <p>Legend:</p>
 <ul>
 <li><strong>Today</strong>: implementation status in the current repository at RFC creation time<ul>
@@ -5720,7 +5675,6 @@ authoritative.</p>
 <p>Note: this table should be used as a checkmark toward implementation completeness when this RFC is implemented.</p>
 </blockquote>
 <h3 id="test-runner-cli-surface">Test runner + CLI surface<a class="headerlink" href="#test-runner-cli-surface" title="Permanent link">&para;</a></h3>
-<!-- markdownlint-disable MD013 -->
 <table>
 <thead>
 <tr>
@@ -5895,9 +5849,16 @@ authoritative.</p>
 </tr>
 </tbody>
 </table>
-<!-- markdownlint-enable MD013 -->
-
-<h2 id="implementation-plan">Implementation plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>CLI (<code>incan test</code>)</strong> — the test runner is the primary deliverable of this RFC. It must implement test discovery (both <code>tests/</code> files and inline <code>module tests:</code> contexts), fixture graph resolution, parametrization expansion, marker evaluation, and parallel/serial scheduling with resource locking.</li>
+<li><strong><code>conftest.incn</code> support</strong> — the compiler and test runner must support shared fixture files discovered at directory boundaries, with precedence rules for fixture shadowing.</li>
+<li><strong>Typechecker</strong> — must validate fixture injection signatures, detect unresolvable fixture dependencies at collection time, and surface them as <code>TestCollectionError</code> rather than runtime failures.</li>
+<li><strong>Stdlib (<code>std.testing</code>)</strong> — <code>@fixture</code>, <code>@parametrize</code>, <code>@skip</code>, <code>@xfail</code>, <code>@timeout</code>, <code>@serial</code>, <code>@resource</code>, and the <code>TEST_MARKS</code> registry must be defined and consumable by the runner as specified in this RFC.</li>
+<li><strong>Build system</strong> — <code>incan test</code> must compile test modules against the project source root, enabling <code>from mymodule import ...</code> in test files without duplication; it must strip <code>module tests:</code> bodies from production builds.</li>
+<li><strong>Reporting layer</strong> — the runner must support <code>--format json</code>, <code>--junit &lt;path&gt;</code>, <code>--list</code>, <code>--durations</code>, and <code>--shuffle</code> as specified; JSON reports must include a stable <code>schema_version</code> field.</li>
+</ul>
+<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
 <p>Implement incrementally:</p>
 <ol>
 <li>Collection pipeline: discovery (test files + <code>module tests:</code> contexts) and stable test ids.</li>
@@ -5909,8 +5870,7 @@ authoritative.</p>
 <li>Reporting: list/durations/shuffle, JSON/JUnit, output capture.</li>
 </ol>
 <h3 id="implementation-dependencies-informative">Implementation dependencies (informative)<a class="headerlink" href="#implementation-dependencies-informative" title="Permanent link">&para;</a></h3>
-<p>This section is informative (non-normative). It exists to help contributors implement the RFC in a sensible dependency
-order.</p>
+<p>This section is informative (non-normative). It exists to help contributors implement the RFC in a sensible dependency order.</p>
 <p>Suggested dependency order:</p>
 <ul>
 <li>Discovery + stable test identifiers</li>
@@ -5920,7 +5880,8 @@ order.</p>
 <li>Parallel execution + resource locking</li>
 <li>Timeouts + reporting surfaces (JSON/JUnit, durations, list, shuffle)</li>
 </ul>
-<p>Conformance tests to add (turn the guide-level examples into real tests):</p>
+<h3 id="conformance-tests">Conformance tests<a class="headerlink" href="#conformance-tests" title="Permanent link">&para;</a></h3>
+<p>Turn the guide-level examples into real tests:</p>
 <ul>
 <li>[ ] stable test id formatting and <code>-k</code> filtering</li>
 <li>[ ] <code>testing.test</code> vs name-based discovery (<code>test_*</code>) in both test files and inline modules</li>
@@ -5945,11 +5906,12 @@ order.</p>
 </ul>
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
 <ul>
-<li>RFC 018: Language Primitives for Testing (<code>/RFCs/018_testing/</code>)</li>
+<li>RFC 018: Language Primitives for Testing</li>
 <li>pytest good practices (discovery): <code>https://docs.pytest.org/en/stable/goodpractices.html#test-discovery</code></li>
 <li>pytest fixtures: <code>https://docs.pytest.org/en/stable/explanation/fixtures.html</code></li>
 <li>pytest parametrize: <code>https://docs.pytest.org/en/stable/how-to/parametrize.html</code></li>
 </ul>
+<!-- The "Design decisions" section (if present) was renamed from "Unresolved questions" once all open questions were resolved. If new unresolved questions arise during implementation, add an "Unresolved questions" section and move resolved items to "Design decisions" after resolution. -->
 
 
 

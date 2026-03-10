@@ -3889,6 +3889,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#proposed-solution" class="md-nav__link">
     <span class="md-ellipsis">
       Proposed Solution
@@ -3982,28 +3991,19 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-plan" class="md-nav__link">
-    <span class="md-ellipsis">
-      Implementation Plan
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#alternatives-considered" class="md-nav__link">
     <span class="md-ellipsis">
-      Alternatives Considered
+      Alternatives considered
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Alternatives Considered">
+    <nav class="md-nav" aria-label="Alternatives considered">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#always-return-result" class="md-nav__link">
+  <a href="#always-return-result-for-fallible-operations" class="md-nav__link">
     <span class="md-ellipsis">
-      Always Return Result
+      Always return Result for fallible operations
     </span>
   </a>
   
@@ -4012,7 +4012,7 @@
           <li class="md-nav__item">
   <a href="#silent-defaults" class="md-nav__link">
     <span class="md-ellipsis">
-      Silent Defaults
+      Silent defaults
     </span>
   </a>
   
@@ -4024,9 +4024,27 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#references" class="md-nav__link">
+  <a href="#drawbacks" class="md-nav__link">
     <span class="md-ellipsis">
-      References
+      Drawbacks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unresolved-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unresolved questions
     </span>
   </a>
   
@@ -4051,11 +4069,16 @@
 
 
 <h1 id="rfc-014-error-handling-in-generated-rust-code">RFC 014: Error Handling in Generated Rust Code<a class="headerlink" href="#rfc-014-error-handling-in-generated-rust-code" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> Draft</p>
+<p><strong>Status:</strong> Draft<br />
+<strong>Created:</strong> 2025-12-01<br />
+<strong>Author(s):</strong> Danny Meijer (@danny-meijer)<br />
+<strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/81">#81</a><br />
+<strong>RFC PR:</strong> —<br />
+<strong>Related:</strong> RFC 013 (Rust crate dependencies)<br />
+<strong>Written against:</strong> v0.1<br />
+<strong>Shipped in:</strong> —  </p>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>The Incan compiler currently emits <code>.unwrap()</code> calls in generated Rust code for operations that can fail at runtime.
-This causes cryptic Rust panics when users encounter edge cases. This RFC proposes a phased approach to improve error
-handling in generated code.</p>
+<p>The Incan compiler currently emits <code>.unwrap()</code> calls in generated Rust code for operations that can fail at runtime. This causes cryptic Rust panics when users encounter edge cases. This RFC proposes a phased approach to improve error handling in generated code.</p>
 <h2 id="problem">Problem<a class="headerlink" href="#problem" title="Permanent link">&para;</a></h2>
 <p>Generated Rust code contains several <code>.unwrap()</code> patterns that can panic:</p>
 <div class="language-rust highlight"><pre><span></span><code><span class="c1">// Dict access - panics if key doesn&#39;t exist</span>
@@ -4080,6 +4103,12 @@ handling in generated code.</p>
 <li><strong>Graceful degradation</strong>: Some operations should return <code>None</code>/default instead of panicking</li>
 <li><strong>Future-proof</strong>: Design should support Incan-level error handling via <code>Result</code>/<code>Option</code>, <code>match</code>, and <code>?</code></li>
 </ol>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Python-style <code>try/except</code> blocks — Incan handles errors via <code>match</code> on <code>Result</code> and <code>Option</code>, not exception catching.</li>
+<li>Changing the Incan language surface for operations that currently have implicit semantics (e.g., <code>d[key]</code> still raises a <code>KeyError</code>-equivalent, not returns <code>None</code>).</li>
+<li>Full source-map infrastructure — source location in runtime messages is best-effort for this RFC.</li>
+</ul>
 <h2 id="proposed-solution">Proposed Solution<a class="headerlink" href="#proposed-solution" title="Permanent link">&para;</a></h2>
 <h3 id="phase-1-better-panic-messages-immediate">Phase 1: Better Panic Messages (Immediate)<a class="headerlink" href="#phase-1-better-panic-messages-immediate" title="Permanent link">&para;</a></h3>
 <p>Replace bare <code>.unwrap()</code> with <code>.unwrap_or_else()</code> that provides context:</p>
@@ -4113,7 +4142,7 @@ handling in generated code.</p>
 <span class="k">impl</span><span class="w"> </span><span class="n">std</span><span class="p">::</span><span class="n">fmt</span><span class="p">::</span><span class="n">Display</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">IncanError</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">fmt</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">f</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">mut</span><span class="w"> </span><span class="n">std</span><span class="p">::</span><span class="n">fmt</span><span class="p">::</span><span class="n">Formatter</span><span class="o">&lt;&#39;</span><span class="nb">_</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">std</span><span class="p">::</span><span class="n">fmt</span><span class="p">::</span><span class="nb">Result</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="k">match</span><span class="w"> </span><span class="bp">self</span><span class="w"> </span><span class="p">{</span>
-<span class="w">            </span><span class="n">IncanError</span><span class="p">::</span><span class="n">KeyError</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">key</span><span class="p">,</span><span class="w"> </span><span class="n">context</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span>
+<span class="w">            </span><span class="n">IncanError</span><span class="p">::</span><span class="n">KeyError</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">key</span><span class="p">,</span><span class="w"> </span><span class="n">context</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="o">=&gt;</span>
 <span class="w">                </span><span class="fm">write!</span><span class="p">(</span><span class="n">f</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;KeyError: &#39;{}&#39; not found{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">key</span><span class="p">,</span><span class="w"> </span><span class="n">context</span><span class="p">),</span>
 <span class="w">            </span><span class="c1">// ... etc</span>
 <span class="w">        </span><span class="p">}</span>
@@ -4255,38 +4284,47 @@ handling in generated code.</p>
 </code></pre></div>
 <div class="language-rust highlight"><pre><span></span><code><span class="n">__incan_list_find_index</span><span class="p">(</span><span class="o">&amp;</span><span class="n">vec</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">v</span><span class="p">).</span><span class="n">unwrap_or_else</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="fm">panic!</span><span class="p">(</span><span class="s">&quot;ValueError: value not found in list&quot;</span><span class="p">))</span>
 </code></pre></div>
-<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Phase 1</strong>: Update codegen to emit better panic messages</li>
-<li><strong>Phase 2</strong>: Add IncanError type to generated prelude</li>
-<li><strong>Phase 3</strong>: Add <code>Dict.get(key, default=...)</code> <strong>and introduce a new safe list API</strong>
-    (e.g. <code>List.get(index, default=...)</code> or <code>List.at(index)</code> returning <code>Option[T]</code>)
-    and update codegen to use Rust's <code>Vec::get</code>.</li>
-</ol>
-<h2 id="alternatives-considered">Alternatives Considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<h3 id="always-return-result">Always Return Result<a class="headerlink" href="#always-return-result" title="Permanent link">&para;</a></h3>
-<p>Make all fallible operations return <code>Result&lt;T, IncanError&gt;</code>. Rejected because:</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<h3 id="always-return-result-for-fallible-operations">Always return <code>Result</code> for fallible operations<a class="headerlink" href="#always-return-result-for-fallible-operations" title="Permanent link">&para;</a></h3>
+<p>Make every fallible operation return <code>Result&lt;T, IncanError&gt;</code>. Rejected because:</p>
 <ul>
 <li>Requires pervasive <code>?</code> or <code>.unwrap()</code> in generated code</li>
 <li>Doesn't match Python/Incan semantics where these operations "just work"</li>
 <li>Would require pervasive <code>Result</code> handling (via <code>match</code>/<code>?</code>) to be usable</li>
 </ul>
-<h3 id="silent-defaults">Silent Defaults<a class="headerlink" href="#silent-defaults" title="Permanent link">&para;</a></h3>
+<h3 id="silent-defaults">Silent defaults<a class="headerlink" href="#silent-defaults" title="Permanent link">&para;</a></h3>
 <p>Return default values instead of panicking (e.g., <code>0</code> for missing int parse). Rejected because:</p>
 <ul>
 <li>Hides bugs</li>
 <li>Doesn't match Python semantics (Python raises exceptions)</li>
 <li>Makes debugging harder</li>
 </ul>
-<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Python's exception model</li>
-<li>Rust's <code>unwrap_or_else</code> pattern</li>
-<li><a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013: Rust Crate Dependencies</a> — related codegen concerns</li>
+<li>Phase 1 adds verbosity to generated Rust for every affected operation. This is noise in the generated output but has no runtime cost.</li>
+<li>Phase 2 introduces a shared prelude type (<code>IncanError</code>) that must be kept backward compatible as the language evolves.</li>
+<li>Phase 4 requires language-level changes (return-type inference for built-ins) that interact with the typechecker and lowering pipeline.</li>
 </ul>
-<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
-
-<!-- RFC reference links for reuse: '[RFC 018]' or '[RFC 018: Title][RFC 018]' -->
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Lowering / IR emission</strong> — must replace bare unwrap patterns with named-message equivalents for all operations listed in "Specific Improvements"; must lower <code>dict.get(key)</code> and <code>dict.get(key, default)</code> to <code>Option</code>-returning and <code>unwrap_or</code>-based patterns respectively.</li>
+<li><strong>Generated prelude</strong> — must introduce the <code>IncanError</code> enum (Phase 2) so all generated error messages share a common format.</li>
+<li><strong>Typechecker</strong> — must track the return type of <code>dict.get(key)</code> as <code>Option[V]</code> (Phase 3); must eventually support <code>Result</code>-returning built-in variants (Phase 4).</li>
+<li><strong>Stdlib</strong> — <code>dict.get</code>, <code>list.get</code>, and any <code>Result</code>-returning variants of <code>int()</code>/<code>float()</code> must be declared in <code>std</code> and wired to the appropriate Rust implementations.</li>
+</ul>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>
+<p><strong>Source location in runtime messages.</strong> Should generated error messages include the Incan file and line number? If so, what mechanism threads that information into the generated Rust without significant overhead?</p>
+</li>
+<li>
+<p><strong><code>int()</code> / <code>float()</code> Result variants.</strong> Should Phase 4 introduce <code>int.try_parse(s) -&gt; Result[int, ValueError]</code> as a separate function, or should <code>int(s)</code> itself change return type when used in a <code>match</code>-position context?</p>
+</li>
+<li>
+<p><strong><code>IncanError</code> stability.</strong> Once introduced in Phase 2, the <code>IncanError</code> enum is part of the implicit generated API. What versioning guarantees apply to it across compiler versions?</p>
+</li>
+</ol>
+<!-- Rename the "Unresolved questions" section above to "Design Decisions" once all open questions have been resolved and the RFC moves to Planned status. -->
 
 
 

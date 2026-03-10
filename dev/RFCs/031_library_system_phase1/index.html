@@ -3871,6 +3871,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#motivation" class="md-nav__link">
     <span class="md-ellipsis">
       Motivation
@@ -4136,12 +4154,35 @@
 <li><strong>Status:</strong> Draft</li>
 <li><strong>Created:</strong> 2026-03-06</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Related:</strong> RFC 027 (incan-vocab — keyword registration API), RFC 034 (<code>incan.pub</code> registry)</li>
-<li><strong>Target version:</strong> v0.2</li>
+<li><strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/165">#165</a></li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Related</strong>:<ul>
+<li>RFC 027 (incan-vocab — keyword registration API)</li>
+<li>RFC 034 (<code>incan.pub</code> registry)</li>
+</ul>
+</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>Introduce Incan library dependencies so that one Incan project can depend on another, import its types, and compile against its generated Rust crate. Phase 1 covers the minimal local-only flow: <code>path</code> dependencies, a type manifest (<code>.incnlib</code>), a library build mode, <code>pub::</code> import syntax, and Cargo wiring through ordinary path dependencies.</p>
 <p>The core abstractions here are intended to carry forward into later phases such as git dependencies and the <code>incan.pub</code> registry, even if some concrete CLI details or artifact layout choices evolve.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Allow one Incan project to declare another as a dependency (via <code>path</code> reference) and import its exported types, functions, and soft keywords.</li>
+<li>Introduce <code>incan build --lib</code> as the canonical command for building a library artifact: a type manifest (<code>.incnlib</code>) plus a generated Rust crate.</li>
+<li>Establish <code>pub::</code> as the import namespace prefix for Incan library dependencies, parallel to <code>rust::</code> for Rust crates.</li>
+<li>Rename <code>[dependencies]</code> in <code>incan.toml</code> to <code>[rust-dependencies]</code> for Rust crate pass-through, freeing the unqualified <code>[dependencies]</code> key for Incan library dependencies.</li>
+<li>Define the manifest schema and the consumer build flow (manifest loading → typechecking → Rust code emission → Cargo wiring) in sufficient normative detail for implementation.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Git-based dependency resolution, <code>~/.incan/libs/</code> caching, lockfile entries, or <code>incan fetch</code> — those are Phase 2 concerns.</li>
+<li>The <code>incan.pub</code> registry, <code>incan publish</code>, or SemVer resolution — those are Phase 3 concerns addressed by RFC 034.</li>
+<li>Transitive Incan library dependencies — Phase 1 supports a single consumer + library; recursive manifests are out of scope.</li>
+<li>Namespace collision resolution beyond a clear compile error.</li>
+<li>Deep LSP warm-cache strategies for remote dependencies — not needed for local path deps.</li>
+</ul>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>The Incan compiler currently has no concept of external Incan packages:</p>
 <ul>
@@ -4322,12 +4363,12 @@ import_path ::= &quot;pub::&quot; IDENT          # Incan library
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Parser</strong> (<code>crates/incan_syntax/src/parser/</code>) — recognise <code>pub::</code> as an import path prefix (parallel to <code>rust::</code>); support <code>pub from ... import ...</code> re-export syntax valid only in <code>lib.incn</code>, requiring a visibility field on <code>ImportDecl</code>.</li>
-<li><strong>Typechecker</strong> (<code>src/frontend/typechecker/</code>) — load manifest exports into the symbol table before checking user code so library types are indistinguishable from local types during checking; load soft keyword activations from manifests into the parser's keyword registry.</li>
-<li><strong>IR Emission</strong> (<code>src/backend/ir/emit/</code>) — generate <code>use &lt;lib&gt;::...</code> statements for <code>pub::</code> imports.</li>
-<li><strong>Project generator</strong> (<code>src/backend/project/</code>) — add library crate paths to the generated <code>Cargo.toml</code> <code>[dependencies]</code> section.</li>
-<li><strong>CLI</strong> (<code>src/cli/</code>) — introduce <code>incan build --lib</code>; wire dependency resolution (path lookup, manifest loading, stale-artifact detection) into <code>build</code>, <code>run</code>, and <code>test</code> flows; emit the migration diagnostic when Rust crate names are found in <code>[dependencies]</code>.</li>
-<li><strong>Manifest layer</strong> (new) — <code>LibraryManifest</code> data model, JSON serialization/deserialization, and the generation step that extracts the checked public API from the typechecker's symbol table.</li>
+<li><strong>Parser</strong> — must recognise <code>pub::</code> as an import path prefix (parallel to <code>rust::</code>); must support <code>pub from ... import ...</code> re-export syntax valid only in <code>lib.incn</code>, requiring a visibility modifier on import declarations.</li>
+<li><strong>Typechecker</strong> — must load manifest exports into the symbol table before checking user code, so library types are indistinguishable from local types during checking; must load soft keyword activations from manifests into the parser's keyword registry.</li>
+<li><strong>IR Emission</strong> — must generate <code>use &lt;lib&gt;::...</code> statements for symbols resolved through <code>pub::</code> imports.</li>
+<li><strong>Project generator</strong> — must add library crate paths to the generated <code>Cargo.toml</code> dependency section for each <code>[dependencies]</code> entry resolved to a local path.</li>
+<li><strong>CLI</strong> — must introduce <code>incan build --lib</code>; must wire dependency resolution (path lookup, manifest loading, stale-artifact detection) into all build, run, and test flows; must emit a migration diagnostic when Rust crate names are found in the <code>[dependencies]</code> section.</li>
+<li><strong>Manifest layer</strong> (new) — a new <code>LibraryManifest</code> data model with JSON serialization and deserialization; a generation step that extracts the checked public API from the typechecker's symbol table at the end of <code>incan build --lib</code>.</li>
 <li><strong>LSP</strong> — load library manifests on workspace open to provide completions and hover info for library types.</li>
 </ul>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
@@ -4346,8 +4387,9 @@ import_path ::= &quot;pub::&quot; IDENT          # Incan library
 <h2 id="future-phases-out-of-scope-for-this-rfc">Future phases (out of scope for this RFC)<a class="headerlink" href="#future-phases-out-of-scope-for-this-rfc" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Phase 2: Git dependencies + caching.</strong> <code>mylib = { git = "https://...", tag = "v0.1.0" }</code>. Adds lockfile (<code>incan.lock</code>), <code>~/.incan/libs/</code> cache, checksum verification, transitive dependency resolution, and inline <code>@</code> version syntax.</li>
-<li><strong>Phase 3: <code>incan.pub</code> registry.</strong> Published Incan libraries with SemVer resolution. <code>mylib = "0.1.0"</code> resolves from the registry. <code>incan publish</code> for library distribution. Defined in <a href="../034_incan_pub_registry/">RFC 034</a>.</li>
+<li><strong>Phase 3: <code>incan.pub</code> registry.</strong> Published Incan libraries with SemVer resolution. <code>mylib = "0.1.0"</code> resolves from the registry. <code>incan publish</code> for library distribution. Defined in RFC 034 (incan.pub registry).</li>
 </ul>
+<!-- Rename the "Unresolved questions" section above to "Design Decisions" once all open questions have been resolved and the RFC moves to Planned status. -->
 
 
 

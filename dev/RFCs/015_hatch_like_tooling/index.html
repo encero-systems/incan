@@ -4042,6 +4042,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#implementation-plan" class="md-nav__link">
     <span class="md-ellipsis">
       Implementation Plan
@@ -4093,6 +4102,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#progress-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      Progress Checklist
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#alternatives-considered" class="md-nav__link">
     <span class="md-ellipsis">
       Alternatives Considered
@@ -4102,18 +4120,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#open-questions" class="md-nav__link">
+  <a href="#unresolved-questions" class="md-nav__link">
     <span class="md-ellipsis">
-      Open Questions
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#checklist" class="md-nav__link">
-    <span class="md-ellipsis">
-      Checklist
+      Unresolved questions
     </span>
   </a>
   
@@ -4141,7 +4150,13 @@
 <p><strong>Status:</strong> In Progress<br />
 <strong>Created:</strong> 2025-12-23<br />
 <strong>Author(s):</strong> Danny Meijer (@danny-meijer)<br />
-<strong>Related:</strong> RFC 013 (Rust crate dependencies), RFC 020 (Cargo offline/locked policy)</p>
+<strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/73">#73</a><br />
+<strong>RFC PR:</strong> —<br />
+<strong>Related:</strong>
+    - RFC 013 (Rust crate dependencies)
+    - RFC 020 (Cargo offline/locked policy)<br />
+<strong>Written against:</strong> v0.1<br />
+<strong>Shipped in:</strong> —  </p>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>Introduce a first-class, batteries-included project lifecycle CLI — similar in spirit to Python’s Hatch — for:</p>
 <ul>
@@ -4566,6 +4581,14 @@ need Make as a dependency.</p>
 <li>Cargo-style third-party subcommands may be supported (similar to <code>cargo-foo</code> → <code>cargo foo</code>):
   if <code>incan &lt;cmd&gt;</code> is not built-in, the CLI may attempt to execute <code>incan-&lt;cmd&gt;</code> from <code>PATH</code>.</li>
 </ul>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>CLI</strong> — <code>incan new</code>, <code>incan init</code>, <code>incan version</code>, and <code>incan env</code> are all new top-level commands introduced by this RFC. All existing commands (<code>build</code>, <code>run</code>, <code>test</code>, <code>lock</code>) must be updated to consult <code>incan.toml</code> and derive project metadata from it.</li>
+<li><strong>Project manifest parsing</strong> — a new manifest reader must parse <code>incan.toml</code>, validate the <code>[project]</code>, <code>[project.scripts]</code>, and <code>[tool.incan.envs.*]</code> schemas, and emit span-precise diagnostics for missing or invalid keys.</li>
+<li><strong>Project root discovery</strong> — the compiler and CLI must walk upward from the current directory to locate <code>incan.toml</code>, with a <code>--project &lt;path&gt;</code> override. All commands must agree on the resolved root.</li>
+<li><strong>Build / codegen</strong> — generated project files (<code>Cargo.toml</code>, entrypoint wiring) must be derived from <code>incan.toml</code> metadata rather than hardcoded defaults.</li>
+<li><strong>Documentation</strong> — a project configuration reference and a "your first Incan project" guide are expected deliverables of this RFC.</li>
+</ul>
 <h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
 <h3 id="phase-1-metadata-scaffolding">Phase 1: Metadata + scaffolding<a class="headerlink" href="#phase-1-metadata-scaffolding" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4579,7 +4602,7 @@ need Make as a dependency.</p>
 <ul>
 <li>Implement SemVer parsing + bump logic</li>
 <li>Apply updates to <code>incan.toml</code></li>
-<li>Optional: update any secondary manifests (only if this repo’s policy requires it)</li>
+<li>Optional: update any secondary manifests (only if this repo's policy requires it)</li>
 </ul>
 <h3 id="phase-3-env-runner">Phase 3: Env runner<a class="headerlink" href="#phase-3-env-runner" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4590,27 +4613,10 @@ need Make as a dependency.</p>
 <h3 id="phase-4-polish-docs">Phase 4: Polish + docs<a class="headerlink" href="#phase-4-polish-docs" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Add guide pages: <code>docs/tooling/project_lifecycle.md</code></li>
-<li>Provide “new project” tutorial for Python users</li>
+<li>Provide "new project" tutorial for Python users</li>
 <li>Add examples for <code>new/init/version/test/env</code> and project root discovery</li>
 </ul>
-<h2 id="alternatives-considered">Alternatives Considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Rely solely on Makefile targets</strong>: simple but inconsistent across repos, hard to compose and introspect;
-    also adds an extra tool dependency we don’t need.</li>
-<li><strong>Embed everything in Cargo</strong>: good for Rust, but Incan’s source-of-truth isn’t Cargo.toml;
-    also doesn’t cover project scaffolding or Incan-centric metadata.</li>
-<li><strong>Adopt an existing tool (justfile, cargo-make)</strong>: helps execution but doesn’t solve metadata/version semantics.</li>
-</ul>
-<h2 id="open-questions">Open Questions<a class="headerlink" href="#open-questions" title="Permanent link">&para;</a></h2>
-<ol>
-<li>How do we want to represent "dev" versions (e.g., <code>-dev.1</code> vs <code>-dev+&lt;sha&gt;</code>)?</li>
-</ol>
-<p><strong>Recommendation:</strong> support both forms:
-   - <code>-dev.N</code> for sequential dev releases (e.g., <code>0.2.0-dev.1</code>, <code>0.2.0-dev.2</code>)
-   - <code>-dev+&lt;sha&gt;</code> for build metadata in CI artifacts (SemVer allows <code>+</code> build metadata)</p>
-<p>The <code>.N</code> form is useful for manual dev releases; the <code>+&lt;sha&gt;</code> form is useful for CI-generated artifacts where
-   the commit hash provides traceability.</p>
-<h2 id="checklist">Checklist<a class="headerlink" href="#checklist" title="Permanent link">&para;</a></h2>
+<h2 id="progress-checklist">Progress Checklist<a class="headerlink" href="#progress-checklist" title="Permanent link">&para;</a></h2>
 <ul>
 <li>[x] Define and validate <code>incan.toml</code> schema (<code>[project]</code>, <code>[project.scripts]</code>, <code>[tool.incan.envs.*]</code>) and document it
       <em>(partial: <code>[project]</code>, <code>[project.scripts]</code>, <code>[build]</code>, <code>[dependencies]</code> implemented; <code>[tool.incan.envs.*]</code> pending)</em></li>
@@ -4636,6 +4642,24 @@ need Make as a dependency.</p>
 <ul>
 <li>[ ] Specify and implement matrix expansion (tox/nox-like)</li>
 </ul>
+<h2 id="alternatives-considered">Alternatives Considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Rely solely on Makefile targets</strong>: simple but inconsistent across repos, hard to compose and introspect;
+    also adds an extra tool dependency we don’t need.</li>
+<li><strong>Embed everything in Cargo</strong>: good for Rust, but Incan’s source-of-truth isn’t Cargo.toml;
+    also doesn’t cover project scaffolding or Incan-centric metadata.</li>
+<li><strong>Adopt an existing tool (justfile, cargo-make)</strong>: helps execution but doesn’t solve metadata/version semantics.</li>
+</ul>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>How do we want to represent "dev" versions (e.g., <code>-dev.1</code> vs <code>-dev+&lt;sha&gt;</code>)?</li>
+</ol>
+<p><strong>Recommendation:</strong> support both forms:
+   - <code>-dev.N</code> for sequential dev releases (e.g., <code>0.2.0-dev.1</code>, <code>0.2.0-dev.2</code>)
+   - <code>-dev+&lt;sha&gt;</code> for build metadata in CI artifacts (SemVer allows <code>+</code> build metadata)</p>
+<p>The <code>.N</code> form is useful for manual dev releases; the <code>+&lt;sha&gt;</code> form is useful for CI-generated artifacts where
+   the commit hash provides traceability.</p>
+<!-- Rename the "Unresolved questions" section above to "Design Decisions" once all open questions have been resolved and the RFC moves to Planned status. -->
 
 
 
