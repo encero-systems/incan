@@ -10,12 +10,12 @@
     - RFC 023 (std.web migration)
     - RFC 028 (global operator overloading)
     - RFC 040 (scoped DSL glyph surfaces)
-- **Written against:** v0.1
+- **Written against:** v0.2
 - **Shipped in:** —
 
 ## Summary
 
-This RFC defines **`incan-vocab`**, a standalone Rust crate that provides the traits and types for Incan's **unified keyword registry** — the single mechanism through which *all* keywords are defined, from core language constructs (`def`, `if`, `for`) to `stdlib` features (`async`, `await`) to third-party DSL extensions (i.e. `routes`, `machine`, `foo`).
+This RFC defines **`incan-vocab`**, a standalone Rust crate that provides the traits and types for Incan's **unified keyword registry** — the single mechanism through which *all* keywords are defined, from core language constructs (`def`, `if`, `for`) to `stdlib` features (`async`, `await`) to third-party DSL extensions (for example `routes` and `machine`).
 
 The crate provides:
 
@@ -23,17 +23,20 @@ The crate provides:
 - **`VocabProvider`** — the trait libraries implement to register keywords and manifest metadata.
 - **`VocabDesugarer`** — transforms parsed DSL blocks into regular Incan AST before typechecking.
 
-There is no distinction between "hard" and "soft" keywords at the architectural level anymore. All keywords are entries in the same registry — they differ only in their **activation rule** (`always-on` for core, `import-activated` for libraries) and their **source** (`compiler-built-in`, `stdlib`, or `third-party`). The `compiler`, `LSP`, `formatter`, and all other tools consume the same cached registry.
+There is no distinction between "hard" and "soft" keywords at the architectural level anymore. All keywords are entries in the same registry — they differ only in their **activation rule** (`always-on` for core, `import-activated` for stdlib and libraries) and their **source** (`compiler-built-in`, `stdlib`, or `third-party`). The compiler, LSP, formatter, and other tools consume the same cached registry.
+
+**Near-term rollout:** first unify today's split core + stdlib keyword infrastructure behind this shared registry and activation model inside the compiler. External library loading, manifest transport, and desugarer execution use the same model once RFC 031-style library artifacts exist.
 
 Scoped glyph surfaces for explicit DSL blocks build on this substrate, but their semantics are specified separately. This RFC provides the block registration, placement, and desugaring machinery those glyph surfaces rely on; it does not define the global meaning of operators.
 
-This way we have one (stable) API that can be used to create 3rd party libraries and language plugins.
+This yields one stable API that can be used to create third-party libraries and language plugins.
 
 ## Goals
 
+- Deliver an internal-first migration that unifies today's core language and stdlib keyword metadata under one registry and one activation model before external library loading exists.
 - Define a stable, published `incan-vocab` crate that serves as the single extension point for keyword registration across core language, stdlib, and third-party libraries.
-- Unify the hard-keyword `KEYWORDS` table and the soft-keyword `info_soft()` mechanism into one `KeywordRegistry` consumed uniformly by the compiler, LSP, and formatter.
-- Give library authors a typed Rust API (`VocabProvider`, `VocabDesugarer`) to declare keywords and desugar DSL blocks, with no changes required to the compiler itself.
+- Replace the hard-keyword `KEYWORDS` table and soft-keyword `info_soft()` path with one `KeywordRegistry` consumed uniformly by the compiler, LSP, formatter, and editor grammar generation.
+- Give library authors a typed Rust API (`VocabProvider`, `VocabDesugarer`) to declare keywords and desugar DSL blocks once library build and consumer loading flows exist.
 - Establish the manifest schema types (`LibraryManifest`, `TypeRef`, `CargoDependency`) used by the library build and consumer flows defined in RFC 031.
 
 ## Non-Goals
@@ -43,6 +46,7 @@ This way we have one (stable) API that can be used to create 3rd party libraries
 - External plugin loading via dynamic libraries (`cdylib`/`libloading`) — desugarers for external libraries use WASM (Phase 4+), not native shared libraries.
 - Implementing the `incan.pub` registry or git-based dependency resolution — those are Phase 2/3 concerns addressed by RFC 034.
 - Replacing the existing `[rust-dependencies]`/Cargo wiring — that is RFC 031's concern.
+- Implementing external library artifact transport or consumer loading ahead of RFC 031 — this RFC defines the contracts those later phases use.
 
 ## Motivation
 
@@ -1296,29 +1300,28 @@ impl VocabProvider for StdlibVocab {
 
 **3. Library providers** — loaded from dependency artifacts, same trait.
 
-**Migration from current `KEYWORDS` table:**
+**Migration from current keyword infrastructure:**
 
-|  Phase  |                 Current keyword system                 |                                            New unified model                                             |
-| ------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| Phase 1 | `KEYWORDS` const table + `info_hard()` / `info_soft()` | `IncanCoreVocab` + `StdlibVocab` produce the same entries. Old `KEYWORDS` table still exists as fallback |
-| Phase 2 | Lexer `Token::Def` / `Token::If` / etc.                | Lexer emits `Token::Ident("def")`. Parser promotes via registry                                          |
-| Phase 3 | `active_soft_keywords: HashSet<KeywordId>`             | `active_keywords: HashSet<String>` (unified set)                                                         |
-| Phase 4 | Old `KEYWORDS` table removed                           | `KeywordRegistry` is the sole source of truth                                                            |
+| Implementation phase | Current keyword system                                           | New unified model                                                                                            |
+| -------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Phase 1              | `KEYWORDS` const table + `info_hard()` / `info_soft()`           | `IncanCoreVocab` + `StdlibVocab` produce equivalent registrations; old tables remain for parity validation   |
+| Phase 2              | Hard keyword tokens + `active_soft_keywords: HashSet<KeywordId>` | Parser activation and dispatch become registry-backed while still accepting transitional keyword token forms |
+| Phase 3              | Mixed registry/legacy consumers in parser and tooling            | Lexer/parser/tooling complete migration; `KeywordRegistry` becomes the sole source of truth                  |
 
-> **Important:** Phase 1 → Phase 2 can be done incrementally. The parser can accept both `Token::Def` and
-> registry-based `Token::Ident("def")` during the transition. This avoids a flag-day rewrite.
+> **Important:** Phase 1 → Phase 2 can be done incrementally. The parser can accept both `Token::Def` and registry-based `Token::Ident("def")` during the transition. This avoids a flag-day rewrite.
 
 ### Extraction flow (`incan build --lib`)
+
+The next two flows describe the full library architecture. The earlier implementation phases establish the shared registry and activation model inside the compiler; the later phases extend that model to library artifacts and consumer loading.
 
 When a library author runs `incan build --lib`:
 
 ```text
 1. Read incan.toml → find [vocab].crate path
 2. cargo build the vocab crate (crates/<name>-vocab/)
-3. Load the compiled VocabProvider (via dynamic loading or build-script extraction)
-4. Call provider.keyword_registrations() → serialize to JSON/MessagePack
-5. Call provider.manifest() → serialize alongside
-6. Package: Incan compiled output + vocab metadata → distributable artifact
+3. Run the compiler's metadata extraction step to obtain VocabProvider output
+4. Serialize keyword registrations + manifest metadata into the library artifact
+5. Package: Incan compiled output + vocab metadata → distributable artifact
 ```
 
 ### Loading flow (consumer `incan build`)
@@ -1340,9 +1343,9 @@ The current compiler uses `needs_web`, `needs_serde`, and various `scan_for_*` b
 
 With `incan-vocab`, the compiler can replace these ad-hoc scans with a unified mechanism:
 
-1. **Phase 1**: Extract `incan-vocab` types, keep `scan_for_*` for stdlib features.
-2. **Phase 2**: Migrate stdlib features to `VocabProvider` implementations.
-3. **Phase 3**: Remove `scan_for_*` — all feature detection flows through vocab metadata.
+1. **Phases 1-3**: extract `incan-vocab`, migrate core + stdlib keyword registration, and keep `scan_for_*` as a compatibility path.
+2. **Phases 4-6**: once library artifacts and manifests exist, move dependency and feature information onto provider output and consumer loading.
+3. **Phase 7**: remove `scan_for_*` and `needs_*` booleans when manifest-driven feature detection is end-to-end.
 
 The serde fallback (automatic `#[derive(Serialize, Deserialize)]` on models) is a special case that may remain as a compiler built-in, since it's not a keyword feature but a codegen behavior.
 
@@ -1959,7 +1962,7 @@ Source → Lexer → Parser → [Desugaring] → Typechecker → Lowering → Em
                     VocabDesugarer (library-provided)
 ```
 
-| Pipeline stage |       Who handles it?        |  Block keywords?    |
+| Pipeline stage | Who handles it?              | Block keywords?     |
 | -------------- | ---------------------------- | ------------------- |
 | Parsing        | Compiler (via `KeywordSpec`) | ✅ `VocabBlock` AST |
 | **Desugaring** | **Library (via desugarer)**  | ✅ → Incan AST      |
@@ -1978,12 +1981,12 @@ A key design principle: **the stdlib uses the same `VocabProvider` / `VocabDesug
 
 **Migration path:**
 
-|  Phase  |                              Stdlib keywords                               | `scan_for_*` booleans |
-| ------- | -------------------------------------------------------------------------- | --------------------- |
-| Phase 1 | Compiler constructs `KeywordRegistration` internally from `KEYWORDS` table | Kept as-is            |
-| Phase 2 | `StdlibVocab` implements `VocabProvider`                                   | Begin deprecation     |
-| Phase 3 | N/A (fully migrated)                                                       | Removed               |
-| Phase 4 | `StdlibDesugarer` for any block-level stdlib features (if needed)          | N/A                   |
+| Implementation phase | Stdlib keywords                                                                  | `scan_for_*` booleans                           |
+| -------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------- |
+| Phase 1              | `StdlibVocab` mirrors existing stdlib soft keywords alongside current tables     | Kept as-is                                      |
+| Phase 2              | Parser and related tooling consume stdlib registrations from the shared registry | Kept as a compatibility path                    |
+| Phase 3              | Core + stdlib keyword handling is fully registry-backed                          | Still present for non-keyword feature detection |
+| Phase 7              | Provider-declared dependencies and features are end-to-end                       | Removed                                         |
 
 **Note:** Simple keywords like `async` and `assert` don't need a desugarer — the compiler handles `DeclarationModifier` and `StatementKeywordArgs` natively. The desugarer is only needed for `BlockDeclaration` keywords that introduce custom DSL syntax.
 
@@ -2028,111 +2031,141 @@ Use `vocab/` as the directory name instead of `crates/`.
 
 - **Adds a Rust dependency for library authors.** Libraries that want custom keywords must write a small Rust crate. This is inherent to the design — keywords affect the parser, which is written in Rust. The `incan-vocab` dependency is tiny (no transitive deps).
 - **One more crate to maintain.** The compiler repo gains another crate. However, `incan-vocab` is intentionally minimal and stable — changes should be rare.
-- **Dynamic loading complexity.** Loading `VocabProvider` from a compiled crate requires either dynamic linking (cdylib + `libloading`) or a build-script extraction approach (compile-time serialization to JSON). The implementation plan addresses this.
+- **Artifact and runtime plumbing.** Library vocab metadata must be emitted into build artifacts, and external desugarers need a portable execution format. This RFC chooses build-time metadata extraction plus WASM for external desugarers, which adds a dedicated artifact/runtime layer to the system.
 
 ## Layers affected
 
+Phases 1-3 focus on the compiler's internal core + stdlib migration. The library-facing portions of the layers below land later, once RFC 031-style library build and consumer artifacts exist.
+
 - **New crate (`incan-vocab`)** — introduces all types and traits defined in this RFC (`VocabProvider`, `VocabDesugarer`, `KeywordRegistration`, `KeywordSpec`, `KeywordSurfaceKind`, `KeywordActivation`, `KeywordRegistry`, `LibraryManifest`, public AST types). Published to crates.io independently of the compiler. All other layers depend on it transitively through `incan_core`.
-- **Lexer** — transitions from emitting dedicated keyword token variants to emitting `Token::Ident` for all keyword-shaped identifiers. Keyword promotion becomes entirely the parser's responsibility via registry lookup. This can be done incrementally.
+- **Lexer** — transitions from emitting dedicated keyword token variants to emitting `Token::Ident` for all keyword-shaped identifiers. Keyword promotion becomes entirely the parser's responsibility via registry lookup. This can be done incrementally across the internal migration phases.
 - **Parser** — replaces per-token-type dispatch with a single `KeywordSurfaceKind`-driven dispatch. Gains `VocabBlock` AST node for `BlockDeclaration` keywords. Per-file `active_keywords` set replaces the narrower `active_soft_keywords` mechanism.
-- **Typechecker** — must accept library manifest exports loaded by the consumer build flow (RFC 031) to treat library types as first-class during checking.
-- **Lowering / IR** — import-activated feature detection (`needs_web`, `needs_async`, etc.) is replaced by registry-driven queries against the `LibraryManifest.required_dependencies` fields. A new desugaring pass (after parsing, before typechecking) transforms `VocabBlock` nodes into ordinary Incan AST via `VocabDesugarer`.
-- **Project generator** — derives required Cargo dependencies from `LibraryManifest.required_dependencies` rather than hard-coded boolean flags.
-- **CLI (`incan build --lib`)** — must build the library's vocab crate, extract `VocabProvider` output, and serialize keyword registrations and manifest metadata into the library artifact. Parsing and handling of the `[vocab]` section in `incan.toml` is required.
+- **Typechecker** — later phases accept library manifest exports loaded by the consumer build flow (RFC 031) so library types become first-class during checking.
+- **Lowering / IR** — later phases replace import-activated feature detection (`needs_web`, `needs_async`, etc.) with registry-driven queries against `LibraryManifest.required_dependencies`. A desugaring pass (after parsing, before typechecking) transforms `VocabBlock` nodes into ordinary Incan AST via `VocabDesugarer`.
+- **Project generator** — later phases derive required Cargo dependencies from `LibraryManifest.required_dependencies` rather than hard-coded boolean flags.
+- **CLI (`incan build --lib`)** — later phases build the library's vocab crate, extract `VocabProvider` output, and serialize keyword registrations and manifest metadata into the library artifact. Parsing and handling of the `[vocab]` section in `incan.toml` is required.
 - **LSP** — builds and caches `KeywordRegistry` once per workspace open; rebuilds only on `incan.toml` changes or dependency updates. All keyword-dependent features (completions, diagnostics, hover, go-to-definition) consume the registry uniformly.
 - **Formatter** — dispatches formatting rules via `KeywordSurfaceKind` rather than hardcoded keyword names, enabling library keywords to receive correct formatting automatically.
 - **Editor grammar** — TextMate grammar for VS Code is generated from `IncanCoreVocab` and `StdlibVocab` at build time, replacing the manually maintained keyword list.
 
 ## Implementation Plan
 
-### Phase 1: Extract types + build the registry alongside existing infra
+Phases 1-3 establish the compiler's internal registry migration for core + stdlib keywords. Phases 4-7 extend the same architecture to library artifacts, external desugarers, and manifest-driven feature detection.
 
-1. Create `crates/incan-vocab/` with all types defined in this RFC: `VocabProvider`, `VocabDesugarer`, `KeywordRegistration`, `KeywordSpec`, `KeywordSurfaceKind` (expanded), `KeywordActivation`, `KeywordSource`, `KeywordRegistry`, `KeywordEntry`, manifest types, public AST types.
-2. Add `incan-vocab` as a dependency of `incan_core`.
-3. Implement `IncanCoreVocab` and `StdlibVocab` as internal `VocabProvider` implementations.
-4. Build `KeywordRegistry` at compiler startup from these providers. Run alongside old `KEYWORDS` table for validation (assert both produce the same keyword set).
-5. Verify: `cargo test` passes, all existing behavior preserved.
-6. Publish `incan-vocab` v0.1.0 to crates.io.
+### Phase 1: Extract `incan-vocab` and validate registry parity
 
-### Phase 2: Unified parser dispatch
+1. Create `crates/incan-vocab/` with the stable traits and data types defined in this RFC: `VocabProvider`, `VocabDesugarer`, `KeywordRegistration`, `KeywordSpec`, `KeywordSurfaceKind`, `KeywordActivation`, `KeywordSource`, `KeywordRegistry`, `KeywordEntry`, manifest types, and public AST types.
+2. Add `incan-vocab` as a dependency of `incan_core` and re-export the public surface that compiler crates need.
+3. Implement `IncanCoreVocab` and `StdlibVocab` as internal `VocabProvider` implementations derived from the existing core + stdlib keyword metadata.
+4. Build `KeywordRegistry` alongside the old keyword tables and add parity checks/tests so both sources produce the same effective keyword set before any parser behavior changes.
+5. Verify with `cargo test`; publish `incan-vocab` once the public API stabilizes.
 
-1. Modify the lexer to emit `Token::Ident` for all keywords (remove `Token::Def`, `Token::If`, etc.). Can be done incrementally — start with the extension shapes, then migrate core shapes.
-2. Modify the parser to dispatch through `KeywordRegistry` + `KeywordSurfaceKind` instead of matching on individual token types.
-3. Replace `active_soft_keywords: HashSet<KeywordId>` with `active_keywords: HashSet<String>`.
-4. Remove old `KEYWORDS` table and `KeywordId` enum once the registry is validated.
-5. LSP: build `KeywordRegistry` once at workspace open, share across all analyses.
+### Phase 2: Migrate parser activation and dispatch with transitional lexer compatibility
 
-### Phase 3: Manifest + build integration
+1. Replace `active_soft_keywords: HashSet<KeywordId>` with registry-backed active keyword tracking while still accepting the current keyword token forms during migration.
+2. Route parser keyword activation and dispatch through `KeywordRegistry` + `KeywordSurfaceKind` instead of hard-coding separate hard/soft keyword paths.
+3. Introduce any AST support needed for registry-driven surfaces, while keeping compatibility paths for the existing core syntax until parity is proven.
+4. Add targeted parser tests for hard/soft keyword parity and import-activated behavior.
 
-1. Add `[vocab]` section parsing to `incan.toml` reader.
-2. Implement vocab crate build step in `incan build --lib`.
-3. Implement serialization of `VocabProvider` output to JSON (embedded in library artifact).
-4. Add integration test: build a test library with a vocab crate, verify keyword metadata is extracted.
+### Phase 3: Complete the internal compiler and tooling migration
 
-### Phase 4: Consumer loading
+1. Move the lexer incrementally toward emitting `Token::Ident` for keyword-shaped words, starting with extension shapes and then core shapes once the parser path is validated.
+2. Migrate formatter dispatch, LSP keyword consumers, and static grammar generation to core + stdlib provider output.
+3. Remove the old `KEYWORDS` table and `KeywordId`-specific dispatch only after all compiler and tooling consumers use the registry.
+4. Re-run full compiler and tooling tests to confirm that the registry-backed path is the only remaining keyword source of truth.
+
+### Phase 4: Add library artifact production (requires RFC 031 library build scaffolding)
+
+1. Add `[vocab]` section parsing to `incan.toml`.
+2. Implement the vocab crate build/extraction step in `incan build --lib`.
+3. Serialize `VocabProvider` output and `LibraryManifest` into the library artifact.
+4. Add integration tests that build a library with a vocab crate and verify metadata extraction.
+
+### Phase 5: Add consumer loading and import/typechecker integration (requires Phase 4 and RFC 031 consumer loading)
 
 1. Implement vocab metadata deserialization during consumer builds.
-2. Add library keywords to `KeywordRegistry` (activation: `OnImport`).
-3. Wire deserialized `LibraryManifest` into typechecker's import resolution.
-4. Add integration test: consumer project imports a library, keywords parse and typecheck.
+2. Merge imported library keywords into `KeywordRegistry` activation with `KeywordActivation::OnImport`.
+3. Wire deserialized `LibraryManifest` data into import resolution and typechecker symbol loading.
+4. Add integration tests that import a library, activate its keywords, and typecheck against its manifest exports.
 
-### Phase 4.5: Desugaring pipeline
+### Phase 6: Add the desugaring pipeline for block DSLs (requires library artifact transport)
 
-1. Implement `VocabDesugarer` loading from library artifacts (alongside `VocabProvider` metadata).
-2. Add desugaring pass to the compiler pipeline: after parsing, before typechecking.
-3. For each `VocabBlock` AST node, look up the corresponding library's desugarer and call `desugar_block()`.
-4. Replace the `VocabBlock` node with the returned `Vec<IncanStatement>` in the AST.
-5. Map the public `IncanExpr`/`IncanStatement` types back to the compiler's internal AST types.
-6. Add integration test: consumer project uses a block-level DSL, verify desugared code typechecks and compiles.
-7. Add error-path test: desugarer returns `DesugarError`, verify compiler surfaces it as a diagnostic with source location.
+1. Add a desugaring pass to the compiler pipeline after parsing and before typechecking.
+2. For each `VocabBlock` AST node, load the corresponding `VocabDesugarer`, call `desugar_block()`, and replace the block with the returned `Vec<IncanStatement>`.
+3. Map the public `IncanExpr` / `IncanStatement` types back to the compiler's internal AST types.
+4. Add success-path and error-path integration tests for block desugaring.
 
-### Phase 5: Feature scanning removal
+### Phase 7: Remove feature scanning debt once provider metadata is end-to-end
 
-1. Replace `needs_serde`/`needs_tokio`/`needs_web` booleans with import-driven feature detection from the registry. When `std.async` keywords are activated for a file, the compiler knows tokio is needed — no AST scanning required.
-2. Remove `scan_for_*` methods from `IrCodegen`.
-3. Replace `ProjectGenerator` boolean fields with a `HashSet<String>` of active features derived from the registry + manifests.
+1. Replace `needs_serde` / `needs_tokio` / `needs_web` booleans with provider-declared features and dependencies derived from registry + manifest data.
+2. Remove `scan_for_*` methods from `IrCodegen` once manifest-driven feature detection is fully wired through builds and consumers.
+3. Replace `ProjectGenerator` boolean fields with collected feature/dependency sets derived from the loaded providers.
 
 ### Compiler touchpoints
 
-|           Component           |                              Change                               |
-| ----------------------------- | ----------------------------------------------------------------- |
-| `crates/incan-vocab/`         | New crate (this RFC)                                              |
-| `crates/incan_core/lang/`     | `IncanCoreVocab`, `StdlibVocab`, remove old `KEYWORDS` table      |
-| `crates/incan_syntax/lexer/`  | Emit `Token::Ident` for all keywords (remove token type variants) |
-| `crates/incan_syntax/parser/` | Single dispatch via `KeywordRegistry` + `KeywordSurfaceKind`      |
-| `crates/incan_syntax/parser/` | Produce `VocabBlock` AST for `BlockDeclaration` keywords          |
-| `src/backend/ir/codegen.rs`   | Load vocab metadata; replace `scan_for_*` with registry queries   |
-| `src/backend/project/`        | Replace `needs_*` booleans with feature set from registry         |
-| `src/cli/commands/build.rs`   | Build vocab crate during `incan build --lib`                      |
-| `src/frontend/typechecker/`   | Accept manifest metadata for import resolution                    |
-| `src/frontend/` (new pass)    | Desugaring pass: `VocabBlock` → Incan AST                         |
-| `src/lsp/`                    | Build and cache `KeywordRegistry` per workspace                   |
-| `src/format/`                 | Dispatch formatting rules via `KeywordSurfaceKind`                |
-| `editors/vscode/`             | Generate TextMate grammar from core + stdlib vocab providers      |
-| `incan.toml` schema           | Add `[vocab]` section                                             |
+| Component                                | Change                                                                         |
+| ---------------------------------------- | ------------------------------------------------------------------------------ |
+| `crates/incan-vocab/`                    | New trait/type crate defined by this RFC                                       |
+| `crates/incan_core/src/lang/keywords.rs` | Phase 1 parity source for `IncanCoreVocab` / `StdlibVocab` extraction          |
+| `crates/incan_syntax/src/parser/`        | Active keyword tracking, registry dispatch, and `VocabBlock` parsing           |
+| `crates/incan_syntax/src/lexer/`         | Transitional then full `Token::Ident` migration for keyword-shaped words       |
+| `src/manifest.rs`                        | Later-phase `[vocab]` parsing and manifest integration                         |
+| `src/cli/commands/build.rs`              | Later-phase `incan build --lib` extraction and consumer loading hooks          |
+| `src/frontend/typechecker/`              | Later-phase manifest-backed import resolution and symbol loading               |
+| `src/backend/ir/codegen.rs`              | Phase 7 removal of `scan_for_*` in favor of provider-declared feature metadata |
+| `src/backend/project/`                   | Replace `needs_*` booleans with collected feature/dependency sets              |
+| `src/lsp/backend.rs`                     | Registry-backed keyword completions and cache lifecycle                        |
+| `src/format/`                            | Registry-backed formatting dispatch                                            |
+| `editors/vscode/`                        | Build-time TextMate grammar generation from core + stdlib providers            |
 
 ## Progress Checklist
 
-- [ ] **Phase 1** — Create `crates/incan-vocab/` with core types (`VocabProvider`, `KeywordRegistry`, manifest types, public AST types)
-- [ ] **Phase 1** — Implement `IncanCoreVocab` and `StdlibVocab` providers internally
-- [ ] **Phase 1** — Build `KeywordRegistry` at startup alongside existing `KEYWORDS` table (validate parity)
-- [ ] **Phase 1** — Publish `incan-vocab` v0.1.0 to crates.io
-- [ ] **Phase 2** — Lexer emits `Token::Ident` for all keywords (remove dedicated token variants)
-- [ ] **Phase 2** — Parser dispatches via `KeywordRegistry` + `KeywordSurfaceKind`
-- [ ] **Phase 2** — Replace `active_soft_keywords` with unified `active_keywords: HashSet<String>`
-- [ ] **Phase 2** — Remove old `KEYWORDS` table and `KeywordId` enum
-- [ ] **Phase 2** — LSP builds and caches `KeywordRegistry` per workspace
-- [ ] **Phase 2** — Formatter dispatches on `KeywordSurfaceKind` instead of hardcoded keyword names
-- [ ] **Phase 2** — Generate TextMate grammar from `IncanCoreVocab` + `StdlibVocab` (build-time step)
-- [ ] **Phase 3** — Parse `[vocab]` section in `incan.toml`
-- [ ] **Phase 3** — Vocab crate build step in `incan build --lib`
-- [ ] **Phase 3** — Serialize `VocabProvider` output to JSON in library artifacts
-- [ ] **Phase 4** — Deserialize vocab metadata during consumer builds
-- [ ] **Phase 4** — Wire `LibraryManifest` into typechecker import resolution
-- [ ] **Phase 4.5** — Implement desugaring pass (`VocabBlock` → Incan AST via `VocabDesugarer`)
-- [ ] **Phase 4.5** — Map public AST types back to compiler internal AST
-- [ ] **Phase 5** — Replace `needs_*` booleans with registry-driven feature detection
-- [ ] **Phase 5** — Remove `scan_for_*` methods from `IrCodegen`
+### Spec and rollout
+
+- [x] Re-review RFC 027 and re-phase the rollout around current compiler seams and RFC 031 dependency boundaries.
+
+### Phase 1: Registry extraction and parity
+
+- [ ] Create `crates/incan-vocab/` with the core registry, manifest, and public AST types defined by this RFC.
+- [ ] Implement `IncanCoreVocab` and `StdlibVocab` as internal providers.
+- [ ] Build `KeywordRegistry` alongside the existing keyword tables and add parity checks/tests.
+- [ ] Publish `incan-vocab` v0.1.0 once the public API is stable.
+
+### Phase 2: Parser activation and transitional dispatch
+
+- [ ] Replace `active_soft_keywords` with registry-backed active keyword tracking.
+- [ ] Route parser dispatch through `KeywordRegistry` + `KeywordSurfaceKind` while retaining transitional compatibility with existing keyword token forms.
+- [ ] Add or adjust AST support for registry-driven surfaces and validate parser behavior with targeted tests.
+
+### Phase 3: Full internal compiler and tooling migration
+
+- [ ] Migrate the lexer toward `Token::Ident` for keyword-shaped words and remove legacy keyword-specific dispatch once parity is proven.
+- [ ] Move LSP keyword consumers, formatter dispatch, and static grammar generation to core + stdlib provider output.
+- [ ] Remove the old `KEYWORDS` table only after all compiler and tooling consumers use the registry.
+
+### Phase 4: Library artifact production (requires RFC 031 library build scaffolding)
+
+- [ ] Parse `[vocab]` in `incan.toml`.
+- [ ] Add vocab crate build and metadata extraction to `incan build --lib`.
+- [ ] Serialize `VocabProvider` output and `LibraryManifest` into the library artifact.
+
+### Phase 5: Consumer loading and typechecker integration (requires Phase 4 and RFC 031 consumer loading)
+
+- [ ] Deserialize library vocab metadata during consumer builds.
+- [ ] Merge imported library keywords into `KeywordRegistry` activation.
+- [ ] Wire `LibraryManifest` into import resolution and typechecker symbol loading.
+
+### Phase 6: Desugaring pipeline (requires library artifact transport)
+
+- [ ] Add a post-parse, pre-typecheck desugaring pass for `VocabBlock`.
+- [ ] Load and execute `VocabDesugarer` for block DSLs, then map public AST types back to compiler AST.
+- [ ] Add success-path and error-path integration tests for block desugaring.
+
+### Phase 7: Feature detection cleanup
+
+- [ ] Replace `needs_*` booleans with provider-declared feature and dependency data.
+- [ ] Remove `scan_for_*` methods from `IrCodegen` once the manifest-driven path is end-to-end.
+- [ ] Update project generation to consume collected feature and dependency sets instead of hard-coded booleans.
 
 ## Design decisions
 
@@ -2140,7 +2173,7 @@ Use `vocab/` as the directory name instead of `crates/`.
 
 `VocabProvider` output (keyword registrations + manifest) is serialized to JSON during `incan build --lib` and bundled into the library artifact. The consumer compiler deserializes it at build time — no dynamic linking needed for metadata.
 
-`VocabDesugarer` implementations are compiled Rust code. In the internal-first phases (1–3), all desugarers are compiled into the compiler binary. For external libraries (Phase 4+), desugarers are compiled as WASM modules and loaded via a sandboxed runtime (`wasmtime`). WASM is portable (no platform-specific `cdylib`), sandboxed (can't access the filesystem or network), and deterministic.
+`VocabDesugarer` implementations are compiled Rust code. During the internal compiler migration, desugarers live inside the compiler binary. For external libraries (Phase 4+), desugarers are compiled as WASM modules and loaded via a sandboxed runtime (`wasmtime`). WASM is portable (no platform-specific `cdylib`), sandboxed (can't access the filesystem or network), and deterministic.
 
 This also resolves the desugarer loading mechanism — `cdylib` + `libloading` is rejected in favor of WASM.
 
