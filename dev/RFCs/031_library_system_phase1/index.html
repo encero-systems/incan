@@ -11,25 +11,21 @@
       
       
       
-        <link rel="prev" href="../contributing/explanation/stdlib_testing_internals/">
       
       
-        <link rel="next" href="../release_notes/">
-      
-      
-      <link rel="icon" href="../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>RFCs - Incan Documentation</title>
+        <title>RFC 031: Incan Library System — Phase 1 (Local Path Dependencies) - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -48,9 +44,9 @@
       
     
     
-      <link rel="stylesheet" href="../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../stylesheets/pygments.css">
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -76,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfcs-design-records" class="md-skip">
+        <a href="#rfc-031-incan-library-system-phase-1-local-path-dependencies" class="md-skip">
           Skip to content
         </a>
       
@@ -96,7 +92,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -116,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFCs
+              RFC 031: Incan Library System — Phase 1 (Local Path Dependencies)
             
           </span>
         </div>
@@ -239,7 +235,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -269,7 +265,7 @@
   
   
     <li class="md-nav__item">
-      <a href=".." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -320,7 +316,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../start_here/" class="md-nav__link ">
+            <a href="../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -353,7 +349,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -374,7 +370,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -395,7 +391,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -416,7 +412,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../start_here/beginner/" class="md-nav__link">
+      <a href="../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -475,7 +471,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../language/" class="md-nav__link ">
+            <a href="../../language/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -599,7 +595,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../language/tutorials/book/" class="md-nav__link ">
+            <a href="../../language/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -632,7 +628,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -653,7 +649,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -674,7 +670,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -695,7 +691,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -716,7 +712,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -737,7 +733,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -758,7 +754,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -779,7 +775,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -800,7 +796,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -821,7 +817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -842,7 +838,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -863,7 +859,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -884,7 +880,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -913,7 +909,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -934,7 +930,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1026,7 +1022,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/async_programming/" class="md-nav__link">
+      <a href="../../language/how-to/async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1047,7 +1043,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1068,7 +1064,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1089,7 +1085,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/error_messages/" class="md-nav__link">
+      <a href="../../language/how-to/error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1110,7 +1106,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/file_io/" class="md-nav__link">
+      <a href="../../language/how-to/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1131,7 +1127,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1152,7 +1148,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1173,7 +1169,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1194,7 +1190,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/string_processing/" class="md-nav__link">
+      <a href="../../language/how-to/string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1215,7 +1211,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/performance/" class="md-nav__link">
+      <a href="../../language/how-to/performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1236,7 +1232,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1257,7 +1253,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1328,7 +1324,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../language/reference/" class="md-nav__link ">
+            <a href="../../language/reference/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1361,7 +1357,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/language/" class="md-nav__link">
+      <a href="../../language/reference/language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1382,7 +1378,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/glossary/" class="md-nav__link">
+      <a href="../../language/reference/glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1403,7 +1399,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/file_io/" class="md-nav__link">
+      <a href="../../language/reference/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1424,7 +1420,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1445,7 +1441,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1466,7 +1462,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/strings/" class="md-nav__link">
+      <a href="../../language/reference/strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1487,7 +1483,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/testing/" class="md-nav__link">
+      <a href="../../language/reference/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1508,7 +1504,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/reflection/" class="md-nav__link">
+      <a href="../../language/reference/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1529,7 +1525,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1582,7 +1578,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1615,7 +1611,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1636,7 +1632,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1657,7 +1653,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1678,7 +1674,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1699,7 +1695,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1720,7 +1716,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1800,7 +1796,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1821,7 +1817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1842,7 +1838,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1863,7 +1859,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1884,7 +1880,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../language/reference/derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1905,7 +1901,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2009,7 +2005,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/why_incan/" class="md-nav__link">
+      <a href="../../language/explanation/why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2030,7 +2026,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2051,7 +2047,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2072,7 +2068,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/control_flow/" class="md-nav__link">
+      <a href="../../language/explanation/control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2093,7 +2089,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/closures/" class="md-nav__link">
+      <a href="../../language/explanation/closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2114,7 +2110,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/consts/" class="md-nav__link">
+      <a href="../../language/explanation/consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2135,7 +2131,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2156,7 +2152,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2177,7 +2173,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/enums/" class="md-nav__link">
+      <a href="../../language/explanation/enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2198,7 +2194,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/error_handling/" class="md-nav__link">
+      <a href="../../language/explanation/error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2219,7 +2215,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2264,7 +2260,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2297,7 +2293,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2318,7 +2314,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2347,7 +2343,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2368,7 +2364,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2435,7 +2431,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../tooling/" class="md-nav__link ">
+            <a href="../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2513,7 +2509,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2534,7 +2530,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2555,7 +2551,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2639,7 +2635,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2660,7 +2656,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2681,7 +2677,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2702,7 +2698,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2723,7 +2719,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2744,7 +2740,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2765,7 +2761,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2786,7 +2782,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2858,7 +2854,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2879,7 +2875,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2953,7 +2949,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2974,7 +2970,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2995,7 +2991,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3028,8 +3024,6 @@
       
   
   
-    
-  
   
   
     
@@ -3057,16 +3051,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../contributing/" class="md-nav__link ">
+            <a href="../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3083,7 +3077,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             Contributing
@@ -3176,7 +3170,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3209,7 +3203,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3230,7 +3224,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3251,7 +3245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3272,7 +3266,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3293,7 +3287,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3314,7 +3308,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3335,7 +3329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3356,7 +3350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3440,7 +3434,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3461,7 +3455,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3482,7 +3476,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3503,7 +3497,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3579,7 +3573,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3600,7 +3594,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3621,7 +3615,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3642,7 +3636,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3668,30 +3662,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  <span class="md-ellipsis">
-    RFCs
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3700,44 +3674,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#index" class="md-nav__link">
-    <span class="md-ellipsis">
-      Index
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
-    <span class="md-ellipsis">
-      See also
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -3784,7 +3720,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../release_notes/" class="md-nav__link ">
+            <a href="../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3817,7 +3753,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../release_notes/0_2/" class="md-nav__link">
+      <a href="../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3838,7 +3774,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../release_notes/0_1/" class="md-nav__link">
+      <a href="../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3866,7 +3802,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../roadmap/" class="md-nav__link">
+      <a href="../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3886,7 +3822,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../stability/" class="md-nav__link">
+      <a href="../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3926,18 +3862,252 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#index" class="md-nav__link">
+  <a href="#summary" class="md-nav__link">
     <span class="md-ellipsis">
-      Index
+      Summary
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
+  <a href="#motivation" class="md-nav__link">
     <span class="md-ellipsis">
-      See also
+      Motivation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation (how users think about it)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Guide-level explanation (how users think about it)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#library-author-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      Library author workflow
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#consumer-project-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      Consumer project workflow
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-user-sees" class="md-nav__link">
+    <span class="md-ellipsis">
+      What the user sees
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reference-level explanation (precise rules)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reference-level explanation (precise rules)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-two-artifact-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      The two-artifact model
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#manifest-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      Manifest schema
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pub-import-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      pub:: import syntax
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incantoml-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan.toml changes
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compilation-flow-incan-build-lib" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compilation flow: incan build --lib
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compilation-flow-incan-build-consumer" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compilation flow: incan build (consumer)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rust-code-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust code emission
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#soft-keyword-activation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Soft keyword activation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction-with-existing-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interaction with existing features
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compatibility-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compatibility / migration
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      Alternatives considered
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alternatives considered">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#source-only-re-compile-library-incn-on-every-consumer-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      Source-only (re-compile library .incn on every consumer build)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rust-crate-only-no-manifest" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust-crate-only (no manifest)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#no-pub-prefix-bare-library-imports" class="md-nav__link">
+    <span class="md-ellipsis">
+      No pub:: prefix (bare library imports)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#explicit-exports-table-in-incantoml" class="md-nav__link">
+    <span class="md-ellipsis">
+      Explicit [exports] table in incan.toml
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#drawbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Drawbacks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unresolved-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unresolved questions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#future-phases-out-of-scope-for-this-rfc" class="md-nav__link">
+    <span class="md-ellipsis">
+      Future phases (out of scope for this RFC)
     </span>
   </a>
   
@@ -3961,304 +4131,222 @@
   
 
 
-<h1 id="rfcs-design-records">RFCs (Design records)<a class="headerlink" href="#rfcs-design-records" title="Permanent link">&para;</a></h1>
-<p>RFCs are design/evolution records (PEP-style). They are primarily for contributors and advanced readers.</p>
+<h1 id="rfc-031-incan-library-system-phase-1-local-path-dependencies">RFC 031: Incan Library System — Phase 1 (Local Path Dependencies)<a class="headerlink" href="#rfc-031-incan-library-system-phase-1-local-path-dependencies" title="Permanent link">&para;</a></h1>
 <ul>
-<li>RFCs are not canonical user docs.</li>
-<li>User docs may link to RFCs for background and rationale.</li>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2026-03-06</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong> RFC 027 (incan-vocab — keyword registration API), RFC 034 (<code>incan.pub</code> registry)</li>
+<li><strong>Target version:</strong> v0.2</li>
 </ul>
-<p>For status, see: <a href="../roadmap/">Roadmap</a>.</p>
-<h2 id="index">Index<a class="headerlink" href="#index" title="Permanent link">&para;</a></h2>
-<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
-
-<!-- markdownlint-disable MD013 MD060 MD053 MD033 -->
-<!-- Include RFC reference links (DRY: reuse rfcs_refs.md) -->
-<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
-
-<!-- RFC reference links for reuse: '[RFC 018]' or '[RFC 018: Title][RFC 018]' -->
-<!-- RFCs index table -->
-
-<!-- RFC index filter UI -->
-
-<div class="rfc-index-filter">
-  <label>
-    Filter RFCs: <input type="search" data-rfc-filter="rfcs-index" placeholder="e.g. 018, testing, superseded">
-  </label>
-  <p><small>Tip: press <code>Esc</code> to clear.</small></p>
-</div>
-
-<div data-rfc-table="rfcs-index">
-<table>
-<thead>
-<tr>
-<th style="text-align: right;">RFC</th>
-<th>Status</th>
-<th>Track</th>
-<th>Title</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/000_core_rfc">RFC 000</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Incan Core Language RFC (Phase 1)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/001_test_fixtures">RFC 001</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Test Fixtures</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/002_test_parametrize">RFC 002</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Parametrized Tests</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/003_frontend_wasm">RFC 003</a></td>
-<td>Blocked</td>
-<td>proposed / active</td>
-<td>Frontend &amp; WebAssembly Support</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/004_async_fixtures">RFC 004</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Async Fixtures</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Rust Interop</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/006_generators">RFC 006</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Python-Style Generators</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/007_inline_tests">RFC 007</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Inline Tests</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/008_const_bindings">RFC 008</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Const Bindings</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/009_sized_integers">RFC 009</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Sized Integer Types &amp; Builtin Type Registry</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/010_tempfile">RFC 010</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Temporary Files and Directories</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/011_fstring_error_spans">RFC 011</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Precise Error Spans in F-Strings</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/012_json_value">RFC 012</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>JsonValue</code> Type, Enum Methods, and Enum Trait Adoption</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Rust Crate Dependencies</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/014_generated_code_error_handling">RFC 014</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Error Handling in Generated Rust Code</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a></td>
-<td>In Progress</td>
-<td>proposed / active</td>
-<td>Hatch-like Tooling (Project Lifecycle CLI)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/016_loop_and_break_value">RFC 016</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>loop</code> and <code>break &lt;value&gt;</code> (Loop Expressions)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/017_validated_newtypes_with_implicit_coercion">RFC 017</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Validated newtypes with implicit coercion (pydantic-like feel)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/018_testing">RFC 018</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Language Primitives for Testing</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/019_runner_testing">RFC 019</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Test Runner, CLI, and Ecosystem</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/020_offline_locked_reproducible_builds">RFC 020</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Offline / Locked / Reproducible Builds (Cargo Policy + Generated Project Contract)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/021_model_field_metadata_and_aliases">RFC 021</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Model field metadata and schema-safe aliases</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Namespaced stdlib modules and compiler→stdlib handoff</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Compilable Stdlib &amp; Rust Module Binding</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Extensible Derive Protocol</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Multi-Instantiation Trait Dispatch</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/026_user_defined_trait_bridges">RFC 026</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>User-Defined Trait Bridges</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/027_incan_vocab_crate">RFC 027</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td><code>incan-vocab</code> — Library Vocabulary Registration Crate</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/028_trait_based_operator_overloading">RFC 028</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Trait-Based Operator Overloading</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/029_union_types">RFC 029</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Union Types and Type Narrowing</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/030_std_collections">RFC 030</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td><code>std.collections</code> — Extended Collection Types</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/031_library_system_phase1">RFC 031</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Incan Library System — Phase 1 (Local Path Dependencies)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/032_value_enums">RFC 032</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Value Enums — <code>StrEnum</code> and <code>IntEnum</code></td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/033_ctx_keyword">RFC 033</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td><code>ctx</code> — Typed Configuration Context</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/034_incan_pub_registry">RFC 034</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td><code>incan.pub</code> — The Incan Package Registry</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/035_first_class_function_references">RFC 035</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>First-Class Named Function References</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/036_user_defined_decorators">RFC 036</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>User-Defined Decorators</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/037_native_web_stdlib_redesign">RFC 037</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Native Web and HTTP Stdlib Redesign</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/038_variadic_positional_args_and_keyword_capture">RFC 038</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Variadic Positional Args and Keyword-Argument Capture (<code>*args</code> / <code>**kwargs</code>)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/039_race_for_awaitable_concurrency">RFC 039</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td><code>race</code> for Awaitable Concurrency</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/040_scoped_dsl_glyph_surfaces">RFC 040</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Scoped DSL Glyph Surfaces</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/041_first_class_rust_interop_authoring">RFC 041</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>First-Class Rust Interop Authoring</td>
-</tr>
-</tbody>
-</table>
-</div>
-<!-- markdownlint-enable MD013 MD060 MD053 MD033 -->
-
-<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>Introduce Incan library dependencies so that one Incan project can depend on another, import its types, and compile against its generated Rust crate. Phase 1 covers the minimal local-only flow: <code>path</code> dependencies, a type manifest (<code>.incnlib</code>), a library build mode, <code>pub::</code> import syntax, and Cargo wiring through ordinary path dependencies.</p>
+<p>The core abstractions here are intended to carry forward into later phases such as git dependencies and the <code>incan.pub</code> registry, even if some concrete CLI details or artifact layout choices evolve.</p>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>The Incan compiler currently has no concept of external Incan packages:</p>
 <ul>
-<li>RFC template: <a href="TEMPLATE/">TEMPLATE</a></li>
-<li>How to write an RFC: <a href="../contributing/how-to/writing_rfcs/">Writing RFCs (how-to)</a></li>
+<li><strong>Module resolution</strong> (<code>collect_modules()</code>) only finds local <code>.incn</code> files on the filesystem.</li>
+<li><strong>Dependencies</strong> only handle raw Rust crates today (under the manifest section this RFC proposes to rename to <code>[rust-dependencies]</code>) via RFC 013.</li>
+<li><strong>There is no way</strong> for one Incan project to import types, models, or functions from another Incan project.</li>
+</ul>
+<p>This blocks the entire library ecosystem. Without library support:</p>
+<ul>
+<li>Every DSL keyword a library introduces would need to be hard-wired into the compiler.</li>
+<li>Users cannot share reusable Incan code between projects except by copy-pasting <code>.incn</code> files.</li>
+</ul>
+<p>The core insight is a <strong>two-artifact model</strong>: a library ships both a <strong>type manifest</strong> (everything the typechecker needs) and a <strong>generated Rust crate</strong> (the library's <code>.incn</code> source already lowered to Rust). The consumer project does not typecheck the dependency's source as part of its own module graph.</p>
+<h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
+<h3 id="library-author-workflow">Library author workflow<a class="headerlink" href="#library-author-workflow" title="Permanent link">&para;</a></h3>
+<p>Like Rust, where the presence of <code>src/lib.rs</code> makes a crate a library, Incan uses <code>src/lib.incn</code> as the package root for a library-capable project. No extra TOML section is required just to declare "this project can build a library".</p>
+<p>The <code>src/lib.incn</code> file declares the package's public API using package-root re-export syntax (new — the Incan equivalent of Rust's <code>pub use</code>):</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># mylib/src/lib.incn</span>
+<span class="sd">&quot;&quot;&quot;My reusable Incan library.&quot;&quot;&quot;</span>
+
+<span class="k">pub</span> <span class="kn">from</span><span class="w"> </span><span class="nn">widgets</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Widget</span><span class="p">,</span> <span class="nc">Layout</span>
+<span class="k">pub</span> <span class="kn">from</span><span class="w"> </span><span class="nn">helpers</span><span class="w"> </span><span class="kn">import</span> <span class="n">format_output</span>
+</code></pre></div>
+<p>The <code>pub</code> modifier on <code>from ... import</code> is only valid in <code>lib.incn</code>. It declares which symbols are part of the package's public API. Imports without <code>pub</code> are internal to the library root and do not appear in the exported manifest.</p>
+<p>The library author builds with:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>--lib
+</code></pre></div>
+<p>This compiles the library through the full pipeline, emits a generated Rust crate, and produces a type manifest (for example <code>mylib.incnlib</code>) from the library's checked public surface. The exact on-disk layout under <code>target/</code> is an implementation detail; what matters normatively is that the build produces both the Rust crate material and the manifest.</p>
+<h3 id="consumer-project-workflow">Consumer project workflow<a class="headerlink" href="#consumer-project-workflow" title="Permanent link">&para;</a></h3>
+<p>A consumer declares the dependency in <code>incan.toml</code>:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="c1"># my-app/incan.toml</span>
+<span class="k">[project]</span>
+<span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;my-app&quot;</span>
+<span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
+
+<span class="k">[dependencies]</span>
+<span class="n">mylib</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../mylib&quot;</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>Then imports and uses library types normally:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># src/main.incn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">mylib</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Widget</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">local_models</span><span class="w"> </span><span class="kn">import</span> <span class="nc">AppState</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_ui</span><span class="p">(</span><span class="n">state</span><span class="p">:</span> <span class="nc">AppState</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Widget</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nc">Widget</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="n">state</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+</code></pre></div>
+<p>The <code>pub::</code> prefix makes the import source unambiguous:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">mylib</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Widget</span>          <span class="c1"># Incan library (from [dependencies])</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">tokio</span> <span class="kn">import</span><span class="w"> </span><span class="nn">spawn</span>          <span class="c1"># Rust crate (from [rust-dependencies])</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">local_models</span><span class="w"> </span><span class="kn">import</span> <span class="nc">AppState</span>      <span class="c1"># Local project module</span>
+</code></pre></div>
+<p><code>incan build</code> resolves the dependency, loads the manifest, typechecks against library types, and wires the generated library crate into the consumer's generated <code>Cargo.toml</code> as a normal path dependency. For local <code>path</code> dependencies, the build tool may rebuild stale library artifacts as an implementation detail, but the consumer typechecks against the manifest rather than folding dependency source into its own module graph.</p>
+<h3 id="what-the-user-sees">What the user sees<a class="headerlink" href="#what-the-user-sees" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code>$<span class="w"> </span>incan<span class="w"> </span>build
+<span class="w">  </span>Resolving<span class="w"> </span>dependencies...
+<span class="w">    </span><span class="nv">mylib</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>../mylib<span class="w"> </span><span class="o">(</span>path<span class="o">)</span>
+<span class="w">  </span>Loading<span class="w"> </span>manifests...
+<span class="w">    </span>mylib<span class="w"> </span><span class="m">0</span>.1.0<span class="w"> </span>—<span class="w"> </span><span class="m">3</span><span class="w"> </span>exports<span class="w"> </span><span class="o">(</span>Widget,<span class="w"> </span>Layout,<span class="w"> </span>format_output<span class="o">)</span>
+<span class="w">  </span>Compiling<span class="w"> </span>my-app...
+<span class="w">  </span>Done.
+</code></pre></div>
+<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
+<h3 id="the-two-artifact-model">The two-artifact model<a class="headerlink" href="#the-two-artifact-model" title="Permanent link">&para;</a></h3>
+<p>A library build produces two logical artifacts:</p>
+<ol>
+<li>
+<p><strong>Type manifest</strong> (<code>.incnlib</code>) — a JSON file containing everything the typechecker needs: exported models, classes, functions, traits, enums, type aliases, and soft keyword declarations. Generated from the typechecker's symbol table — never hand-written.</p>
+</li>
+<li>
+<p><strong>Generated Rust crate</strong> — the library's <code>.incn</code> source lowered to Rust, ready for Cargo to compile and link against. Shipped as generated Rust source rather than a platform-specific compiled binary artifact.</p>
+</li>
+</ol>
+<p>The exact directory names under <code>target/</code> are intentionally not normative in this RFC. Phase 2 / RFC 034 packaging can bundle these logical artifacts into a single distributable package without changing their meaning.</p>
+<h3 id="manifest-schema">Manifest schema<a class="headerlink" href="#manifest-schema" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code>Manifest:
+  name: str                          # Package name
+  version: str                       # SemVer
+  incan_version: str                 # Minimum compiler version required
+  manifest_format: int               # Schema version (for forward compatibility)
+  dependencies: list[Dependency]     # Other Incan libraries this depends on
+
+  exports:
+    models: list[ModelExport]        # Model definitions with fields, traits, methods
+    classes: list[ClassExport]       # Class definitions with inheritance, methods
+    functions: list[FunctionExport]  # Free functions with typed signatures
+    traits: list[TraitExport]        # Trait definitions with required methods
+    enums: list[EnumExport]          # Enum definitions with variants
+    type_aliases: list[TypeAlias]    # Type aliases
+
+  soft_keywords:
+    activations: list[SoftKeywordActivation]
+      # Extracted from the library&#39;s vocab crate (RFC 027), if any.
+      # Never hand-authored.
+
+  rust_crate:
+    name: str                        # Rust crate name (for generated Cargo.toml)
+    path: str                        # Relative path to Rust crate root
+</code></pre></div>
+<p>The manifest is serialized as JSON for Phase 1 (human-readable, debuggable, zero extra deps). <code>manifest_format</code> versioning is what protects future evolution; exact JSON field layout is not the semantic contract by itself.</p>
+<h3 id="pub-import-syntax"><code>pub::</code> import syntax<a class="headerlink" href="#pub-import-syntax" title="Permanent link">&para;</a></h3>
+<p>The parser recognises <code>pub::</code> as a library namespace prefix, parallel to the existing <code>rust::</code> prefix:</p>
+<div class="language-text highlight"><pre><span></span><code>import_stmt ::= &quot;from&quot; import_path &quot;import&quot; import_items
+import_path ::= &quot;pub::&quot; IDENT          # Incan library
+              | &quot;rust::&quot; rust_path      # Rust crate (existing)
+              | module_path             # Local project module (existing)
+</code></pre></div>
+<p>Resolution: the compiler looks up the identifier after <code>pub::</code> in the loaded library manifests (populated from <code>[dependencies]</code> in <code>incan.toml</code>). If found, the imported names are resolved against the manifest's exports. If not found, a diagnostic is emitted.</p>
+<h3 id="incantoml-changes"><code>incan.toml</code> changes<a class="headerlink" href="#incantoml-changes" title="Permanent link">&para;</a></h3>
+<p><strong>Consumer project</strong> — new <code>[dependencies]</code> section for Incan libraries:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
+<span class="n">mylib</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../mylib&quot;</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p><strong>Library project</strong> — no special section needed. The presence of <code>src/lib.incn</code> makes the project library-capable. <code>incan build --lib</code> checks for this file and errors if it doesn't exist.</p>
+<p><strong>Rename</strong>: existing <code>[dependencies]</code> for Rust crates becomes <code>[rust-dependencies]</code>. Incan library dependencies get the unqualified <code>[dependencies]</code> name — they will be the more common case long-term. The compiler emits a clear migration diagnostic if it detects Rust crate names in <code>[dependencies]</code>.</p>
+<h3 id="compilation-flow-incan-build-lib">Compilation flow: <code>incan build --lib</code><a class="headerlink" href="#compilation-flow-incan-build-lib" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code>src/*.incn
+  → Lexer → Parser → Typechecker (validate all exports)
+  → Lowering → Emission → generated library Rust crate
+  → Generate manifest from checked public API → &lt;library-artifact-dir&gt;/&lt;name&gt;.incnlib
+  → cargo build (validate the Rust crate compiles)
+</code></pre></div>
+<p>The manifest is generated from the checked public API declared by <code>lib.incn</code>. There is no separate TOML export list.</p>
+<h3 id="compilation-flow-incan-build-consumer">Compilation flow: <code>incan build</code> (consumer)<a class="headerlink" href="#compilation-flow-incan-build-consumer" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code>incan.toml
+  → Parse [dependencies]
+  → For each dependency: resolve path, ensure/load the built library artifact, read &lt;name&gt;.incnlib
+  → Load manifest exports into typechecker symbol table
+  → Parse + typecheck user&#39;s .incn files
+  → On `pub::` imports, activate any matching library vocab metadata from the manifest
+  → Lower + emit user&#39;s Rust code (generates `use &lt;lib&gt;::...` references)
+  → Generate Cargo.toml with library crate paths as path dependencies
+  → cargo build (Cargo resolves the library crate&#39;s own Rust deps transitively)
+</code></pre></div>
+<h3 id="rust-code-emission">Rust code emission<a class="headerlink" href="#rust-code-emission" title="Permanent link">&para;</a></h3>
+<p>For a consumer file importing <code>from pub::mylib import Widget</code>:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="c1">// Generated Rust</span>
+<span class="k">use</span><span class="w"> </span><span class="n">mylib</span><span class="p">::</span><span class="n">Widget</span><span class="p">;</span>
+
+<span class="k">fn</span><span class="w"> </span><span class="nf">build_ui</span><span class="p">(</span><span class="n">state</span><span class="p">:</span><span class="w"> </span><span class="nc">AppState</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Widget</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// ...</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>The generated <code>Cargo.toml</code>:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
+<span class="n">mylib</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../mylib/&lt;generated-library-crate-dir&gt;&quot;</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>The consumer only needs the library crate as a normal Cargo dependency. The generated library crate's own <code>Cargo.toml</code> declares any Rust dependencies it needs, and Cargo resolves those transitively in the usual way.</p>
+<h3 id="soft-keyword-activation">Soft keyword activation<a class="headerlink" href="#soft-keyword-activation" title="Permanent link">&para;</a></h3>
+<p>Libraries that introduce soft keywords define them via the <code>VocabProvider</code> trait (RFC 027). The library build extracts those declarations and serializes them into the manifest alongside the ordinary export surface. During consumer build, the compiler reads that metadata from the manifest and uses it with the same import-driven activation model used for other soft keywords.</p>
+<p>In Phase 1, activation should remain <strong>import-driven</strong>, not project-wide. Depending on a library makes its vocabulary available for resolution, but keywords are activated by the relevant <code>pub::...</code> imports, just as stdlib soft keywords are activated by the imports that bring their modules into scope.</p>
+<h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>rust::</code> imports (RFC 005)</strong>: <code>pub::</code> and <code>rust::</code> are parallel namespace prefixes. They share the same import syntax, differing only in resolution mechanism (manifest lookup vs. Rust crate path).</li>
+<li><strong>Stdlib namespaces (RFC 022/023)</strong>: <code>std.*</code> imports are compiler-provided and always available. <code>pub::*</code> imports are user-declared and require <code>[dependencies]</code>. They coexist without overlap.</li>
+<li><strong>Soft keywords (RFC 022)</strong>: Library soft keywords use the same import-activated model as stdlib soft keywords.</li>
+<li><strong>Vocab crate (RFC 027)</strong>: <code>incan-vocab</code> defines keyword-registration and desugaring metadata. The library export manifest itself remains a product of the library build, not the vocab crate's authoritative replacement.</li>
+</ul>
+<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Breaking</strong>: <code>[dependencies]</code> in <code>incan.toml</code> is renamed to <code>[rust-dependencies]</code> for Rust crate deps. A migration diagnostic guides users.</li>
+<li><strong>Additive</strong>: <code>pub::</code> import syntax, <code>[dependencies]</code> for Incan libraries, <code>src/lib.incn</code> convention, <code>incan build --lib</code> — all new.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<h3 id="source-only-re-compile-library-incn-on-every-consumer-build">Source-only (re-compile library <code>.incn</code> on every consumer build)<a class="headerlink" href="#source-only-re-compile-library-incn-on-every-consumer-build" title="Permanent link">&para;</a></h3>
+<p>The consumer would re-lex, re-parse, re-typecheck, and re-lower the entire library on every build. Rejected because it's slow for large libraries and eliminates the possibility of pre-compiled distribution.</p>
+<h3 id="rust-crate-only-no-manifest">Rust-crate-only (no manifest)<a class="headerlink" href="#rust-crate-only-no-manifest" title="Permanent link">&para;</a></h3>
+<p>Ship only the generated Rust crate, skip the manifest. The consumer gets Rust compilation but no Incan-level type checking — the compiler wouldn't know about library types' fields, methods, or type parameters. Rejected because it defeats the purpose of Incan's type system.</p>
+<h3 id="no-pub-prefix-bare-library-imports">No <code>pub::</code> prefix (bare library imports)<a class="headerlink" href="#no-pub-prefix-bare-library-imports" title="Permanent link">&para;</a></h3>
+<p><code>from mylib import Widget</code> without any prefix. Rejected because it's ambiguous — is <code>mylib</code> a local module or a library? The <code>pub::</code> prefix makes the source unambiguous, paralleling <code>rust::</code> for Rust crates.</p>
+<h3 id="explicit-exports-table-in-incantoml">Explicit <code>[exports]</code> table in <code>incan.toml</code><a class="headerlink" href="#explicit-exports-table-in-incantoml" title="Permanent link">&para;</a></h3>
+<p>Instead of deriving exports from <code>pub</code> visibility in <code>lib.incn</code>, require an explicit list of exported symbols in <code>incan.toml</code>. Rejected because it duplicates information the typechecker already has and adds ceremony without benefit.</p>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Complexity</strong>: The two-artifact model, manifest format, and <code>build --lib</code> flow add significant compiler complexity.</li>
+<li><strong>Breaking change</strong>: Renaming <code>[dependencies]</code> → <code>[rust-dependencies]</code> for Rust crates will require migration for existing projects.</li>
+<li><strong>Build orchestration</strong>: Library builds now have artifact freshness concerns. Tooling must decide when a local path dependency needs to be rebuilt.</li>
+<li><strong>No versioning</strong>: Phase 1 path dependencies have no version resolution — if the library changes, the consumer gets whatever's on disk. Versioning comes in Phase 2 (git tags) and Phase 3 (<code>incan.pub</code> + SemVer).</li>
+</ul>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Parser</strong> (<code>crates/incan_syntax/src/parser/</code>) — recognise <code>pub::</code> as an import path prefix (parallel to <code>rust::</code>); support <code>pub from ... import ...</code> re-export syntax valid only in <code>lib.incn</code>, requiring a visibility field on <code>ImportDecl</code>.</li>
+<li><strong>Typechecker</strong> (<code>src/frontend/typechecker/</code>) — load manifest exports into the symbol table before checking user code so library types are indistinguishable from local types during checking; load soft keyword activations from manifests into the parser's keyword registry.</li>
+<li><strong>IR Emission</strong> (<code>src/backend/ir/emit/</code>) — generate <code>use &lt;lib&gt;::...</code> statements for <code>pub::</code> imports.</li>
+<li><strong>Project generator</strong> (<code>src/backend/project/</code>) — add library crate paths to the generated <code>Cargo.toml</code> <code>[dependencies]</code> section.</li>
+<li><strong>CLI</strong> (<code>src/cli/</code>) — introduce <code>incan build --lib</code>; wire dependency resolution (path lookup, manifest loading, stale-artifact detection) into <code>build</code>, <code>run</code>, and <code>test</code> flows; emit the migration diagnostic when Rust crate names are found in <code>[dependencies]</code>.</li>
+<li><strong>Manifest layer</strong> (new) — <code>LibraryManifest</code> data model, JSON serialization/deserialization, and the generation step that extracts the checked public API from the typechecker's symbol table.</li>
+<li><strong>LSP</strong> — load library manifests on workspace open to provide completions and hover info for library types.</li>
+</ul>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>
+<p><strong>Generic type representation in manifests.</strong> How does the manifest represent generic types like <code>Container[T]</code> with bounds like <code>T: Serializable</code>? The TypeRef format needs to handle generics, Optional types, Result types, and nested generics (<code>list[Container[T]]</code>).</p>
+</li>
+<li>
+<p><strong>Artifact freshness policy for path deps.</strong> Should <code>incan build</code> always rebuild local library dependencies, use timestamps/hashes, or require an explicit user command to refresh them?</p>
+</li>
+<li>
+<p><strong>Export-surface ergonomics beyond <code>lib.incn</code>.</strong> Phase 1 uses package-root re-exports in <code>src/lib.incn</code>. If Incan later wants broader visibility modifiers or more granular package APIs, should that remain sugar over the same root export model or become a broader language visibility feature?</p>
+</li>
+</ol>
+<p>Implementation details such as the LSP's manifest cache layering are intentionally out of scope for this RFC.</p>
+<h2 id="future-phases-out-of-scope-for-this-rfc">Future phases (out of scope for this RFC)<a class="headerlink" href="#future-phases-out-of-scope-for-this-rfc" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Phase 2: Git dependencies + caching.</strong> <code>mylib = { git = "https://...", tag = "v0.1.0" }</code>. Adds lockfile (<code>incan.lock</code>), <code>~/.incan/libs/</code> cache, checksum verification, transitive dependency resolution, and inline <code>@</code> version syntax.</li>
+<li><strong>Phase 3: <code>incan.pub</code> registry.</strong> Published Incan libraries with SemVer resolution. <code>mylib = "0.1.0"</code> resolves from the registry. <code>incan publish</code> for library distribution. Defined in <a href="../034_incan_pub_registry/">RFC 034</a>.</li>
 </ul>
 
 
@@ -4308,18 +4396,18 @@
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="../_snippets/javascripts/mathjax.js"></script>
+        <script src="../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../_snippets/javascripts/tablesort.js"></script>
+        <script src="../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>
