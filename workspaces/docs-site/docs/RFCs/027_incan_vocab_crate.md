@@ -1,14 +1,17 @@
 # RFC 027: `incan-vocab` — Library Vocabulary Registration Crate
 
-- **Status:** Planned
+- **Status:** In Progress
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
+- **Issue:** [#161](https://github.com/dannys-code-corner/incan/issues/161)
+- **RFC PR:** —
 - **Related**:
     - RFC 022 (stdlib namespacing)
     - RFC 023 (std.web migration)
     - RFC 028 (global operator overloading)
     - RFC 040 (scoped DSL glyph surfaces)
-- **Target version:** v0.2.0
+- **Written against:** v0.1
+- **Shipped in:** —
 
 ## Summary
 
@@ -25,6 +28,21 @@ There is no distinction between "hard" and "soft" keywords at the architectural 
 Scoped glyph surfaces for explicit DSL blocks build on this substrate, but their semantics are specified separately. This RFC provides the block registration, placement, and desugaring machinery those glyph surfaces rely on; it does not define the global meaning of operators.
 
 This way we have one (stable) API that can be used to create 3rd party libraries and language plugins.
+
+## Goals
+
+- Define a stable, published `incan-vocab` crate that serves as the single extension point for keyword registration across core language, stdlib, and third-party libraries.
+- Unify the hard-keyword `KEYWORDS` table and the soft-keyword `info_soft()` mechanism into one `KeywordRegistry` consumed uniformly by the compiler, LSP, and formatter.
+- Give library authors a typed Rust API (`VocabProvider`, `VocabDesugarer`) to declare keywords and desugar DSL blocks, with no changes required to the compiler itself.
+- Establish the manifest schema types (`LibraryManifest`, `TypeRef`, `CargoDependency`) used by the library build and consumer flows defined in RFC 031.
+
+## Non-Goals
+
+- Defining the global meaning of operators (`+`, `>>`, `|>`, etc.) — that belongs to RFC 028.
+- Defining scoped glyph surfaces for explicit DSL blocks — that belongs to RFC 040.
+- External plugin loading via dynamic libraries (`cdylib`/`libloading`) — desugarers for external libraries use WASM (Phase 4+), not native shared libraries.
+- Implementing the `incan.pub` registry or git-based dependency resolution — those are Phase 2/3 concerns addressed by RFC 034.
+- Replacing the existing `[rust-dependencies]`/Cargo wiring — that is RFC 031's concern.
 
 ## Motivation
 
@@ -345,8 +363,8 @@ impl KeywordSpec {
         Self {
             name: name.to_string(),
             surface_kind,
-            | compound_tokens: rest.iter().map(                        | s | s.to_string()).collect(),  |
-            | placement: KeywordPlacement::InBlock(parents.iter().map( | s | s.to_string()).collect()), |
+            compound_tokens: rest.iter().map(|s| s.to_string()).collect(),
+            placement: KeywordPlacement::InBlock(parents.iter().map(|s| s.to_string()).collect()),
         }
     }
 }
@@ -2012,7 +2030,20 @@ Use `vocab/` as the directory name instead of `crates/`.
 - **One more crate to maintain.** The compiler repo gains another crate. However, `incan-vocab` is intentionally minimal and stable — changes should be rare.
 - **Dynamic loading complexity.** Loading `VocabProvider` from a compiled crate requires either dynamic linking (cdylib + `libloading`) or a build-script extraction approach (compile-time serialization to JSON). The implementation plan addresses this.
 
-## Implementation plan
+## Layers affected
+
+- **New crate (`incan-vocab`)** — introduces all types and traits defined in this RFC (`VocabProvider`, `VocabDesugarer`, `KeywordRegistration`, `KeywordSpec`, `KeywordSurfaceKind`, `KeywordActivation`, `KeywordRegistry`, `LibraryManifest`, public AST types). Published to crates.io independently of the compiler. All other layers depend on it transitively through `incan_core`.
+- **Lexer** — transitions from emitting dedicated keyword token variants to emitting `Token::Ident` for all keyword-shaped identifiers. Keyword promotion becomes entirely the parser's responsibility via registry lookup. This can be done incrementally.
+- **Parser** — replaces per-token-type dispatch with a single `KeywordSurfaceKind`-driven dispatch. Gains `VocabBlock` AST node for `BlockDeclaration` keywords. Per-file `active_keywords` set replaces the narrower `active_soft_keywords` mechanism.
+- **Typechecker** — must accept library manifest exports loaded by the consumer build flow (RFC 031) to treat library types as first-class during checking.
+- **Lowering / IR** — import-activated feature detection (`needs_web`, `needs_async`, etc.) is replaced by registry-driven queries against the `LibraryManifest.required_dependencies` fields. A new desugaring pass (after parsing, before typechecking) transforms `VocabBlock` nodes into ordinary Incan AST via `VocabDesugarer`.
+- **Project generator** — derives required Cargo dependencies from `LibraryManifest.required_dependencies` rather than hard-coded boolean flags.
+- **CLI (`incan build --lib`)** — must build the library's vocab crate, extract `VocabProvider` output, and serialize keyword registrations and manifest metadata into the library artifact. Parsing and handling of the `[vocab]` section in `incan.toml` is required.
+- **LSP** — builds and caches `KeywordRegistry` once per workspace open; rebuilds only on `incan.toml` changes or dependency updates. All keyword-dependent features (completions, diagnostics, hover, go-to-definition) consume the registry uniformly.
+- **Formatter** — dispatches formatting rules via `KeywordSurfaceKind` rather than hardcoded keyword names, enabling library keywords to receive correct formatting automatically.
+- **Editor grammar** — TextMate grammar for VS Code is generated from `IncanCoreVocab` and `StdlibVocab` at build time, replacing the manually maintained keyword list.
+
+## Implementation Plan
 
 ### Phase 1: Extract types + build the registry alongside existing infra
 
@@ -2072,7 +2103,7 @@ Use `vocab/` as the directory name instead of `crates/`.
 | `crates/incan_syntax/parser/` | Produce `VocabBlock` AST for `BlockDeclaration` keywords          |
 | `src/backend/ir/codegen.rs`   | Load vocab metadata; replace `scan_for_*` with registry queries   |
 | `src/backend/project/`        | Replace `needs_*` booleans with feature set from registry         |
-| `src/cli/build.rs`            | Build vocab crate during `incan build --lib`                      |
+| `src/cli/commands/build.rs`   | Build vocab crate during `incan build --lib`                      |
 | `src/frontend/typechecker/`   | Accept manifest metadata for import resolution                    |
 | `src/frontend/` (new pass)    | Desugaring pass: `VocabBlock` → Incan AST                         |
 | `src/lsp/`                    | Build and cache `KeywordRegistry` per workspace                   |
@@ -2080,7 +2111,7 @@ Use `vocab/` as the directory name instead of `crates/`.
 | `editors/vscode/`             | Generate TextMate grammar from core + stdlib vocab providers      |
 | `incan.toml` schema           | Add `[vocab]` section                                             |
 
-## Implementation checklist
+## Progress Checklist
 
 - [ ] **Phase 1** — Create `crates/incan-vocab/` with core types (`VocabProvider`, `KeywordRegistry`, manifest types, public AST types)
 - [ ] **Phase 1** — Implement `IncanCoreVocab` and `StdlibVocab` providers internally
@@ -2217,3 +2248,5 @@ In other words:
 - RFC 040 defines how an explicit DSL block may own block-local glyph surfaces without implying global operator support.
 
 Imports alone do not change the meaning of `a >> b` or `a |> b` in ordinary code. Only an explicit registered block and its eligible DSL positions may activate a scoped glyph surface positively, though an activating file/module may also gain targeted misuse diagnostics for that glyph family as specified in RFC 040.
+
+<!-- The "Design decisions" section above was renamed from "Unresolved questions" once all open questions were resolved. If new unresolved questions arise during implementation, add an "Unresolved questions" section above "Design decisions" and move resolved items back down after resolution. -->
