@@ -24,7 +24,8 @@ RFC NNN: \<short descriptive title\>
 - **Related:** \<RFC links, if any\>
 - **Issue:** \<link to issue\>
 - **RFC PR:** \<link to PR\>
-- **Target version:** \<version\>  <!-- Optional: records the baseline version this RFC describes (the source of truth). For example, `v0.2` means the RFC reflects the language as of `>= v0.2.0`. It does not mean "the version when this will be released"; it means "the version that was current when this RFC was written". -->
+- **Written against:** \<version\>  <!-- The Incan version that was current when this RFC was written. Describes the language baseline the RFC assumes, not when it will ship. Example: `v0.1` means the RFC was drafted when Incan was at v0.1. This field never changes after the RFC is accepted. -->
+- **Shipped in:** —  <!-- Set to the first Incan release that includes this feature, once implementation is complete. Leave as `—` while the RFC is in Draft or Planned status. This is NOT a planning field — do not set it to a future version speculatively. -->
 
 ## Summary
 
@@ -88,15 +89,16 @@ List plausible alternatives and why they’re worse.
 
 What does this cost (complexity, performance, mental model)?
 
-## Implementation plan
+## Layers affected
 
-Concrete steps (expected touchpoints):
+Describe which compiler and tooling layers this RFC impacts, and what each layer must do differently. Use normative language (`must`, `must not`, `should`). Do not list task steps or reference specific internal files or struct names — those belong in the implementation issue.
 
-- Frontend changes (lexer/parser/AST/typechecker)
-- Backend changes (IR/lowering/emission)
-- Stdlib/runtime changes
-- Tooling changes (fmt/test/LSP)
-- Tests to add (unit/integration/fixtures)
+- **Parser** — …
+- **Typechecker** — …
+- **Lowering / IR emission** — …
+- **Stdlib** — …
+- **CLI / tooling** — …
+- **LSP / formatter** — …
 
 ## Unresolved questions
 
