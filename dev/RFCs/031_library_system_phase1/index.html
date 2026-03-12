@@ -3871,6 +3871,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#motivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Motivation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#goals" class="md-nav__link">
     <span class="md-ellipsis">
       Goals
@@ -3883,15 +3892,6 @@
   <a href="#non-goals" class="md-nav__link">
     <span class="md-ellipsis">
       Non-Goals
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#motivation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Motivation
     </span>
   </a>
   
@@ -4090,6 +4090,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#ship-compiled-rlib-artifacts-as-the-phase-1-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      Ship compiled .rlib artifacts as the Phase 1 contract
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4114,18 +4123,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
-      Unresolved questions
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#future-phases-out-of-scope-for-this-rfc" class="md-nav__link">
-    <span class="md-ellipsis">
-      Future phases (out of scope for this RFC)
+      Design Decisions
     </span>
   </a>
   
@@ -4151,7 +4151,7 @@
 
 <h1 id="rfc-031-incan-library-system-phase-1-local-path-dependencies">RFC 031: Incan Library System — Phase 1 (Local Path Dependencies)<a class="headerlink" href="#rfc-031-incan-library-system-phase-1-local-path-dependencies" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-03-06</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/165">#165</a></li>
@@ -4165,12 +4165,26 @@
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Introduce Incan library dependencies so that one Incan project can depend on another, import its types, and compile against its generated Rust crate. Phase 1 covers the minimal local-only flow: <code>path</code> dependencies, a type manifest (<code>.incnlib</code>), a library build mode, <code>pub::</code> import syntax, and Cargo wiring through ordinary path dependencies.</p>
-<p>The core abstractions here are intended to carry forward into later phases such as git dependencies and the <code>incan.pub</code> registry, even if some concrete CLI details or artifact layout choices evolve.</p>
+<p>Introduce Incan library dependencies so that one Incan project can depend on another, import its types, and compile against its generated Rust crate. Phase 1 (this RFC)covers the minimal local-only flow to serve as a foundation for later phases. This includes: <code>path</code> dependencies, a type manifest (<code>.incnlib</code>), a library build mode, <code>pub::</code> import syntax, optional vocab metadata for library-provided soft keywords, and Cargo wiring through ordinary path dependencies. The core abstractions here are intended to carry forward into later phases such as git dependencies and the <code>incan.pub</code> registry, even if some concrete CLI details or artifact layout choices evolve.</p>
+<p>RFC 034 captures the full library system, including git dependencies and the <code>incan.pub</code> registry.</p>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>The Incan compiler currently has no concept of external Incan packages:</p>
+<ul>
+<li><strong>Module resolution</strong> only finds local <code>.incn</code> files on the filesystem.</li>
+<li><strong>Dependencies</strong> (<code>[rust-dependencies]</code> in <code>incan.toml</code>) only handle raw Rust crates via RFC 013.</li>
+<li><strong>There is no way</strong> for one Incan project to import types, models, or functions from another Incan project.</li>
+</ul>
+<p>This blocks the entire library ecosystem. Without library support:</p>
+<ul>
+<li>Every DSL keyword a library introduces would need to be hard-wired into the compiler.</li>
+<li>Users cannot share reusable Incan code between projects except by copy-pasting <code>.incn</code> files.</li>
+</ul>
+<p>The core insight is a <strong>two-artifact model</strong>: a library ships both a <strong>type manifest</strong> (everything the typechecker needs) and a <strong>generated Rust crate</strong> (the library's <code>.incn</code> source already lowered to Rust source plus crate metadata). The consumer project never reparses, re-typechecks, or re-lowers library <code>.incn</code> source as part of its own build.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Allow one Incan project to declare another as a dependency (via <code>path</code> reference) and import its exported types, functions, and soft keywords.</li>
 <li>Introduce <code>incan build --lib</code> as the canonical command for building a library artifact: a type manifest (<code>.incnlib</code>) plus a generated Rust crate.</li>
+<li>Allow a library project to declare optional vocab metadata for library-provided soft keywords so the consumer compiler can activate them from the built artifact rather than from source.</li>
 <li>Establish <code>pub::</code> as the import namespace prefix for Incan library dependencies, parallel to <code>rust::</code> for Rust crates.</li>
 <li>Rename <code>[dependencies]</code> in <code>incan.toml</code> to <code>[rust-dependencies]</code> for Rust crate pass-through, freeing the unqualified <code>[dependencies]</code> key for Incan library dependencies.</li>
 <li>Define the manifest schema and the consumer build flow (manifest loading → typechecking → Rust code emission → Cargo wiring) in sufficient normative detail for implementation.</li>
@@ -4179,38 +4193,31 @@
 <ul>
 <li>Git-based dependency resolution, <code>~/.incan/libs/</code> caching, lockfile entries, or <code>incan fetch</code> — those are Phase 2 concerns.</li>
 <li>The <code>incan.pub</code> registry, <code>incan publish</code>, or SemVer resolution — those are Phase 3 concerns addressed by RFC 034.</li>
-<li>Transitive Incan library dependencies — Phase 1 supports a single consumer + library; recursive manifests are out of scope.</li>
+<li>Transitive Incan library dependencies. Phase 1 only covers direct local path dependencies, so recursive dependency manifests and graph resolution are out of scope.</li>
 <li>Namespace collision resolution beyond a clear compile error.</li>
 <li>Deep LSP warm-cache strategies for remote dependencies — not needed for local path deps.</li>
+<li>External desugarer transport or execution for library-defined DSL blocks — Phase 1 only carries declarative metadata plus soft keyword registrations.</li>
 </ul>
-<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>The Incan compiler currently has no concept of external Incan packages:</p>
-<ul>
-<li><strong>Module resolution</strong> (<code>collect_modules()</code>) only finds local <code>.incn</code> files on the filesystem.</li>
-<li><strong>Dependencies</strong> only handle raw Rust crates today (under the manifest section this RFC proposes to rename to <code>[rust-dependencies]</code>) via RFC 013.</li>
-<li><strong>There is no way</strong> for one Incan project to import types, models, or functions from another Incan project.</li>
-</ul>
-<p>This blocks the entire library ecosystem. Without library support:</p>
-<ul>
-<li>Every DSL keyword a library introduces would need to be hard-wired into the compiler.</li>
-<li>Users cannot share reusable Incan code between projects except by copy-pasting <code>.incn</code> files.</li>
-</ul>
-<p>The core insight is a <strong>two-artifact model</strong>: a library ships both a <strong>type manifest</strong> (everything the typechecker needs) and a <strong>generated Rust crate</strong> (the library's <code>.incn</code> source already lowered to Rust). The consumer project does not typecheck the dependency's source as part of its own module graph.</p>
 <h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
 <h3 id="library-author-workflow">Library author workflow<a class="headerlink" href="#library-author-workflow" title="Permanent link">&para;</a></h3>
-<p>Like Rust, where the presence of <code>src/lib.rs</code> makes a crate a library, Incan uses <code>src/lib.incn</code> as the package root for a library-capable project. No extra TOML section is required just to declare "this project can build a library".</p>
-<p>The <code>src/lib.incn</code> file declares the package's public API using package-root re-export syntax (new — the Incan equivalent of Rust's <code>pub use</code>):</p>
+<p>Like Rust, where the presence of <code>src/lib.rs</code> makes a crate a library, Incan uses <code>src/lib.incn</code> as the convention. If <code>src/lib.incn</code> exists, the project is a library. No required library-specific TOML section is needed.</p>
+<p>The <code>src/lib.incn</code> file declares public exports using <code>pub</code> re-export syntax (new — the Incan equivalent of Rust's <code>pub use</code>):</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># mylib/src/lib.incn</span>
 <span class="sd">&quot;&quot;&quot;My reusable Incan library.&quot;&quot;&quot;</span>
 
 <span class="k">pub</span> <span class="kn">from</span><span class="w"> </span><span class="nn">widgets</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Widget</span><span class="p">,</span> <span class="nc">Layout</span>
 <span class="k">pub</span> <span class="kn">from</span><span class="w"> </span><span class="nn">helpers</span><span class="w"> </span><span class="kn">import</span> <span class="n">format_output</span>
 </code></pre></div>
-<p>The <code>pub</code> modifier on <code>from ... import</code> is only valid in <code>lib.incn</code>. It declares which symbols are part of the package's public API. Imports without <code>pub</code> are internal to the library root and do not appear in the exported manifest.</p>
+<p>The <code>pub</code> modifier on <code>from ... import</code> is only valid in <code>lib.incn</code>. It declares which symbols are part of the library's public API. Imports without <code>pub</code> are internal to the library.</p>
+<p>If the library also exposes soft keywords (or custom DSL), it declares an optional companion vocab crate in <code>incan.toml</code>:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[vocab]</span>
+<span class="n">crate</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;crates/mylib-vocab&quot;</span>
+</code></pre></div>
+<p>That crate depends on RFC 027's <code>incan-vocab</code> surface and contributes keyword registrations that <code>incan build --lib</code> serializes into the library artifact alongside the checked export manifest.</p>
 <p>The library author builds with:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>--lib
 </code></pre></div>
-<p>This compiles the library through the full pipeline, emits a generated Rust crate, and produces a type manifest (for example <code>mylib.incnlib</code>) from the library's checked public surface. The exact on-disk layout under <code>target/</code> is an implementation detail; what matters normatively is that the build produces both the Rust crate material and the manifest.</p>
+<p>This compiles all <code>.incn</code> source through the full pipeline, generates a Rust crate in <code>target/lib/</code>, and produces a type manifest (e.g., <code>mylib.incnlib</code>) derived from the library's checked public API.</p>
 <h3 id="consumer-project-workflow">Consumer project workflow<a class="headerlink" href="#consumer-project-workflow" title="Permanent link">&para;</a></h3>
 <p>A consumer declares the dependency in <code>incan.toml</code>:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="c1"># my-app/incan.toml</span>
@@ -4234,7 +4241,7 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">tokio</span> <span class="kn">import</span><span class="w"> </span><span class="nn">spawn</span>          <span class="c1"># Rust crate (from [rust-dependencies])</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">local_models</span><span class="w"> </span><span class="kn">import</span> <span class="nc">AppState</span>      <span class="c1"># Local project module</span>
 </code></pre></div>
-<p><code>incan build</code> resolves the dependency, loads the manifest, typechecks against library types, and wires the generated library crate into the consumer's generated <code>Cargo.toml</code> as a normal path dependency. For local <code>path</code> dependencies, the build tool may rebuild stale library artifacts as an implementation detail, but the consumer typechecks against the manifest rather than folding dependency source into its own module graph.</p>
+<p><code>incan build</code> resolves the dependency, loads the manifest, typechecks against library types, and wires the library's Rust crate into the generated Cargo.toml. The consumer never touches library source.</p>
 <h3 id="what-the-user-sees">What the user sees<a class="headerlink" href="#what-the-user-sees" title="Permanent link">&para;</a></h3>
 <div class="language-bash highlight"><pre><span></span><code>$<span class="w"> </span>incan<span class="w"> </span>build
 <span class="w">  </span>Resolving<span class="w"> </span>dependencies...
@@ -4246,23 +4253,29 @@
 </code></pre></div>
 <h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
 <h3 id="the-two-artifact-model">The two-artifact model<a class="headerlink" href="#the-two-artifact-model" title="Permanent link">&para;</a></h3>
-<p>A library build produces two logical artifacts:</p>
+<p>A library produces two artifacts during <code>incan build --lib</code>:</p>
 <ol>
 <li>
-<p><strong>Type manifest</strong> (<code>.incnlib</code>) — a JSON file containing everything the typechecker needs: exported models, classes, functions, traits, enums, type aliases, and soft keyword declarations. Generated from the typechecker's symbol table — never hand-written.</p>
+<p><strong>Type manifest</strong> (<code>.incnlib</code>) — a JSON file containing everything the typechecker needs: exported models, classes, functions, traits, enums, type aliases, and soft keyword declarations. Generated from the library's checked public API — never hand-written.</p>
 </li>
 <li>
-<p><strong>Generated Rust crate</strong> — the library's <code>.incn</code> source lowered to Rust, ready for Cargo to compile and link against. Shipped as generated Rust source rather than a platform-specific compiled binary artifact.</p>
+<p><strong>Generated Rust crate</strong> — the library's <code>.incn</code> source lowered to Rust source plus <code>Cargo.toml</code>, ready for <code>cargo</code> to compile and link against. The Phase 1 artifact ships generated <code>.rs</code> source, not a compiled <code>.rlib</code>, so the artifact remains target-independent and compatible with the consumer's toolchain.</p>
 </li>
 </ol>
-<p>The exact directory names under <code>target/</code> are intentionally not normative in this RFC. Phase 2 / RFC 034 packaging can bundle these logical artifacts into a single distributable package without changing their meaning.</p>
+<div class="language-text highlight"><pre><span></span><code>mylib/target/lib/
+├── mylib.incnlib             # Type manifest (JSON)
+├── Cargo.toml                # Rust crate metadata
+└── src/                      # Generated Rust source
+    ├── lib.rs
+    ├── widgets.rs
+    └── helpers.rs
+</code></pre></div>
 <h3 id="manifest-schema">Manifest schema<a class="headerlink" href="#manifest-schema" title="Permanent link">&para;</a></h3>
 <div class="language-text highlight"><pre><span></span><code>Manifest:
   name: str                          # Package name
   version: str                       # SemVer
   incan_version: str                 # Minimum compiler version required
   manifest_format: int               # Schema version (for forward compatibility)
-  dependencies: list[Dependency]     # Other Incan libraries this depends on
 
   exports:
     models: list[ModelExport]        # Model definitions with fields, traits, methods
@@ -4274,47 +4287,51 @@
 
   soft_keywords:
     activations: list[SoftKeywordActivation]
-      # Extracted from the library&#39;s vocab crate (RFC 027), if any.
+      # Extracted from the library&#39;s vocab crate (RFC 027) during build --lib.
       # Never hand-authored.
-
-  rust_crate:
-    name: str                        # Rust crate name (for generated Cargo.toml)
-    path: str                        # Relative path to Rust crate root
 </code></pre></div>
-<p>The manifest is serialized as JSON for Phase 1 (human-readable, debuggable, zero extra deps). <code>manifest_format</code> versioning is what protects future evolution; exact JSON field layout is not the semantic contract by itself.</p>
+<p>The manifest is serialized as JSON for Phase 1 because it is human-readable, debuggable, and requires no extra dependencies. Implementations should isolate the encoding behind a stable manifest read/write boundary so the on-disk format may evolve later without changing the language contract. The semantic contract is the manifest schema, not JSON as a forever format.</p>
+<p><code>TypeRef</code> is recursive: it must support plain named types, applied generics, optionals, results/unions, and nested combinations. Bounds belong at the declarations that introduce type parameters, not on every individual use site, so exported generic types and exported generic functions must carry their type parameters plus bound metadata alongside the recursive <code>TypeRef</code> tree.</p>
+<p>The <code>.incnlib</code> manifest is intentionally a semantic surface artifact, not a transport or dependency-resolution artifact. It describes the checked public API plus optional vocab metadata; it does not describe where the generated Rust crate lives on disk, nor does it attempt to encode future git/registry/lockfile resolution data. For Phase 1, we mandate that the generated Rust crate name must match the library package name, and the crate's on-disk location is determined by the dependency transport (<code>target/lib/</code> for local builds, extracted package root for registry packages); the <code>.incnlib</code> file does not hold information about this (on purpose).</p>
 <h3 id="pub-import-syntax"><code>pub::</code> import syntax<a class="headerlink" href="#pub-import-syntax" title="Permanent link">&para;</a></h3>
-<p>The parser recognises <code>pub::</code> as a library namespace prefix, parallel to the existing <code>rust::</code> prefix:</p>
+<p>The language recognises <code>pub::</code> as a library namespace prefix, parallel to the existing <code>rust::</code> prefix:</p>
 <div class="language-text highlight"><pre><span></span><code>import_stmt ::= &quot;from&quot; import_path &quot;import&quot; import_items
 import_path ::= &quot;pub::&quot; IDENT          # Incan library
-              | &quot;rust::&quot; rust_path      # Rust crate (existing)
-              | module_path             # Local project module (existing)
+              | &quot;rust::&quot; rust_path      # Rust crate (existing)           |
+              | module_path             # Local project module (existing) |
 </code></pre></div>
-<p>Resolution: the compiler looks up the identifier after <code>pub::</code> in the loaded library manifests (populated from <code>[dependencies]</code> in <code>incan.toml</code>). If found, the imported names are resolved against the manifest's exports. If not found, a diagnostic is emitted.</p>
+<p>Resolution: the compiler must look up the identifier after <code>pub::</code> in the loaded library manifests (populated from <code>[dependencies]</code> in <code>incan.toml</code>). If found, the imported names are resolved against the manifest's exports. If not found, a diagnostic is emitted.</p>
 <h3 id="incantoml-changes"><code>incan.toml</code> changes<a class="headerlink" href="#incantoml-changes" title="Permanent link">&para;</a></h3>
 <p><strong>Consumer project</strong> — new <code>[dependencies]</code> section for Incan libraries:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
 <span class="n">mylib</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../mylib&quot;</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
-<p><strong>Library project</strong> — no special section needed. The presence of <code>src/lib.incn</code> makes the project library-capable. <code>incan build --lib</code> checks for this file and errors if it doesn't exist.</p>
+<p><strong>Library project</strong> — no special section needed. The presence of <code>src/lib.incn</code> makes the project a library. <code>incan build --lib</code> checks for this file and errors if it doesn't exist.</p>
+<p><strong>Optional vocab companion</strong> — libraries that expose soft keywords may declare:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[vocab]</span>
+<span class="n">crate</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;crates/mylib-vocab&quot;</span>
+</code></pre></div>
+<p>That crate is built during <code>incan build --lib</code>, and its keyword registrations are serialized into the library artifact.</p>
 <p><strong>Rename</strong>: existing <code>[dependencies]</code> for Rust crates becomes <code>[rust-dependencies]</code>. Incan library dependencies get the unqualified <code>[dependencies]</code> name — they will be the more common case long-term. The compiler emits a clear migration diagnostic if it detects Rust crate names in <code>[dependencies]</code>.</p>
 <h3 id="compilation-flow-incan-build-lib">Compilation flow: <code>incan build --lib</code><a class="headerlink" href="#compilation-flow-incan-build-lib" title="Permanent link">&para;</a></h3>
 <div class="language-text highlight"><pre><span></span><code>src/*.incn
+  → Read optional [vocab].crate and collect library soft keyword registrations
   → Lexer → Parser → Typechecker (validate all exports)
-  → Lowering → Emission → generated library Rust crate
-  → Generate manifest from checked public API → &lt;library-artifact-dir&gt;/&lt;name&gt;.incnlib
-  → cargo build (validate the Rust crate compiles)
+  → Lowering → Emission → Rust crate in target/lib/src/
+  → Generate manifest from the checked public API → target/lib/&lt;name&gt;.incnlib
+  → cargo build (compile the generated Rust crate and validate that it links)
 </code></pre></div>
-<p>The manifest is generated from the checked public API declared by <code>lib.incn</code>. There is no separate TOML export list.</p>
+<p>The manifest is derived from the library's checked public API and includes every declaration exported through <code>lib.incn</code>. No separate export declaration mechanism is required.</p>
 <h3 id="compilation-flow-incan-build-consumer">Compilation flow: <code>incan build</code> (consumer)<a class="headerlink" href="#compilation-flow-incan-build-consumer" title="Permanent link">&para;</a></h3>
 <div class="language-text highlight"><pre><span></span><code>incan.toml
   → Parse [dependencies]
-  → For each dependency: resolve path, ensure/load the built library artifact, read &lt;name&gt;.incnlib
-  → Load manifest exports into typechecker symbol table
-  → Parse + typecheck user&#39;s .incn files
-  → On `pub::` imports, activate any matching library vocab metadata from the manifest
+  → For each dependency: resolve path, read &lt;name&gt;.incnlib
+  → Make manifest exports available to semantic name resolution
+  → Make soft keyword activations available to import-driven parsing
+  → Parse + typecheck user&#39;s .incn files (library types already available)
   → Lower + emit user&#39;s Rust code (generates `use &lt;lib&gt;::...` references)
   → Generate Cargo.toml with library crate paths as path dependencies
-  → cargo build (Cargo resolves the library crate&#39;s own Rust deps transitively)
+  → cargo build (compiles and links against the generated library Rust crates without re-lowering library Incan source)
 </code></pre></div>
 <h3 id="rust-code-emission">Rust code emission<a class="headerlink" href="#rust-code-emission" title="Permanent link">&para;</a></h3>
 <p>For a consumer file importing <code>from pub::mylib import Widget</code>:</p>
@@ -4327,18 +4344,18 @@ import_path ::= &quot;pub::&quot; IDENT          # Incan library
 </code></pre></div>
 <p>The generated <code>Cargo.toml</code>:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
-<span class="n">mylib</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../mylib/&lt;generated-library-crate-dir&gt;&quot;</span><span class="w"> </span><span class="p">}</span>
+<span class="n">mylib</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../mylib/target/lib&quot;</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
-<p>The consumer only needs the library crate as a normal Cargo dependency. The generated library crate's own <code>Cargo.toml</code> declares any Rust dependencies it needs, and Cargo resolves those transitively in the usual way.</p>
+<p>The consumer only needs the generated library crate as a normal Cargo dependency. The library crate's own <code>Cargo.toml</code> declares any Rust dependencies it needs, and Cargo resolves those transitively in the usual way.</p>
 <h3 id="soft-keyword-activation">Soft keyword activation<a class="headerlink" href="#soft-keyword-activation" title="Permanent link">&para;</a></h3>
-<p>Libraries that introduce soft keywords define them via the <code>VocabProvider</code> trait (RFC 027). The library build extracts those declarations and serializes them into the manifest alongside the ordinary export surface. During consumer build, the compiler reads that metadata from the manifest and uses it with the same import-driven activation model used for other soft keywords.</p>
-<p>In Phase 1, activation should remain <strong>import-driven</strong>, not project-wide. Depending on a library makes its vocabulary available for resolution, but keywords are activated by the relevant <code>pub::...</code> imports, just as stdlib soft keywords are activated by the imports that bring their modules into scope.</p>
+<p>Libraries that introduce soft keywords define them via RFC 027's vocab surface. The compiler extracts these declarations during <code>incan build --lib</code> and serializes them into the manifest. During consumer build, keyword activations are loaded from the manifest so imports can activate the relevant soft keywords without requiring access to library source.</p>
+<p>For Phase 1, activation remains <strong>import-driven</strong>, not project-wide. Depending on a library makes its vocabulary available for resolution, but the relevant <code>pub::...</code> imports are what activate the library's soft keywords, just as stdlib soft keywords are activated by the imports that bring their namespaces into scope.</p>
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong><code>rust::</code> imports (RFC 005)</strong>: <code>pub::</code> and <code>rust::</code> are parallel namespace prefixes. They share the same import syntax, differing only in resolution mechanism (manifest lookup vs. Rust crate path).</li>
 <li><strong>Stdlib namespaces (RFC 022/023)</strong>: <code>std.*</code> imports are compiler-provided and always available. <code>pub::*</code> imports are user-declared and require <code>[dependencies]</code>. They coexist without overlap.</li>
-<li><strong>Soft keywords (RFC 022)</strong>: Library soft keywords use the same import-activated model as stdlib soft keywords.</li>
-<li><strong>Vocab crate (RFC 027)</strong>: <code>incan-vocab</code> defines keyword-registration and desugaring metadata. The library export manifest itself remains a product of the library build, not the vocab crate's authoritative replacement.</li>
+<li><strong>Soft keywords (RFC 022)</strong>: Library soft keywords use the same import-activated model as stdlib soft keywords. The language must not introduce a separate library-only activation rule.</li>
+<li><strong>Vocab crate (RFC 027)</strong>: <code>incan-vocab</code> defines the shared types (<code>VocabProvider</code>, <code>KeywordRegistration</code>, <code>KeywordSpec</code>, manifest metadata types) used by both library authors and the compiler. This RFC uses those types to populate the built library artifact.</li>
 </ul>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4354,42 +4371,48 @@ import_path ::= &quot;pub::&quot; IDENT          # Incan library
 <p><code>from mylib import Widget</code> without any prefix. Rejected because it's ambiguous — is <code>mylib</code> a local module or a library? The <code>pub::</code> prefix makes the source unambiguous, paralleling <code>rust::</code> for Rust crates.</p>
 <h3 id="explicit-exports-table-in-incantoml">Explicit <code>[exports]</code> table in <code>incan.toml</code><a class="headerlink" href="#explicit-exports-table-in-incantoml" title="Permanent link">&para;</a></h3>
 <p>Instead of deriving exports from <code>pub</code> visibility in <code>lib.incn</code>, require an explicit list of exported symbols in <code>incan.toml</code>. Rejected because it duplicates information the typechecker already has and adds ceremony without benefit.</p>
+<h3 id="ship-compiled-rlib-artifacts-as-the-phase-1-contract">Ship compiled <code>.rlib</code> artifacts as the Phase 1 contract<a class="headerlink" href="#ship-compiled-rlib-artifacts-as-the-phase-1-contract" title="Permanent link">&para;</a></h3>
+<p>Package a compiled Rust library instead of generated Rust source. Rejected for Phase 1 because <code>.rlib</code> artifacts are tied to the consumer's Rust toolchain and target configuration, while generated Rust source keeps the library artifact target-independent and lets Cargo compile everything in one normal dependency graph.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Complexity</strong>: The two-artifact model, manifest format, and <code>build --lib</code> flow add significant compiler complexity.</li>
 <li><strong>Breaking change</strong>: Renaming <code>[dependencies]</code> → <code>[rust-dependencies]</code> for Rust crates will require migration for existing projects.</li>
-<li><strong>Build orchestration</strong>: Library builds now have artifact freshness concerns. Tooling must decide when a local path dependency needs to be rebuilt.</li>
+<li><strong>Library author friction</strong>: Authors must run <code>incan build --lib</code> and keep artifacts up-to-date. Phase 2 (git deps + CI) will automate this.</li>
 <li><strong>No versioning</strong>: Phase 1 path dependencies have no version resolution — if the library changes, the consumer gets whatever's on disk. Versioning comes in Phase 2 (git tags) and Phase 3 (<code>incan.pub</code> + SemVer).</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Parser</strong> — must recognise <code>pub::</code> as an import path prefix (parallel to <code>rust::</code>); must support <code>pub from ... import ...</code> re-export syntax valid only in <code>lib.incn</code>, requiring a visibility modifier on import declarations.</li>
-<li><strong>Typechecker</strong> — must load manifest exports into the symbol table before checking user code, so library types are indistinguishable from local types during checking; must load soft keyword activations from manifests into the parser's keyword registry.</li>
-<li><strong>IR Emission</strong> — must generate <code>use &lt;lib&gt;::...</code> statements for symbols resolved through <code>pub::</code> imports.</li>
-<li><strong>Project generator</strong> — must add library crate paths to the generated <code>Cargo.toml</code> dependency section for each <code>[dependencies]</code> entry resolved to a local path.</li>
-<li><strong>CLI</strong> — must introduce <code>incan build --lib</code>; must wire dependency resolution (path lookup, manifest loading, stale-artifact detection) into all build, run, and test flows; must emit a migration diagnostic when Rust crate names are found in the <code>[dependencies]</code> section.</li>
-<li><strong>Manifest layer</strong> (new) — a new <code>LibraryManifest</code> data model with JSON serialization and deserialization; a generation step that extracts the checked public API from the typechecker's symbol table at the end of <code>incan build --lib</code>.</li>
-<li><strong>LSP</strong> — load library manifests on workspace open to provide completions and hover info for library types.</li>
+<li><strong>Project configuration and dependency declarations</strong>: <code>incan.toml</code> gains a clear split between Incan library dependencies (<code>[dependencies]</code>) and Rust crate dependencies (<code>[rust-dependencies]</code>), plus an optional <code>[vocab]</code> section for library-provided keyword metadata.</li>
+<li><strong>Library surface definition</strong>: <code>src/lib.incn</code> becomes the public entrypoint for library exports, and <code>pub</code> re-exports define the checked API surface that is serialized into the manifest.</li>
+<li><strong>Parsing and import resolution</strong>: the language adds <code>pub::</code> as a distinct import namespace, and library-provided soft keywords follow the same import-driven activation model as existing soft keywords.</li>
+<li><strong>Semantic analysis</strong>: consumer projects resolve imported library items from manifests rather than from library source, so exported types, functions, and keyword metadata must be represented in a typechecker-readable artifact.</li>
+<li><strong>Code generation and build orchestration</strong>: <code>incan build --lib</code> must emit both the manifest and a generated Rust crate, while consumer builds must wire that crate into the generated Cargo dependency graph as a path dependency.</li>
+<li><strong>Tooling and editor support</strong>: the compiler and LSP should share the same manifest schema and validation rules so imported library symbols behave consistently in builds and editor workflows.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ol>
 <li>
-<p><strong>Generic type representation in manifests.</strong> How does the manifest represent generic types like <code>Container[T]</code> with bounds like <code>T: Serializable</code>? The TypeRef format needs to handle generics, Optional types, Result types, and nested generics (<code>list[Container[T]]</code>).</p>
+<p><strong>Manifest type representation and generic bounds.</strong> The manifest uses a recursive <code>TypeRef</code> tree for named types, applied generics, optionals, result-like wrappers, and nested compositions. Bounds are serialized at the declarations that introduce type parameters, so exported generic types and exported generic functions carry their type parameters plus bound metadata rather than repeating bounds on every use site.</p>
 </li>
 <li>
-<p><strong>Artifact freshness policy for path deps.</strong> Should <code>incan build</code> always rebuild local library dependencies, use timestamps/hashes, or require an explicit user command to refresh them?</p>
+<p><strong>Public surface completeness.</strong> Phase 1 library exports include public nominal types and public free functions re-exported through <code>src/lib.incn</code>. Enum variants are represented as part of their exported enum definitions rather than as standalone exports, and trait implementations are not independently exportable manifest items.</p>
 </li>
 <li>
-<p><strong>Export-surface ergonomics beyond <code>lib.incn</code>.</strong> Phase 1 uses package-root re-exports in <code>src/lib.incn</code>. If Incan later wants broader visibility modifiers or more granular package APIs, should that remain sugar over the same root export model or become a broader language visibility feature?</p>
+<p><strong>Namespace collision handling.</strong> A collision between an imported library symbol and a local symbol is a compile error. Phase 1 does not add new qualified-type syntax such as <code>mylib.Widget</code>; instead, diagnostics should suggest import-site aliasing such as <code>from pub::mylib import Widget as LibWidget</code>.</p>
+</li>
+<li>
+<p><strong>Library Rust dependency handling.</strong> The consumer depends on the generated library crate, not on each Rust crate that the library happens to use internally. The library crate's own <code>Cargo.toml</code> declares its Rust dependencies, and Cargo resolves them transitively in the normal way.</p>
+</li>
+<li>
+<p><strong>LSP manifest loading.</strong> The LSP should share the same manifest parsing and validation layer as the compiler so there is a single schema implementation. LSP-specific caching may sit on top of that shared reader, but the parsing rules themselves should not fork.</p>
+</li>
+<li>
+<p><strong>JSON transport for Phase 1.</strong> <code>.incnlib</code> stays JSON in Phase 1 because it is debuggable, easy to generate, and expected to be a small fraction of total local path dependency build cost. The compiler should read each dependency artifact at most once per invocation, and the encoding may change in a later phase behind the existing reader/writer abstraction if profiling proves it worthwhile.</p>
+</li>
+<li>
+<p><strong>Semantic manifest vs. transport metadata.</strong> <code>.incnlib</code> carries checked public API and optional vocab metadata only. Dependency source/version resolution belongs to the path/git/registry layers, and filesystem layout belongs to the build/package transport layer. That keeps Phase 1's semantic contract stable even as later phases add lockfiles, caches, and registry packaging.</p>
 </li>
 </ol>
-<p>Implementation details such as the LSP's manifest cache layering are intentionally out of scope for this RFC.</p>
-<h2 id="future-phases-out-of-scope-for-this-rfc">Future phases (out of scope for this RFC)<a class="headerlink" href="#future-phases-out-of-scope-for-this-rfc" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Phase 2: Git dependencies + caching.</strong> <code>mylib = { git = "https://...", tag = "v0.1.0" }</code>. Adds lockfile (<code>incan.lock</code>), <code>~/.incan/libs/</code> cache, checksum verification, transitive dependency resolution, and inline <code>@</code> version syntax.</li>
-<li><strong>Phase 3: <code>incan.pub</code> registry.</strong> Published Incan libraries with SemVer resolution. <code>mylib = "0.1.0"</code> resolves from the registry. <code>incan publish</code> for library distribution. Defined in RFC 034 (incan.pub registry).</li>
-</ul>
-<!-- Rename the "Unresolved questions" section above to "Design Decisions" once all open questions have been resolved and the RFC moves to Planned status. -->
 
 
 

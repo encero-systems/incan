@@ -3976,9 +3976,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-plan" class="md-nav__link">
+  <a href="#layers-affected" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation plan
+      Layers affected
     </span>
   </a>
   
@@ -4036,7 +4036,8 @@
 <li><strong>Related:</strong> \&lt;RFC links, if any&gt;</li>
 <li><strong>Issue:</strong> \&lt;link to issue&gt;</li>
 <li><strong>RFC PR:</strong> \&lt;link to PR&gt;</li>
-<li><strong>Target version:</strong> \&lt;version&gt;  <!-- Optional: records the baseline version this RFC describes (the source of truth). For example, <code>v0.2</code> means the RFC reflects the language as of <code>&gt;= v0.2.0</code>. It does not mean "the version when this will be released"; it means "the version that was current when this RFC was written". --></li>
+<li><strong>Written against:</strong> \&lt;version&gt;  <!-- The Incan version that was current when this RFC was written. Describes the language baseline the RFC assumes, not when it will ship. Example: <code>v0.1</code> means the RFC was drafted when Incan was at v0.1. This field never changes after the RFC is accepted. --></li>
+<li><strong>Shipped in:</strong> —  <!-- Set to the first Incan release that includes this feature, once implementation is complete. Leave as <code>—</code> while the RFC is in Draft or Planned status. This is NOT a planning field — do not set it to a future version speculatively. --></li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>One paragraph describing what this RFC proposes.</p>
@@ -4082,14 +4083,15 @@
 <p>List plausible alternatives and why they’re worse.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <p>What does this cost (complexity, performance, mental model)?</p>
-<h2 id="implementation-plan">Implementation plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
-<p>Concrete steps (expected touchpoints):</p>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<p>Describe which compiler and tooling layers this RFC impacts, and what each layer must do differently. Use normative language (<code>must</code>, <code>must not</code>, <code>should</code>). Do not list task steps or reference specific internal files or struct names — those belong in the implementation issue.</p>
 <ul>
-<li>Frontend changes (lexer/parser/AST/typechecker)</li>
-<li>Backend changes (IR/lowering/emission)</li>
-<li>Stdlib/runtime changes</li>
-<li>Tooling changes (fmt/test/LSP)</li>
-<li>Tests to add (unit/integration/fixtures)</li>
+<li><strong>Parser</strong> — …</li>
+<li><strong>Typechecker</strong> — …</li>
+<li><strong>Lowering / IR emission</strong> — …</li>
+<li><strong>Stdlib</strong> — …</li>
+<li><strong>CLI / tooling</strong> — …</li>
+<li><strong>LSP / formatter</strong> — …</li>
 </ul>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <p>Open questions to decide before implementation lands.</p>

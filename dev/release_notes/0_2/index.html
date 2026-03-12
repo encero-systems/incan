@@ -4217,6 +4217,7 @@ They are not intended as runtime function calls.</p>
   through a registry-driven dispatch system (<code>SurfaceSemanticsPack</code>). The parser emits generic <code>Surface</code> AST nodes keyed
   by <code>SurfaceFeatureKey</code>; downstream stages dispatch on that key rather than per-keyword AST variants. Adding a new soft
   keyword requires no parser, AST, or IR changes — only a keyword descriptor and a semantics-pack handler (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
+<li><strong>Compiler</strong>: <code>incan-vocab</code> establishes a standalone, registry-driven keyword/manifest/desugaring contract for future library vocabulary extensions, and core tooling consumers now read keyword surface data through that shared registry path (<a href="/dev/RFCs/027_incan_vocab_crate">RFC 027</a>).</li>
 <li><strong>Compiler</strong>: Namespaced decorator resolution — decorators resolved by module path
   (e.g., <code>from std.web.routing import route</code> enables <code>@route(...)</code>) with alias support (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>).</li>
 <li><strong>Compiler</strong>: <code>@rust.extern</code> marker for Rust-backed function stubs, replacing the internal <code>@std.builtin</code>
@@ -4263,6 +4264,7 @@ They are not intended as runtime function calls.</p>
 <li><strong>Diagnostics</strong>: Rust interop dependency errors now include the import site path and a hint to verify the
   crate/module/item path or add version/features in <code>incan.toml</code> (<a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a>, <a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
 <li><strong>Docs</strong>: "Your first Incan project" tutorial covering <code>incan init</code>, modules, and testing.</li>
+<li><strong>Docs</strong>: Contributor docs now describe the registry-driven keyword path, including <code>incan-vocab</code>, parser <code>Ident</code> keyword handling, and generated VS Code grammar synchronization (<a href="/dev/RFCs/027_incan_vocab_crate">RFC 027</a>).</li>
 <li><strong>Codegen</strong>: String literals passed to external Rust type methods now emit <code>.into()</code> instead of <code>.to_string()</code>,
   letting the Rust compiler resolve custom string types (e.g. Polars' <code>PlSmallStr</code>) via the <code>Into</code> trait.</li>
 <li><strong>Compiler</strong>: MSRV bumped from 1.85 to 1.88 (required by <code>time</code> crate v0.3.47).</li>
