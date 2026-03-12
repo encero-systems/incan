@@ -180,7 +180,7 @@ str(Env.Dev)       # → "development" (Display uses value, not name)
 
 ## Reference-level explanation (precise rules)
 
-**Syntax**:
+### Syntax
 
 ```text
 enum <Name>(<value_type>):
@@ -310,7 +310,7 @@ For `IntEnum`, the pattern is identical but with `i64` values, `TryFrom<i64>` in
 
 ## Design details
 
-### Syntax
+### Proposed Syntax
 
 The value type specifier `(str)` or `(int)` appears after the enum name, before the colon. This mirrors Python's `class Env(StrEnum):` parenthesized base class syntax while remaining consistent with Incan's existing `enum Name:` declaration pattern.
 
@@ -389,15 +389,41 @@ Rejected: breaks Incan's type safety philosophy. A `str` and an `Env` should not
 - **Value type restriction**: Only `str` and `int` are supported. Users wanting `float` or custom types must use regular enums with methods. This is intentional (simple values should be simple) but may require explanation.
 - **Display uses value, not name**: Printing an `Env.Dev` shows `"development"`, not `"Dev"`. This is the right default for wire-format types but could surprise users who expect the variant name. `message()` exists for that use case.
 
-## Layers affected
+## Implementation plan
 
-- **Parser** (`crates/incan_syntax/`) — recognize the `(str)` / `(int)` value type specifier after the enum name, and parse `Variant = <literal>` assignments on enum variants.
-- **AST** (`crates/incan_syntax/`) — `EnumDecl` and `VariantDecl` need to carry the optional value type and per-variant literal value.
-- **Typechecker** (`src/frontend/typechecker/`) — validate that all variants have values when a value type is declared (and none when it isn't); validate literals match the declared type; enforce value uniqueness; reject value enums with tuple/struct variant fields or type parameters.
-- **IR Lowering** (`src/backend/ir/lower/`) — propagate the value type and per-variant literals from AST to IR.
-- **IR Emission** (`src/backend/ir/emit/`) — extend enum code generation to emit `value()`, `from_value()`, `Display`, and `FromStr` impls; add `#[serde(rename = "...")]` per variant when serde is active.
-- **Formatter** (`src/format/`) — handle alignment of `= "value"` assignments in value enum declarations.
-- **LSP** — surface value enum variant completions and hover info showing the associated value.
+<!-- markdownlint-disable MD029 -->
+### Frontend
+
+1. **Parser** (`crates/incan_syntax/src/parser/decl.rs`): After parsing `enum`, check for `(str)` or `(int)` value type specifier. Parse variant assignments `Name = <literal>`.
+2. **AST** (`crates/incan_syntax/src/ast/decls.rs`): Add `value_type: Option<Spanned<Type>>` to `EnumDecl`. Add `value: Option<Spanned<Expr>>` to `VariantDecl`.
+3. **Typechecker** (`src/frontend/typechecker/`):
+    - Validate that all variants have values when `value_type` is set (and none when it isn't).
+    - Validate value literals match the declared type.
+    - Validate value uniqueness.
+    - Reject value enums with tuple/struct variant fields.
+    - Reject value enums with type parameters.
+
+### Backend
+
+4. **IR** (`src/backend/ir/decl.rs`): Add `value_type: Option<IrType>` to `IrEnum`. Add `value: Option<IrLiteral>` to `EnumVariant`.
+5. **Lowering** (`src/backend/ir/lower/decl.rs`): Lower value type and variant values from AST to IR.
+6. **Emission** (`src/backend/ir/emit/decls/structures.rs`): Extend `emit_enum()` to generate:
+    - `value()` method (match on variants → literal values)
+    - `from_value()` method (match on literal values → variants)
+    - `Display` impl (delegates to `value()`)
+    - `FromStr` impl (delegates to `from_value()`)
+    - `#[serde(rename = "...")]` attributes per variant when serde is active
+
+### Tooling
+
+7. **Formatter** (`src/format/`): Format value enum syntax (alignment of `= "value"` assignments).
+8. **LSP** (`src/lsp/`): Completion for value enum variants, hover showing value.
+
+### Tests
+
+9. **Snapshot tests**: Add codegen snapshot for `StrEnum` and `IntEnum` variants.
+10. **Integration tests**: End-to-end test exercising `value()`, `from_value()`, `Display`, serde round-trip.
+11. **Error tests**: Missing values, duplicate values, type mismatches, generics rejected.
 
 ## Unresolved questions
 

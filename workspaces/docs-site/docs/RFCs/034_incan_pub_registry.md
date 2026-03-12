@@ -8,7 +8,15 @@
 
 ## Summary
 
-Define the `incan.pub` package registry: the protocols, package format, and CLI commands that allow Incan library authors to publish packages and consumers to resolve versioned dependencies. The registry is an Incan web service backed by S3-compatible object storage, with SHA256 integrity verification and Sigstore-based package signing.
+Define the `incan.pub` package registry: the infrastructure, protocols, and CLI commands that allow Incan library authors to publish packages and consumers to resolve them. The registry is an Incan web service backed by S3-compatible European object storage, with SHA256 integrity verification and Sigstore-based package signing. It costs €0 at launch and scales predictably with hard spending caps.
+
+## Constraints
+
+Two non-negotiable requirements drive every decision in this RFC:
+
+1. **EU infrastructure.** The Incan project is partially funded by an EU grant. All data storage and compute must be hosted by EU-based providers. This rules out US-headquartered cloud providers (AWS, GCP, Azure, Cloudflare) as primary infrastructure. EU-based CDN is acceptable for edge caching.
+
+2. **Cost ceiling.** The registry must not produce surprise bills. At every scale tier the monthly cost must be predictable and capped. The project cannot absorb a €1,000+/month bill from sudden popularity — cost must grow slowly and linearly, with hard limits enforced via provider spending caps and architectural choices (CDN offloading, bandwidth caps, immutable caching).
 
 ## Motivation
 
@@ -24,8 +32,6 @@ The `incan.pub` registry closes this gap. It is the canonical source for publish
 ## Guide-level explanation
 
 ### Publishing a package
-
-Publishing a package should end up looking something like so:
 
 ```bash
 # One-time setup: create an account and save credentials
@@ -45,9 +51,8 @@ $ incan publish
 
 ### Consuming a published package
 
-Adding it as a dependency in `incan.toml`:
-
-```toml title="my-app/incan.toml"
+```toml
+# my-app/incan.toml
 [project]
 name = "my-app"
 version = "0.1.0"
@@ -56,17 +61,14 @@ version = "0.1.0"
 mylib = "0.1.0"
 ```
 
-Calling `mylib` from an incan script:
-
-```incan title="src/main.incn"
+```incan
+# src/main.incn
 from pub::mylib import Widget
 
 def main():
     w = Widget(title="hello")
     print(w)
 ```
-
-Building the project:
 
 ```bash
 $ incan build
@@ -113,15 +115,17 @@ This is a static site generated from the index — no dynamic server needed for 
                       │          │
                       ▼          ▼
              ┌────────────────────────────────────┐
-             │  CDN Layer                         │
+             │  CDN Layer (Bunny.net — Slovenia)  │
              │  Caches all GET requests at edge   │
              │  Hard bandwidth cap configurable   │
+             │  EU PoPs only (or worldwide later) │
              └────────┬───────────────────────────┘
                       │ cache miss
                       ▼
              ┌────────────────────────────────────┐
              │  Registry Service                  │
-             │  (serverless container)            │
+             │  (Incan binary on Scaleway         │
+             │   Serverless Containers — Paris)   │
              │                                    │
              │  Handles:                          │
              │  - POST /api/v1/publish            │
@@ -133,7 +137,9 @@ This is a static site generated from the index — no dynamic server needed for 
                       │
                       ▼
              ┌────────────────────────────────────┐
-             │  Object Storage (S3-compatible)    │
+             │  Scaleway Object Storage (Paris)   │
+             │  S3-compatible                     │
+             │  75 GB free tier                   │
              │                                    │
              │  Bucket layout:                    │
              │    crates/<name>/<ver>.crate       │
@@ -252,9 +258,13 @@ Returns the `.crate` tarball. Served from object storage, cached at CDN edge. Im
 
 ### Authentication
 
+#### Token-based auth
+
 Publishers authenticate with API tokens. Tokens are generated via the `incan.pub` web UI (or a future `incan token create` CLI command).
 
-- **Server side:** token hash mapped to publisher identity + package ownership list.
+Token storage:
+
+- **Server side:** Scaleway Serverless Database (PostgreSQL, free tier: 1 GB) or a simple JSON file in object storage (sufficient for early scale). Maps token hash → publisher identity + package ownership list.
 - **Client side:** `~/.incan/credentials` (file permissions 0600). Format: `[registry]\ntoken = "incan_tok_..."`.
 
 ```bash
@@ -275,7 +285,7 @@ $ incan login
 
 Every `incan publish` signs the `.crate` tarball using [Sigstore](https://sigstore.dev) keyless signing:
 
-**Publish side**:
+**Publish side:**
 
 1. `incan publish` initiates an OIDC flow (opens browser → GitHub/GitLab/Google login)
 2. Sigstore's Fulcio CA issues a short-lived signing certificate tied to the OIDC identity
@@ -283,7 +293,7 @@ Every `incan publish` signs the `.crate` tarball using [Sigstore](https://sigsto
 4. The signature + certificate + checksum are recorded in Sigstore's Rekor transparency log
 5. The signature and certificate are sent to the registry alongside the `.crate`
 
-**Verification side (`incan build`)**:
+**Verification side (`incan build`):**
 
 1. Download `.crate` + `.sig` + `.cert` from registry
 2. Verify SHA256 of `.crate` matches the index checksum
@@ -296,7 +306,7 @@ If verification fails, `incan build` refuses to use the package and emits a clea
 
 **Sigstore is optional in Phase 1** — the `signatures` field in the index is nullable. Unsigned packages are accepted but display a warning during `incan build`. The goal is to make signing the default from early on, then make it mandatory once the tooling is proven.
 
-**Rust integration**: the `sigstore-rs` crate provides the Sigstore client libraries. The registry service itself verifies signatures on publish (to reject invalid signatures early).
+**Rust integration:** the `sigstore-rs` crate provides the Sigstore client libraries. The registry service itself verifies signatures on publish (to reject invalid signatures early).
 
 ### Security properties
 
@@ -315,7 +325,7 @@ If verification fails, `incan build` refuses to use the package and emits a clea
 
 When `incan build` encounters a registry dependency:
 
-```toml
+```text
 [dependencies]
 mylib = "0.1.0"          # exact version
 mylib = "^0.1"           # SemVer-compatible range
@@ -388,43 +398,106 @@ $ incan add widgets --git https://github.com/example/widgets --tag v0.2.0
 
 `incan remove` does the inverse: removes the entry from `incan.toml` and re-locks.
 
+## Infrastructure: provider selection
+
+### Requirements
+
+| Requirement | Rationale |
+|---|---|
+| EU-headquartered provider | EU grant compliance; GDPR-native |
+| Predictable cost with hard caps | Project cannot absorb surprise bills from scaling |
+| S3-compatible object storage | Standard tooling; provider-portable |
+| Scale-to-zero compute | No cost when idle; only pay for publishes |
+| CDN with configurable bandwidth cap | Read traffic offloaded to edge; cap prevents bill shock |
+
+### Selected providers
+
+| Component | Provider | Country | Why |
+|---|---|---|---|
+| **Object storage** | Scaleway Object Storage | France | S3-compatible, 75 GB free, €0.01/GB beyond, EU data residency |
+| **Compute** | Scaleway Serverless Containers | France | Scales to zero, 400K vCPU-s/month free, deploy Incan binary as container |
+| **CDN** | Bunny.net | Slovenia | EU-based, €0.005-0.01/GB, configurable monthly bandwidth cap, EU-only PoPs option |
+| **DNS** | Scaleway or registrar | EU | Point `incan.pub` at CDN |
+
+### Cost projections with hard caps
+
+| Stage | Packages | Downloads/month | Storage | CDN bandwidth | Compute | **Total** | **Cap** |
+|---|---|---|---|---|---|---|---|
+| Launch | <100 | <1K | €0 (free tier) | €0 (<1 GB) | €0 (free tier) | **€0** | €5 cap on Scaleway |
+| Growing | ~1K | ~50K | ~€1 | ~€5 | €0 | **~€6** | €20 cap |
+| Traction | ~5K | ~500K | ~€5 | ~€25 | ~€5 | **~€35** | €75 cap |
+| Large | ~50K | ~5M | ~€50 | ~€250 | ~€15 | **~€315** | €500 cap |
+
+**How caps work:**
+
+- **Scaleway:** billing alerts + hard spending limits per project. Set a monthly budget; services are suspended (not billed) when exceeded.
+- **Bunny.net:** configurable monthly bandwidth limit per pull zone. When reached, traffic returns 503 (or falls through to origin with a smaller rate limit). Set to the cap column value; increase manually as growth justifies it.
+
+**The worst case** of "sudden PyPI-scale fame" is: CDN hits its bandwidth cap, new downloads get 503, existing cached packages keep working. You notice, evaluate whether to raise the cap, and decide. You never wake up to a €10K bill.
+
+### Provider portability
+
+The registry service talks to object storage via the S3 API (`rust::aws_sdk_s3`). Configuration is environment variables:
+
+```text
+S3_ENDPOINT=https://s3.fr-par.scw.cloud
+S3_BUCKET=incan-pub
+S3_REGION=fr-par
+S3_ACCESS_KEY=...
+S3_SECRET_KEY=...
+```
+
+Switching providers means changing these variables and running an `rclone sync` to migrate existing objects. Zero code changes.
+
+### Why not self-hosted Kellnr?
+
+Kellnr is a self-hosted Rust crate registry that implements the Cargo registry protocol. It was considered and rejected because:
+
+- It only speaks the Cargo registry protocol — no awareness of `.incnlib` manifests
+- Requires a persistent server (no scale-to-zero)
+- Written in Rust, not Incan (misses the dogfooding opportunity)
+- The `.incnlib`-in-`.crate` trick makes Cargo protocol compatibility free anyway — any tool that can download a `.crate` gets both the Rust source and the type manifest
+
 ## The registry service: written in Incan
 
 The `incan.pub` registry API is itself an Incan project. This is deliberate:
 
 1. **Dogfooding.** The registry is the first production Incan web service. If `std.web` can't handle it, that's a bug we need to find.
 2. **Marketing.** "Our package registry is written in Incan" demonstrates the language's production readiness.
-3. **Simplicity.** Incan compiles to a native Rust binary — no runtime dependencies, minimal container image.
+3. **Simplicity.** Incan compiles to a native Rust binary — no runtime dependencies, no container base image beyond `scratch`.
 
 ```incan
 # registry/src/main.incn
-from std.web import App, Request, Response
+import std.web
+from std.web import App, Request, Response, route, status
 from handlers import publish, yank, get_index, download_crate
 from middleware import require_auth, log_request
 
 app = App()
 app.use(log_request)
 
-@app.post("/api/v1/publish")
+@route("POST", "/api/v1/publish")
 @require_auth
 async def handle_publish(req: Request) -> Response:
     return await publish(req)
 
-@app.post("/api/v1/yank")
+@route("POST", "/api/v1/yank")
 @require_auth
 async def handle_yank(req: Request) -> Response:
     return await yank(req)
 
-@app.get("/index/{prefix}/{name}")
+@route("GET", "/index/{prefix}/{name}")
 async def handle_index(req: Request) -> Response:
     return await get_index(req)
 
-@app.get("/crates/{name}/{version}.crate")
+@route("GET", "/crates/{name}/{version}.crate")
 async def handle_download(req: Request) -> Response:
     return await download_crate(req)
 
 app.run(host="0.0.0.0", port=8080)
 ```
+
+Deployed as a Docker container on Scaleway Serverless Containers. The container image is minimal (~10 MB): the compiled binary plus TLS root certificates.
 
 ## Interaction with existing features
 
@@ -434,44 +507,63 @@ app.run(host="0.0.0.0", port=8080)
 
 ## Alternatives considered
 
-### Rust-crate-only (no `.incnlib` in the package)
+### Cloudflare Workers + R2
 
-Ship only the generated Rust crate. The consumer gets Cargo-level compilation but no Incan-level typechecking — the compiler wouldn't know about library types' fields, methods, or type parameters. Rejected because it defeats the purpose of Incan's type system.
+US-headquartered, disqualified by the EU infrastructure requirement. Cloudflare's EU-only deployment options exist but the company remains US-based.
+
+### GitHub Releases as package storage
+
+Free but ties the ecosystem to a US platform. Also lacks integrity guarantees — release assets can be silently re-uploaded.
 
 ### Self-hosted Kellnr
 
-Kellnr is a self-hosted Rust crate registry that implements the Cargo registry protocol. Rejected because it only speaks Cargo's protocol (no awareness of `.incnlib` manifests), requires a persistent server, and is written in Rust rather than Incan (misses the dogfooding opportunity). The `.incnlib`-in-`.crate` trick makes Cargo protocol compatibility free anyway — any tool that can download a `.crate` gets both the Rust source and the type manifest.
+See "Why not self-hosted Kellnr?" above.
 
 ### Static git repository (no compute)
 
-A git repo deployed as a static site. Works for reads but cannot validate publishes server-side — anyone with push access can publish anything. No auth, no ownership, no validation. Acceptable for first-party-only use but not for a community registry.
+A git repo deployed as a static site (like `incan.io`). Works for reads but cannot validate publishes server-side — anyone with push access can publish anything. No auth, no ownership, no validation. Acceptable for first-party-only use but not for a community registry.
+
+### Hetzner VPS + Object Storage
+
+German provider, good pricing. However: no scale-to-zero compute (minimum €4.51/month even when idle), no serverless containers. Viable as a fallback but Scaleway's free tier and serverless model are a better fit for the early stage.
 
 ## Drawbacks
 
 - **Complexity.** A package registry is a significant piece of infrastructure to build and maintain, even a simple one.
+- **Dependency on Scaleway/Bunny.net.** The architecture is provider-portable (S3 API + HTTP CDN), but the initial deployment is tied to these specific providers.
 - **Sigstore learning curve.** Keyless signing via OIDC is unfamiliar to many developers. Clear documentation and good CLI UX can mitigate this.
-- **`std.web` dependency.** Writing the registry in Incan means `std.web` (RFC 037) must ship first. If `std.web` is delayed, the registry could be written in Rust as a temporary measure and rewritten in Incan later.
+- **`std.web` dependency.** Writing the registry in Incan means `std.web` (RFC 023) must ship first. If `std.web` is delayed, the registry could be written in Rust as a temporary measure and rewritten in Incan later.
 
-## Layers affected
+## Implementation plan
 
-**Registry service (new Incan project)**:
+### Phase 1: MVP registry (alongside RFC 031 implementation)
 
-- A new `registry/` Incan project implementing the HTTP API (`POST /api/v1/publish`, `POST /api/v1/yank`, `GET /index/...`, `GET /crates/...`) using `std.web` (RFC 037).
-- An S3-compatible storage layer for reading and writing `.crate` files and sparse index entries.
-- Sigstore signing verification on publish (Phase 2).
+| Component | What | Estimated size |
+|---|---|---|
+| Registry service (Incan) | HTTP API: publish, yank, index, download | ~300 lines |
+| S3 storage layer | Object storage client for crate + index read/write | ~150 lines |
+| `incan login` CLI command | Token prompt, save to `~/.incan/credentials` | ~50 lines |
+| `incan publish` CLI command | Build lib, package `.crate`, upload with checksum | ~150 lines |
+| Index reader (in compiler) | Fetch + parse sparse index, resolve versions | ~200 lines |
+| Cache manager | `~/.incan/libs/` cache with checksum verification | ~100 lines |
+| Lockfile (`incan.lock`) | Write/read resolved dependency versions | ~150 lines |
+| Scaleway + Bunny.net setup | Infra provisioning (one-time) | ~2 hours |
 
-**CLI** (`src/cli/`):
+### Phase 2: Sigstore signing
 
-- New commands: `incan login`, `incan publish`, `incan yank`, `incan add`, `incan remove`, `incan update`, `incan search`, `incan owner`.
-- `incan build` / `incan lock`: registry dependency resolution — fetch sparse index, select version, download and verify `.crate`, extract `.incnlib`, cache to `~/.incan/libs/`.
-- Lockfile (`incan.lock`) write/read for reproducible builds.
-- `~/.incan/credentials` for token storage.
-- `sigstore-rs` integration for OIDC-based package signing and verification (Phase 2).
+| Component | What | Estimated size |
+|---|---|---|
+| Signing in `incan publish` | OIDC flow + Sigstore signing via `sigstore-rs` | ~80 lines |
+| Verification in `incan build` | Signature + certificate + Rekor verification | ~100 lines |
+| Registry-side validation | Verify signature on publish before storing | ~50 lines |
 
-**Compiler dependency resolver** (`src/dependency_resolver.rs`):
+### Phase 3: Web UI + search
 
-- Extend to handle registry dependencies (`mylib = "0.1.0"` / `mylib = "^0.1"`) alongside existing path dependencies from RFC 031.
-- Index fetching, SemVer range resolution, checksum verification, and cache lookup.
+| Component | What |
+|---|---|
+| Static site generator | Generate HTML from index data (package pages, search) |
+| `incan search` CLI | Client-side search over cached index |
+| Download counters | Increment counter in object storage metadata on each download |
 
 ## Unresolved questions
 
@@ -481,9 +573,9 @@ A git repo deployed as a static site. Works for reads but cannot validate publis
 
 3. **Namespace / scope model.** Should packages be flat (`mylib`) or scoped (`@danny/mylib`)? Flat is simpler; scoped prevents name conflicts as the ecosystem grows. PyPI is flat; npm is scoped. Cargo is flat with a `foo` / `foo-bar` convention.
 
-4. **CDN cache invalidation on publish.** When a new version is published, the index entry must be updated at the CDN edge. Should the registry service call the CDN purge API synchronously (slower publish, instant availability) or asynchronously (fast publish, ~60s propagation delay)?
+4. **CDN cache invalidation on publish.** When a new version is published, the index entry must be updated at the CDN edge. Bunny.net supports API-based purge — but should the registry service call it synchronously (slower publish, instant availability) or asynchronously (fast publish, ~60s propagation delay)?
 
-5. **Fallback when CDN bandwidth cap is reached.** Should the client fall back to direct origin requests (slower but functional) or fail with a clear "registry bandwidth limit reached" error? Fallback is better UX but could overload the origin.
+5. **Fallback when CDN cap is reached.** When Bunny.net hits its bandwidth cap, should the client fall back to direct origin requests (slower but functional) or fail with a clear "registry bandwidth limit reached" error? Fallback is better UX but could overload the origin.
 
 ## Future extensions (out of scope)
 

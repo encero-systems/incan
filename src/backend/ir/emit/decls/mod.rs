@@ -179,23 +179,16 @@ impl<'a> IrEmitter<'a> {
             }
         }
 
-        // RFC 023: map Incan `std.*` imports based on per-namespace implementation mode.
+        // RFC 023: map all Incan `std.*` imports to emitted `crate::__incan_std::*` modules.
         //
         // `std.testing.assert_eq` (Incan-source mode) → `crate::__incan_std::testing::assert_eq`
-        // `std.async.time.sleep` → `incan_stdlib::r#async::time::sleep`
-        // `std.web` → `incan_stdlib::web`
-        //
-        // Incan-source stdlib namespaces are emitted under `crate::__incan_std::*`, while runtime-facade namespaces are
-        // emitted under `incan_stdlib::*`.
+        // `std.async.time.sleep` → `crate::__incan_std::r#async::time::sleep`
+        // `std.web` → `crate::__incan_std::web`
         //
         // Only Incan stdlib imports (qualifier `Auto`) are mapped. Rust crate imports like
         // `from rust::std::collections import HashMap` (qualifier `None`) are left as-is.
         let is_stdlib = !matches!(qualifier, IrImportQualifier::None) && stdlib::is_any_stdlib_path(path);
-        let is_incan_source_stdlib = is_stdlib
-            && matches!(
-                stdlib::stdlib_impl_mode_for(path),
-                Some(stdlib::StdlibImplMode::IncanSource)
-            );
+        let is_incan_source_stdlib = is_stdlib;
 
         let path_tokens: Vec<TokenStream> = if is_incan_source_stdlib {
             let mut tokens = vec![quote! { crate }];

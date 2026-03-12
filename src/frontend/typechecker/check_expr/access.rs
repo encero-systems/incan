@@ -192,18 +192,6 @@ impl TypeChecker {
         Some(idx as usize)
     }
 
-    fn is_rust_module_chain_expr(&self, expr: &Spanned<Expr>) -> bool {
-        match &expr.node {
-            Expr::Ident(name) => self.lookup_symbol(name).is_some_and(|sym| match &sym.kind {
-                SymbolKind::RustModule { .. } => true,
-                SymbolKind::Module(info) => info.path.first().is_some_and(|seg| seg == "rust"),
-                _ => false,
-            }),
-            Expr::Field(base, _) => self.is_rust_module_chain_expr(base),
-            _ => false,
-        }
-    }
-
     /// Type-check an indexing expression (`base[index]`) and return the element type.
     pub(in crate::frontend::typechecker::check_expr) fn check_index(
         &mut self,
@@ -348,15 +336,6 @@ impl TypeChecker {
             }
         }
 
-        // Rust module chains are intentionally permissive so expressions like
-        // `import rust::std::f64::consts as consts; consts.PI` typecheck.
-        //
-        // We deliberately return `Unknown` here instead of guessing a concrete type from the field spelling. Rust
-        // constants can be any type, and the backend only needs to know that this is an external Rust path.
-        if self.is_rust_module_chain_expr(base) {
-            return ResolvedType::Unknown;
-        }
-
         let base_ty = self.check_expr(base);
 
         // Be permissive for unknown receivers: allow field access and continue typechecking.
@@ -480,8 +459,7 @@ impl TypeChecker {
         }
 
         // External/runtime-provided concurrency primitives: be permissive for surface types that have no local Incan
-        // definition (pure Rust leaves). Types defined in .incn source (e.g. `Semaphore`) have type info and do NOT hit
-        // this early return.
+        // definition. Types defined in `.incn` source are resolved below through their extracted method signatures.
         if let ResolvedType::Named(name) = &base_ty
             && surface_types::from_str(name.as_str()).is_some()
             && self.lookup_type_info(name).is_none()
@@ -489,12 +467,10 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
 
-        // `Semaphore` is defined in .incn source so lookup_type_info returns Some, bypassing the permissive
-        // short-circuit above. We must resolve its methods explicitly because the typechecker cannot yet infer return
-        // types through Rust-backed runtime shims.
-        if let ResolvedType::Named(name) = &base_ty
-            && surface_types::from_str(name.as_str()) == Some(SurfaceTypeId::Semaphore)
-        {
+        if matches!(
+            &base_ty,
+            ResolvedType::Named(name) if name == surface_types::as_str(SurfaceTypeId::Semaphore)
+        ) {
             return match method {
                 "acquire" => ResolvedType::Generic(
                     "Result".to_string(),
@@ -505,6 +481,33 @@ impl TypeChecker {
                 ),
                 "try_acquire" => option_ty(ResolvedType::Named(SEMAPHORE_PERMIT_TYPE_NAME.to_string())),
                 "available_permits" => ResolvedType::Int,
+                _ => ResolvedType::Unknown,
+            };
+        }
+
+        if let ResolvedType::Generic(name, type_args) = &base_ty
+            && surface_types::from_str(name.as_str()) == Some(SurfaceTypeId::Mutex)
+        {
+            let inner = type_args.first().cloned().unwrap_or(ResolvedType::Unknown);
+            return match method {
+                "lock" => ResolvedType::Generic("MutexGuard".to_string(), vec![inner.clone()]),
+                "try_lock" => option_ty(ResolvedType::Generic("MutexGuard".to_string(), vec![inner])),
+                _ => ResolvedType::Unknown,
+            };
+        }
+
+        if let ResolvedType::Generic(name, type_args) = &base_ty
+            && surface_types::from_str(name.as_str()) == Some(SurfaceTypeId::RwLock)
+        {
+            let inner = type_args.first().cloned().unwrap_or(ResolvedType::Unknown);
+            return match method {
+                "read" => ResolvedType::Generic("RwLockReadGuard".to_string(), vec![inner.clone()]),
+                "write" => ResolvedType::Generic("RwLockWriteGuard".to_string(), vec![inner.clone()]),
+                "try_read" => option_ty(ResolvedType::Generic(
+                    "RwLockReadGuard".to_string(),
+                    vec![inner.clone()],
+                )),
+                "try_write" => option_ty(ResolvedType::Generic("RwLockWriteGuard".to_string(), vec![inner])),
                 _ => ResolvedType::Unknown,
             };
         }
@@ -734,12 +737,6 @@ impl TypeChecker {
 
         // For common external generic types (interop/runtime-provided) that we don't model in the checker, be
         // permissive and do not error on unknown methods.
-        if let ResolvedType::Generic(name, _args) = &base_ty
-            && surface_types::from_str(name.as_str()).is_some()
-        {
-            return ResolvedType::Unknown;
-        }
-
         if let ResolvedType::Generic(name, _args) = &base_ty
             && self.lookup_type_info(name).is_none()
         {

@@ -53,24 +53,6 @@ impl ReceiverInfo {
 }
 
 impl<'a> IrEmitter<'a> {
-    /// Check if the receiver is a type-like identifier.
-    ///
-    /// This is used to determine if the receiver is a type name or an external import placeholder.
-    ///
-    /// ## Parameters
-    ///
-    /// - `receiver`: The receiver expression
-    ///
-    /// ## Returns
-    ///
-    /// - `true` if the receiver is a type-like identifier, `false` otherwise
-    fn receiver_is_type_like(receiver: &TypedExpr) -> bool {
-        match &receiver.kind {
-            IrExprKind::Var { ref_kind, .. } => !matches!(ref_kind, VarRefKind::Value),
-            _ => false,
-        }
-    }
-
     /// Emit a known method call using enum-based dispatch.
     ///
     /// This handles calls that have been lowered to `IrExprKind::KnownMethodCall`.
@@ -159,7 +141,7 @@ impl<'a> IrEmitter<'a> {
             // a type-like identifier (type name or external import placeholder).
             //
             // This avoids capitalization heuristics that can mis-emit runtime variables named `TitleCase`.
-            if Self::receiver_is_type_like(receiver) {
+            if Self::expr_is_type_like(receiver) {
                 let type_ident = format_ident!("{}", name);
                 let m = format_ident!("{}", method);
                 // Apply Incan-style argument conversions when calling associated functions on Incan-owned types

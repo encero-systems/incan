@@ -415,6 +415,13 @@ fn test_rust_interop_associated_functions_codegen() {
 }
 
 #[test]
+fn test_rust_interop_field_access_codegen() {
+    let source = load_test_file("rust_interop_field_access");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rust_interop_field_access", rust_code);
+}
+
+#[test]
 fn test_titlecase_var_not_type_codegen() {
     let source = load_test_file("titlecase_var_not_type");
     let rust_code = generate_rust(&source);

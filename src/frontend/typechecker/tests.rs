@@ -1521,6 +1521,40 @@ def foo() -> Result[int, str]:
     assert!(check_str(source).is_ok());
 }
 
+#[test]
+fn test_result_ok_reports_payload_type_mismatch() {
+    let source = r#"
+def foo() -> Result[int, str]:
+  return Ok("hello")
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("Ok payload type mismatch should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Result[int, str]") && e.message.contains("Result[str, str]")),
+        "Expected Result payload mismatch; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_result_err_reports_payload_type_mismatch() {
+    let source = r#"
+def foo() -> Result[int, str]:
+  return Err(1)
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("Err payload type mismatch should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Result[int, str]") && e.message.contains("Result[int, int]")),
+        "Expected Result payload mismatch; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
 // ========================================
 // Function calls
 // ========================================

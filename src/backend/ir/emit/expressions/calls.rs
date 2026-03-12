@@ -9,7 +9,7 @@ use super::super::super::conversions::{BinOpEmitKind, ConversionContext, determi
 use super::super::super::expr::{BinOp, IrCallArg, IrExprKind, TypedExpr, VarAccess, VarRefKind};
 use super::super::super::types::{IrType, Mutability};
 use super::super::{EmitError, IrEmitter};
-use incan_core::lang::stdlib::{self, StdlibImplMode};
+use incan_core::lang::stdlib;
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 
 impl<'a> IrEmitter<'a> {
@@ -451,17 +451,12 @@ impl<'a> IrEmitter<'a> {
         let Some(function_name) = canonical_path.last() else {
             return Ok(None);
         };
-        let Some(mode) = stdlib::stdlib_impl_mode_for(&module_path) else {
+        if !stdlib::is_known_stdlib_module(&module_path) {
             return Ok(None);
-        };
+        }
 
-        let mut segments: Vec<TokenStream> = match mode {
-            StdlibImplMode::IncanSource => {
-                let ns = Self::rust_ident(stdlib::INCAN_STD_NAMESPACE);
-                vec![quote! { crate }, quote! { #ns }]
-            }
-            StdlibImplMode::RuntimeFacade => vec![quote! { incan_stdlib }],
-        };
+        let ns = Self::rust_ident(stdlib::INCAN_STD_NAMESPACE);
+        let mut segments: Vec<TokenStream> = vec![quote! { crate }, quote! { #ns }];
 
         for seg in module_path.iter().skip(1) {
             let ident = Self::rust_ident(seg);

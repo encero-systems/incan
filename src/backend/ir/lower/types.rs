@@ -33,6 +33,10 @@ fn classify_generic_base(name: &str) -> GenericBaseKind {
     GenericBaseKind::Other
 }
 
+fn lowered_generic_arg_or_unknown(lowered_params: &[IrType], idx: usize) -> IrType {
+    lowered_params.get(idx).cloned().unwrap_or(IrType::Unknown)
+}
+
 impl AstLowering {
     /// Lower an AST type in a `const` context, applying RFC 008 freezing rules.
     ///
@@ -211,19 +215,6 @@ impl AstLowering {
         }
     }
 
-    /// Lower an AST type to an IR type.
-    ///
-    /// # Parameters
-    ///
-    /// * `ty` - The AST type to lower
-    ///
-    /// # Returns
-    ///
-    /// The corresponding IR type representation.
-    pub(super) fn lower_type(&self, ty: &ast::Type) -> IrType {
-        self.lower_type_with_type_params(ty, None)
-    }
-
     pub(super) fn lower_type_with_type_params(
         &self,
         ty: &ast::Type,
@@ -259,11 +250,9 @@ impl AstLowering {
                     };
                 }
 
-                // Check if this is a known enum
                 if let Some(enum_ty) = self.enum_names.get(name) {
                     enum_ty.clone()
                 } else {
-                    // Default to struct
                     IrType::Struct(name.clone())
                 }
             }
@@ -273,59 +262,28 @@ impl AstLowering {
                     .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
                     .collect();
                 match classify_generic_base(base.as_str()) {
-                    GenericBaseKind::Collection(CollectionTypeId::List) => IrType::List(Box::new(
-                        params
-                            .first()
-                            .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
-                            .unwrap_or(IrType::Unknown),
-                    )),
+                    GenericBaseKind::Collection(CollectionTypeId::List) => {
+                        IrType::List(Box::new(lowered_generic_arg_or_unknown(&lowered_params, 0)))
+                    }
                     GenericBaseKind::Collection(CollectionTypeId::Dict) => IrType::Dict(
-                        Box::new(
-                            params
-                                .first()
-                                .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
-                                .unwrap_or(IrType::Unknown),
-                        ),
-                        Box::new(
-                            params
-                                .get(1)
-                                .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
-                                .unwrap_or(IrType::Unknown),
-                        ),
+                        Box::new(lowered_generic_arg_or_unknown(&lowered_params, 0)),
+                        Box::new(lowered_generic_arg_or_unknown(&lowered_params, 1)),
                     ),
-                    GenericBaseKind::Collection(CollectionTypeId::Set) => IrType::Set(Box::new(
-                        params
-                            .first()
-                            .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
-                            .unwrap_or(IrType::Unknown),
-                    )),
-                    GenericBaseKind::Collection(CollectionTypeId::Option) => IrType::Option(Box::new(
-                        params
-                            .first()
-                            .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
-                            .unwrap_or(IrType::Unknown),
-                    )),
+                    GenericBaseKind::Collection(CollectionTypeId::Set) => {
+                        IrType::Set(Box::new(lowered_generic_arg_or_unknown(&lowered_params, 0)))
+                    }
+                    GenericBaseKind::Collection(CollectionTypeId::Option) => {
+                        IrType::Option(Box::new(lowered_generic_arg_or_unknown(&lowered_params, 0)))
+                    }
                     GenericBaseKind::Collection(CollectionTypeId::Result) => IrType::Result(
-                        Box::new(
-                            params
-                                .first()
-                                .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
-                                .unwrap_or(IrType::Unknown),
-                        ),
-                        Box::new(
-                            params
-                                .get(1)
-                                .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
-                                .unwrap_or(IrType::Unknown),
-                        ),
+                        Box::new(lowered_generic_arg_or_unknown(&lowered_params, 0)),
+                        Box::new(lowered_generic_arg_or_unknown(&lowered_params, 1)),
                     ),
                     GenericBaseKind::Collection(CollectionTypeId::Tuple) => IrType::Tuple(lowered_params),
                     GenericBaseKind::Collection(
                         CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet | CollectionTypeId::FrozenDict,
                     ) => {
                         let Some(id) = collections::from_str(base.as_str()) else {
-                            // Should not happen: `classify_generic_base()` told us this is a collection type.
-                            // Fall back to preserving the user spelling to avoid panicking during lowering.
                             return IrType::NamedGeneric(base.clone(), lowered_params);
                         };
                         IrType::NamedGeneric(collections::as_str(id).to_string(), lowered_params)
@@ -349,6 +307,19 @@ impl AstLowering {
             ),
             ast::Type::SelfType => IrType::SelfType,
         }
+    }
+
+    /// Lower an AST type to an IR type.
+    ///
+    /// # Parameters
+    ///
+    /// * `ty` - The AST type to lower
+    ///
+    /// # Returns
+    ///
+    /// The corresponding IR type representation.
+    pub(super) fn lower_type(&self, ty: &ast::Type) -> IrType {
+        self.lower_type_with_type_params(ty, None)
     }
 
     /// Lower a binary operator from AST to IR.

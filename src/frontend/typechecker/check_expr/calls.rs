@@ -97,25 +97,6 @@ impl TypeChecker {
         }
     }
 
-    fn constructor_result_type(&self, name: &str) -> ResolvedType {
-        match self.lookup_type_info(name) {
-            Some(TypeInfo::Model(model)) if !model.type_params.is_empty() => {
-                ResolvedType::Generic(name.to_string(), vec![ResolvedType::Unknown; model.type_params.len()])
-            }
-            Some(TypeInfo::Class(class)) if !class.type_params.is_empty() => {
-                ResolvedType::Generic(name.to_string(), vec![ResolvedType::Unknown; class.type_params.len()])
-            }
-            Some(TypeInfo::Newtype(newtype)) if !newtype.type_params.is_empty() => {
-                ResolvedType::Generic(name.to_string(), vec![ResolvedType::Unknown; newtype.type_params.len()])
-            }
-            Some(TypeInfo::Enum(enum_info)) if !enum_info.type_params.is_empty() => ResolvedType::Generic(
-                name.to_string(),
-                vec![ResolvedType::Unknown; enum_info.type_params.len()],
-            ),
-            _ => ResolvedType::Named(name.to_string()),
-        }
-    }
-
     /// Type-check a JSON/Query constructor call (`Json(...)` / `Query(...)`).
     ///
     /// NOTE: This method is called from multiple dispatch points in the typechecker because
@@ -177,6 +158,25 @@ impl TypeChecker {
         args.iter()
             .map(|arg| self.check_expr(Self::call_arg_expr(arg)))
             .collect()
+    }
+
+    fn constructor_result_type(&self, name: &str) -> ResolvedType {
+        match self.lookup_type_info(name) {
+            Some(TypeInfo::Model(model)) if !model.type_params.is_empty() => {
+                ResolvedType::Generic(name.to_string(), vec![ResolvedType::Unknown; model.type_params.len()])
+            }
+            Some(TypeInfo::Class(class)) if !class.type_params.is_empty() => {
+                ResolvedType::Generic(name.to_string(), vec![ResolvedType::Unknown; class.type_params.len()])
+            }
+            Some(TypeInfo::Newtype(newtype)) if !newtype.type_params.is_empty() => {
+                ResolvedType::Generic(name.to_string(), vec![ResolvedType::Unknown; newtype.type_params.len()])
+            }
+            Some(TypeInfo::Enum(enum_info)) if !enum_info.type_params.is_empty() => ResolvedType::Generic(
+                name.to_string(),
+                vec![ResolvedType::Unknown; enum_info.type_params.len()],
+            ),
+            _ => ResolvedType::Named(name.to_string()),
+        }
     }
 
     /// Validate a function call against a known function signature and enforce explicit generic bounds.
@@ -504,23 +504,32 @@ impl TypeChecker {
             return match cid {
                 ConstructorId::Ok | ConstructorId::Err => {
                     let arg_types = self.check_call_arg_types(args);
-                    // If we're inside a function/method that returns Result[_, E], use that E to type Ok(...) properly.
-                    // This improves common patterns like:
-                    //   def f() -> Result[T, str]:
-                    //     return Ok(value)
-                    let current_err = self.current_return_error_type.clone().unwrap_or(ResolvedType::Unknown);
-                    let current_ok = self
-                        .symbols
-                        .current_return_type()
-                        .and_then(ResolvedType::result_ok_type)
-                        .cloned()
+                    let current_result = self.symbols.current_return_type().and_then(|ty| match ty {
+                        ResolvedType::Generic(name, args)
+                            if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result)
+                                && args.len() >= 2 =>
+                        {
+                            Some((args[0].clone(), args[1].clone()))
+                        }
+                        _ => None,
+                    });
+                    let current_ok = current_result
+                        .as_ref()
+                        .map(|(ok_ty, _)| ok_ty.clone())
                         .unwrap_or(ResolvedType::Unknown);
+                    let current_err = current_result
+                        .as_ref()
+                        .map(|(_, err_ty)| err_ty.clone())
+                        .or_else(|| self.current_return_error_type.clone())
+                        .unwrap_or(ResolvedType::Unknown);
+                    let inferred_arg = arg_types.first().cloned().unwrap_or(ResolvedType::Unknown);
 
                     let (ok_ty, err_ty) = if cid == ConstructorId::Ok {
-                        let inferred_ok = arg_types.first().cloned().unwrap_or(ResolvedType::Unknown);
+                        // `Ok(...)` must reflect the payload type so return checking can catch mismatches against the
+                        // declared `Result[T, E]`.
                         let ok_ty = if current_ok == ResolvedType::Unit
                             && matches!(
-                                inferred_ok,
+                                inferred_arg,
                                 ResolvedType::Generic(ref name, ref args)
                                     if collection_type_id(name.as_str()) == Some(CollectionTypeId::Option)
                                         && args.len() == 1
@@ -528,14 +537,12 @@ impl TypeChecker {
                             ) {
                             ResolvedType::Unit
                         } else {
-                            inferred_ok
+                            inferred_arg
                         };
                         (ok_ty, current_err)
                     } else {
-                        (
-                            ResolvedType::Unknown,
-                            arg_types.first().cloned().unwrap_or(ResolvedType::Unknown),
-                        )
+                        // `Err(...)` mirrors the actual error payload while preserving any known enclosing `Ok` type.
+                        (current_ok, inferred_arg)
                     };
                     Some(result_ty(ok_ty, err_ty))
                 }

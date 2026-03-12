@@ -15,9 +15,7 @@ The extension includes support for the Incan Language Server, providing:
 
 **Requirements:** The `incan-lsp` binary must be installed and available in your PATH, or you can configure the path in settings.
 
-**Tip (development):** When your workspace is the Incan compiler repo, the extension will automatically prefer
-`target/debug/incan-lsp` (or `target/release/incan-lsp`) if present. This keeps diagnostics in sync with the
-syntax supported by your current checkout (e.g. `pub const`).
+**Tip (development):** When your workspace is the Incan compiler repo, the extension will automatically prefer `target/debug/incan-lsp` (or `target/release/incan-lsp`) if present. This keeps diagnostics in sync with the syntax supported by your current checkout (e.g. `pub const`).
 
 ### Syntax Highlighting
 
@@ -108,8 +106,7 @@ syntax supported by your current checkout (e.g. `pub const`).
 
     This will create a file like `incan-0.1.0.vsix` in the `editors/vscode` directory.
 
-2. Open VS Code, go to the Extensions sidebar (Cmd+Shift+X), click the three-dot menu (…), and choose **Install from VSIX…**.
-   Select your `.vsix` file.
+2. Open VS Code, go to the Extensions sidebar (Cmd+Shift+X), click the three-dot menu (…), and choose **Install from VSIX…**. Select your `.vsix` file.
 
 3. Fully restart VS Code after installing.
 
@@ -172,30 +169,30 @@ Restart VS Code/Cursor to activate the language server.
 
 ## Configuration
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `incan.lsp.enabled` | `true` | Enable/disable the language server |
-| `incan.lsp.path` | `""` | Custom path to the incan-lsp binary |
+|       Setting       | Default |             Description             |
+| ------------------- | ------- | ----------------------------------- |
+| `incan.lsp.enabled` | `true`  | Enable/disable the language server  |
+| `incan.lsp.path`    | `""`    | Custom path to the incan-lsp binary |
 
 ## Scopes Reference
 
 For theme authors, here are the TextMate scopes used:
 
-| Element | Scope |
-|---------|-------|
-| Keywords | `keyword.control.flow.incan`, `keyword.declaration.incan` |
-| Functions | `entity.name.function.incan`, `entity.name.function.call.incan` |
-| Methods | `entity.name.function.method.incan` |
-| Types | `entity.name.type.incan`, `support.type.primitive.incan` |
-| Parameters | `variable.parameter.function.incan` |
-| Properties | `variable.other.property.incan` |
-| Strings | `string.quoted.double.incan`, `string.interpolated.incan` |
-| F-string expr | `meta.template.expression.incan` |
-| Comments | `comment.line.number-sign.incan` |
-| Decorators | `entity.name.function.decorator.incan` |
-| Modules | `entity.name.module.incan` |
-| Constants | `constant.numeric.*.incan`, `constant.language.*.incan` |
-| Operators | `keyword.operator.*.incan` |
+|    Element    |                              Scope                              |
+| ------------- | --------------------------------------------------------------- |
+| Keywords      | `keyword.control.flow.incan`, `keyword.declaration.incan`       |
+| Functions     | `entity.name.function.incan`, `entity.name.function.call.incan` |
+| Methods       | `entity.name.function.method.incan`                             |
+| Types         | `entity.name.type.incan`, `support.type.primitive.incan`        |
+| Parameters    | `variable.parameter.function.incan`                             |
+| Properties    | `variable.other.property.incan`                                 |
+| Strings       | `string.quoted.double.incan`, `string.interpolated.incan`       |
+| F-string expr | `meta.template.expression.incan`                                |
+| Comments      | `comment.line.number-sign.incan`                                |
+| Decorators    | `entity.name.function.decorator.incan`                          |
+| Modules       | `entity.name.module.incan`                                      |
+| Constants     | `constant.numeric.*.incan`, `constant.language.*.incan`         |
+| Operators     | `keyword.operator.*.incan`                                      |
 
 ## Example
 
@@ -226,11 +223,13 @@ async def fetch_users(limit: int = 10) -> List[User]:
 
 ## Contributing
 
-To modify the grammar:
+To modify keyword highlighting:
 
-1. Edit `incan.tmLanguage.json`
-2. Reload VS Code/Cursor window
-3. Test with various Incan files in `examples/`
+1. Update the registry-backed helpers in `incan_core::lang`
+2. Run `cargo run --bin generate_vscode_grammar_keywords`
+3. Reload VS Code/Cursor and test with files in `examples/`
+
+For non-keyword grammar structure, update `incan.tmLanguage.json` directly and keep the generated keyword regexes in sync via the command above.
 
 ## License
 

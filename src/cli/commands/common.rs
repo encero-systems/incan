@@ -266,27 +266,21 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
                     }
 
                     if path.parent_levels == 0 && !path.is_absolute && stdlib::is_any_stdlib_path(&path.segments) {
-                        if matches!(
-                            stdlib::stdlib_impl_mode_for(&path.segments),
-                            Some(stdlib::StdlibImplMode::IncanSource)
-                        ) {
-                            let stdlib_key = path.segments.join(".");
-                            let source_path =
-                                if let Some(cached_path) = incan_source_stdlib_module_paths.get(&stdlib_key) {
-                                    cached_path.clone()
-                                } else {
-                                    let resolved = resolve_stdlib_module_source_path(&path.segments)?;
-                                    incan_source_stdlib_module_paths.insert(stdlib_key, resolved.clone());
-                                    resolved
-                                };
+                        let stdlib_key = path.segments.join(".");
+                        let source_path = if let Some(cached_path) = incan_source_stdlib_module_paths.get(&stdlib_key) {
+                            cached_path.clone()
+                        } else {
+                            let resolved = resolve_stdlib_module_source_path(&path.segments)?;
+                            incan_source_stdlib_module_paths.insert(stdlib_key, resolved.clone());
+                            resolved
+                        };
 
-                            let mut module_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
-                            module_segments.extend(path.segments.iter().skip(1).cloned());
-                            let module_name = module_segments.join("_");
-                            let dep_path_str = source_path.to_string_lossy().to_string();
-                            if !processed.contains(&dep_path_str) {
-                                to_process.push((dep_path_str, module_name, module_segments));
-                            }
+                        let mut module_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
+                        module_segments.extend(path.segments.iter().skip(1).cloned());
+                        let module_name = module_segments.join("_");
+                        let dep_path_str = source_path.to_string_lossy().to_string();
+                        if !processed.contains(&dep_path_str) {
+                            to_process.push((dep_path_str, module_name, module_segments));
                         }
                         continue;
                     }

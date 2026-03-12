@@ -1,130 +1,521 @@
 {
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "fileTypes": [
+    "incn"
+  ],
   "name": "Incan",
-  "scopeName": "source.incan",
-  "fileTypes": ["incn"],
   "patterns": [
-    { "include": "#docstrings" },
-    { "include": "#comments" },
-    { "include": "#decorators" },
-    { "include": "#function-definition" },
-    { "include": "#class-definition" },
-    { "include": "#model-definition" },
-    { "include": "#trait-definition" },
-    { "include": "#enum-definition" },
-    { "include": "#newtype-definition" },
-    { "include": "#import-statement" },
-    { "include": "#from-import-statement" },
-    { "include": "#strings" },
-    { "include": "#keywords" },
-    { "include": "#operators" },
-    { "include": "#numbers" },
-    { "include": "#builtin-function-call" },
-    { "include": "#function-call" },
-    { "include": "#builtin-method-call" },
-    { "include": "#method-call" },
-    { "include": "#types" },
-    { "include": "#constants" },
-    { "include": "#variables" },
-    { "include": "#punctuation" }
+    {
+      "include": "#docstrings"
+    },
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#decorators"
+    },
+    {
+      "include": "#function-definition"
+    },
+    {
+      "include": "#class-definition"
+    },
+    {
+      "include": "#model-definition"
+    },
+    {
+      "include": "#trait-definition"
+    },
+    {
+      "include": "#enum-definition"
+    },
+    {
+      "include": "#newtype-definition"
+    },
+    {
+      "include": "#import-statement"
+    },
+    {
+      "include": "#from-import-statement"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#builtin-function-call"
+    },
+    {
+      "include": "#function-call"
+    },
+    {
+      "include": "#builtin-method-call"
+    },
+    {
+      "include": "#method-call"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#variables"
+    },
+    {
+      "include": "#punctuation"
+    }
   ],
   "repository": {
-    "docstrings": {
+    "builtin-function-call": {
       "patterns": [
         {
-          "name": "string.quoted.docstring.multi.incan",
-          "begin": "^(\\s*)(\"\"\")(?=.*\"\"\")",
-          "end": "\"\"\"",
-          "beginCaptures": {
-            "2": { "name": "punctuation.definition.string.begin.incan" }
+          "captures": {
+            "1": {
+              "name": "support.function.builtin.incan"
+            },
+            "2": {
+              "name": "punctuation.section.arguments.begin.incan"
+            }
           },
-          "endCaptures": {
-            "0": { "name": "punctuation.definition.string.end.incan" }
-          }
+          "match": "\\b(println|print|len|range|enumerate|zip|map|filter|sorted|reversed|min|max|sum|any|all|abs|round|type|hash|id|repr|chr|ord|hex|bin|oct|pow|divmod|slice|iter|next|getattr|setattr|hasattr|delattr|isinstance|issubclass|callable|vars|dir|globals|locals|exec|eval|compile|format|ascii)\\s*(\\()",
+          "name": "meta.function-call.builtin.incan"
         },
         {
-          "name": "string.quoted.docstring.multi.incan",
-          "begin": "^(\\s*)(\"\"\")",
-          "end": "\"\"\"",
-          "beginCaptures": {
-            "2": { "name": "punctuation.definition.string.begin.incan" }
+          "captures": {
+            "1": {
+              "name": "support.function.builtin.incan"
+            },
+            "2": {
+              "name": "punctuation.section.arguments.begin.incan"
+            }
           },
-          "endCaptures": {
-            "0": { "name": "punctuation.definition.string.end.incan" }
-          }
+          "match": "\\b(read_file|write_file|open|input|close|read|readline|readlines|write|writelines|seek|tell|flush)\\s*(\\()",
+          "name": "meta.function-call.io.incan"
+        },
+        {
+          "captures": {
+            "1": {
+              "name": "support.function.builtin.incan"
+            },
+            "2": {
+              "name": "punctuation.section.arguments.begin.incan"
+            }
+          },
+          "match": "\\b(int|str|float|bool|bytes|list|dict|set|tuple|frozenset|bytearray|memoryview|complex|object)\\s*(\\()",
+          "name": "meta.function-call.conversion.incan"
+        },
+        {
+          "captures": {
+            "1": {
+              "name": "support.function.builtin.incan"
+            },
+            "2": {
+              "name": "punctuation.section.arguments.begin.incan"
+            }
+          },
+          "match": "\\b(json_parse|json_stringify)\\s*(\\()",
+          "name": "meta.function-call.json.incan"
+        }
+      ]
+    },
+    "builtin-method-call": {
+      "patterns": [
+        {
+          "captures": {
+            "1": {
+              "name": "punctuation.accessor.incan"
+            },
+            "2": {
+              "name": "support.function.builtin.incan"
+            },
+            "3": {
+              "name": "punctuation.section.arguments.begin.incan"
+            }
+          },
+          "match": "(\\.)\\s*(append|extend|insert|remove|pop|clear|index|count|sort|reverse|copy|get|keys|values|items|update|setdefault|popitem|add|discard|union|intersection|difference|symmetric_difference|issubset|issuperset|isdisjoint|strip|lstrip|rstrip|split|rsplit|join|replace|find|rfind|startswith|endswith|upper|lower|title|capitalize|swapcase|center|ljust|rjust|zfill|encode|decode|format|isalpha|isdigit|isalnum|isspace|isupper|islower|istitle)\\s*(\\()",
+          "name": "meta.method-call.builtin.incan"
+        }
+      ]
+    },
+    "byte-escape": {
+      "patterns": [
+        {
+          "match": "\\\\[nrtv\\\\\"'0]",
+          "name": "constant.character.escape.incan"
+        },
+        {
+          "match": "\\\\x[0-9a-fA-F]{2}",
+          "name": "constant.character.escape.hex.incan"
+        }
+      ]
+    },
+    "class-definition": {
+      "patterns": [
+        {
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.class.incan"
+            },
+            "2": {
+              "name": "entity.name.type.class.incan"
+            },
+            "3": {
+              "name": "keyword.declaration.extends.incan"
+            },
+            "4": {
+              "name": "entity.other.inherited-class.incan"
+            },
+            "5": {
+              "name": "keyword.declaration.with.incan"
+            },
+            "6": {
+              "name": "entity.other.inherited-class.incan"
+            },
+            "7": {
+              "name": "punctuation.section.class.begin.incan"
+            }
+          },
+          "match": "^\\s*(class)\\s+([A-Z][a-zA-Z0-9_]*)(?:\\s+(extends)\\s+([A-Z][a-zA-Z0-9_]*))?(?:\\s+(with)\\s+([A-Z][a-zA-Z0-9_,\\s]*))?\\s*(:)",
+          "name": "meta.class.incan"
         }
       ]
     },
     "comments": {
       "patterns": [
         {
-          "name": "comment.line.number-sign.incan",
-          "match": "#.*$"
+          "match": "#.*$",
+          "name": "comment.line.number-sign.incan"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "match": "\\b(True|true)\\b",
+          "name": "constant.language.boolean.true.incan"
+        },
+        {
+          "match": "\\b(False|false)\\b",
+          "name": "constant.language.boolean.false.incan"
+        },
+        {
+          "match": "\\b(None)\\b",
+          "name": "constant.language.none.incan"
+        },
+        {
+          "match": "\\b(Ok|Err)\\b",
+          "name": "support.constant.result.incan"
+        },
+        {
+          "match": "\\b(Some)\\b",
+          "name": "support.constant.option.incan"
+        },
+        {
+          "match": "\\b[A-Z][A-Z0-9_]+\\b",
+          "name": "constant.other.caps.incan"
+        }
+      ]
+    },
+    "decorator-arguments": {
+      "patterns": [
+        {
+          "include": "#strings"
+        },
+        {
+          "include": "#numbers"
+        },
+        {
+          "include": "#constants"
+        },
+        {
+          "match": "[a-zA-Z_][a-zA-Z0-9_]*",
+          "name": "variable.parameter.decorator.incan"
+        },
+        {
+          "match": ",",
+          "name": "punctuation.separator.comma.incan"
         }
       ]
     },
     "decorators": {
       "patterns": [
         {
-          "name": "meta.decorator.incan",
           "begin": "^\\s*(@)([a-zA-Z_][a-zA-Z0-9_]*)",
-          "end": "(?=\\s|$|\\()",
           "beginCaptures": {
-            "1": { "name": "punctuation.definition.decorator.incan" },
-            "2": { "name": "entity.name.function.decorator.incan" }
-          }
+            "1": {
+              "name": "punctuation.definition.decorator.incan"
+            },
+            "2": {
+              "name": "entity.name.function.decorator.incan"
+            }
+          },
+          "end": "(?=\\s|$|\\()",
+          "name": "meta.decorator.incan"
         },
         {
-          "name": "meta.decorator.arguments.incan",
           "begin": "(@[a-zA-Z_][a-zA-Z0-9_]*)(\\()",
-          "end": "\\)",
           "beginCaptures": {
-            "1": { "name": "entity.name.function.decorator.incan" },
-            "2": { "name": "punctuation.section.arguments.begin.incan" }
+            "1": {
+              "name": "entity.name.function.decorator.incan"
+            },
+            "2": {
+              "name": "punctuation.section.arguments.begin.incan"
+            }
           },
+          "end": "\\)",
           "endCaptures": {
-            "0": { "name": "punctuation.section.arguments.end.incan" }
+            "0": {
+              "name": "punctuation.section.arguments.end.incan"
+            }
           },
+          "name": "meta.decorator.arguments.incan",
           "patterns": [
-            { "include": "#decorator-arguments" }
+            {
+              "include": "#decorator-arguments"
+            }
           ]
         }
       ]
     },
-    "decorator-arguments": {
+    "docstrings": {
       "patterns": [
-        { "include": "#strings" },
-        { "include": "#numbers" },
-        { "include": "#constants" },
         {
-          "name": "variable.parameter.decorator.incan",
-          "match": "[a-zA-Z_][a-zA-Z0-9_]*"
+          "begin": "^(\\s*)(\"\"\")(?=.*\"\"\")",
+          "beginCaptures": {
+            "2": {
+              "name": "punctuation.definition.string.begin.incan"
+            }
+          },
+          "end": "\"\"\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.incan"
+            }
+          },
+          "name": "string.quoted.docstring.multi.incan"
         },
         {
-          "name": "punctuation.separator.comma.incan",
-          "match": ","
+          "begin": "^(\\s*)(\"\"\")",
+          "beginCaptures": {
+            "2": {
+              "name": "punctuation.definition.string.begin.incan"
+            }
+          },
+          "end": "\"\"\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.incan"
+            }
+          },
+          "name": "string.quoted.docstring.multi.incan"
+        }
+      ]
+    },
+    "enum-definition": {
+      "patterns": [
+        {
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.enum.incan"
+            },
+            "2": {
+              "name": "entity.name.type.enum.incan"
+            },
+            "3": {
+              "name": "punctuation.section.enum.begin.incan"
+            }
+          },
+          "match": "^\\s*(enum)\\s+([A-Z][a-zA-Z0-9_]*)\\s*(:)",
+          "name": "meta.enum.incan"
+        }
+      ]
+    },
+    "field-access": {
+      "patterns": [
+        {
+          "captures": {
+            "1": {
+              "name": "punctuation.accessor.incan"
+            },
+            "2": {
+              "name": "variable.other.property.incan"
+            }
+          },
+          "match": "(\\.)([a-z_][a-zA-Z0-9_]*|[0-9]+)(?!\\s*\\()",
+          "name": "meta.field-access.incan"
+        }
+      ]
+    },
+    "from-import-statement": {
+      "patterns": [
+        {
+          "captures": {
+            "1": {
+              "name": "keyword.control.import.from.incan"
+            },
+            "2": {
+              "name": "meta.import.path.incan",
+              "patterns": [
+                {
+                  "match": "\\b(super|crate)\\b",
+                  "name": "keyword.control.import.incan"
+                },
+                {
+                  "match": "(\\.\\.|::|\\.)(?!\\s)",
+                  "name": "punctuation.separator.namespace.incan"
+                },
+                {
+                  "match": "[a-zA-Z_][a-zA-Z0-9_]*",
+                  "name": "entity.name.module.incan"
+                }
+              ]
+            },
+            "3": {
+              "name": "keyword.control.import.incan"
+            },
+            "4": {
+              "name": "meta.import.names.incan",
+              "patterns": [
+                {
+                  "captures": {
+                    "1": {
+                      "name": "entity.name.import.incan"
+                    },
+                    "2": {
+                      "name": "keyword.control.as.incan"
+                    },
+                    "3": {
+                      "name": "entity.name.import.alias.incan"
+                    }
+                  },
+                  "match": "([a-zA-Z_][a-zA-Z0-9_]*)\\s+(as)\\s+([a-zA-Z_][a-zA-Z0-9_]*)"
+                },
+                {
+                  "match": "[a-zA-Z_][a-zA-Z0-9_]*",
+                  "name": "entity.name.import.incan"
+                },
+                {
+                  "match": ",",
+                  "name": "punctuation.separator.comma.incan"
+                }
+              ]
+            }
+          },
+          "match": "^\\s*(from)\\s+((?:\\.\\.|super::)*(?:crate(?:::|\\.))?(?:[a-zA-Z_][a-zA-Z0-9_]*(?:::|\\.)?)*)\\s+(import)\\s+(.+)$",
+          "name": "meta.import.from.incan"
+        }
+      ]
+    },
+    "fstring-interpolation": {
+      "patterns": [
+        {
+          "begin": "(\\{)",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.definition.template-expression.begin.incan"
+            }
+          },
+          "contentName": "meta.template.expression.incan",
+          "end": "(\\})",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.template-expression.end.incan"
+            }
+          },
+          "name": "meta.embedded.line.incan",
+          "patterns": [
+            {
+              "include": "#builtin-function-call"
+            },
+            {
+              "include": "#function-call"
+            },
+            {
+              "include": "#builtin-method-call"
+            },
+            {
+              "include": "#method-call"
+            },
+            {
+              "include": "#field-access"
+            },
+            {
+              "include": "#operators"
+            },
+            {
+              "include": "#numbers"
+            },
+            {
+              "include": "#constants"
+            },
+            {
+              "include": "#variables"
+            }
+          ]
+        }
+      ]
+    },
+    "function-call": {
+      "patterns": [
+        {
+          "captures": {
+            "1": {
+              "name": "entity.name.function.call.incan"
+            },
+            "2": {
+              "name": "punctuation.section.arguments.begin.incan"
+            }
+          },
+          "match": "\\b([a-z_][a-zA-Z0-9_]*)\\s*(\\()",
+          "name": "meta.function-call.incan"
         }
       ]
     },
     "function-definition": {
       "patterns": [
         {
-          "name": "meta.function.incan",
           "begin": "^\\s*(async\\s+)?(def)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(\\()",
-          "end": "\\)\\s*(->\\s*([^:]+))?\\s*(:)",
           "beginCaptures": {
-            "1": { "name": "keyword.control.async.incan" },
-            "2": { "name": "keyword.declaration.function.incan" },
-            "3": { "name": "entity.name.function.incan" },
-            "4": { "name": "punctuation.definition.parameters.begin.incan" }
+            "1": {
+              "name": "keyword.control.async.incan"
+            },
+            "2": {
+              "name": "keyword.declaration.function.incan"
+            },
+            "3": {
+              "name": "entity.name.function.incan"
+            },
+            "4": {
+              "name": "punctuation.definition.parameters.begin.incan"
+            }
           },
+          "end": "\\)\\s*(->\\s*([^:]+))?\\s*(:)",
           "endCaptures": {
-            "1": { "name": "meta.function.return-type.incan" },
-            "2": { "name": "entity.name.type.return.incan" },
-            "3": { "name": "punctuation.section.function.begin.incan" }
+            "1": {
+              "name": "meta.function.return-type.incan"
+            },
+            "2": {
+              "name": "entity.name.type.return.incan"
+            },
+            "3": {
+              "name": "punctuation.section.function.begin.incan"
+            }
           },
+          "name": "meta.function.incan",
           "patterns": [
-            { "include": "#function-parameters" }
+            {
+              "include": "#function-parameters"
+            }
           ]
         }
       ]
@@ -132,595 +523,466 @@
     "function-parameters": {
       "patterns": [
         {
-          "name": "meta.function.parameter.self.incan",
+          "captures": {
+            "1": {
+              "name": "storage.modifier.mutable.incan"
+            },
+            "2": {
+              "name": "variable.language.self.incan"
+            }
+          },
           "match": "\\b(mut\\s+)?(self)\\b",
-          "captures": {
-            "1": { "name": "storage.modifier.mutable.incan" },
-            "2": { "name": "variable.language.self.incan" }
-          }
+          "name": "meta.function.parameter.self.incan"
         },
         {
-          "name": "meta.function.parameter.incan",
+          "captures": {
+            "1": {
+              "name": "variable.parameter.function.incan"
+            },
+            "2": {
+              "name": "punctuation.separator.annotation.incan"
+            },
+            "3": {
+              "name": "entity.name.type.parameter.incan"
+            }
+          },
           "match": "([a-zA-Z_][a-zA-Z0-9_]*)\\s*(:)\\s*([^,=)]+)",
-          "captures": {
-            "1": { "name": "variable.parameter.function.incan" },
-            "2": { "name": "punctuation.separator.annotation.incan" },
-            "3": { "name": "entity.name.type.parameter.incan" }
-          }
+          "name": "meta.function.parameter.incan"
         },
         {
-          "name": "meta.function.parameter.default.incan",
-          "match": "(=)\\s*([^,)]+)",
           "captures": {
-            "1": { "name": "keyword.operator.assignment.incan" },
-            "2": { 
+            "1": {
+              "name": "keyword.operator.assignment.incan"
+            },
+            "2": {
               "patterns": [
-                { "include": "#strings" },
-                { "include": "#numbers" },
-                { "include": "#constants" }
+                {
+                  "include": "#strings"
+                },
+                {
+                  "include": "#numbers"
+                },
+                {
+                  "include": "#constants"
+                }
               ]
             }
-          }
+          },
+          "match": "(=)\\s*([^,)]+)",
+          "name": "meta.function.parameter.default.incan"
         },
         {
-          "name": "punctuation.separator.parameters.incan",
-          "match": ","
-        }
-      ]
-    },
-    "class-definition": {
-      "patterns": [
-        {
-          "name": "meta.class.incan",
-          "match": "^\\s*(class)\\s+([A-Z][a-zA-Z0-9_]*)(?:\\s+(extends)\\s+([A-Z][a-zA-Z0-9_]*))?(?:\\s+(with)\\s+([A-Z][a-zA-Z0-9_,\\s]*))?\\s*(:)",
-          "captures": {
-            "1": { "name": "keyword.declaration.class.incan" },
-            "2": { "name": "entity.name.type.class.incan" },
-            "3": { "name": "keyword.declaration.extends.incan" },
-            "4": { "name": "entity.other.inherited-class.incan" },
-            "5": { "name": "keyword.declaration.with.incan" },
-            "6": { "name": "entity.other.inherited-class.incan" },
-            "7": { "name": "punctuation.section.class.begin.incan" }
-          }
-        }
-      ]
-    },
-    "model-definition": {
-      "patterns": [
-        {
-          "name": "meta.model.incan",
-          "match": "^\\s*(model)\\s+([A-Z][a-zA-Z0-9_]*)\\s*(:)",
-          "captures": {
-            "1": { "name": "keyword.declaration.model.incan" },
-            "2": { "name": "entity.name.type.model.incan" },
-            "3": { "name": "punctuation.section.model.begin.incan" }
-          }
-        }
-      ]
-    },
-    "trait-definition": {
-      "patterns": [
-        {
-          "name": "meta.trait.incan",
-          "match": "^\\s*(trait)\\s+([A-Z][a-zA-Z0-9_]*)\\s*(:)",
-          "captures": {
-            "1": { "name": "keyword.declaration.trait.incan" },
-            "2": { "name": "entity.name.type.trait.incan" },
-            "3": { "name": "punctuation.section.trait.begin.incan" }
-          }
-        }
-      ]
-    },
-    "enum-definition": {
-      "patterns": [
-        {
-          "name": "meta.enum.incan",
-          "match": "^\\s*(enum)\\s+([A-Z][a-zA-Z0-9_]*)\\s*(:)",
-          "captures": {
-            "1": { "name": "keyword.declaration.enum.incan" },
-            "2": { "name": "entity.name.type.enum.incan" },
-            "3": { "name": "punctuation.section.enum.begin.incan" }
-          }
-        }
-      ]
-    },
-    "newtype-definition": {
-      "patterns": [
-        {
-          "name": "meta.newtype.incan",
-          "match": "^\\s*(newtype)\\s+([A-Z][a-zA-Z0-9_]*)\\s*(=)\\s*([A-Za-z][a-zA-Z0-9_\\[\\],\\s]*)",
-          "captures": {
-            "1": { "name": "keyword.declaration.newtype.incan" },
-            "2": { "name": "entity.name.type.newtype.incan" },
-            "3": { "name": "keyword.operator.assignment.incan" },
-            "4": { "name": "entity.name.type.underlying.incan" }
-          }
+          "match": ",",
+          "name": "punctuation.separator.parameters.incan"
         }
       ]
     },
     "import-statement": {
       "patterns": [
         {
-          "name": "meta.import.incan",
-          "match": "^\\s*(import)\\s+((?:super::|crate::)?(?:[a-zA-Z_][a-zA-Z0-9_]*(?:::|\\.))*[a-zA-Z_][a-zA-Z0-9_]*)(?:\\s+(as)\\s+([a-zA-Z_][a-zA-Z0-9_]*))?",
           "captures": {
-            "1": { "name": "keyword.control.import.incan" },
-            "2": { 
+            "1": {
+              "name": "keyword.control.import.incan"
+            },
+            "2": {
               "name": "meta.import.path.incan",
               "patterns": [
                 {
-                  "name": "keyword.control.import.incan",
-                  "match": "\\b(super|crate)\\b"
+                  "match": "\\b(super|crate)\\b",
+                  "name": "keyword.control.import.incan"
                 },
                 {
-                  "name": "entity.name.module.incan",
-                  "match": "[a-zA-Z_][a-zA-Z0-9_]*"
+                  "match": "[a-zA-Z_][a-zA-Z0-9_]*",
+                  "name": "entity.name.module.incan"
                 },
                 {
-                  "name": "punctuation.separator.namespace.incan",
-                  "match": "(::|\\.|\\.\\.)"
+                  "match": "(::|\\.|\\.\\.)",
+                  "name": "punctuation.separator.namespace.incan"
                 }
               ]
             },
-            "3": { "name": "keyword.control.as.incan" },
-            "4": { "name": "entity.name.import.alias.incan" }
-          }
-        }
-      ]
-    },
-    "from-import-statement": {
-      "patterns": [
-        {
-          "name": "meta.import.from.incan",
-          "match": "^\\s*(from)\\s+((?:\\.\\.|super::)*(?:crate(?:::|\\.))?(?:[a-zA-Z_][a-zA-Z0-9_]*(?:::|\\.)?)*)\\s+(import)\\s+(.+)$",
-          "captures": {
-            "1": { "name": "keyword.control.import.from.incan" },
-            "2": { 
-              "name": "meta.import.path.incan",
-              "patterns": [
-                {
-                  "name": "keyword.control.import.incan",
-                  "match": "\\b(super|crate)\\b"
-                },
-                {
-                  "name": "punctuation.separator.namespace.incan",
-                  "match": "(\\.\\.|::|\\.)(?!\\s)"
-                },
-                {
-                  "name": "entity.name.module.incan",
-                  "match": "[a-zA-Z_][a-zA-Z0-9_]*"
-                }
-              ]
+            "3": {
+              "name": "keyword.control.as.incan"
             },
-            "3": { "name": "keyword.control.import.incan" },
-            "4": { 
-              "name": "meta.import.names.incan",
-              "patterns": [
-                {
-                  "match": "([a-zA-Z_][a-zA-Z0-9_]*)\\s+(as)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
-                  "captures": {
-                    "1": { "name": "entity.name.import.incan" },
-                    "2": { "name": "keyword.control.as.incan" },
-                    "3": { "name": "entity.name.import.alias.incan" }
-                  }
-                },
-                {
-                  "name": "entity.name.import.incan",
-                  "match": "[a-zA-Z_][a-zA-Z0-9_]*"
-                },
-                {
-                  "name": "punctuation.separator.comma.incan",
-                  "match": ","
-                }
-              ]
+            "4": {
+              "name": "entity.name.import.alias.incan"
             }
-          }
-        }
-      ]
-    },
-    "strings": {
-      "patterns": [
-        {
-          "name": "string.interpolated.incan",
-          "begin": "(f)(\")",
-          "end": "\"",
-          "beginCaptures": {
-            "1": { "name": "storage.type.string.incan" },
-            "2": { "name": "punctuation.definition.string.begin.incan" }
           },
-          "endCaptures": {
-            "0": { "name": "punctuation.definition.string.end.incan" }
-          },
-          "patterns": [
-            { "include": "#fstring-interpolation" },
-            { "include": "#string-escape" }
-          ]
-        },
-        {
-          "name": "string.interpolated.incan",
-          "begin": "(f)(')",
-          "end": "'",
-          "beginCaptures": {
-            "1": { "name": "storage.type.string.incan" },
-            "2": { "name": "punctuation.definition.string.begin.incan" }
-          },
-          "endCaptures": {
-            "0": { "name": "punctuation.definition.string.end.incan" }
-          },
-          "patterns": [
-            { "include": "#fstring-interpolation" },
-            { "include": "#string-escape" }
-          ]
-        },
-        {
-          "name": "string.quoted.byte.incan",
-          "begin": "(b)(\")",
-          "end": "\"",
-          "beginCaptures": {
-            "1": { "name": "storage.type.string.incan" },
-            "2": { "name": "punctuation.definition.string.begin.incan" }
-          },
-          "endCaptures": {
-            "0": { "name": "punctuation.definition.string.end.incan" }
-          },
-          "patterns": [
-            { "include": "#byte-escape" }
-          ]
-        },
-        {
-          "name": "string.quoted.double.incan",
-          "begin": "\"",
-          "end": "\"",
-          "beginCaptures": {
-            "0": { "name": "punctuation.definition.string.begin.incan" }
-          },
-          "endCaptures": {
-            "0": { "name": "punctuation.definition.string.end.incan" }
-          },
-          "patterns": [
-            { "include": "#string-escape" }
-          ]
-        },
-        {
-          "name": "string.quoted.single.incan",
-          "begin": "'",
-          "end": "'",
-          "beginCaptures": {
-            "0": { "name": "punctuation.definition.string.begin.incan" }
-          },
-          "endCaptures": {
-            "0": { "name": "punctuation.definition.string.end.incan" }
-          },
-          "patterns": [
-            { "include": "#string-escape" }
-          ]
-        }
-      ]
-    },
-    "fstring-interpolation": {
-      "patterns": [
-        {
-          "name": "meta.embedded.line.incan",
-          "begin": "(\\{)",
-          "end": "(\\})",
-          "beginCaptures": {
-            "1": { "name": "punctuation.definition.template-expression.begin.incan" }
-          },
-          "endCaptures": {
-            "1": { "name": "punctuation.definition.template-expression.end.incan" }
-          },
-          "contentName": "meta.template.expression.incan",
-          "patterns": [
-            { "include": "#builtin-function-call" },
-            { "include": "#function-call" },
-            { "include": "#builtin-method-call" },
-            { "include": "#method-call" },
-            { "include": "#field-access" },
-            { "include": "#operators" },
-            { "include": "#numbers" },
-            { "include": "#constants" },
-            { "include": "#variables" }
-          ]
-        }
-      ]
-    },
-    "string-escape": {
-      "patterns": [
-        {
-          "name": "constant.character.escape.incan",
-          "match": "\\\\[nrtv\\\\\"'0]"
-        },
-        {
-          "name": "constant.character.escape.unicode.incan",
-          "match": "\\\\u\\{[0-9a-fA-F]+\\}"
-        }
-      ]
-    },
-    "byte-escape": {
-      "patterns": [
-        {
-          "name": "constant.character.escape.incan",
-          "match": "\\\\[nrtv\\\\\"'0]"
-        },
-        {
-          "name": "constant.character.escape.hex.incan",
-          "match": "\\\\x[0-9a-fA-F]{2}"
+          "match": "^\\s*(import)\\s+((?:super::|crate::)?(?:[a-zA-Z_][a-zA-Z0-9_]*(?:::|\\.))*[a-zA-Z_][a-zA-Z0-9_]*)(?:\\s+(as)\\s+([a-zA-Z_][a-zA-Z0-9_]*))?",
+          "name": "meta.import.incan"
         }
       ]
     },
     "keywords": {
       "patterns": [
         {
-          "name": "keyword.control.flow.incan",
-          "match": "\\b(if|else|elif|while|for|in|match|case|return|yield|break|continue|pass)\\b"
+          "match": "\\b(assert|break|case|continue|elif|else|for|if|match|pass|return|while|yield)\\b",
+          "name": "keyword.control.flow.incan"
         },
         {
-          "name": "keyword.control.const.incan",
-          "match": "\\bconst\\b"
+          "match": "\\b(const)\\b",
+          "name": "keyword.control.const.incan"
         },
         {
-          "name": "keyword.control.async.incan",
-          "match": "\\b(async|await)\\b"
+          "match": "\\b(async|await)\\b",
+          "name": "keyword.control.async.incan"
         },
         {
-          "name": "keyword.declaration.incan",
-          "match": "\\b(def|class|model|trait|enum|newtype|type|const)\\b"
+          "match": "\\b(class|def|enum|fn|model|newtype|trait|type)\\b",
+          "name": "keyword.declaration.incan"
         },
         {
-          "name": "keyword.control.import.incan",
-          "match": "\\b(import|from|as|super|crate)\\b"
+          "match": "\\b(as|crate|from|import|python|rust|super)\\b",
+          "name": "keyword.control.import.incan"
         },
         {
-          "name": "keyword.declaration.extends.incan",
-          "match": "\\b(extends|with)\\b"
+          "match": "\\b(extends|with)\\b",
+          "name": "keyword.declaration.extends.incan"
         },
         {
-          "name": "keyword.other.visibility.incan",
-          "match": "\\b(pub)\\b"
+          "match": "\\b(pub)\\b",
+          "name": "keyword.other.visibility.incan"
         },
         {
-          "name": "storage.modifier.incan",
-          "match": "\\b(let|mut)\\b"
+          "match": "\\b(let|mut)\\b",
+          "name": "storage.modifier.incan"
         },
         {
-          "name": "keyword.operator.logical.incan",
-          "match": "\\b(and|or|not|is)\\b"
-        }
-      ]
-    },
-    "operators": {
-      "patterns": [
-        {
-          "name": "keyword.operator.assignment.compound.incan",
-          "match": "(\\+=|-=|\\*=|/=|%=)"
-        },
-        {
-          "name": "keyword.operator.comparison.incan",
-          "match": "(==|!=|<=|>=|<|>)"
-        },
-        {
-          "name": "keyword.operator.arrow.incan",
-          "match": "(->)"
-        },
-        {
-          "name": "keyword.operator.fat-arrow.incan",
-          "match": "(=>)"
-        },
-        {
-          "name": "punctuation.separator.namespace.incan",
-          "match": "::"
-        },
-        {
-          "name": "keyword.operator.optional.incan",
-          "match": "\\?"
-        },
-        {
-          "name": "keyword.operator.arithmetic.incan",
-          "match": "(\\+|-|\\*\\*|\\*|//|/|%)"
-        },
-        {
-          "name": "keyword.operator.assignment.incan",
-          "match": "(?<![=!<>])=(?!=)"
-        },
-        {
-          "name": "keyword.operator.bitwise.incan",
-          "match": "(&|\\||\\^|~|<<|>>)"
-        }
-      ]
-    },
-    "numbers": {
-      "patterns": [
-        {
-          "name": "constant.numeric.float.incan",
-          "match": "\\b\\d+\\.\\d+([eE][+-]?\\d+)?\\b"
-        },
-        {
-          "name": "constant.numeric.hex.incan",
-          "match": "\\b0x[0-9a-fA-F_]+\\b"
-        },
-        {
-          "name": "constant.numeric.binary.incan",
-          "match": "\\b0b[01_]+\\b"
-        },
-        {
-          "name": "constant.numeric.octal.incan",
-          "match": "\\b0o[0-7_]+\\b"
-        },
-        {
-          "name": "constant.numeric.integer.incan",
-          "match": "\\b\\d[\\d_]*\\b"
-        }
-      ]
-    },
-    "builtin-function-call": {
-      "patterns": [
-        {
-          "name": "meta.function-call.builtin.incan",
-          "match": "\\b(println|print|len|range|enumerate|zip|map|filter|sorted|reversed|min|max|sum|any|all|abs|round|type|hash|id|repr|chr|ord|hex|bin|oct|pow|divmod|slice|iter|next|getattr|setattr|hasattr|delattr|isinstance|issubclass|callable|vars|dir|globals|locals|exec|eval|compile|format|ascii)\\s*(\\()",
-          "captures": {
-            "1": { "name": "support.function.builtin.incan" },
-            "2": { "name": "punctuation.section.arguments.begin.incan" }
-          }
-        },
-        {
-          "name": "meta.function-call.io.incan",
-          "match": "\\b(read_file|write_file|open|input|close|read|readline|readlines|write|writelines|seek|tell|flush)\\s*(\\()",
-          "captures": {
-            "1": { "name": "support.function.builtin.incan" },
-            "2": { "name": "punctuation.section.arguments.begin.incan" }
-          }
-        },
-        {
-          "name": "meta.function-call.conversion.incan",
-          "match": "\\b(int|str|float|bool|bytes|list|dict|set|tuple|frozenset|bytearray|memoryview|complex|object)\\s*(\\()",
-          "captures": {
-            "1": { "name": "support.function.builtin.incan" },
-            "2": { "name": "punctuation.section.arguments.begin.incan" }
-          }
-        },
-        {
-          "name": "meta.function-call.json.incan",
-          "match": "\\b(json_parse|json_stringify)\\s*(\\()",
-          "captures": {
-            "1": { "name": "support.function.builtin.incan" },
-            "2": { "name": "punctuation.section.arguments.begin.incan" }
-          }
-        }
-      ]
-    },
-    "builtin-method-call": {
-      "patterns": [
-        {
-          "name": "meta.method-call.builtin.incan",
-          "match": "(\\.)\\s*(append|extend|insert|remove|pop|clear|index|count|sort|reverse|copy|get|keys|values|items|update|setdefault|popitem|add|discard|union|intersection|difference|symmetric_difference|issubset|issuperset|isdisjoint|strip|lstrip|rstrip|split|rsplit|join|replace|find|rfind|startswith|endswith|upper|lower|title|capitalize|swapcase|center|ljust|rjust|zfill|encode|decode|format|isalpha|isdigit|isalnum|isspace|isupper|islower|istitle)\\s*(\\()",
-          "captures": {
-            "1": { "name": "punctuation.accessor.incan" },
-            "2": { "name": "support.function.builtin.incan" },
-            "3": { "name": "punctuation.section.arguments.begin.incan" }
-          }
-        }
-      ]
-    },
-    "function-call": {
-      "patterns": [
-        {
-          "name": "meta.function-call.incan",
-          "match": "\\b([a-z_][a-zA-Z0-9_]*)\\s*(\\()",
-          "captures": {
-            "1": { "name": "entity.name.function.call.incan" },
-            "2": { "name": "punctuation.section.arguments.begin.incan" }
-          }
+          "match": "\\b(and|in|is|not|or)\\b",
+          "name": "keyword.operator.logical.incan"
         }
       ]
     },
     "method-call": {
       "patterns": [
         {
-          "name": "meta.method-call.incan",
+          "captures": {
+            "1": {
+              "name": "punctuation.accessor.incan"
+            },
+            "2": {
+              "name": "entity.name.function.method.incan"
+            },
+            "3": {
+              "name": "punctuation.section.arguments.begin.incan"
+            }
+          },
           "match": "(\\.)([a-z_][a-zA-Z0-9_]*)\\s*(\\()",
+          "name": "meta.method-call.incan"
+        }
+      ]
+    },
+    "model-definition": {
+      "patterns": [
+        {
           "captures": {
-            "1": { "name": "punctuation.accessor.incan" },
-            "2": { "name": "entity.name.function.method.incan" },
-            "3": { "name": "punctuation.section.arguments.begin.incan" }
-          }
+            "1": {
+              "name": "keyword.declaration.model.incan"
+            },
+            "2": {
+              "name": "entity.name.type.model.incan"
+            },
+            "3": {
+              "name": "punctuation.section.model.begin.incan"
+            }
+          },
+          "match": "^\\s*(model)\\s+([A-Z][a-zA-Z0-9_]*)\\s*(:)",
+          "name": "meta.model.incan"
         }
       ]
     },
-    "field-access": {
+    "newtype-definition": {
       "patterns": [
         {
-          "name": "meta.field-access.incan",
-          "match": "(\\.)([a-z_][a-zA-Z0-9_]*|[0-9]+)(?!\\s*\\()",
           "captures": {
-            "1": { "name": "punctuation.accessor.incan" },
-            "2": { "name": "variable.other.property.incan" }
-          }
+            "1": {
+              "name": "keyword.declaration.newtype.incan"
+            },
+            "2": {
+              "name": "entity.name.type.newtype.incan"
+            },
+            "3": {
+              "name": "keyword.operator.assignment.incan"
+            },
+            "4": {
+              "name": "entity.name.type.underlying.incan"
+            }
+          },
+          "match": "^\\s*(newtype)\\s+([A-Z][a-zA-Z0-9_]*)\\s*(=)\\s*([A-Za-z][a-zA-Z0-9_\\[\\],\\s]*)",
+          "name": "meta.newtype.incan"
         }
       ]
     },
-    "types": {
+    "numbers": {
       "patterns": [
         {
-          "name": "support.type.primitive.incan",
-          "match": "\\b(int|float|bool|str|bytes)\\b"
+          "match": "\\b\\d+\\.\\d+([eE][+-]?\\d+)?\\b",
+          "name": "constant.numeric.float.incan"
         },
         {
-          "name": "support.type.none.incan",
-          "match": "\\b(None|Unit)\\b"
+          "match": "\\b0x[0-9a-fA-F_]+\\b",
+          "name": "constant.numeric.hex.incan"
         },
         {
-          "name": "support.type.collection.incan",
-          "match": "\\b(List|Dict|Set|Tuple|Option|Result)\\b"
+          "match": "\\b0b[01_]+\\b",
+          "name": "constant.numeric.binary.incan"
         },
         {
-          "name": "entity.name.type.incan",
-          "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
+          "match": "\\b0o[0-7_]+\\b",
+          "name": "constant.numeric.octal.incan"
+        },
+        {
+          "match": "\\b\\d[\\d_]*\\b",
+          "name": "constant.numeric.integer.incan"
         }
       ]
     },
-    "constants": {
+    "operators": {
       "patterns": [
         {
-          "name": "constant.language.boolean.true.incan",
-          "match": "\\btrue\\b"
+          "match": "(\\+=|-=|\\*=|/=|%=)",
+          "name": "keyword.operator.assignment.compound.incan"
         },
         {
-          "name": "constant.language.boolean.false.incan",
-          "match": "\\bfalse\\b"
+          "match": "(==|!=|<=|>=|<|>)",
+          "name": "keyword.operator.comparison.incan"
         },
         {
-          "name": "constant.language.none.incan",
-          "match": "\\bNone\\b"
+          "match": "(->)",
+          "name": "keyword.operator.arrow.incan"
         },
         {
-          "name": "support.constant.result.incan",
-          "match": "\\b(Ok|Err)\\b"
+          "match": "(=>)",
+          "name": "keyword.operator.fat-arrow.incan"
         },
         {
-          "name": "support.constant.option.incan",
-          "match": "\\b(Some)\\b"
+          "match": "::",
+          "name": "punctuation.separator.namespace.incan"
         },
         {
-          "name": "constant.other.caps.incan",
-          "match": "\\b[A-Z][A-Z0-9_]+\\b"
-        }
-      ]
-    },
-    "variables": {
-      "patterns": [
-        {
-          "name": "variable.language.self.incan",
-          "match": "\\bself\\b"
+          "match": "\\?",
+          "name": "keyword.operator.optional.incan"
         },
         {
-          "name": "variable.other.incan",
-          "match": "\\b[a-z_][a-zA-Z0-9_]*\\b"
+          "match": "(\\+|-|\\*\\*|\\*|//|/|%)",
+          "name": "keyword.operator.arithmetic.incan"
+        },
+        {
+          "match": "(?<![=!<>])=(?!=)",
+          "name": "keyword.operator.assignment.incan"
+        },
+        {
+          "match": "(&|\\||\\^|~|<<|>>)",
+          "name": "keyword.operator.bitwise.incan"
         }
       ]
     },
     "punctuation": {
       "patterns": [
         {
-          "name": "punctuation.section.block.begin.incan",
-          "match": ":"
+          "match": ":",
+          "name": "punctuation.section.block.begin.incan"
         },
         {
-          "name": "punctuation.bracket.round.incan",
-          "match": "[()]"
+          "match": "[()]",
+          "name": "punctuation.bracket.round.incan"
         },
         {
-          "name": "punctuation.bracket.square.incan",
-          "match": "[\\[\\]]"
+          "match": "[\\[\\]]",
+          "name": "punctuation.bracket.square.incan"
         },
         {
-          "name": "punctuation.bracket.curly.incan",
-          "match": "[{}]"
+          "match": "[{}]",
+          "name": "punctuation.bracket.curly.incan"
         },
         {
-          "name": "punctuation.separator.comma.incan",
-          "match": ","
+          "match": ",",
+          "name": "punctuation.separator.comma.incan"
+        }
+      ]
+    },
+    "string-escape": {
+      "patterns": [
+        {
+          "match": "\\\\[nrtv\\\\\"'0]",
+          "name": "constant.character.escape.incan"
+        },
+        {
+          "match": "\\\\u\\{[0-9a-fA-F]+\\}",
+          "name": "constant.character.escape.unicode.incan"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "begin": "(f)(\")",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.string.incan"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.incan"
+            }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.incan"
+            }
+          },
+          "name": "string.interpolated.incan",
+          "patterns": [
+            {
+              "include": "#fstring-interpolation"
+            },
+            {
+              "include": "#string-escape"
+            }
+          ]
+        },
+        {
+          "begin": "(f)(')",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.string.incan"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.incan"
+            }
+          },
+          "end": "'",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.incan"
+            }
+          },
+          "name": "string.interpolated.incan",
+          "patterns": [
+            {
+              "include": "#fstring-interpolation"
+            },
+            {
+              "include": "#string-escape"
+            }
+          ]
+        },
+        {
+          "begin": "(b)(\")",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.string.incan"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.incan"
+            }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.incan"
+            }
+          },
+          "name": "string.quoted.byte.incan",
+          "patterns": [
+            {
+              "include": "#byte-escape"
+            }
+          ]
+        },
+        {
+          "begin": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.incan"
+            }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.incan"
+            }
+          },
+          "name": "string.quoted.double.incan",
+          "patterns": [
+            {
+              "include": "#string-escape"
+            }
+          ]
+        },
+        {
+          "begin": "'",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.incan"
+            }
+          },
+          "end": "'",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.incan"
+            }
+          },
+          "name": "string.quoted.single.incan",
+          "patterns": [
+            {
+              "include": "#string-escape"
+            }
+          ]
+        }
+      ]
+    },
+    "trait-definition": {
+      "patterns": [
+        {
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.trait.incan"
+            },
+            "2": {
+              "name": "entity.name.type.trait.incan"
+            },
+            "3": {
+              "name": "punctuation.section.trait.begin.incan"
+            }
+          },
+          "match": "^\\s*(trait)\\s+([A-Z][a-zA-Z0-9_]*)\\s*(:)",
+          "name": "meta.trait.incan"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "match": "\\b(int|float|bool|str|bytes)\\b",
+          "name": "support.type.primitive.incan"
+        },
+        {
+          "match": "\\b(None|Unit)\\b",
+          "name": "support.type.none.incan"
+        },
+        {
+          "match": "\\b(List|Dict|Set|Tuple|Option|Result)\\b",
+          "name": "support.type.collection.incan"
+        },
+        {
+          "match": "\\b[A-Z][a-zA-Z0-9_]*\\b",
+          "name": "entity.name.type.incan"
+        }
+      ]
+    },
+    "variables": {
+      "patterns": [
+        {
+          "match": "\\b(self)\\b",
+          "name": "variable.language.self.incan"
+        },
+        {
+          "match": "\\b[a-z_][a-zA-Z0-9_]*\\b",
+          "name": "variable.other.incan"
         }
       ]
     }
-  }
+  },
+  "scopeName": "source.incan"
 }

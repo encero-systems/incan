@@ -52,11 +52,21 @@ mod structs_enums;
 use proc_macro2::{Literal, TokenStream};
 use quote::{ToTokens, format_ident, quote};
 
-use super::super::expr::{IrExprKind, Literal as IrLiteral, TypedExpr, UnaryOp};
+use super::super::expr::{IrExprKind, Literal as IrLiteral, TypedExpr, UnaryOp, VarRefKind};
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
 
 impl<'a> IrEmitter<'a> {
+    /// Check whether an expression is a type-like identifier that should use Rust path syntax.
+    ///
+    /// This covers Incan type names, enum variants, module placeholders, and external Rust imports.
+    pub(super) fn expr_is_type_like(expr: &TypedExpr) -> bool {
+        match &expr.kind {
+            IrExprKind::Var { ref_kind, .. } => !matches!(ref_kind, VarRefKind::Value),
+            _ => false,
+        }
+    }
+
     /// Emit an IR expression as a Rust `TokenStream`.
     ///
     /// ## Parameters

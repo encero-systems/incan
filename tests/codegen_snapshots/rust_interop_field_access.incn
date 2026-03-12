@@ -1,0 +1,4 @@
+import rust::std::f64::consts as consts
+
+def main() -> None:
+  _ = consts.PI

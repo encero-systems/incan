@@ -4,7 +4,8 @@
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Issue:** [#161](https://github.com/dannys-code-corner/incan/issues/161)
-- **RFC PR:** —
+- **RFC PR:**
+    - Phases 1-3: [#...](https://github.com/dannys-code-corner/incan/pull/...)
 - **Related**:
     - RFC 022 (stdlib namespacing)
     - RFC 023 (std.web migration)
@@ -2120,28 +2121,32 @@ Phases 1-3 establish the compiler's internal registry migration for core + stdli
 
 ## Progress Checklist
 
-### Spec and rollout
-
-- [x] Re-review RFC 027 and re-phase the rollout around current compiler seams and RFC 031 dependency boundaries.
+- First PR: ... covers phase 1-3. etc etc
 
 ### Phase 1: Registry extraction and parity
 
-- [ ] Create `crates/incan-vocab/` with the core registry, manifest, and public AST types defined by this RFC.
-- [ ] Implement `IncanCoreVocab` and `StdlibVocab` as internal providers.
-- [ ] Build `KeywordRegistry` alongside the existing keyword tables and add parity checks/tests.
-- [ ] Publish `incan-vocab` v0.1.0 once the public API is stable.
+- [x] Create `crates/incan-vocab/` with the core registry, manifest, and public AST types defined by this RFC.
+- [x] Implement `IncanCoreVocab` and `StdlibVocab` as internal providers.
+- [x] Build `KeywordRegistry` alongside the existing keyword tables and add parity checks/tests.
 
 ### Phase 2: Parser activation and transitional dispatch
 
-- [ ] Replace `active_soft_keywords` with registry-backed active keyword tracking.
-- [ ] Route parser dispatch through `KeywordRegistry` + `KeywordSurfaceKind` while retaining transitional compatibility with existing keyword token forms.
-- [ ] Add or adjust AST support for registry-driven surfaces and validate parser behavior with targeted tests.
+- [x] Replace `active_soft_keywords` with registry-backed active keyword tracking.
+- [x] Route parser dispatch through `KeywordRegistry` + `KeywordSurfaceKind` while retaining transitional compatibility with existing keyword token forms.
+- [x] Add or adjust AST support for registry-driven surfaces and validate parser behavior with targeted tests.
 
 ### Phase 3: Full internal compiler and tooling migration
 
-- [ ] Migrate the lexer toward `Token::Ident` for keyword-shaped words and remove legacy keyword-specific dispatch once parity is proven.
-- [ ] Move LSP keyword consumers, formatter dispatch, and static grammar generation to core + stdlib provider output.
-- [ ] Remove the old `KEYWORDS` table only after all compiler and tooling consumers use the registry.
+- [x] Migrate the lexer toward `Token::Ident` for keyword-shaped words and remove legacy keyword-specific dispatch once parity is proven.
+- [x] Move LSP keyword consumers to core + stdlib provider output.
+- [x] Move formatter dispatch to core + stdlib provider output.
+- [x] Move static grammar generation to core + stdlib provider output.
+- [x] Remove direct compiler/tooling dependence on the old `KEYWORDS` table; keep `keywords.rs` metadata as a compatibility/parity source until RFC 031+ artifact-based vocab loading is end-to-end.
+
+Phase 3 closure inventory:
+
+- Migrated now (compiler/tooling paths): parser activation/dispatch, lexer keyword tokenization, LSP keyword completion, formatter surface-keyword rendering, VS Code keyword grammar patterns.
+- Compatibility retained intentionally (non-primary source-of-truth): `incan_core::lang::keywords` metadata table for parity tests and generated language-reference docs, plus adapter scaffolding until external library vocab manifests land via RFC 031.
 
 ### Phase 4: Library artifact production (requires RFC 031 library build scaffolding)
 
@@ -2166,6 +2171,7 @@ Phases 1-3 establish the compiler's internal registry migration for core + stdli
 - [ ] Replace `needs_*` booleans with provider-declared feature and dependency data.
 - [ ] Remove `scan_for_*` methods from `IrCodegen` once the manifest-driven path is end-to-end.
 - [ ] Update project generation to consume collected feature and dependency sets instead of hard-coded booleans.
+- [ ] Publish `incan-vocab` v0.1.0 once the public API is stable.
 
 ## Design decisions
 

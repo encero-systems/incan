@@ -29,6 +29,7 @@ pub mod derives;
 pub mod enum_helpers;
 pub mod errors;
 pub mod field_metadata;
+pub mod highlighting;
 pub mod keywords;
 pub mod magic_methods;
 pub mod operators;

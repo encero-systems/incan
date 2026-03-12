@@ -8,6 +8,35 @@ use crate::frontend::ast::{Declaration, ImportKind, Program};
 use crate::frontend::{diagnostics, lexer, parser};
 use incan_core::lang::stdlib;
 
+/// Resolve and queue an emitted Incan stdlib source module for recursive test dependency collection.
+///
+/// This helper:
+/// - memoizes `std.*` source-path resolution so repeated imports do not hit the filesystem repeatedly
+/// - rewrites the logical module path to the emitted `__incan_std::*` namespace used by generated Rust
+/// - avoids re-queueing modules that have already been processed
+fn queue_incan_stdlib_source_module(
+    module_path: &[String],
+    incan_source_stdlib_module_paths: &mut HashMap<String, PathBuf>,
+    processed: &HashSet<PathBuf>,
+    to_process: &mut Vec<(PathBuf, String, Vec<String>)>,
+) -> Result<(), String> {
+    let stdlib_key = module_path.join(".");
+    let source_path = if let Some(cached_path) = incan_source_stdlib_module_paths.get(&stdlib_key) {
+        cached_path.clone()
+    } else {
+        let resolved = resolve_stdlib_module_source_path(module_path).map_err(|err| err.message)?;
+        incan_source_stdlib_module_paths.insert(stdlib_key, resolved.clone());
+        resolved
+    };
+    let mut module_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
+    module_segments.extend(module_path.iter().skip(1).cloned());
+    let module_name = module_segments.join("_");
+    if !processed.contains(&source_path) {
+        to_process.push((source_path, module_name, module_segments));
+    }
+    Ok(())
+}
+
 /// Collect source modules referenced by a test file's imports.
 ///
 /// Walks the test AST for `from <module> import ...` statements that reference user modules and materialized stdlib
@@ -39,25 +68,12 @@ pub(super) fn collect_source_modules_for_test(
         let Some(path) = import_path else { continue };
 
         if path.parent_levels == 0 && !path.is_absolute && stdlib::is_any_stdlib_path(&path.segments) {
-            if matches!(
-                stdlib::stdlib_impl_mode_for(&path.segments),
-                Some(stdlib::StdlibImplMode::IncanSource)
-            ) {
-                let stdlib_key = path.segments.join(".");
-                let source_path = if let Some(cached_path) = incan_source_stdlib_module_paths.get(&stdlib_key) {
-                    cached_path.clone()
-                } else {
-                    let resolved = resolve_stdlib_module_source_path(&path.segments).map_err(|err| err.message)?;
-                    incan_source_stdlib_module_paths.insert(stdlib_key, resolved.clone());
-                    resolved
-                };
-                let mut module_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
-                module_segments.extend(path.segments.iter().skip(1).cloned());
-                let module_name = module_segments.join("_");
-                if !processed.contains(&source_path) {
-                    to_process.push((source_path, module_name, module_segments));
-                }
-            }
+            queue_incan_stdlib_source_module(
+                &path.segments,
+                &mut incan_source_stdlib_module_paths,
+                &processed,
+                &mut to_process,
+            )?;
             continue;
         }
 
@@ -156,25 +172,12 @@ pub(super) fn collect_source_modules_for_test(
             };
             let Some(dep) = dep_path else { continue };
             if dep.parent_levels == 0 && !dep.is_absolute && stdlib::is_any_stdlib_path(&dep.segments) {
-                if matches!(
-                    stdlib::stdlib_impl_mode_for(&dep.segments),
-                    Some(stdlib::StdlibImplMode::IncanSource)
-                ) {
-                    let stdlib_key = dep.segments.join(".");
-                    let source_path = if let Some(cached_path) = incan_source_stdlib_module_paths.get(&stdlib_key) {
-                        cached_path.clone()
-                    } else {
-                        let resolved = resolve_stdlib_module_source_path(&dep.segments).map_err(|err| err.message)?;
-                        incan_source_stdlib_module_paths.insert(stdlib_key, resolved.clone());
-                        resolved
-                    };
-                    let mut module_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
-                    module_segments.extend(dep.segments.iter().skip(1).cloned());
-                    let module_name = module_segments.join("_");
-                    if !processed.contains(&source_path) {
-                        to_process.push((source_path, module_name, module_segments));
-                    }
-                }
+                queue_incan_stdlib_source_module(
+                    &dep.segments,
+                    &mut incan_source_stdlib_module_paths,
+                    &processed,
+                    &mut to_process,
+                )?;
                 continue;
             }
             if dep

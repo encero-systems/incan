@@ -22,15 +22,6 @@ pub const STDLIB_THIS: &str = "this";
 /// `std.async` module name.
 pub const STDLIB_ASYNC: &str = "async";
 
-/// How a `std.*` namespace is implemented at runtime/emission.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StdlibImplMode {
-    /// Backed by the Rust runtime facade (`incan_stdlib::<ns>::...`).
-    RuntimeFacade,
-    /// Backed by emitted Incan-source modules (`crate::__incan_std::<ns>::...`).
-    IncanSource,
-}
-
 /// Check if a module path starts with `std.<module>`.
 pub fn is_stdlib_module(path: &[String], module: &str) -> bool {
     path.len() >= 2 && path[0] == STDLIB_ROOT && path[1] == module
@@ -54,8 +45,6 @@ pub fn is_any_stdlib_path(path: &[String]) -> bool {
 pub struct StdlibNamespace {
     /// Top-level namespace name (e.g., `"web"`, `"testing"`, `"async"`).
     pub name: &'static str,
-    /// How this namespace is materialized in emitted Rust.
-    pub impl_mode: StdlibImplMode,
     /// Optional Cargo feature gate required for this namespace.
     pub feature: Option<&'static str>,
     /// Extra crate dependencies required by generated projects when this namespace is enabled.
@@ -90,7 +79,6 @@ pub enum StdlibExtraCrateSource {
 pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     StdlibNamespace {
         name: "web",
-        impl_mode: StdlibImplMode::IncanSource,
         feature: Some("web"),
         extra_crate_deps: &[
             StdlibExtraCrateDep {
@@ -110,49 +98,42 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "testing",
-        impl_mode: StdlibImplMode::IncanSource,
         feature: None,
         extra_crate_deps: &[],
         submodules: &[],
     },
     StdlibNamespace {
         name: "async",
-        impl_mode: StdlibImplMode::IncanSource,
         feature: Some("async"),
         extra_crate_deps: &[],
         submodules: &["time", "task", "channel", "select", "sync", "prelude"],
     },
     StdlibNamespace {
         name: "serde",
-        impl_mode: StdlibImplMode::IncanSource,
         feature: Some("json"),
         extra_crate_deps: &[],
         submodules: &["json"],
     },
     StdlibNamespace {
         name: "reflection",
-        impl_mode: StdlibImplMode::IncanSource,
         feature: None,
         extra_crate_deps: &[],
         submodules: &[],
     },
     StdlibNamespace {
         name: "derives",
-        impl_mode: StdlibImplMode::IncanSource,
         feature: None,
         extra_crate_deps: &[],
         submodules: &["string", "comparison", "copying", "collection"],
     },
     StdlibNamespace {
         name: "traits",
-        impl_mode: StdlibImplMode::IncanSource,
         feature: None,
         extra_crate_deps: &[],
         submodules: &["convert", "ops", "error", "indexing", "callable", "prelude"],
     },
     StdlibNamespace {
         name: "math",
-        impl_mode: StdlibImplMode::IncanSource,
         feature: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "libm",
@@ -165,14 +146,6 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
 /// Look up a top-level stdlib namespace by name.
 pub fn find_namespace(name: &str) -> Option<&'static StdlibNamespace> {
     STDLIB_NAMESPACES.iter().find(|ns| ns.name == name)
-}
-
-/// Resolve implementation mode for a stdlib module path (e.g. `["std", "testing"]`).
-pub fn stdlib_impl_mode_for(path: &[String]) -> Option<StdlibImplMode> {
-    if path.len() < 2 || path[0] != STDLIB_ROOT {
-        return None;
-    }
-    find_namespace(&path[1]).map(|ns| ns.impl_mode)
 }
 
 /// Resolve soft keywords activated by a stdlib import path.
@@ -276,8 +249,6 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "async", "time"])));
         assert!(is_known_stdlib_module(&segs(&["std", "serde", "json"])));
         assert!(is_known_stdlib_module(&segs(&["std", "reflection"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "traits", "prelude"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "math"])));
     }
 
     #[test]
@@ -317,19 +288,20 @@ mod tests {
     }
 
     #[test]
-    fn stdlib_impl_modes_are_registry_driven() {
+    fn stdlib_registry_keeps_phase_023_metadata() {
+        let async_ns = find_namespace("async");
+        let reflection_ns = find_namespace("reflection");
+        let traits_ns = find_namespace("traits");
+        let math_ns = find_namespace("math");
+
+        assert_eq!(async_ns.and_then(|ns| ns.feature), Some("async"));
+        assert_eq!(reflection_ns.map(|ns| ns.submodules.is_empty()), Some(true));
+        assert_eq!(traits_ns.map(|ns| ns.submodules.contains(&"prelude")), Some(true));
         assert_eq!(
-            stdlib_impl_mode_for(&segs(&["std", "testing"])),
-            Some(StdlibImplMode::IncanSource)
+            math_ns
+                .and_then(|ns| ns.extra_crate_deps.first())
+                .map(|dep| dep.crate_name),
+            Some("libm")
         );
-        assert_eq!(
-            stdlib_impl_mode_for(&segs(&["std", "serde"])),
-            Some(StdlibImplMode::IncanSource)
-        );
-        assert_eq!(
-            stdlib_impl_mode_for(&segs(&["std", "web"])),
-            Some(StdlibImplMode::IncanSource)
-        );
-        assert_eq!(stdlib_impl_mode_for(&segs(&["not_std", "testing"])), None);
     }
 }
