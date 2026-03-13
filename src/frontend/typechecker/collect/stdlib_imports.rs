@@ -3,17 +3,37 @@
 //! This keeps stdlib import enforcement (RFC 022) separate from general declaration collection while preserving the
 //! existing behavior.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
+use crate::frontend::library_manifest_index::{LibraryManifestFailureKind, LibraryManifestIndexEntry};
 use crate::frontend::module::ExportedSymbol;
 use crate::frontend::symbols::*;
 use crate::frontend::testing_markers::load_testing_marker_semantics;
 use crate::frontend::typechecker::TypeChecker;
+use crate::library_manifest::{
+    ClassExport, ConstExport, EnumExport, FieldExport, FunctionExport, LibraryManifest, MethodExport, ModelExport,
+    NewtypeExport, ParamExport, ReceiverExport, TraitExport, TypeParamExport, TypeRef,
+};
+use incan_core::lang::conventions;
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::types as surface_types;
+use incan_core::lang::types::collections::{self, CollectionTypeId};
+use incan_core::lang::types::numerics::{self, NumericTypeId};
+use incan_core::lang::types::stringlike::{self, StringLikeId};
 use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
+
+enum ManifestExportRef<'a> {
+    Model(&'a ModelExport),
+    Class(&'a ClassExport),
+    Function(&'a FunctionExport),
+    Trait(&'a TraitExport),
+    Enum(&'a EnumExport),
+    TypeAlias,
+    Newtype(&'a NewtypeExport),
+    Const(&'a ConstExport),
+}
 
 impl TypeChecker {
     /// Reject names that shadow reserved root namespaces.
@@ -218,6 +238,15 @@ impl TypeChecker {
                     self.define_import_symbol(name, path, false, span);
                 }
             }
+            ImportKind::PubLibrary { library } => {
+                let name = import.alias.clone().unwrap_or_else(|| library.clone());
+                self.validate_root_namespace(&name, span);
+                self.validate_pub_library_entry(library, span);
+                self.define_import_symbol(name, vec!["pub".to_string(), library.clone()], false, span);
+            }
+            ImportKind::PubFrom { library, items } => {
+                self.collect_pub_imports(library, items, span);
+            }
             ImportKind::Python(pkg) => {
                 let name = import.alias.clone().unwrap_or_else(|| pkg.clone());
                 self.validate_root_namespace(&name, span);
@@ -254,6 +283,523 @@ impl TypeChecker {
                 }
             }
         }
+    }
+
+    fn validate_pub_library_entry(&mut self, library: &str, span: Span) {
+        let known_libraries = self.library_manifests.known_libraries();
+        let Some(entry) = self.library_manifests.get(library) else {
+            self.errors
+                .push(errors::unknown_pub_library(library, &known_libraries, span));
+            return;
+        };
+        if let LibraryManifestIndexEntry::Failed(failure) = entry {
+            let details = self.format_manifest_failure_detail(failure);
+            self.errors.push(errors::pub_library_manifest_load_failed(
+                library,
+                failure.path.to_string_lossy().as_ref(),
+                &details,
+                span,
+            ));
+        }
+    }
+
+    fn collect_pub_imports(&mut self, library: &str, items: &[ImportItem], span: Span) {
+        let known_libraries = self.library_manifests.known_libraries();
+        let Some(entry) = self.library_manifests.get(library).cloned() else {
+            self.errors
+                .push(errors::unknown_pub_library(library, &known_libraries, span));
+            return;
+        };
+
+        let manifest = match entry {
+            LibraryManifestIndexEntry::Loaded { manifest, .. } => manifest,
+            LibraryManifestIndexEntry::Failed(failure) => {
+                let details = self.format_manifest_failure_detail(&failure);
+                self.errors.push(errors::pub_library_manifest_load_failed(
+                    library,
+                    failure.path.to_string_lossy().as_ref(),
+                    &details,
+                    span,
+                ));
+                return;
+            }
+        };
+
+        let available_exports = Self::manifest_export_names(&manifest);
+        let mut imported_type_aliases: HashMap<String, String> = HashMap::new();
+        for item in items {
+            let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
+            if let Some(export) = Self::find_manifest_export(&manifest, &item.name)
+                && Self::manifest_export_is_type(&export)
+            {
+                imported_type_aliases.insert(item.name.clone(), local_name);
+            }
+        }
+
+        for item in items {
+            let Some(export) = Self::find_manifest_export(&manifest, &item.name) else {
+                self.errors.push(errors::pub_library_symbol_not_exported(
+                    &item.name,
+                    library,
+                    &available_exports,
+                    span,
+                ));
+                continue;
+            };
+
+            let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
+            self.validate_root_namespace(&local_name, span);
+            if let Some(existing_kind) = self.existing_local_symbol_kind(&local_name) {
+                self.errors.push(errors::pub_library_import_name_collision(
+                    &local_name,
+                    existing_kind,
+                    span,
+                ));
+                continue;
+            }
+
+            self.define_pub_import_symbol(local_name, export, &imported_type_aliases, span);
+        }
+    }
+
+    fn format_manifest_failure_detail(
+        &self,
+        failure: &crate::frontend::library_manifest_index::LibraryManifestLoadFailure,
+    ) -> String {
+        match failure.kind {
+            LibraryManifestFailureKind::Read => {
+                format!("Manifest file is unreadable: {}", failure.message)
+            }
+            LibraryManifestFailureKind::Parse => {
+                format!("Manifest JSON is malformed: {}", failure.message)
+            }
+            LibraryManifestFailureKind::Invalid => {
+                format!("Manifest is incompatible or invalid: {}", failure.message)
+            }
+        }
+    }
+
+    fn manifest_export_names(manifest: &LibraryManifest) -> Vec<String> {
+        let mut names = Vec::new();
+        names.extend(manifest.exports.models.iter().map(|item| item.name.clone()));
+        names.extend(manifest.exports.classes.iter().map(|item| item.name.clone()));
+        names.extend(manifest.exports.functions.iter().map(|item| item.name.clone()));
+        names.extend(manifest.exports.traits.iter().map(|item| item.name.clone()));
+        names.extend(manifest.exports.enums.iter().map(|item| item.name.clone()));
+        names.extend(manifest.exports.type_aliases.iter().map(|item| item.name.clone()));
+        names.extend(manifest.exports.newtypes.iter().map(|item| item.name.clone()));
+        names.extend(manifest.exports.consts.iter().map(|item| item.name.clone()));
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    fn find_manifest_export<'a>(manifest: &'a LibraryManifest, name: &str) -> Option<ManifestExportRef<'a>> {
+        if let Some(item) = manifest.exports.models.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Model(item));
+        }
+        if let Some(item) = manifest.exports.classes.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Class(item));
+        }
+        if let Some(item) = manifest.exports.functions.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Function(item));
+        }
+        if let Some(item) = manifest.exports.traits.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Trait(item));
+        }
+        if let Some(item) = manifest.exports.enums.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Enum(item));
+        }
+        if manifest.exports.type_aliases.iter().any(|item| item.name == name) {
+            return Some(ManifestExportRef::TypeAlias);
+        }
+        if let Some(item) = manifest.exports.newtypes.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Newtype(item));
+        }
+        if let Some(item) = manifest.exports.consts.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Const(item));
+        }
+        None
+    }
+
+    fn manifest_export_is_type(export: &ManifestExportRef<'_>) -> bool {
+        matches!(
+            export,
+            ManifestExportRef::Model(_)
+                | ManifestExportRef::Class(_)
+                | ManifestExportRef::Trait(_)
+                | ManifestExportRef::Enum(_)
+                | ManifestExportRef::TypeAlias
+                | ManifestExportRef::Newtype(_)
+        )
+    }
+
+    fn existing_local_symbol_kind(&self, name: &str) -> Option<&'static str> {
+        let symbol_id = self.symbols.lookup_local(name)?;
+        let symbol = self.symbols.get(symbol_id)?;
+        let kind = match &symbol.kind {
+            SymbolKind::Variable(_) => "const/variable",
+            SymbolKind::Function(_) => "function",
+            SymbolKind::Type(_) => "type",
+            SymbolKind::Trait(_) => "trait",
+            SymbolKind::Module(_) => "imported module",
+            SymbolKind::Variant(_) => "enum variant",
+            SymbolKind::Field(_) => "field",
+            SymbolKind::RustModule { .. } => "rust import",
+        };
+        Some(kind)
+    }
+
+    fn define_pub_import_symbol(
+        &mut self,
+        local_name: String,
+        export: ManifestExportRef<'_>,
+        imported_type_aliases: &HashMap<String, String>,
+        span: Span,
+    ) {
+        let mut kind = match export {
+            ManifestExportRef::Model(export) => {
+                SymbolKind::Type(TypeInfo::Model(self.model_info_from_manifest(export)))
+            }
+            ManifestExportRef::Class(export) => {
+                SymbolKind::Type(TypeInfo::Class(self.class_info_from_manifest(export)))
+            }
+            ManifestExportRef::Function(export) => SymbolKind::Function(self.function_info_from_manifest(export)),
+            ManifestExportRef::Trait(export) => SymbolKind::Trait(self.trait_info_from_manifest(export)),
+            ManifestExportRef::Enum(export) => SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(export))),
+            ManifestExportRef::TypeAlias => SymbolKind::Type(TypeInfo::TypeAlias),
+            ManifestExportRef::Newtype(export) => {
+                SymbolKind::Type(TypeInfo::Newtype(self.newtype_info_from_manifest(export)))
+            }
+            ManifestExportRef::Const(export) => SymbolKind::Variable(VariableInfo {
+                ty: self.resolved_type_from_manifest(&export.ty),
+                is_mutable: false,
+                is_used: false,
+            }),
+        };
+        self.remap_symbol_kind_with_import_aliases(&mut kind, imported_type_aliases);
+
+        self.symbols.define(Symbol {
+            name: local_name,
+            kind,
+            span,
+            scope: 0,
+        });
+    }
+
+    fn remap_symbol_kind_with_import_aliases(
+        &self,
+        kind: &mut SymbolKind,
+        imported_type_aliases: &HashMap<String, String>,
+    ) {
+        if imported_type_aliases.is_empty() {
+            return;
+        }
+
+        match kind {
+            SymbolKind::Variable(info) => {
+                Self::remap_resolved_type_with_import_aliases(&mut info.ty, imported_type_aliases);
+            }
+            SymbolKind::Function(info) => {
+                for (_, ty) in &mut info.params {
+                    Self::remap_resolved_type_with_import_aliases(ty, imported_type_aliases);
+                }
+                Self::remap_resolved_type_with_import_aliases(&mut info.return_type, imported_type_aliases);
+            }
+            SymbolKind::Type(ty_info) => match ty_info {
+                TypeInfo::Class(info) => {
+                    if let Some(extends) = &mut info.extends
+                        && let Some(alias) = imported_type_aliases.get(extends)
+                    {
+                        *extends = alias.clone();
+                    }
+                    for field in info.fields.values_mut() {
+                        Self::remap_resolved_type_with_import_aliases(&mut field.ty, imported_type_aliases);
+                    }
+                    for method in info.methods.values_mut() {
+                        for (_, ty) in &mut method.params {
+                            Self::remap_resolved_type_with_import_aliases(ty, imported_type_aliases);
+                        }
+                        Self::remap_resolved_type_with_import_aliases(&mut method.return_type, imported_type_aliases);
+                    }
+                }
+                TypeInfo::Model(info) => {
+                    for field in info.fields.values_mut() {
+                        Self::remap_resolved_type_with_import_aliases(&mut field.ty, imported_type_aliases);
+                    }
+                    for method in info.methods.values_mut() {
+                        for (_, ty) in &mut method.params {
+                            Self::remap_resolved_type_with_import_aliases(ty, imported_type_aliases);
+                        }
+                        Self::remap_resolved_type_with_import_aliases(&mut method.return_type, imported_type_aliases);
+                    }
+                }
+                TypeInfo::Newtype(info) => {
+                    Self::remap_resolved_type_with_import_aliases(&mut info.underlying, imported_type_aliases);
+                    for method in info.methods.values_mut() {
+                        for (_, ty) in &mut method.params {
+                            Self::remap_resolved_type_with_import_aliases(ty, imported_type_aliases);
+                        }
+                        Self::remap_resolved_type_with_import_aliases(&mut method.return_type, imported_type_aliases);
+                    }
+                }
+                TypeInfo::Enum(_) | TypeInfo::TypeAlias | TypeInfo::Builtin => {}
+            },
+            SymbolKind::Trait(info) => {
+                for method in info.methods.values_mut() {
+                    for (_, ty) in &mut method.params {
+                        Self::remap_resolved_type_with_import_aliases(ty, imported_type_aliases);
+                    }
+                    Self::remap_resolved_type_with_import_aliases(&mut method.return_type, imported_type_aliases);
+                }
+                for (_, ty) in &mut info.requires {
+                    Self::remap_resolved_type_with_import_aliases(ty, imported_type_aliases);
+                }
+            }
+            SymbolKind::Module(_) | SymbolKind::Variant(_) | SymbolKind::Field(_) | SymbolKind::RustModule { .. } => {}
+        }
+    }
+
+    fn remap_resolved_type_with_import_aliases(
+        ty: &mut ResolvedType,
+        imported_type_aliases: &HashMap<String, String>,
+    ) {
+        match ty {
+            ResolvedType::Named(name) => {
+                if let Some(alias) = imported_type_aliases.get(name) {
+                    *name = alias.clone();
+                }
+            }
+            ResolvedType::Generic(name, args) => {
+                if let Some(alias) = imported_type_aliases.get(name) {
+                    *name = alias.clone();
+                }
+                for arg in args {
+                    Self::remap_resolved_type_with_import_aliases(arg, imported_type_aliases);
+                }
+            }
+            ResolvedType::Function(params, return_type) => {
+                for param in params {
+                    Self::remap_resolved_type_with_import_aliases(param, imported_type_aliases);
+                }
+                Self::remap_resolved_type_with_import_aliases(return_type, imported_type_aliases);
+            }
+            ResolvedType::Tuple(items) => {
+                for item in items {
+                    Self::remap_resolved_type_with_import_aliases(item, imported_type_aliases);
+                }
+            }
+            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) | ResolvedType::Ref(inner) => {
+                Self::remap_resolved_type_with_import_aliases(inner, imported_type_aliases);
+            }
+            ResolvedType::FrozenDict(key, value) => {
+                Self::remap_resolved_type_with_import_aliases(key, imported_type_aliases);
+                Self::remap_resolved_type_with_import_aliases(value, imported_type_aliases);
+            }
+            ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::Bytes
+            | ResolvedType::FrozenStr
+            | ResolvedType::FrozenBytes
+            | ResolvedType::Unit
+            | ResolvedType::TypeVar(_)
+            | ResolvedType::SelfType
+            | ResolvedType::Unknown => {}
+        }
+    }
+
+    fn function_info_from_manifest(&self, export: &FunctionExport) -> FunctionInfo {
+        FunctionInfo {
+            params: self.params_from_manifest(&export.params),
+            return_type: self.resolved_type_from_manifest(&export.return_type),
+            is_async: export.is_async,
+            type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
+            type_param_bounds: self.type_param_bounds_from_manifest(&export.type_params),
+        }
+    }
+
+    fn model_info_from_manifest(&self, export: &ModelExport) -> ModelInfo {
+        ModelInfo {
+            type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
+            traits: export.traits.clone(),
+            derives: Vec::new(),
+            fields: self.fields_from_manifest(&export.fields),
+            methods: self.methods_from_manifest(&export.methods),
+        }
+    }
+
+    fn class_info_from_manifest(&self, export: &ClassExport) -> ClassInfo {
+        ClassInfo {
+            type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
+            extends: export.extends.clone(),
+            traits: export.traits.clone(),
+            derives: Vec::new(),
+            fields: self.fields_from_manifest(&export.fields),
+            methods: self.methods_from_manifest(&export.methods),
+        }
+    }
+
+    fn trait_info_from_manifest(&self, export: &TraitExport) -> TraitInfo {
+        TraitInfo {
+            type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
+            methods: self.methods_from_manifest(&export.methods),
+            requires: export
+                .requires
+                .iter()
+                .map(|required| (required.name.clone(), self.resolved_type_from_manifest(&required.ty)))
+                .collect(),
+        }
+    }
+
+    fn enum_info_from_manifest(&self, export: &EnumExport) -> EnumInfo {
+        EnumInfo {
+            type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
+            variants: export.variants.iter().map(|variant| variant.name.clone()).collect(),
+        }
+    }
+
+    fn newtype_info_from_manifest(&self, export: &NewtypeExport) -> NewtypeInfo {
+        NewtypeInfo {
+            type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
+            underlying: self.resolved_type_from_manifest(&export.underlying),
+            methods: self.methods_from_manifest(&export.methods),
+        }
+    }
+
+    fn type_param_bounds_from_manifest(
+        &self,
+        type_params: &[TypeParamExport],
+    ) -> std::collections::HashMap<String, Vec<String>> {
+        type_params
+            .iter()
+            .map(|param| {
+                (
+                    param.name.clone(),
+                    param.bounds.iter().map(|bound| bound.name.clone()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    fn fields_from_manifest(&self, fields: &[FieldExport]) -> std::collections::HashMap<String, FieldInfo> {
+        fields
+            .iter()
+            .map(|field| {
+                (
+                    field.name.clone(),
+                    FieldInfo {
+                        ty: self.resolved_type_from_manifest(&field.ty),
+                        has_default: field.has_default,
+                        alias: field.alias.clone(),
+                        description: field.description.clone(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn methods_from_manifest(&self, methods: &[MethodExport]) -> std::collections::HashMap<String, MethodInfo> {
+        methods
+            .iter()
+            .map(|method| {
+                (
+                    method.name.clone(),
+                    MethodInfo {
+                        receiver: self.receiver_from_manifest(method.receiver.as_ref()),
+                        params: self.params_from_manifest(&method.params),
+                        return_type: self.resolved_type_from_manifest(&method.return_type),
+                        is_async: method.is_async,
+                        has_body: method.has_body,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn params_from_manifest(&self, params: &[ParamExport]) -> Vec<(String, ResolvedType)> {
+        params
+            .iter()
+            .map(|param| (param.name.clone(), self.resolved_type_from_manifest(&param.ty)))
+            .collect()
+    }
+
+    fn receiver_from_manifest(&self, receiver: Option<&ReceiverExport>) -> Option<Receiver> {
+        match receiver {
+            Some(ReceiverExport::Immutable) => Some(Receiver::Immutable),
+            Some(ReceiverExport::Mutable) => Some(Receiver::Mutable),
+            None => None,
+        }
+    }
+
+    fn resolved_type_from_manifest(&self, ty: &TypeRef) -> ResolvedType {
+        match ty {
+            TypeRef::Named { name } => self.resolved_named_type(name),
+            TypeRef::Applied { name, args } => {
+                let resolved_args: Vec<ResolvedType> =
+                    args.iter().map(|arg| self.resolved_type_from_manifest(arg)).collect();
+                match collections::from_str(name.as_str()) {
+                    Some(CollectionTypeId::FrozenList) => ResolvedType::FrozenList(Box::new(
+                        resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown),
+                    )),
+                    Some(CollectionTypeId::FrozenSet) => ResolvedType::FrozenSet(Box::new(
+                        resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown),
+                    )),
+                    Some(CollectionTypeId::FrozenDict) => ResolvedType::FrozenDict(
+                        Box::new(resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown)),
+                        Box::new(resolved_args.get(1).cloned().unwrap_or(ResolvedType::Unknown)),
+                    ),
+                    Some(collection_id) => {
+                        ResolvedType::Generic(collections::as_str(collection_id).to_string(), resolved_args)
+                    }
+                    None => ResolvedType::Generic(name.clone(), resolved_args),
+                }
+            }
+            TypeRef::Function { params, return_type } => ResolvedType::Function(
+                params
+                    .iter()
+                    .map(|param| self.resolved_type_from_manifest(param))
+                    .collect(),
+                Box::new(self.resolved_type_from_manifest(return_type)),
+            ),
+            TypeRef::Tuple { elements } => ResolvedType::Tuple(
+                elements
+                    .iter()
+                    .map(|element| self.resolved_type_from_manifest(element))
+                    .collect(),
+            ),
+            TypeRef::TypeParam { name } => ResolvedType::TypeVar(name.clone()),
+            TypeRef::SelfType => ResolvedType::SelfType,
+            TypeRef::Ref { inner } => ResolvedType::Ref(Box::new(self.resolved_type_from_manifest(inner))),
+            TypeRef::Unknown => ResolvedType::Unknown,
+        }
+    }
+
+    fn resolved_named_type(&self, name: &str) -> ResolvedType {
+        if let Some(id) = numerics::from_str(name) {
+            return match id {
+                NumericTypeId::Int => ResolvedType::Int,
+                NumericTypeId::Float => ResolvedType::Float,
+                NumericTypeId::Bool => ResolvedType::Bool,
+            };
+        }
+        if let Some(id) = stringlike::from_str(name) {
+            return match id {
+                StringLikeId::Str => ResolvedType::Str,
+                StringLikeId::Bytes => ResolvedType::Bytes,
+                StringLikeId::FrozenStr => ResolvedType::FrozenStr,
+                StringLikeId::FrozenBytes => ResolvedType::FrozenBytes,
+                StringLikeId::FString => ResolvedType::Str,
+            };
+        }
+        if let Some(id) = collections::from_str(name) {
+            return ResolvedType::Named(collections::as_str(id).to_string());
+        }
+        if name == conventions::UNIT_TYPE_NAME || name == conventions::NONE_TYPE_NAME {
+            return ResolvedType::Unit;
+        }
+        ResolvedType::Named(name.to_string())
     }
 
     /// Ensure imported items are public in the dependency module.

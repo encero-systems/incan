@@ -5,6 +5,7 @@
 use crate::backend::IrCodegen;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::frontend::ast::Program;
+use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser, typechecker};
 use crate::manifest::ProjectManifest;
 use std::path::Path;
@@ -67,6 +68,10 @@ pub fn check_file(file_path: &str) -> CliResult<ExitCode> {
     let project_root = resolve_project_root(Path::new(file_path));
     let manifest = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))?;
     let declared = manifest.as_ref().map(|m| m.declared_rust_crate_names());
+    let library_manifest_index = manifest
+        .as_ref()
+        .map(LibraryManifestIndex::from_project_manifest)
+        .unwrap_or_default();
 
     let mut all_errors: String = String::new();
     for (idx, module) in modules.iter().enumerate() {
@@ -76,6 +81,7 @@ pub fn check_file(file_path: &str) -> CliResult<ExitCode> {
         if let Some(names) = declared.clone() {
             checker.set_declared_crate_names(names);
         }
+        checker.set_library_manifest_index(library_manifest_index.clone());
         match checker.check_with_imports(&module.ast, &deps_for_module) {
             Ok(()) => {
                 for warn in checker.warnings() {

@@ -1,5 +1,15 @@
 /// Import parsing (`import ...`, `from ... import ...`, `rust::`, `python ...`).
 impl<'a> Parser<'a> {
+    fn expect_pub_namespace_separator(&mut self, form: errors::PubImportForm) -> Result<(), CompileError> {
+        if self.match_punct(PunctuationId::ColonColon) {
+            return Ok(());
+        }
+        if self.match_punct(PunctuationId::Dot) {
+            return Err(errors::pub_import_expected_namespace_separator(self.current_span(), form));
+        }
+        Err(errors::pub_import_expected_namespace_separator(self.current_span(), form))
+    }
+
     fn import_decl(&mut self, visibility: Visibility) -> Result<ImportDecl, CompileError> {
         // Check for "from ... import ..." syntax
         if self.match_keyword(KeywordId::From) {
@@ -28,6 +38,24 @@ impl<'a> Parser<'a> {
                         features,
                         items,
                     },
+                    alias: None,
+                });
+            }
+
+            // Check for "from pub::library import ..." syntax
+            if self.match_keyword(KeywordId::Pub) {
+                self.expect_pub_namespace_separator(errors::PubImportForm::From)?;
+                let library = self.identifier()?;
+                if self.check_punct(PunctuationId::ColonColon) || self.check_punct(PunctuationId::Dot) {
+                    return Err(errors::pub_import_submodule_not_supported(self.current_span()));
+                }
+                self.expect_keyword(KeywordId::Import, "Expected 'import' after pub library path")?;
+
+                let items = self.parse_import_items()?;
+
+                return Ok(ImportDecl {
+                    visibility,
+                    kind: ImportKind::PubFrom { library, items },
                     alias: None,
                 });
             }
@@ -71,6 +99,13 @@ impl<'a> Parser<'a> {
                 version,
                 features,
             }
+        } else if self.match_keyword(KeywordId::Pub) {
+            self.expect_pub_namespace_separator(errors::PubImportForm::Import)?;
+            let library = self.identifier()?;
+            if self.check_punct(PunctuationId::ColonColon) || self.check_punct(PunctuationId::Dot) {
+                return Err(errors::pub_import_submodule_not_supported(self.current_span()));
+            }
+            ImportKind::PubLibrary { library }
         } else {
             // Module import: import foo::bar::baz or import super::foo or import crate::foo
             let path = self.import_path()?;

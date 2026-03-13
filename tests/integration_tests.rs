@@ -1405,3 +1405,156 @@ def database() -> Database:
         }
     }
 }
+
+mod rfc031_pub_import_integration_tests {
+    use super::*;
+    use incan::library_manifest::{LibraryManifest, ModelExport};
+
+    fn write_project_files(
+        root: &Path,
+        manifest_content: &str,
+        main_source: &str,
+    ) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::write(root.join("incan.toml"), manifest_content)?;
+        let main_path = root.join("src").join("main.incn");
+        std::fs::write(&main_path, main_source)?;
+        Ok(main_path)
+    }
+
+    fn run_check(main_path: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+        Ok(Command::new("target/debug/incan")
+            .arg("--check")
+            .arg(main_path)
+            .output()?)
+    }
+
+    fn mylib_manifest_with_widget() -> LibraryManifest {
+        let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+        manifest.exports.models.push(ModelExport {
+            name: "Widget".to_string(),
+            type_params: Vec::new(),
+            traits: Vec::new(),
+            fields: Vec::new(),
+            methods: Vec::new(),
+        });
+        manifest
+    }
+
+    #[test]
+    fn check_reports_unknown_pub_library() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"app\"\n",
+            "from pub::missinglib import Widget\n",
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            !output.status.success(),
+            "expected check to fail for unknown library, stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&output.stderr));
+        assert!(
+            stderr.contains("Unknown `pub::` library `missinglib`"),
+            "expected unknown-library diagnostic, got:\n{stderr}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn check_reports_missing_pub_export() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let dep_manifest_path = tmp
+            .path()
+            .join("deps")
+            .join("mylib")
+            .join("target")
+            .join("lib")
+            .join("mylib.incnlib");
+        std::fs::create_dir_all(dep_manifest_path.parent().ok_or("missing dependency manifest parent")?)?;
+        mylib_manifest_with_widget().write_to_path(&dep_manifest_path)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"app\"\n\n[dependencies]\nmylib = { path = \"deps/mylib\" }\n",
+            "from pub::mylib import MissingSymbol\n",
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            !output.status.success(),
+            "expected check to fail for missing export, stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&output.stderr));
+        assert!(
+            stderr.contains("is not exported by `pub::mylib`"),
+            "expected missing-export diagnostic, got:\n{stderr}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn check_reports_pub_manifest_load_failure() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let dep_manifest_path = tmp
+            .path()
+            .join("deps")
+            .join("mylib")
+            .join("target")
+            .join("lib")
+            .join("mylib.incnlib");
+        std::fs::create_dir_all(dep_manifest_path.parent().ok_or("missing dependency manifest parent")?)?;
+        std::fs::write(&dep_manifest_path, "{ not-json }\n")?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"app\"\n\n[dependencies]\nmylib = { path = \"deps/mylib\" }\n",
+            "from pub::mylib import Widget\n",
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            !output.status.success(),
+            "expected check to fail for manifest load failure, stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&output.stderr));
+        assert!(
+            stderr.contains("Failed to load manifest for `pub::mylib`"),
+            "expected manifest-load diagnostic, got:\n{stderr}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn check_passes_for_pub_imported_manifest_type() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let dep_manifest_path = tmp
+            .path()
+            .join("deps")
+            .join("mylib")
+            .join("target")
+            .join("lib")
+            .join("mylib.incnlib");
+        std::fs::create_dir_all(dep_manifest_path.parent().ok_or("missing dependency manifest parent")?)?;
+        mylib_manifest_with_widget().write_to_path(&dep_manifest_path)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"app\"\n\n[dependencies]\nmylib = { path = \"deps/mylib\" }\n",
+            "from pub::mylib import Widget\n\ndef build(x: Widget) -> Widget:\n  return x\n",
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected check to pass for valid pub import, stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+}

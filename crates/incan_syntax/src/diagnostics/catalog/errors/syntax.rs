@@ -115,6 +115,31 @@ pub fn rust_import_features_require_version(span: Span) -> CompileError {
         .with_hint("Use `@ \"version\" with [\"feature\"]` on the rust import")
 }
 
+/// Which surface form of `pub` import triggered a namespace-separator diagnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PubImportForm {
+    /// `from pub... import Item`
+    From,
+    /// `import pub...`
+    Import,
+}
+
+pub fn pub_import_expected_namespace_separator(span: Span, form: PubImportForm) -> CompileError {
+    let hint = match form {
+        PubImportForm::From => "Use `from pub::library import Item`",
+        PubImportForm::Import => "Use `import pub::library`",
+    };
+    CompileError::syntax("Expected `::` after `pub` in library import".to_string(), span).with_hint(hint)
+}
+
+pub fn pub_import_submodule_not_supported(span: Span) -> CompileError {
+    CompileError::syntax(
+        "`pub::` imports only accept a single library name in this phase".to_string(),
+        span,
+    )
+    .with_hint("Use `from pub::library import Name` and import exported names directly")
+}
+
 /// Which surface form of `rust` import triggered a dot-notation warning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RustImportForm {

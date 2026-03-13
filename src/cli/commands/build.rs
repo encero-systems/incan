@@ -12,6 +12,7 @@ use crate::dependency_resolver::resolve_dependencies;
 use crate::frontend::ast::Program;
 use crate::frontend::ast::{Declaration, Decorator, ImportKind, Span, Spanned};
 use crate::frontend::library_exports::{CheckedExportKind, CheckedNamedExport, collect_checked_public_exports};
+use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, typechecker};
 use crate::library_manifest::LibraryManifest;
 use crate::lockfile::CargoFeatureSelection;
@@ -352,6 +353,10 @@ fn prepare_project(
     let project_root = resolve_project_root(path);
 
     let manifest = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))?;
+    let library_manifest_index = manifest
+        .as_ref()
+        .map(LibraryManifestIndex::from_project_manifest)
+        .unwrap_or_default();
 
     // Type check all modules (dependencies + stdlib first), so diagnostics are associated with the correct file.
     let declared = manifest.as_ref().map(|m| m.declared_rust_crate_names());
@@ -363,6 +368,7 @@ fn prepare_project(
         if let Some(names) = declared.clone() {
             checker.set_declared_crate_names(names);
         }
+        checker.set_library_manifest_index(library_manifest_index.clone());
 
         match checker.check_with_imports(&module.ast, &deps_for_module) {
             Ok(()) => {
@@ -594,6 +600,7 @@ pub fn build_library(
     }
 
     let declared = manifest.declared_rust_crate_names();
+    let library_manifest_index = LibraryManifestIndex::from_project_manifest(&manifest);
     let mut all_errors = String::new();
     let mut checked_exports_by_module: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
 
@@ -602,6 +609,7 @@ pub fn build_library(
 
         let mut checker = typechecker::TypeChecker::new();
         checker.set_declared_crate_names(declared.clone());
+        checker.set_library_manifest_index(library_manifest_index.clone());
 
         match checker.check_with_imports(&module.ast, &deps_for_module) {
             Ok(()) => {

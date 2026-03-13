@@ -133,8 +133,11 @@ pub fn resolve_import_path(base_dir: &Path, import: &ImportDecl) -> Option<PathB
         ImportKind::From { module, .. } if !module.segments.is_empty() => {
             (module.segments.clone(), module.is_absolute, module.parent_levels)
         }
-        // Rust crate imports don't resolve to Incan files
-        ImportKind::RustCrate { .. } | ImportKind::RustFrom { .. } => return None,
+        // External namespace imports don't resolve to on-disk Incan source files.
+        ImportKind::RustCrate { .. }
+        | ImportKind::RustFrom { .. }
+        | ImportKind::PubLibrary { .. }
+        | ImportKind::PubFrom { .. } => return None,
         ImportKind::Python(_) | ImportKind::Module(_) | ImportKind::From { .. } => return None,
     };
 
@@ -276,6 +279,7 @@ pub fn exported_symbols(ast: &Program) -> Vec<ExportedSymbol> {
                 let items = match &import.kind {
                     ImportKind::From { items, .. } => Some(items.as_slice()),
                     ImportKind::RustFrom { items, .. } => Some(items.as_slice()),
+                    ImportKind::PubFrom { items, .. } => Some(items.as_slice()),
                     _ => None,
                 };
                 if let Some(items) = items {

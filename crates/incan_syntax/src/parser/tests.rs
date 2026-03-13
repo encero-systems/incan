@@ -785,6 +785,70 @@ def add(a: int, b: int) -> int:
         );
     }
 
+    #[test]
+    fn test_parse_pub_library_import_with_alias() -> Result<(), Vec<CompileError>> {
+        let source = "import pub::mylib as lib\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::PubLibrary { library } => {
+                    assert_eq!(library, "mylib");
+                    assert_eq!(i.alias.as_deref(), Some("lib"));
+                }
+                _ => panic!("Expected pub library import"),
+            },
+            _ => panic!("Expected import"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_pub_from_import_parenthesized_items() -> Result<(), Vec<CompileError>> {
+        let source = "from pub::mylib import (\n    Widget,\n    make_widget as build_widget,\n)\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::PubFrom { library, items } => {
+                    assert_eq!(library, "mylib");
+                    assert_eq!(items.len(), 2);
+                    assert_eq!(items[0].name, "Widget");
+                    assert_eq!(items[0].alias, None);
+                    assert_eq!(items[1].name, "make_widget");
+                    assert_eq!(items[1].alias.as_deref(), Some("build_widget"));
+                }
+                _ => panic!("Expected pub from import"),
+            },
+            _ => panic!("Expected import"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_pub_import_dot_notation_is_error() {
+        let source = "from pub.mylib import Widget\n";
+        let Err(err) = parse_str(source) else {
+            panic!("Expected parser to reject dot-notation `pub` import");
+        };
+        assert!(
+            err[0].message.contains("Expected `::` after `pub`"),
+            "Unexpected error: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
+    fn test_parse_pub_import_nested_path_is_error() {
+        let source = "from pub::mylib::widgets import Widget\n";
+        let Err(err) = parse_str(source) else {
+            panic!("Expected parser to reject nested `pub::` path");
+        };
+        assert!(
+            err[0].message.contains("single library name"),
+            "Unexpected error: {}",
+            err[0].message
+        );
+    }
+
     /// RFC 005: `from rust.crate import Item` emits a warning and parses successfully.
     #[test]
     fn test_parse_rust_from_import_dot_notation_is_warning() {

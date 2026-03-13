@@ -33,6 +33,17 @@ pub enum ImportKind {
     Module(ImportPath),
     /// `from module import item1, item2` or `from ..utils import x` - Python-style multi-import
     From { module: ImportPath, items: Vec<ImportItem> },
+    /// `import pub::mylib` - Incan library namespace import
+    PubLibrary {
+        /// Library dependency key from `incan.toml [dependencies]`
+        library: Ident,
+    },
+    /// `from pub::mylib import Widget, helper` - Incan library symbols from manifest exports
+    PubFrom {
+        /// Library dependency key from `incan.toml [dependencies]`
+        library: Ident,
+        items: Vec<ImportItem>,
+    },
     /// `import python "module"` - Python interop  FIXME: this doesn't actually work yet
     Python(String),
     /// `import rust::serde_json` - Rust crate import (direct crate usage)

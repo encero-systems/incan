@@ -1,12 +1,28 @@
 //! Typechecker unit tests.
 
 use super::*;
+use crate::frontend::library_manifest_index::{
+    LibraryManifestFailureKind, LibraryManifestIndex, LibraryManifestIndexEntry, LibraryManifestLoadFailure,
+};
 use crate::frontend::{lexer, parser};
+use crate::library_manifest::{
+    ConstExport, FunctionExport, LibraryExports, LibraryManifest, ModelExport, ParamExport, TypeRef,
+};
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 fn check_str(source: &str) -> Result<(), Vec<CompileError>> {
     let tokens = lexer::lex(source)?;
     let ast = parser::parse(&tokens)?;
     check(&ast)
+}
+
+fn check_str_with_library_index(source: &str, library_index: LibraryManifestIndex) -> Result<(), Vec<CompileError>> {
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.set_library_manifest_index(library_index);
+    checker.check_program(&ast)
 }
 
 fn assert_check_ok(source: &str) {
@@ -16,6 +32,58 @@ fn assert_check_ok(source: &str) {
         }
         panic!("expected Ok, got errors (see stderr)");
     }
+}
+
+fn library_index_with_mylib_exports() -> LibraryManifestIndex {
+    let manifest = LibraryManifest {
+        name: "mylib".to_string(),
+        version: "0.1.0".to_string(),
+        incan_version: crate::version::INCAN_VERSION.to_string(),
+        manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
+        exports: LibraryExports {
+            models: vec![ModelExport {
+                name: "Widget".to_string(),
+                type_params: Vec::new(),
+                traits: Vec::new(),
+                fields: Vec::new(),
+                methods: Vec::new(),
+            }],
+            classes: Vec::new(),
+            functions: vec![FunctionExport {
+                name: "make_widget".to_string(),
+                type_params: Vec::new(),
+                params: vec![ParamExport {
+                    name: "name".to_string(),
+                    ty: TypeRef::Named {
+                        name: "str".to_string(),
+                    },
+                }],
+                return_type: TypeRef::Named {
+                    name: "Widget".to_string(),
+                },
+                is_async: false,
+            }],
+            traits: Vec::new(),
+            enums: Vec::new(),
+            type_aliases: Vec::new(),
+            newtypes: Vec::new(),
+            consts: vec![ConstExport {
+                name: "DEFAULT_NAME".to_string(),
+                ty: TypeRef::Named {
+                    name: "str".to_string(),
+                },
+            }],
+        },
+        soft_keywords: Default::default(),
+    };
+
+    LibraryManifestIndex::from_entries(HashMap::from([(
+        "mylib".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            path: PathBuf::from("/tmp/mylib/target/lib/mylib.incnlib"),
+            manifest: Box::new(manifest),
+        },
+    )]))
 }
 
 // ========================================
@@ -2455,6 +2523,108 @@ fn test_unknown_stdlib_module_hint_includes_registry_entries() {
         err.hints.iter().any(|h| h.contains("std.web.app")),
         "Expected hint to include std.web.app; hints: {:?}",
         err.hints
+    );
+}
+
+// ========================================================================
+// RFC 031 Phase 3: `pub::` library imports from dependency manifests
+// ========================================================================
+
+#[test]
+fn test_pub_from_import_manifest_symbols_typecheck() {
+    let source = r#"
+from pub::mylib import Widget, make_widget, DEFAULT_NAME
+
+def build() -> Widget:
+  return make_widget(DEFAULT_NAME)
+"#;
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    assert!(result.is_ok(), "expected pub import to typecheck, got: {result:?}");
+}
+
+#[test]
+fn test_pub_from_import_unknown_library_is_error() {
+    let source = "from pub::missinglib import Widget\n";
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    let Err(errs) = result else {
+        panic!("expected unknown pub library error");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("Unknown `pub::` library")),
+        "Expected unknown-library diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_pub_from_import_missing_export_is_error() {
+    let source = "from pub::mylib import MissingSymbol\n";
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    let Err(errs) = result else {
+        panic!("expected missing export error");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("is not exported by `pub::mylib`")),
+        "Expected missing-export diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_pub_from_import_collision_with_local_symbol_is_error() {
+    let source = r#"
+def Widget() -> None:
+  pass
+
+from pub::mylib import Widget
+"#;
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    let Err(errs) = result else {
+        panic!("expected collision diagnostic");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("already in scope")),
+        "Expected collision diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_pub_from_import_alias_recovers_from_collision() {
+    let source = r#"
+def Widget() -> None:
+  pass
+
+from pub::mylib import Widget as LibWidget, make_widget
+
+def build() -> LibWidget:
+  return make_widget("ok")
+"#;
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    assert!(result.is_ok(), "expected alias recovery to typecheck, got: {result:?}");
+}
+
+#[test]
+fn test_pub_import_manifest_load_failure_is_error() {
+    let broken_index = LibraryManifestIndex::from_entries(HashMap::from([(
+        "brokenlib".to_string(),
+        LibraryManifestIndexEntry::Failed(LibraryManifestLoadFailure {
+            path: PathBuf::from("/tmp/brokenlib/target/lib/brokenlib.incnlib"),
+            kind: LibraryManifestFailureKind::Invalid,
+            message: "invalid library manifest: unsupported manifest_format 999 (expected 1)".to_string(),
+        }),
+    )]));
+
+    let source = "from pub::brokenlib import Widget\n";
+    let result = check_str_with_library_index(source, broken_index);
+    let Err(errs) = result else {
+        panic!("expected manifest-load failure diagnostic");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("Failed to load manifest")),
+        "Expected manifest-load diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }
 

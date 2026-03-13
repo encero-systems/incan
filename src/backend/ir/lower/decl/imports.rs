@@ -10,6 +10,10 @@ impl AstLowering {
         let (path, ast_items) = match &i.kind {
             ast::ImportKind::Module(p) => (p.segments.clone(), vec![]),
             ast::ImportKind::From { module, items } => (module.segments.clone(), items.clone()),
+            ast::ImportKind::PubLibrary { library } => (vec!["pub".to_string(), library.clone()], vec![]),
+            ast::ImportKind::PubFrom { library, items } => {
+                (vec!["pub".to_string(), library.clone()], items.clone())
+            }
             ast::ImportKind::RustCrate { crate_name, path, .. } => {
                 let mut segs = vec![crate_name.clone()];
                 segs.extend(path.clone());

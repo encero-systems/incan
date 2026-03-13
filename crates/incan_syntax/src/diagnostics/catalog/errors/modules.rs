@@ -108,3 +108,58 @@ pub fn duplicate_library_export(name: &str, span: Span) -> CompileError {
     CompileError::new(format!("Duplicate library export `{name}` in `src/lib.incn`"), span)
         .with_hint("Rename one of the exports with `as`, or remove the duplicate")
 }
+
+/// `from pub::... import ...` references a library not declared in `incan.toml [dependencies]`.
+pub fn unknown_pub_library(library: &str, known_libraries: &[String], span: Span) -> CompileError {
+    let mut known = known_libraries.to_vec();
+    known.sort();
+    let known = if known.is_empty() {
+        "<none>".to_string()
+    } else {
+        known.join(", ")
+    };
+
+    CompileError::new(format!("Unknown `pub::` library `{library}`"), span)
+        .with_hint("Declare it in `incan.toml [dependencies]` and build the dependency library first")
+        .with_hint(format!("Known libraries: {known}"))
+}
+
+/// Loading a dependency `.incnlib` failed for a `pub::` import.
+pub fn pub_library_manifest_load_failed(library: &str, manifest_path: &str, details: &str, span: Span) -> CompileError {
+    CompileError::new(
+        format!("Failed to load manifest for `pub::{library}` from `{manifest_path}`"),
+        span,
+    )
+    .with_hint(details.to_string())
+    .with_hint("Run `incan build --lib` in the dependency project to regenerate its `.incnlib` manifest")
+}
+
+/// A symbol was requested from a known `pub::` library but is not part of its manifest exports.
+pub fn pub_library_symbol_not_exported(
+    symbol: &str,
+    library: &str,
+    exported_names: &[String],
+    span: Span,
+) -> CompileError {
+    let mut names = exported_names.to_vec();
+    names.sort();
+    let exports = if names.is_empty() {
+        "<none>".to_string()
+    } else {
+        names.join(", ")
+    };
+
+    CompileError::new(format!("`{symbol}` is not exported by `pub::{library}`"), span)
+        .with_hint(format!("Available exports from `pub::{library}`: {exports}"))
+}
+
+/// A `pub::` import binding collides with an already-defined local/imported symbol.
+pub fn pub_library_import_name_collision(name: &str, existing_kind: &str, span: Span) -> CompileError {
+    CompileError::new(
+        format!("Cannot import `{name}` from `pub::`: a {existing_kind} named `{name}` is already in scope"),
+        span,
+    )
+    .with_hint(format!(
+        "Use an alias to avoid the collision, e.g. `from pub::mylib import {name} as {name}FromLib`"
+    ))
+}

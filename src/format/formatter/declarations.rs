@@ -89,6 +89,21 @@ impl Formatter {
                 self.writer.write(" import ");
                 self.format_import_items(items);
             }
+            ImportKind::PubLibrary { library } => {
+                self.writer.write("import pub::");
+                self.writer.write(library);
+                if let Some(alias) = &import.alias {
+                    self.writer.write(" as ");
+                    self.writer.write(alias);
+                }
+                self.writer.newline();
+            }
+            ImportKind::PubFrom { library, items } => {
+                self.writer.write("from pub::");
+                self.writer.write(library);
+                self.writer.write(" import ");
+                self.format_import_items(items);
+            }
             ImportKind::Python(name) => {
                 self.writer.write("import python \"");
                 self.writer.write(name);
