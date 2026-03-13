@@ -26,11 +26,21 @@ impl<'a> Parser<'a> {
             visibility = Visibility::Public;
         }
 
-        let decl = if self.check_keyword(KeywordId::Import) || self.check_keyword(KeywordId::From) {
+        let decl = if self.check_keyword(KeywordId::From) {
+            if visibility == Visibility::Public
+                && self.module_path.is_some()
+                && !self.is_library_entrypoint_module()
+            {
+                return Err(errors::pub_reexport_only_allowed_in_library_entrypoint(
+                    self.current_span(),
+                ));
+            }
+            Declaration::Import(self.import_decl(visibility)?)
+        } else if self.check_keyword(KeywordId::Import) {
             if visibility == Visibility::Public {
                 return Err(errors::pub_modifier_not_allowed_on_import(self.current_span()));
             }
-            Declaration::Import(self.import_decl()?)
+            Declaration::Import(self.import_decl(Visibility::Private)?)
         } else if self.check_keyword(KeywordId::Const) {
             Declaration::Const(self.const_decl_with_visibility(visibility)?)
         } else if self.check_keyword(KeywordId::Model) {

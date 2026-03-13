@@ -10,11 +10,13 @@ use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::dependency_resolver::resolve_dependencies;
 use crate::frontend::ast::Program;
-use crate::frontend::ast::{Declaration, Decorator, Span, Spanned};
+use crate::frontend::ast::{Declaration, Decorator, ImportKind, Span, Spanned};
+use crate::frontend::library_exports::{CheckedExportKind, CheckedNamedExport, collect_checked_public_exports};
 use crate::frontend::{diagnostics, typechecker};
+use crate::library_manifest::LibraryManifest;
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::common::{
     build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_modules, collect_stdlib_usage,
@@ -231,6 +233,92 @@ fn validate_library_entrypoint(manifest: &ProjectManifest) -> CliResult<PathBuf>
         )));
     }
     Ok(lib_entry)
+}
+
+fn module_key(path_segments: &[String]) -> String {
+    path_segments.join("_")
+}
+
+fn checked_export_map(exports: Vec<CheckedNamedExport>) -> HashMap<String, CheckedNamedExport> {
+    exports
+        .into_iter()
+        .map(|export| (export.name.clone(), export))
+        .collect()
+}
+
+fn rename_checked_export(export: &CheckedNamedExport, exported_name: &str) -> CheckedNamedExport {
+    let mut renamed = export.clone();
+    renamed.name = exported_name.to_string();
+
+    match &mut renamed.kind {
+        CheckedExportKind::Function(function_export) => function_export.name = exported_name.to_string(),
+        CheckedExportKind::TypeAlias(type_alias_export) => type_alias_export.name = exported_name.to_string(),
+        CheckedExportKind::Model(model_export) => model_export.name = exported_name.to_string(),
+        CheckedExportKind::Class(class_export) => class_export.name = exported_name.to_string(),
+        CheckedExportKind::Trait(trait_export) => trait_export.name = exported_name.to_string(),
+        CheckedExportKind::Enum(enum_export) => enum_export.name = exported_name.to_string(),
+        CheckedExportKind::Newtype(newtype_export) => newtype_export.name = exported_name.to_string(),
+        CheckedExportKind::Const(const_export) => const_export.name = exported_name.to_string(),
+    }
+
+    renamed
+}
+
+fn resolve_library_reexports(
+    lib_module: &ParsedModule,
+    module_exports: &HashMap<String, HashMap<String, CheckedNamedExport>>,
+) -> Result<Vec<CheckedNamedExport>, Vec<crate::frontend::diagnostics::CompileError>> {
+    let mut errors = Vec::new();
+    let mut resolved = Vec::new();
+    let mut exported_names: HashSet<String> = HashSet::new();
+    let known_modules: Vec<String> = module_exports.keys().cloned().collect();
+
+    for decl in &lib_module.ast.declarations {
+        let Declaration::Import(import) = &decl.node else {
+            continue;
+        };
+        if !matches!(import.visibility, crate::frontend::ast::Visibility::Public) {
+            continue;
+        }
+
+        let ImportKind::From { module, items } = &import.kind else {
+            errors.push(diagnostics::errors::library_pub_reexport_requires_from(decl.span));
+            continue;
+        };
+
+        let module_name = module_key(&module.segments);
+        let Some(exports_by_name) = module_exports.get(&module_name) else {
+            errors.push(diagnostics::errors::library_reexport_unknown_module(
+                &module.to_rust_path(),
+                &known_modules,
+                decl.span,
+            ));
+            continue;
+        };
+
+        for item in items {
+            let exported_name = item.alias.as_ref().unwrap_or(&item.name).clone();
+            if !exported_names.insert(exported_name.clone()) {
+                errors.push(diagnostics::errors::duplicate_library_export(&exported_name, decl.span));
+                continue;
+            }
+
+            let Some(export) = exports_by_name.get(&item.name) else {
+                let available: Vec<String> = exports_by_name.keys().cloned().collect();
+                errors.push(diagnostics::errors::import_not_exported(
+                    &item.name,
+                    &module.to_rust_path(),
+                    &available,
+                    decl.span,
+                ));
+                continue;
+            };
+
+            resolved.push(rename_checked_export(export, &exported_name));
+        }
+    }
+
+    if errors.is_empty() { Ok(resolved) } else { Err(errors) }
 }
 
 /// Prepare an Incan project for building or running.
@@ -477,11 +565,11 @@ pub fn build_file(
 pub fn build_library(
     file_path: Option<&str>,
     _output_dir: Option<&String>,
-    _locked: bool,
-    _frozen: bool,
-    _cargo_features: Vec<String>,
-    _cargo_no_default_features: bool,
-    _cargo_all_features: bool,
+    locked: bool,
+    frozen: bool,
+    cargo_features: Vec<String>,
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
 ) -> CliResult<ExitCode> {
     let project_root = resolve_library_project_root(file_path)?;
     let Some(manifest) = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))? else {
@@ -490,11 +578,206 @@ pub fn build_library(
         ));
     };
 
-    let _lib_entry = validate_library_entrypoint(&manifest)?;
+    let lib_entry = validate_library_entrypoint(&manifest)?;
+    let lib_entry_str = lib_entry.to_string_lossy().to_string();
+    let modules = collect_modules(&lib_entry_str)?;
 
-    Err(CliError::failure(
-        "`incan build --lib` preconditions passed, but library artifact generation is not implemented yet.",
-    ))
+    let Some(lib_module) = modules.last() else {
+        return Err(CliError::failure("No modules found for library build"));
+    };
+    if lib_module.file_path != lib_entry {
+        return Err(CliError::failure(format!(
+            "Library entrypoint mismatch: expected `{}`, got `{}`",
+            lib_entry.display(),
+            lib_module.file_path.display()
+        )));
+    }
+
+    let declared = manifest.declared_rust_crate_names();
+    let mut all_errors = String::new();
+    let mut checked_exports_by_module: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
+
+    for (idx, module) in modules.iter().enumerate() {
+        let deps_for_module: Vec<(&str, &Program)> = modules[..idx].iter().map(|m| (m.name.as_str(), &m.ast)).collect();
+
+        let mut checker = typechecker::TypeChecker::new();
+        checker.set_declared_crate_names(declared.clone());
+
+        match checker.check_with_imports(&module.ast, &deps_for_module) {
+            Ok(()) => {
+                for warn in checker.warnings() {
+                    eprint!(
+                        "{}",
+                        diagnostics::format_error(module.file_path.to_string_lossy().as_ref(), &module.source, warn)
+                    );
+                }
+                let module_exports = collect_checked_public_exports(&module.ast, &checker);
+                checked_exports_by_module.insert(module_key(&module.path_segments), checked_export_map(module_exports));
+            }
+            Err(errs) => {
+                for err in &errs {
+                    all_errors.push_str(&diagnostics::format_error(
+                        module.file_path.to_string_lossy().as_ref(),
+                        &module.source,
+                        err,
+                    ));
+                }
+            }
+        }
+    }
+
+    if !all_errors.is_empty() {
+        return Err(CliError::failure(all_errors.trim_end()));
+    }
+
+    let selected_exports = resolve_library_reexports(lib_module, &checked_exports_by_module).map_err(|errs| {
+        let mut msg = String::new();
+        for err in &errs {
+            msg.push_str(&diagnostics::format_error(
+                lib_module.file_path.to_string_lossy().as_ref(),
+                &lib_module.source,
+                err,
+            ));
+        }
+        CliError::failure(msg.trim_end())
+    })?;
+
+    let project_name = manifest
+        .project
+        .as_ref()
+        .and_then(|project| project.name.clone())
+        .or_else(|| {
+            manifest
+                .project_root()
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "incan_library".to_string());
+    let project_version = manifest
+        .project
+        .as_ref()
+        .and_then(|project| project.version.clone())
+        .unwrap_or_else(|| "0.1.0".to_string());
+
+    let library_manifest =
+        LibraryManifest::from_checked_exports(project_name.clone(), project_version, &selected_exports);
+    let out_dir = project_root.join("target").join("lib");
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| CliError::failure(format!("failed to create {}: {e}", out_dir.display())))?;
+    let manifest_path = out_dir.join(format!("{project_name}.incnlib"));
+
+    let dep_modules = &modules[..modules.len() - 1];
+    let stdlib_usage = collect_stdlib_usage(&modules);
+    let rust_extern_contexts = collect_rust_extern_contexts(&modules);
+
+    let mut codegen = IrCodegen::new();
+    codegen.set_declared_crate_names(declared);
+    for module in dep_modules {
+        codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
+    }
+    for module in &modules {
+        codegen.scan_for_serde(&module.ast);
+        codegen.scan_for_async(&module.ast);
+        codegen.scan_for_web(&module.ast);
+        codegen.scan_for_list_helpers(&module.ast);
+    }
+
+    let needs_serde = codegen.needs_serde() || stdlib_usage.needs_serde;
+    let needs_tokio = codegen.needs_tokio() || stdlib_usage.needs_tokio;
+    let needs_web = codegen.needs_web() || stdlib_usage.needs_web;
+
+    let mut generator = ProjectGenerator::new(&out_dir, project_name.as_str(), false);
+    generator.set_needs_serde(needs_serde);
+    generator.set_needs_tokio(needs_tokio);
+    generator.set_needs_web(needs_web);
+    generator.set_include_dev_dependencies(false);
+    generator.set_rust_edition(manifest.build.as_ref().and_then(|build| build.rust_edition.clone()));
+
+    let mut inline_imports = collect_inline_rust_imports(lib_module, false);
+    for module in dep_modules {
+        inline_imports.extend(collect_inline_rust_imports(module, false));
+    }
+
+    let cargo_features = CargoFeatureSelection {
+        cargo_features,
+        cargo_no_default_features,
+        cargo_all_features,
+    }
+    .normalized();
+
+    let mut resolved = match resolve_dependencies(Some(&manifest), &inline_imports, true, &cargo_features) {
+        Ok(resolved) => resolved,
+        Err(errors) => {
+            let mut msg = String::new();
+            let sources = build_source_map(&modules);
+            for err in errors {
+                msg.push_str(&format_dependency_error(&err, &sources));
+            }
+            return Err(CliError::failure(msg.trim_end()));
+        }
+    };
+    merge_stdlib_extra_dependencies(&mut resolved, &stdlib_usage);
+
+    let lock_payload = resolve_lock_payload(LockResolutionRequest {
+        project_root: &project_root,
+        project_name: project_name.as_str(),
+        manifest: Some(&manifest),
+        resolved: &resolved,
+        stdlib_usage: &stdlib_usage,
+        cargo_features: &cargo_features,
+        locked,
+        frozen,
+    })?;
+    generator.set_cargo_lock_payload(lock_payload);
+    generator.set_cargo_policy_flags(cargo_command_flags(locked, frozen, &cargo_features));
+    generator.set_dependencies(resolved.dependencies);
+    generator.set_dev_dependencies(resolved.dev_dependencies);
+
+    if dep_modules.is_empty() {
+        let rust_code = codegen
+            .try_generate(&lib_module.ast)
+            .map_err(|e| CliError::failure(format!("Code generation error: {e}")))?;
+        generator
+            .generate(&rust_code)
+            .map_err(|e| CliError::failure(format!("Error generating project: {e}")))?;
+    } else {
+        let module_paths: Vec<Vec<String>> = dep_modules.iter().map(|module| module.path_segments.clone()).collect();
+        let (main_code, rust_modules) = codegen
+            .try_generate_multi_file_nested(&lib_module.ast, &module_paths)
+            .map_err(|e| CliError::failure(format!("Code generation error: {e}")))?;
+        generator
+            .generate_nested(&main_code, &rust_modules)
+            .map_err(|e| CliError::failure(format!("Error generating project: {e}")))?;
+    }
+
+    match generator.build() {
+        Ok(result) => {
+            if !result.success {
+                if let Some(wrapped) = format_rust_extern_wrapped_diagnostics(&result.stderr, &rust_extern_contexts) {
+                    return Err(CliError::failure(format!(
+                        "Library build failed.\n\n{}\nRaw cargo/rustc output:\n{}",
+                        wrapped.trim_end(),
+                        result.stderr
+                    )));
+                }
+                return Err(CliError::failure(format!("Library build failed:\n{}", result.stderr)));
+            }
+        }
+        Err(err) => {
+            return Err(CliError::failure(format!("Error running cargo: {err}")));
+        }
+    }
+
+    library_manifest
+        .write_to_path(&manifest_path)
+        .map_err(|err| CliError::failure(format!("failed to write {}: {err}", manifest_path.display())))?;
+
+    println!("✓ Library build successful!");
+    println!("Generated Rust crate in: {}", out_dir.display());
+    println!("Generated manifest: {}", manifest_path.display());
+
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Build and run an Incan file.
@@ -534,6 +817,9 @@ pub fn run_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frontend::lexer;
+    use crate::frontend::parser;
+    use crate::frontend::symbols::ResolvedType;
     use crate::manifest::ProjectManifest;
     use std::fs;
 
@@ -596,6 +882,97 @@ mod tests {
 
         let lib_path = validate_library_entrypoint(&manifest)?;
         assert!(lib_path.ends_with("src/lib.incn"));
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_library_reexports_success_with_alias() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "pub from widgets import Widget as PublicWidget\n";
+        let tokens = lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+        let ast = parser::parse_with_module_path(&tokens, Some("project/src/lib.incn"))
+            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let lib_module = ParsedModule {
+            name: "main".to_string(),
+            path_segments: vec!["main".to_string()],
+            file_path: PathBuf::from("project/src/lib.incn"),
+            source: source.to_string(),
+            ast,
+        };
+
+        let widget_export = CheckedNamedExport {
+            name: "Widget".to_string(),
+            kind: CheckedExportKind::TypeAlias(crate::frontend::library_exports::CheckedTypeAliasExport {
+                name: "Widget".to_string(),
+                type_params: Vec::new(),
+                target: ResolvedType::Named("Widget".to_string()),
+            }),
+        };
+        let mut module_exports: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
+        module_exports.insert(
+            "widgets".to_string(),
+            HashMap::from([(widget_export.name.clone(), widget_export)]),
+        );
+
+        let resolved = resolve_library_reexports(&lib_module, &module_exports).map_err(|errs| format!("{errs:?}"))?;
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].name, "PublicWidget");
+        match &resolved[0].kind {
+            CheckedExportKind::TypeAlias(alias) => assert_eq!(alias.name, "PublicWidget"),
+            _ => panic!("expected type alias export"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_library_reexports_reports_missing_module() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "pub from widgets import Widget\n";
+        let tokens = lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+        let ast = parser::parse_with_module_path(&tokens, Some("project/src/lib.incn"))
+            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let lib_module = ParsedModule {
+            name: "main".to_string(),
+            path_segments: vec!["main".to_string()],
+            file_path: PathBuf::from("project/src/lib.incn"),
+            source: source.to_string(),
+            ast,
+        };
+
+        let module_exports: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
+        let result = resolve_library_reexports(&lib_module, &module_exports);
+        assert!(result.is_err(), "expected missing module to fail");
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_library_reexports_reports_duplicates() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "pub from widgets import Widget\npub from widgets import Widget\n";
+        let tokens = lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+        let ast = parser::parse_with_module_path(&tokens, Some("project/src/lib.incn"))
+            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let lib_module = ParsedModule {
+            name: "main".to_string(),
+            path_segments: vec!["main".to_string()],
+            file_path: PathBuf::from("project/src/lib.incn"),
+            source: source.to_string(),
+            ast,
+        };
+
+        let widget_export = CheckedNamedExport {
+            name: "Widget".to_string(),
+            kind: CheckedExportKind::TypeAlias(crate::frontend::library_exports::CheckedTypeAliasExport {
+                name: "Widget".to_string(),
+                type_params: Vec::new(),
+                target: ResolvedType::Named("Widget".to_string()),
+            }),
+        };
+        let mut module_exports: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
+        module_exports.insert(
+            "widgets".to_string(),
+            HashMap::from([(widget_export.name.clone(), widget_export)]),
+        );
+
+        let result = resolve_library_reexports(&lib_module, &module_exports);
+        assert!(result.is_err(), "expected duplicate export to fail");
         Ok(())
     }
 }

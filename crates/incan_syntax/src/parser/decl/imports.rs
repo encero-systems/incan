@@ -1,6 +1,6 @@
 /// Import parsing (`import ...`, `from ... import ...`, `rust::`, `python ...`).
 impl<'a> Parser<'a> {
-    fn import_decl(&mut self) -> Result<ImportDecl, CompileError> {
+    fn import_decl(&mut self, visibility: Visibility) -> Result<ImportDecl, CompileError> {
         // Check for "from ... import ..." syntax
         if self.match_keyword(KeywordId::From) {
             // Check for "from rust::crate import ..." syntax
@@ -20,6 +20,7 @@ impl<'a> Parser<'a> {
                 let items = self.parse_import_items()?;
 
                 return Ok(ImportDecl {
+                    visibility,
                     kind: ImportKind::RustFrom {
                         crate_name,
                         path,
@@ -39,6 +40,7 @@ impl<'a> Parser<'a> {
             let items = self.parse_import_items()?;
 
             return Ok(ImportDecl {
+                visibility,
                 kind: ImportKind::From { module, items },
                 alias: None,
             });
@@ -81,7 +83,11 @@ impl<'a> Parser<'a> {
             None
         };
 
-        Ok(ImportDecl { kind, alias })
+        Ok(ImportDecl {
+            visibility,
+            kind,
+            alias,
+        })
     }
 
     /// Parse a Rust crate path after `rust::` (or `rust.` recovery)

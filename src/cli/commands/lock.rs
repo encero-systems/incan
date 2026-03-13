@@ -265,7 +265,8 @@ fn collect_test_inline_imports(project_root: &Path) -> CliResult<Vec<InlineRustI
             }
             CliError::failure(msg.trim_end())
         })?;
-        let ast = parser::parse(&tokens).map_err(|errs| {
+        let path_display = file_path.to_string_lossy();
+        let ast = parser::parse_with_module_path(&tokens, Some(path_display.as_ref())).map_err(|errs| {
             let mut msg = String::new();
             for err in &errs {
                 msg.push_str(&diagnostics::format_error(&file_path.to_string_lossy(), &source, err));

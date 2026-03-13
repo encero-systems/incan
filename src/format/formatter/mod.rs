@@ -124,6 +124,7 @@ impl Formatter {
 
         (
             Declaration::Import(ImportDecl {
+                visibility: base_import.visibility,
                 kind: ImportKind::RustFrom {
                     crate_name: base_crate.clone(),
                     path: base_path.clone(),

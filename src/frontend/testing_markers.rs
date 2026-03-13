@@ -148,12 +148,14 @@ fn load_testing_marker_semantics_from_stdlib() -> Result<TestingMarkerSemantics,
         ))
     })?;
 
-    let program = crate::frontend::parser::parse(&tokens).map_err(|e| {
-        TestingMarkerLoadError::new(format!(
-            "failed to parse std.testing source `{}`: {e:?}",
-            abs_path.display()
-        ))
-    })?;
+    let path_display = abs_path.to_string_lossy();
+    let program =
+        crate::frontend::parser::parse_with_module_path(&tokens, Some(path_display.as_ref())).map_err(|e| {
+            TestingMarkerLoadError::new(format!(
+                "failed to parse std.testing source `{}`: {e:?}",
+                abs_path.display()
+            ))
+        })?;
 
     extract_testing_marker_semantics(&program)
 }

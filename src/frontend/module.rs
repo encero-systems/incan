@@ -84,7 +84,7 @@ impl ModuleCollector {
         let source = fs::read_to_string(path).map_err(|e| vec![errors::cannot_read_file(path, &e, Span::default())])?;
 
         let tokens = lexer::lex(&source)?;
-        let ast = parser::parse(&tokens)?;
+        let ast = parser::parse_with_module_path(&tokens, path.to_str())?;
 
         // Find and load dependencies
         for decl in &ast.declarations {
@@ -525,6 +525,7 @@ mod tests {
     #[test]
     fn test_exported_symbols_ignores_module_imports() {
         let import = ImportDecl {
+            visibility: Visibility::Private,
             kind: ImportKind::Module(ImportPath {
                 segments: vec!["std".to_string()],
                 is_absolute: false,
@@ -544,6 +545,7 @@ mod tests {
     #[test]
     fn test_exported_symbols_reexports_from_import_items() {
         let import = ImportDecl {
+            visibility: Visibility::Private,
             kind: ImportKind::From {
                 module: ImportPath {
                     segments: vec!["std".to_string(), "web".to_string(), "routing".to_string()],

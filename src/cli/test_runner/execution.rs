@@ -56,7 +56,8 @@ pub(super) fn run_single_test(
         Err(e) => return TestResult::Failed(start.elapsed(), format!("Lexer error: {:?}", e)),
     };
 
-    let ast = match parser::parse(&tokens) {
+    let path_display = test.file_path.to_string_lossy();
+    let ast = match parser::parse_with_module_path(&tokens, Some(path_display.as_ref())) {
         Ok(a) => a,
         Err(e) => return TestResult::Failed(start.elapsed(), format!("Parser error: {:?}", e)),
     };

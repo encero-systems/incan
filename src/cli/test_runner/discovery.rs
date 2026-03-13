@@ -48,7 +48,9 @@ pub fn discover_tests_and_fixtures(file_path: &Path) -> Result<DiscoveryResult, 
 
     let tokens = lexer::lex(&source).map_err(|e| format!("Lexer error: {:?}", e))?;
 
-    let ast = parser::parse(&tokens).map_err(|e| format!("Parser error: {:?}", e))?;
+    let path_display = file_path.to_string_lossy();
+    let ast = parser::parse_with_module_path(&tokens, Some(path_display.as_ref()))
+        .map_err(|e| format!("Parser error: {:?}", e))?;
 
     let import_aliases = crate::frontend::decorator_resolution::collect_import_aliases(&ast);
     let semantics =

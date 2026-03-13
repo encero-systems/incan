@@ -22,6 +22,7 @@ pub struct ConstDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportDecl {
+    pub visibility: Visibility,
     pub kind: ImportKind,
     pub alias: Option<Ident>,
 }

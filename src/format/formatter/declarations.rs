@@ -72,6 +72,7 @@ impl Formatter {
     // ---- Imports ----
 
     fn format_import(&mut self, import: &ImportDecl) {
+        self.write_visibility(import.visibility);
         match &import.kind {
             ImportKind::Module(path) => {
                 self.writer.write("import ");

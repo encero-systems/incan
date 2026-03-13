@@ -151,7 +151,7 @@ pub fn parse_prelude_file(stdlib_dir: &Path, relative_path: &str) -> Result<Opti
         }
     })?;
 
-    let ast = parser::parse(&tokens).map_err(|errs| {
+    let ast = parser::parse_with_module_path(&tokens, Some(&path_display)).map_err(|errs| {
         let mut msg = String::from("parser errors:\n");
         for err in &errs {
             msg.push_str(&diagnostics::format_error(&path_display, &source, err));

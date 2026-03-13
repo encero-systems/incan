@@ -68,7 +68,8 @@ impl IncanLanguageServer {
         };
 
         // Step 2: Parse
-        let ast = match parser::parse(&tokens) {
+        let module_path = uri.to_file_path().ok();
+        let ast = match parser::parse_with_module_path(&tokens, module_path.as_deref().and_then(|path| path.to_str())) {
             Ok(ast) => {
                 // Forward non-fatal parser warnings (e.g. RFC 005 dot-notation nudges) to the LSP.
                 for warn in &ast.warnings {
@@ -227,7 +228,8 @@ impl IncanLanguageServer {
                     continue;
                 }
             };
-            let dep_ast = match parser::parse(&dep_tokens) {
+            let dep_path_display = canonical.to_string_lossy();
+            let dep_ast = match parser::parse_with_module_path(&dep_tokens, Some(dep_path_display.as_ref())) {
                 Ok(a) => a,
                 Err(errors) => {
                     // Guardrail: surface dependency parse errors.

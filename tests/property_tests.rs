@@ -169,15 +169,45 @@ mod proptest_strategies {
         ) {
             // Parse
             use incan::frontend::{lexer, parser};
-            let tokens = lexer::lex(&func).expect("Lex failed");
-            let _ast = parser::parse(&tokens).expect("Parse failed");
+            let tokens = match lexer::lex(&func) {
+                Ok(tokens) => tokens,
+                Err(errs) => {
+                    prop_assert!(false, "Lex failed: {:?}", errs);
+                    unreachable!();
+                }
+            };
+            let _ast = match parser::parse(&tokens) {
+                Ok(ast) => ast,
+                Err(errs) => {
+                    prop_assert!(false, "Parse failed: {:?}", errs);
+                    unreachable!();
+                }
+            };
 
             // Format
-            let formatted = format_source(&func).expect("Format failed");
+            let formatted = match format_source(&func) {
+                Ok(formatted) => formatted,
+                Err(err) => {
+                    prop_assert!(false, "Format failed: {}", err);
+                    unreachable!();
+                }
+            };
 
             // Re-parse to ensure still valid
-            let tokens2 = lexer::lex(&formatted).expect("Lex formatted failed");
-            let _ast2 = parser::parse(&tokens2).expect("Parse formatted failed");
+            let tokens2 = match lexer::lex(&formatted) {
+                Ok(tokens) => tokens,
+                Err(errs) => {
+                    prop_assert!(false, "Lex formatted failed: {:?}", errs);
+                    unreachable!();
+                }
+            };
+            let _ast2 = match parser::parse(&tokens2) {
+                Ok(ast) => ast,
+                Err(errs) => {
+                    prop_assert!(false, "Parse formatted failed: {:?}", errs);
+                    unreachable!();
+                }
+            };
         }
 
         /// Property: Identifiers remain valid after round-trip through lexer
@@ -186,7 +216,13 @@ mod proptest_strategies {
             use incan::frontend::lexer;
 
             let source = format!("x = {}", ident);
-            let tokens = lexer::lex(&source).expect("Lex failed");
+            let tokens = match lexer::lex(&source) {
+                Ok(tokens) => tokens,
+                Err(errs) => {
+                    prop_assert!(false, "Lex failed: {:?}", errs);
+                    unreachable!();
+                }
+            };
 
             // Should have at least 3 tokens (ident, =, ident)
             prop_assert!(tokens.len() >= 3);

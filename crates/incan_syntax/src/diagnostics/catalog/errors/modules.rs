@@ -79,3 +79,32 @@ pub fn import_not_exported(name: &str, module_path: &str, exported_names: &[Stri
     )
     .with_hint(format!("Public exports from `{}`: {}", module_path, exports))
 }
+
+/// `src/lib.incn` public exports must use `pub from ... import ...`.
+pub fn library_pub_reexport_requires_from(span: Span) -> CompileError {
+    CompileError::new("Library exports must use `pub from ... import ...`".to_string(), span)
+        .with_hint("Use `pub from module import Name` in `src/lib.incn`")
+}
+
+/// A `pub from ... import ...` statement in `src/lib.incn` references an unknown module.
+pub fn library_reexport_unknown_module(module_path: &str, known_modules: &[String], span: Span) -> CompileError {
+    let mut modules = known_modules.to_vec();
+    modules.sort();
+    let known = if modules.is_empty() {
+        "<none>".to_string()
+    } else {
+        modules.join(", ")
+    };
+
+    CompileError::new(
+        format!("Cannot re-export from `{module_path}`: module not found in this library build"),
+        span,
+    )
+    .with_hint(format!("Known modules: {}", known))
+}
+
+/// Duplicate exported name in `src/lib.incn`.
+pub fn duplicate_library_export(name: &str, span: Span) -> CompileError {
+    CompileError::new(format!("Duplicate library export `{name}` in `src/lib.incn`"), span)
+        .with_hint("Rename one of the exports with `as`, or remove the duplicate")
+}

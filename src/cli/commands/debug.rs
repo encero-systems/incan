@@ -45,7 +45,7 @@ pub fn parse_file(file_path: &str) -> CliResult<ExitCode> {
         }
     };
 
-    match parser::parse(&tokens) {
+    match parser::parse_with_module_path(&tokens, Some(file_path)) {
         Ok(ast) => {
             println!("{:#?}", ast);
             Ok(ExitCode::SUCCESS)

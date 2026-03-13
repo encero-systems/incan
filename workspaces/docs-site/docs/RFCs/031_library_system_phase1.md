@@ -364,8 +364,8 @@ Package a compiled Rust library instead of generated Rust source. Rejected for P
 ### Spec / design lock
 
 - [ ] Confirm all Phase 1 scope boundaries remain aligned with RFC 034 handoff (git/registry deferred).
-- [ ] Confirm `pub` re-export expectations in `src/lib.incn` and document any edge-case constraints.
-- [ ] Confirm manifest schema v1 fields for exports, type parameters, and bounds metadata.
+- [x] Confirm `pub` re-export expectations in `src/lib.incn` and document any edge-case constraints.
+- [x] Confirm manifest schema v1 fields for exports, type parameters, and bounds metadata.
 
 ### Configuration and CLI behavior
 
@@ -382,10 +382,10 @@ Package a compiled Rust library instead of generated Rust source. Rejected for P
 
 ### Manifest producer and consumer reader
 
-- [ ] Build manifest export entries from the checked public API rather than source reparse.
-- [ ] Serialize and deserialize recursive `TypeRef` trees with generic applications and wrappers.
-- [ ] Preserve declaration-site type-parameter bounds metadata in manifest exports.
-- [ ] Enforce manifest version and compiler compatibility checks on load.
+- [x] Build manifest export entries from the checked public API rather than source reparse.
+- [x] Serialize and deserialize recursive `TypeRef` trees with generic applications and wrappers.
+- [x] Preserve declaration-site type-parameter bounds metadata in manifest exports.
+- [x] Enforce manifest version and compiler compatibility checks on load.
 
 ### Typechecker integration
 
@@ -415,7 +415,7 @@ Package a compiled Rust library instead of generated Rust source. Rejected for P
 
 - [ ] Add parser tests for `pub::` import forms and edge-case diagnostics.
 - [ ] Add typechecker tests for valid/invalid manifest-backed imports.
-- [ ] Add manifest IO tests for schema compatibility and bounds fidelity.
+- [x] Add manifest IO tests for schema compatibility and bounds fidelity.
 - [ ] Add codegen snapshot tests covering `pub::` usage in expression positions.
 - [ ] Add integration tests for library build + consumer build end-to-end flow.
 

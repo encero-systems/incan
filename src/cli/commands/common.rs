@@ -230,7 +230,7 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
             }
         };
 
-        let ast = match parser::parse(&tokens) {
+        let ast = match parser::parse_with_module_path(&tokens, Some(&file_path)) {
             Ok(a) => {
                 // Surface any non-fatal parser warnings (e.g. RFC 005 dot-notation nudges) immediately,
                 // so they reach the user regardless of which build/run/debug command was invoked.

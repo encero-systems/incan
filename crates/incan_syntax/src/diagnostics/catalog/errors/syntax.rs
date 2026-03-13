@@ -78,7 +78,19 @@ pub fn empty_index_not_allowed(span: Span) -> CompileError {
 // -- Imports & decorators ----------------------------------------------------
 
 pub fn pub_modifier_not_allowed_on_import(span: Span) -> CompileError {
-    CompileError::syntax("The 'pub' modifier is not supported on imports".to_string(), span)
+    CompileError::syntax(
+        "The 'pub' modifier is only supported on `from ... import ...` re-exports".to_string(),
+        span,
+    )
+    .with_hint("Use `pub from module import Name` in `src/lib.incn`, or remove `pub`")
+}
+
+pub fn pub_reexport_only_allowed_in_library_entrypoint(span: Span) -> CompileError {
+    CompileError::syntax(
+        "`pub from ... import ...` is only valid in `src/lib.incn`".to_string(),
+        span,
+    )
+    .with_hint("Move this re-export to `src/lib.incn`, or remove `pub` for an internal import")
 }
 
 pub fn decorator_path_expected(span: Span) -> CompileError {
