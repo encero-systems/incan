@@ -321,7 +321,7 @@ pub struct IrCodegen<'a> {
     needs_list_helpers: bool,
     /// Functions imported from external Rust crates (name -> true for external)
     external_rust_functions: HashSet<String>,
-    /// Declared Rust crate names from `incan.toml [dependencies]` (RFC 013 / RFC 023).
+    /// Declared Rust crate names from `incan.toml [rust-dependencies]` (RFC 013 / RFC 023).
     ///
     /// When set, internal typechecking (used to obtain `TypeCheckInfo` for lowering) will validate `rust.module()`
     /// crate segments against this set.
@@ -346,7 +346,7 @@ impl<'a> IrCodegen<'a> {
         }
     }
 
-    /// Set declared Rust crate names from `incan.toml [dependencies]`.
+    /// Set declared Rust crate names from `incan.toml [rust-dependencies]`. (RFC 031)
     ///
     /// This is used for validating `rust.module()` paths during the internal typechecking that precedes IR lowering.
     pub fn set_declared_crate_names(&mut self, names: HashSet<String>) {

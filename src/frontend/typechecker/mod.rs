@@ -173,7 +173,7 @@ pub struct TypeChecker {
     pub(crate) dependency_exports: HashMap<String, Vec<ExportedSymbol>>,
     /// Module path for the program being checked (if known).
     pub(crate) current_module_path: Option<Vec<String>>,
-    /// Declared Rust crate names from `incan.toml [dependencies]` (RFC 023 / RFC 013).
+    /// Declared Rust crate names from `incan.toml [rust-dependencies]` (RFC 023 / RFC 013).
     ///
     /// Used to validate that `rust.module()` paths reference known crates. When `None`, crate validation is skipped
     /// (e.g. single-file mode without a manifest).
@@ -224,7 +224,7 @@ impl TypeChecker {
         }
     }
 
-    /// Set the declared Rust crate names from `incan.toml [dependencies]`.
+    /// Set the declared Rust crate names from `incan.toml [rust-dependencies]`.
     ///
     /// When set, `rust.module()` path validation will check that the first segment of the path is either `incan_stdlib`
     /// or a crate declared here.

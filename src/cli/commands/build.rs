@@ -3,6 +3,7 @@
 //! This module handles the full compilation flow: module collection, type checking, codegen configuration, dependency
 //! resolution, project generation, and Cargo build/run.
 
+use std::env;
 use std::path::{Path, PathBuf};
 
 use crate::backend::{IrCodegen, ProjectGenerator};
@@ -213,6 +214,25 @@ fn format_rust_extern_wrapped_diagnostics(stderr: &str, contexts: &[RustExternDe
     if rendered.is_empty() { None } else { Some(rendered) }
 }
 
+fn resolve_library_project_root(file_path: Option<&str>) -> CliResult<PathBuf> {
+    if let Some(file_path) = file_path {
+        return Ok(resolve_project_root(Path::new(file_path)));
+    }
+
+    env::current_dir().map_err(|e| CliError::failure(format!("failed to determine current directory: {e}")))
+}
+
+fn validate_library_entrypoint(manifest: &ProjectManifest) -> CliResult<PathBuf> {
+    let lib_entry = manifest.project_root().join("src").join("lib.incn");
+    if !lib_entry.is_file() {
+        return Err(CliError::failure(format!(
+            "`incan build --lib` requires `{}`",
+            lib_entry.display()
+        )));
+    }
+    Ok(lib_entry)
+}
+
 /// Prepare an Incan project for building or running.
 ///
 /// This function performs all the shared setup:
@@ -246,7 +266,7 @@ fn prepare_project(
     let manifest = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))?;
 
     // Type check all modules (dependencies + stdlib first), so diagnostics are associated with the correct file.
-    let declared = manifest.as_ref().map(|m| m.declared_crate_names());
+    let declared = manifest.as_ref().map(|m| m.declared_rust_crate_names());
     let mut all_errors: String = String::new();
     for (idx, module) in modules.iter().enumerate() {
         let deps_for_module: Vec<(&str, &Program)> = modules[..idx].iter().map(|m| (m.name.as_str(), &m.ast)).collect();
@@ -301,7 +321,7 @@ fn prepare_project(
     // ---- Setup codegen ----
     let mut codegen = IrCodegen::new();
     if let Some(m) = manifest.as_ref() {
-        codegen.set_declared_crate_names(m.declared_crate_names());
+        codegen.set_declared_crate_names(m.declared_rust_crate_names());
     }
     // Add user dependency modules
     for module in dep_modules {
@@ -453,6 +473,30 @@ pub fn build_file(
     }
 }
 
+/// Validate RFC 031 library-mode preconditions.
+pub fn build_library(
+    file_path: Option<&str>,
+    _output_dir: Option<&String>,
+    _locked: bool,
+    _frozen: bool,
+    _cargo_features: Vec<String>,
+    _cargo_no_default_features: bool,
+    _cargo_all_features: bool,
+) -> CliResult<ExitCode> {
+    let project_root = resolve_library_project_root(file_path)?;
+    let Some(manifest) = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))? else {
+        return Err(CliError::failure(
+            "No incan.toml found for `incan build --lib` (run `incan init` first)",
+        ));
+    };
+
+    let _lib_entry = validate_library_entrypoint(&manifest)?;
+
+    Err(CliError::failure(
+        "`incan build --lib` preconditions passed, but library artifact generation is not implemented yet.",
+    ))
+}
+
 /// Build and run an Incan file.
 pub fn run_file(
     file_path: &str,
@@ -490,6 +534,8 @@ pub fn run_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::ProjectManifest;
+    use std::fs;
 
     #[test]
     fn classify_signature_mismatch_for_rust_extern_context() {
@@ -522,5 +568,34 @@ mod tests {
         };
         assert!(rendered.contains("Rust backing item"));
         assert!(rendered.contains("incan_stdlib::testing::fail"));
+    }
+
+    #[test]
+    fn library_entrypoint_precondition_fails_when_missing() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let manifest_path = tmp.path().join("incan.toml");
+        let manifest_content = "[project]\nname = \"mylib\"\n";
+        fs::write(&manifest_path, manifest_content)?;
+        let manifest = ProjectManifest::from_str(manifest_content, &manifest_path)?;
+
+        let err = validate_library_entrypoint(&manifest);
+        assert!(err.is_err(), "expected missing src/lib.incn to fail");
+        Ok(())
+    }
+
+    #[test]
+    fn library_entrypoint_precondition_passes_when_present() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let src_dir = tmp.path().join("src");
+        fs::create_dir_all(&src_dir)?;
+        fs::write(src_dir.join("lib.incn"), "\"\"\"lib\"\"\"\n")?;
+        let manifest_path = tmp.path().join("incan.toml");
+        let manifest_content = "[project]\nname = \"mylib\"\n";
+        fs::write(&manifest_path, manifest_content)?;
+        let manifest = ProjectManifest::from_str(manifest_content, &manifest_path)?;
+
+        let lib_path = validate_library_entrypoint(&manifest)?;
+        assert!(lib_path.ends_with("src/lib.incn"));
+        Ok(())
     }
 }

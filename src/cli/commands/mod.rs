@@ -22,7 +22,7 @@ pub mod lock;
 pub mod stdlib_loader;
 
 // Re-export public API so callers can use `commands::build_file()` etc.
-pub use build::{build_file, run_file};
+pub use build::{build_file, build_library, run_file};
 pub use common::{collect_modules, read_source};
 pub use debug::{check_file, emit_rust, lex_file, parse_file};
 pub use format::format_files;

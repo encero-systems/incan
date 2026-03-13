@@ -96,7 +96,7 @@ impl IncanLanguageServer {
             && let Ok(manifest) = ProjectManifest::discover(start_dir)
             && let Some(m) = manifest
         {
-            checker.set_declared_crate_names(m.declared_crate_names());
+            checker.set_declared_crate_names(m.declared_rust_crate_names());
         }
         let (deps, mut dep_summary_diags) = self.collect_dependency_modules(uri, &ast, source, version).await;
         let dep_refs: Vec<(&str, &Program)> = deps.iter().map(|(name, program)| (name.as_str(), program)).collect();

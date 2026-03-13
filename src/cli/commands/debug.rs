@@ -66,7 +66,7 @@ pub fn check_file(file_path: &str) -> CliResult<ExitCode> {
 
     let project_root = resolve_project_root(Path::new(file_path));
     let manifest = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))?;
-    let declared = manifest.as_ref().map(|m| m.declared_crate_names());
+    let declared = manifest.as_ref().map(|m| m.declared_rust_crate_names());
 
     let mut all_errors: String = String::new();
     for (idx, module) in modules.iter().enumerate() {
@@ -120,7 +120,7 @@ pub fn emit_rust(file_path: &str, strict: bool) -> CliResult<ExitCode> {
     let project_root = resolve_project_root(Path::new(file_path));
     let manifest = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))?;
     if let Some(m) = manifest.as_ref() {
-        codegen.set_declared_crate_names(m.declared_crate_names());
+        codegen.set_declared_crate_names(m.declared_rust_crate_names());
     }
 
     for module in &modules[..modules.len() - 1] {

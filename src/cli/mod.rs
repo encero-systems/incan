@@ -5,6 +5,7 @@
 //! ## Commands
 //!
 //! - `build <file>` - Compile to Rust and build executable
+//! - `build --lib` - Validate library-mode preconditions
 //! - `run <file>` - Compile and run the program
 //! - `init [path]` - Create a starter incan.toml
 //! - `fmt <file|dir>` - Format Incan source files
@@ -157,9 +158,12 @@ pub enum ColorMode {
 pub enum Command {
     /// Compile to Rust and build executable
     Build {
-        /// Source file to compile
+        /// Source file to compile (optional in `--lib` mode)
         #[arg(value_name = "FILE")]
-        file: PathBuf,
+        file: Option<PathBuf>,
+        /// Enable library mode precondition checks (`src/lib.incn` required)
+        #[arg(long = "lib")]
+        lib_mode: bool,
         /// Output directory (default: target/incan/<name>)
         #[arg(value_name = "OUTPUT_DIR")]
         output_dir: Option<PathBuf>,
@@ -347,6 +351,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
     match cli.command {
         Some(Command::Build {
             file,
+            lib_mode,
             output_dir,
             locked,
             frozen,
@@ -355,15 +360,29 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             cargo_all_features,
         }) => {
             let out = output_dir.map(|p| p.to_string_lossy().to_string());
-            commands::build_file(
-                &file.to_string_lossy(),
-                out.as_ref(),
-                locked,
-                frozen,
-                cargo_features,
-                cargo_no_default_features,
-                cargo_all_features,
-            )
+            if lib_mode {
+                let file_arg = file.as_ref().map(|p| p.to_string_lossy().to_string());
+                commands::build_library(
+                    file_arg.as_deref(),
+                    out.as_ref(),
+                    locked,
+                    frozen,
+                    cargo_features,
+                    cargo_no_default_features,
+                    cargo_all_features,
+                )
+            } else {
+                let file = file.ok_or_else(|| CliError::failure("Error: build requires FILE unless `--lib` is set"))?;
+                commands::build_file(
+                    &file.to_string_lossy(),
+                    out.as_ref(),
+                    locked,
+                    frozen,
+                    cargo_features,
+                    cargo_no_default_features,
+                    cargo_all_features,
+                )
+            }
         }
         Some(Command::Run {
             file,
@@ -579,7 +598,25 @@ mod tests {
     #[test]
     fn test_cli_parse_build() {
         let cli = must_cli(["incan", "build", "test.incn"]);
-        assert!(matches!(cli.command, Some(Command::Build { .. })));
+        match cli.command {
+            Some(Command::Build { file, lib_mode, .. }) => {
+                assert_eq!(file, Some(PathBuf::from("test.incn")));
+                assert!(!lib_mode);
+            }
+            _ => panic!("Expected Build command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_build_lib() {
+        let cli = must_cli(["incan", "build", "--lib"]);
+        match cli.command {
+            Some(Command::Build { file, lib_mode, .. }) => {
+                assert!(file.is_none());
+                assert!(lib_mode);
+            }
+            _ => panic!("Expected Build command"),
+        }
     }
 
     #[test]

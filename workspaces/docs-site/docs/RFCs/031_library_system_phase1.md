@@ -369,10 +369,10 @@ Package a compiled Rust library instead of generated Rust source. Rejected for P
 
 ### Configuration and CLI behavior
 
-- [ ] Parse and validate `[dependencies]` as Incan library dependencies (path-only in Phase 1).
-- [ ] Parse and validate `[rust-dependencies]` as Rust crate pass-through dependencies.
-- [ ] Add migration diagnostics for projects still using old Rust dependency placement.
-- [ ] Implement `incan build --lib` precondition checks and clear failure messages.
+- [x] Parse and validate `[dependencies]` as Incan library dependencies (path-only in Phase 1).
+- [x] Parse and validate `[rust-dependencies]` as Rust crate pass-through dependencies.
+- [x] Add migration diagnostics for projects still using old Rust dependency placement.
+- [x] Implement `incan build --lib` precondition checks and clear failure messages.
 
 ### Parser and import resolution
 
@@ -407,7 +407,7 @@ Package a compiled Rust library instead of generated Rust source. Rejected for P
 
 ### LSP and tooling parity
 
-- [ ] Reuse shared manifest parser/validator between compiler and LSP.
+- [x] Reuse shared manifest parser/validator between compiler and LSP.
 - [ ] Ensure editor diagnostics for `pub::` imports match compiler diagnostics.
 - [ ] Validate completion and hover behavior for manifest-backed library symbols.
 
