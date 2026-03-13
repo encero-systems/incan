@@ -376,9 +376,9 @@ Package a compiled Rust library instead of generated Rust source. Rejected for P
 
 ### Parser and import resolution
 
-- [ ] Support `pub::` import path handling as a first-class namespace prefix.
-- [ ] Ensure import diagnostics distinguish unresolved library names vs unresolved exported symbols.
-- [ ] Ensure namespace collision diagnostics suggest import aliasing patterns.
+- [x] Support `pub::` import path handling as a first-class namespace prefix.
+- [x] Ensure import diagnostics distinguish unresolved library names vs unresolved exported symbols.
+- [x] Ensure namespace collision diagnostics suggest import aliasing patterns.
 
 ### Manifest producer and consumer reader
 
@@ -389,15 +389,15 @@ Package a compiled Rust library instead of generated Rust source. Rejected for P
 
 ### Typechecker integration
 
-- [ ] Register manifest exports in semantic lookup so imported library symbols typecheck like local declarations.
-- [ ] Resolve library nominal types and function signatures from manifest-backed symbols in expression contexts.
-- [ ] Keep local-module and library symbol resolution behavior deterministic and well-diagnosed.
+- [x] Register manifest exports in semantic lookup so imported library symbols typecheck like local declarations.
+- [x] Resolve library nominal types and function signatures from manifest-backed symbols in expression contexts.
+- [x] Keep local-module and library symbol resolution behavior deterministic and well-diagnosed.
 
 ### Lowering, emission, and Cargo integration
 
-- [ ] Emit generated Rust that imports library symbols from dependency crates.
-- [ ] Generate consumer Cargo dependency entries targeting each library's generated crate path.
-- [ ] Validate that consumer builds compile and link against generated library crates without re-lowering library Incan source.
+- [x] Emit generated Rust that imports library symbols from dependency crates.
+- [x] Generate consumer Cargo dependency entries targeting each library's generated crate path.
+- [x] Validate that consumer builds compile and link against generated library crates without re-lowering library Incan source.
 
 ### Vocab and soft keywords (RFC 027 alignment)
 
@@ -414,10 +414,10 @@ Package a compiled Rust library instead of generated Rust source. Rejected for P
 ### Tests and snapshots
 
 - [ ] Add parser tests for `pub::` import forms and edge-case diagnostics.
-- [ ] Add typechecker tests for valid/invalid manifest-backed imports.
+- [x] Add typechecker tests for valid/invalid manifest-backed imports.
 - [x] Add manifest IO tests for schema compatibility and bounds fidelity.
 - [ ] Add codegen snapshot tests covering `pub::` usage in expression positions.
-- [ ] Add integration tests for library build + consumer build end-to-end flow.
+- [x] Add integration tests for library build + consumer build end-to-end flow.
 
 ### Docs and release notes
 

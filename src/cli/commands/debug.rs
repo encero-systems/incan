@@ -128,6 +128,11 @@ pub fn emit_rust(file_path: &str, strict: bool) -> CliResult<ExitCode> {
     if let Some(m) = manifest.as_ref() {
         codegen.set_declared_crate_names(m.declared_rust_crate_names());
     }
+    let library_manifest_index = manifest
+        .as_ref()
+        .map(LibraryManifestIndex::from_project_manifest)
+        .unwrap_or_default();
+    codegen.set_library_manifest_index(library_manifest_index);
 
     for module in &modules[..modules.len() - 1] {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());

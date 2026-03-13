@@ -10,10 +10,8 @@ impl AstLowering {
         let (path, ast_items) = match &i.kind {
             ast::ImportKind::Module(p) => (p.segments.clone(), vec![]),
             ast::ImportKind::From { module, items } => (module.segments.clone(), items.clone()),
-            ast::ImportKind::PubLibrary { library } => (vec!["pub".to_string(), library.clone()], vec![]),
-            ast::ImportKind::PubFrom { library, items } => {
-                (vec!["pub".to_string(), library.clone()], items.clone())
-            }
+            ast::ImportKind::PubLibrary { library } => (vec![library.clone()], vec![]),
+            ast::ImportKind::PubFrom { library, items } => (vec![library.clone()], items.clone()),
             ast::ImportKind::RustCrate { crate_name, path, .. } => {
                 let mut segs = vec![crate_name.clone()];
                 segs.extend(path.clone());
@@ -30,6 +28,14 @@ impl AstLowering {
                 (segs, items.clone())
             }
             ast::ImportKind::Python(s) => (vec![s.clone()], vec![]),
+        };
+        let origin = match &i.kind {
+            ast::ImportKind::PubLibrary { library } | ast::ImportKind::PubFrom { library, .. } => {
+                super::super::super::decl::IrImportOrigin::PubLibrary {
+                    dependency_key: library.clone(),
+                }
+            }
+            _ => super::super::super::decl::IrImportOrigin::Standard,
         };
 
         let qualifier = match &i.kind {
@@ -64,6 +70,7 @@ impl AstLowering {
             .collect();
 
         IrDeclKind::Import {
+            origin,
             qualifier,
             path,
             alias: i.alias.clone(),

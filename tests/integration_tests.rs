@@ -1410,6 +1410,10 @@ mod rfc031_pub_import_integration_tests {
     use super::*;
     use incan::library_manifest::{LibraryManifest, ModelExport};
 
+    fn incan_bin_path() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("incan")
+    }
+
     fn write_project_files(
         root: &Path,
         manifest_content: &str,
@@ -1423,10 +1427,41 @@ mod rfc031_pub_import_integration_tests {
     }
 
     fn run_check(main_path: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
-        Ok(Command::new("target/debug/incan")
+        Ok(Command::new(incan_bin_path())
             .arg("--check")
             .arg(main_path)
             .output()?)
+    }
+
+    fn run_build(main_path: &Path, out_dir: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+        Ok(Command::new(incan_bin_path())
+            .args([
+                "build",
+                main_path.to_string_lossy().as_ref(),
+                out_dir.to_string_lossy().as_ref(),
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?)
+    }
+
+    fn run_build_lib(project_root: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+        Ok(Command::new(incan_bin_path())
+            .args(["build", "--lib"])
+            .current_dir(project_root)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?)
+    }
+
+    fn write_minimal_library_crate(artifact_root: &Path, package_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+        std::fs::create_dir_all(artifact_root.join("src"))?;
+        std::fs::write(
+            artifact_root.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n"
+            ),
+        )?;
+        std::fs::write(artifact_root.join("src/lib.rs"), "pub fn linked() {}\n")?;
+        Ok(())
     }
 
     fn mylib_manifest_with_widget() -> LibraryManifest {
@@ -1476,6 +1511,10 @@ mod rfc031_pub_import_integration_tests {
             .join("mylib.incnlib");
         std::fs::create_dir_all(dep_manifest_path.parent().ok_or("missing dependency manifest parent")?)?;
         mylib_manifest_with_widget().write_to_path(&dep_manifest_path)?;
+        write_minimal_library_crate(
+            dep_manifest_path.parent().ok_or("missing dependency artifact root")?,
+            "mylib",
+        )?;
 
         let main_path = write_project_files(
             tmp.path(),
@@ -1542,6 +1581,10 @@ mod rfc031_pub_import_integration_tests {
             .join("mylib.incnlib");
         std::fs::create_dir_all(dep_manifest_path.parent().ok_or("missing dependency manifest parent")?)?;
         mylib_manifest_with_widget().write_to_path(&dep_manifest_path)?;
+        write_minimal_library_crate(
+            dep_manifest_path.parent().ok_or("missing dependency artifact root")?,
+            "mylib",
+        )?;
 
         let main_path = write_project_files(
             tmp.path(),
@@ -1555,6 +1598,154 @@ mod rfc031_pub_import_integration_tests {
             "expected check to pass for valid pub import, stderr:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn check_reports_missing_pub_library_artifacts() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let dep_manifest_path = tmp
+            .path()
+            .join("deps")
+            .join("mylib")
+            .join("target")
+            .join("lib")
+            .join("mylib.incnlib");
+        std::fs::create_dir_all(dep_manifest_path.parent().ok_or("missing dependency manifest parent")?)?;
+        mylib_manifest_with_widget().write_to_path(&dep_manifest_path)?;
+        // Intentionally do not write Cargo.toml / src/lib.rs to exercise artifact-contract diagnostics.
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"app\"\n\n[dependencies]\nmylib = { path = \"deps/mylib\" }\n",
+            "from pub::mylib import Widget\n",
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            !output.status.success(),
+            "expected check to fail for missing crate artifacts, stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&output.stderr));
+        assert!(
+            stderr.contains("Missing generated crate artifacts for `pub::mylib`"),
+            "expected missing-artifact diagnostic, got:\n{stderr}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn check_reports_pub_library_artifact_mismatch() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let dep_artifact_root = tmp.path().join("deps").join("widgets-lib").join("target").join("lib");
+        std::fs::create_dir_all(&dep_artifact_root)?;
+        let mut manifest = LibraryManifest::new("widgets_core", "0.1.0");
+        manifest.exports.models.push(ModelExport {
+            name: "Widget".to_string(),
+            type_params: Vec::new(),
+            traits: Vec::new(),
+            fields: Vec::new(),
+            methods: Vec::new(),
+        });
+        manifest.write_to_path(&dep_artifact_root.join("widgets_core.incnlib"))?;
+        write_minimal_library_crate(&dep_artifact_root, "different_package_name")?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"app\"\n\n[dependencies]\nwidgets = { path = \"deps/widgets-lib\" }\n",
+            "from pub::widgets import Widget\n",
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            !output.status.success(),
+            "expected check to fail for artifact mismatch, stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&output.stderr));
+        assert!(
+            stderr.contains("Generated crate metadata mismatch for `pub::widgets`"),
+            "expected artifact mismatch diagnostic, got:\n{stderr}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn build_lib_artifacts_and_consumer_alias_linkage() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("widgets_core_project");
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"widgets_core\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/widgets.incn"),
+            "pub model Widget:\n  name: str\n\npub def make_widget(name: str) -> Widget:\n  return Widget(name=name)\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/lib.incn"),
+            "pub from widgets import Widget, make_widget\n",
+        )?;
+
+        let producer_build = run_build_lib(&producer_root)?;
+        assert!(
+            producer_build.status.success(),
+            "expected `build --lib` to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&producer_build.stdout),
+            String::from_utf8_lossy(&producer_build.stderr)
+        );
+        let producer_artifact_root = producer_root.join("target").join("lib");
+        assert!(producer_artifact_root.join("Cargo.toml").is_file());
+        assert!(producer_artifact_root.join("src/lib.rs").is_file());
+        assert!(producer_artifact_root.join("widgets_core.incnlib").is_file());
+
+        let consumer_root = tmp.path().join("consumer_app");
+        std::fs::create_dir_all(consumer_root.join("src"))?;
+        std::fs::write(
+            consumer_root.join("incan.toml"),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"../widgets_core_project\" }\n",
+        )?;
+        let consumer_main = consumer_root.join("src/main.incn");
+        std::fs::write(
+            &consumer_main,
+            "from pub::widgets import Widget as PublicWidget, make_widget\n\ndef main() -> None:\n  w: PublicWidget = make_widget(\"ok\")\n  print(w.name)\n",
+        )?;
+
+        let out_dir = consumer_root.join("out");
+        let consumer_build = run_build(&consumer_main, &out_dir)?;
+        assert!(
+            consumer_build.status.success(),
+            "expected consumer build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&consumer_build.stdout),
+            String::from_utf8_lossy(&consumer_build.stderr)
+        );
+
+        let generated_toml = std::fs::read_to_string(out_dir.join("Cargo.toml"))?;
+        assert!(
+            generated_toml.contains("[dependencies.widgets]"),
+            "expected library alias dependency entry, got:\n{generated_toml}"
+        );
+        assert!(
+            generated_toml.contains("package = \"widgets_core\""),
+            "expected package alias mapping in Cargo.toml, got:\n{generated_toml}"
+        );
+        assert!(
+            generated_toml.contains("path = "),
+            "expected path dependency in Cargo.toml, got:\n{generated_toml}"
+        );
+
+        let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        assert!(
+            generated_main_rs.contains("pub use widgets::Widget as PublicWidget;"),
+            "expected pub:: item alias import emission, got:\n{generated_main_rs}"
+        );
+        assert!(
+            generated_main_rs.contains("pub use widgets::make_widget;"),
+            "expected pub:: item import emission, got:\n{generated_main_rs}"
+        );
+
         Ok(())
     }
 }

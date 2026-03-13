@@ -2,7 +2,8 @@
 
 use super::*;
 use crate::frontend::library_manifest_index::{
-    LibraryManifestFailureKind, LibraryManifestIndex, LibraryManifestIndexEntry, LibraryManifestLoadFailure,
+    LibraryArtifactMetadata, LibraryManifestFailureKind, LibraryManifestIndex, LibraryManifestIndexEntry,
+    LibraryManifestLoadFailure,
 };
 use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
@@ -23,6 +24,14 @@ fn check_str_with_library_index(source: &str, library_index: LibraryManifestInde
     let mut checker = TypeChecker::new();
     checker.set_library_manifest_index(library_index);
     checker.check_program(&ast)
+}
+
+fn synthetic_artifact_root(name: &str) -> PathBuf {
+    let mut root = std::env::temp_dir();
+    root.push(format!("incan_test_{name}_artifacts"));
+    root.push("target");
+    root.push("lib");
+    root
 }
 
 fn assert_check_ok(source: &str) {
@@ -80,8 +89,12 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
     LibraryManifestIndex::from_entries(HashMap::from([(
         "mylib".to_string(),
         LibraryManifestIndexEntry::Loaded {
-            path: PathBuf::from("/tmp/mylib/target/lib/mylib.incnlib"),
             manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root(
+                "mylib",
+                "mylib",
+                synthetic_artifact_root("mylib"),
+            ),
         },
     )]))
 }
@@ -2610,8 +2623,8 @@ fn test_pub_import_manifest_load_failure_is_error() {
     let broken_index = LibraryManifestIndex::from_entries(HashMap::from([(
         "brokenlib".to_string(),
         LibraryManifestIndexEntry::Failed(LibraryManifestLoadFailure {
-            path: PathBuf::from("/tmp/brokenlib/target/lib/brokenlib.incnlib"),
-            kind: LibraryManifestFailureKind::Invalid,
+            path: synthetic_artifact_root("brokenlib").join("brokenlib.incnlib"),
+            kind: LibraryManifestFailureKind::ManifestInvalid,
             message: "invalid library manifest: unsupported manifest_format 999 (expected 1)".to_string(),
         }),
     )]));

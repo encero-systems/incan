@@ -552,4 +552,37 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn test_cargo_toml_library_path_dependency_with_package_alias() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::manifest::{DependencySource, DependencySpec};
+
+        let mut generator = ProjectGenerator::new("/tmp/consumer/out", "consumer", true);
+        generator.set_dependencies(vec![DependencySpec {
+            crate_name: "widgets".to_string(),
+            version: None,
+            features: vec![],
+            default_features: true,
+            source: DependencySource::Path {
+                path: PathBuf::from("/tmp/deps/widgets-lib/target/lib"),
+            },
+            optional: false,
+            package: Some("widgets_core".to_string()),
+        }]);
+
+        let toml = generator.generate_cargo_toml()?;
+        assert!(
+            toml.contains("[dependencies.widgets]"),
+            "expected expanded table for alias dependency, got:\n{toml}"
+        );
+        assert!(
+            toml.contains("package = \"widgets_core\""),
+            "expected package alias in Cargo.toml, got:\n{toml}"
+        );
+        assert!(
+            toml.contains("path = "),
+            "expected path-based dependency in Cargo.toml, got:\n{toml}"
+        );
+        Ok(())
+    }
 }

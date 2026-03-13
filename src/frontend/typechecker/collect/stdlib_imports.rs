@@ -287,19 +287,13 @@ impl TypeChecker {
 
     fn validate_pub_library_entry(&mut self, library: &str, span: Span) {
         let known_libraries = self.library_manifests.known_libraries();
-        let Some(entry) = self.library_manifests.get(library) else {
+        let Some(entry) = self.library_manifests.get(library).cloned() else {
             self.errors
                 .push(errors::unknown_pub_library(library, &known_libraries, span));
             return;
         };
         if let LibraryManifestIndexEntry::Failed(failure) = entry {
-            let details = self.format_manifest_failure_detail(failure);
-            self.errors.push(errors::pub_library_manifest_load_failed(
-                library,
-                failure.path.to_string_lossy().as_ref(),
-                &details,
-                span,
-            ));
+            self.push_pub_library_failure(library, &failure, span);
         }
     }
 
@@ -314,13 +308,7 @@ impl TypeChecker {
         let manifest = match entry {
             LibraryManifestIndexEntry::Loaded { manifest, .. } => manifest,
             LibraryManifestIndexEntry::Failed(failure) => {
-                let details = self.format_manifest_failure_detail(&failure);
-                self.errors.push(errors::pub_library_manifest_load_failed(
-                    library,
-                    failure.path.to_string_lossy().as_ref(),
-                    &details,
-                    span,
-                ));
+                self.push_pub_library_failure(library, &failure, span);
                 return;
             }
         };
@@ -367,16 +355,52 @@ impl TypeChecker {
         failure: &crate::frontend::library_manifest_index::LibraryManifestLoadFailure,
     ) -> String {
         match failure.kind {
-            LibraryManifestFailureKind::Read => {
+            LibraryManifestFailureKind::ManifestRead => {
                 format!("Manifest file is unreadable: {}", failure.message)
             }
-            LibraryManifestFailureKind::Parse => {
+            LibraryManifestFailureKind::ManifestParse => {
                 format!("Manifest JSON is malformed: {}", failure.message)
             }
-            LibraryManifestFailureKind::Invalid => {
+            LibraryManifestFailureKind::ManifestInvalid => {
                 format!("Manifest is incompatible or invalid: {}", failure.message)
             }
+            LibraryManifestFailureKind::ArtifactMissing => {
+                format!("Generated library artifacts are missing: {}", failure.message)
+            }
+            LibraryManifestFailureKind::ArtifactInvalid => {
+                format!("Generated library artifacts are invalid: {}", failure.message)
+            }
+            LibraryManifestFailureKind::ArtifactMismatch => {
+                format!("Generated library artifact names do not match: {}", failure.message)
+            }
         }
+    }
+
+    fn push_pub_library_failure(
+        &mut self,
+        library: &str,
+        failure: &crate::frontend::library_manifest_index::LibraryManifestLoadFailure,
+        span: Span,
+    ) {
+        let details = self.format_manifest_failure_detail(failure);
+        let path = failure.path.to_string_lossy();
+        let error = match failure.kind {
+            LibraryManifestFailureKind::ManifestRead
+            | LibraryManifestFailureKind::ManifestParse
+            | LibraryManifestFailureKind::ManifestInvalid => {
+                errors::pub_library_manifest_load_failed(library, path.as_ref(), &details, span)
+            }
+            LibraryManifestFailureKind::ArtifactMissing => {
+                errors::pub_library_artifact_missing(library, path.as_ref(), &details, span)
+            }
+            LibraryManifestFailureKind::ArtifactInvalid => {
+                errors::pub_library_artifact_invalid(library, path.as_ref(), &details, span)
+            }
+            LibraryManifestFailureKind::ArtifactMismatch => {
+                errors::pub_library_artifact_mismatch(library, path.as_ref(), &details, span)
+            }
+        };
+        self.errors.push(error);
     }
 
     fn manifest_export_names(manifest: &LibraryManifest) -> Vec<String> {
@@ -560,10 +584,7 @@ impl TypeChecker {
         }
     }
 
-    fn remap_resolved_type_with_import_aliases(
-        ty: &mut ResolvedType,
-        imported_type_aliases: &HashMap<String, String>,
-    ) {
+    fn remap_resolved_type_with_import_aliases(ty: &mut ResolvedType, imported_type_aliases: &HashMap<String, String>) {
         match ty {
             ResolvedType::Named(name) => {
                 if let Some(alias) = imported_type_aliases.get(name) {

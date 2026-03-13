@@ -16,7 +16,7 @@ use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, typechecker};
 use crate::library_manifest::LibraryManifest;
 use crate::lockfile::CargoFeatureSelection;
-use crate::manifest::ProjectManifest;
+use crate::manifest::{DependencySpec, ProjectManifest};
 use std::collections::{HashMap, HashSet};
 
 use super::common::{
@@ -240,6 +240,29 @@ fn module_key(path_segments: &[String]) -> String {
     path_segments.join("_")
 }
 
+fn merge_library_path_dependencies(
+    resolved_dependencies: &mut Vec<DependencySpec>,
+    library_manifest_index: &LibraryManifestIndex,
+) -> CliResult<()> {
+    for library_dep in library_manifest_index.cargo_path_dependencies() {
+        if let Some(existing) = resolved_dependencies
+            .iter()
+            .find(|existing| existing.crate_name == library_dep.crate_name)
+        {
+            if existing != &library_dep {
+                return Err(CliError::failure(format!(
+                    "dependency `{}` conflicts between rust dependencies and `pub::` library artifact wiring",
+                    library_dep.crate_name
+                )));
+            }
+            continue;
+        }
+        resolved_dependencies.push(library_dep);
+    }
+    resolved_dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    Ok(())
+}
+
 fn checked_export_map(exports: Vec<CheckedNamedExport>) -> HashMap<String, CheckedNamedExport> {
     exports
         .into_iter()
@@ -417,6 +440,7 @@ fn prepare_project(
     if let Some(m) = manifest.as_ref() {
         codegen.set_declared_crate_names(m.declared_rust_crate_names());
     }
+    codegen.set_library_manifest_index(library_manifest_index.clone());
     // Add user dependency modules
     for module in dep_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
@@ -474,6 +498,7 @@ fn prepare_project(
         }
     };
     merge_stdlib_extra_dependencies(&mut resolved, &stdlib_usage);
+    merge_library_path_dependencies(&mut resolved.dependencies, &library_manifest_index)?;
 
     // Resolve lock payload before moving deps into generator (borrows resolved)
     let lock_payload = resolve_lock_payload(LockResolutionRequest {
@@ -681,6 +706,7 @@ pub fn build_library(
 
     let mut codegen = IrCodegen::new();
     codegen.set_declared_crate_names(declared);
+    codegen.set_library_manifest_index(library_manifest_index.clone());
     for module in dep_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
@@ -726,6 +752,7 @@ pub fn build_library(
         }
     };
     merge_stdlib_extra_dependencies(&mut resolved, &stdlib_usage);
+    merge_library_path_dependencies(&mut resolved.dependencies, &library_manifest_index)?;
 
     let lock_payload = resolve_lock_payload(LockResolutionRequest {
         project_root: &project_root,

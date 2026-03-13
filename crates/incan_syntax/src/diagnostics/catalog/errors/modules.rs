@@ -134,6 +134,36 @@ pub fn pub_library_manifest_load_failed(library: &str, manifest_path: &str, deta
     .with_hint("Run `incan build --lib` in the dependency project to regenerate its `.incnlib` manifest")
 }
 
+/// A `pub::` dependency is missing generated crate artifacts under `target/lib`.
+pub fn pub_library_artifact_missing(library: &str, artifact_path: &str, details: &str, span: Span) -> CompileError {
+    CompileError::new(
+        format!("Missing generated crate artifacts for `pub::{library}` at `{artifact_path}`"),
+        span,
+    )
+    .with_hint(details.to_string())
+    .with_hint("Run `incan build --lib` in the dependency project")
+}
+
+/// A `pub::` dependency has an invalid generated crate layout under `target/lib`.
+pub fn pub_library_artifact_invalid(library: &str, artifact_path: &str, details: &str, span: Span) -> CompileError {
+    CompileError::new(
+        format!("Invalid generated crate artifacts for `pub::{library}` at `{artifact_path}`"),
+        span,
+    )
+    .with_hint(details.to_string())
+    .with_hint("Rebuild the dependency with `incan build --lib` and verify `target/lib/Cargo.toml` + `src/lib.rs`")
+}
+
+/// A `pub::` dependency has mismatched naming between dependency key and produced crate metadata.
+pub fn pub_library_artifact_mismatch(library: &str, artifact_path: &str, details: &str, span: Span) -> CompileError {
+    CompileError::new(
+        format!("Generated crate metadata mismatch for `pub::{library}` at `{artifact_path}`"),
+        span,
+    )
+    .with_hint(details.to_string())
+    .with_hint("Ensure `.incnlib` name, manifest `name`, and Cargo `[package].name` are consistent")
+}
+
 /// A symbol was requested from a known `pub::` library but is not part of its manifest exports.
 pub fn pub_library_symbol_not_exported(
     symbol: &str,

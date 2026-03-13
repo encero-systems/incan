@@ -26,7 +26,7 @@ use quote::{format_ident, quote};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::stdlib;
 
-use super::super::decl::{IrDecl, IrDeclKind, IrImportQualifier};
+use super::super::decl::{IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier};
 use super::super::expr::IrExprKind;
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
@@ -73,11 +73,12 @@ impl<'a> IrEmitter<'a> {
                 value,
             } => self.emit_const(visibility, name, ty, value),
             IrDeclKind::Import {
+                origin,
                 qualifier,
                 path,
                 alias,
                 items,
-            } => self.emit_import(qualifier, path, alias, items),
+            } => self.emit_import(origin, qualifier, path, alias, items),
             IrDeclKind::Impl(impl_block) => self.emit_impl(impl_block),
             IrDeclKind::Trait(trait_decl) => self.emit_trait(trait_decl),
         }
@@ -158,6 +159,7 @@ impl<'a> IrEmitter<'a> {
 
     fn emit_import(
         &self,
+        origin: &IrImportOrigin,
         qualifier: &IrImportQualifier,
         path: &[String],
         alias: &Option<String>,
@@ -187,7 +189,9 @@ impl<'a> IrEmitter<'a> {
         //
         // Only Incan stdlib imports (qualifier `Auto`) are mapped. Rust crate imports like
         // `from rust::std::collections import HashMap` (qualifier `None`) are left as-is.
-        let is_stdlib = !matches!(qualifier, IrImportQualifier::None) && stdlib::is_any_stdlib_path(path);
+        let is_pub_library_import = matches!(origin, IrImportOrigin::PubLibrary { .. });
+        let is_stdlib =
+            !is_pub_library_import && !matches!(qualifier, IrImportQualifier::None) && stdlib::is_any_stdlib_path(path);
         let is_incan_source_stdlib = is_stdlib;
 
         let path_tokens: Vec<TokenStream> = if is_incan_source_stdlib {
@@ -199,6 +203,13 @@ impl<'a> IrEmitter<'a> {
                 tokens.push(quote! { #ident });
             }
             tokens
+        } else if is_pub_library_import {
+            path.iter()
+                .map(|segment| {
+                    let ident = Self::rust_ident(segment);
+                    quote! { #ident }
+                })
+                .collect()
         } else {
             let mut tokens: Vec<TokenStream> = Vec::new();
             let mapped_path_tokens: Vec<_> = if is_stdlib {
@@ -248,7 +259,8 @@ impl<'a> IrEmitter<'a> {
         // Item imports (`from ... import X`) are always emitted as re-exports. The frontend already treats both
         // `from module import X` and `from rust::crate import X` as module exports, so the backend must preserve that
         // contract in generated Rust as well.
-        let is_rust_crate_reexport = matches!(qualifier, IrImportQualifier::None) && self.rust_module_path.is_some();
+        let is_rust_crate_reexport =
+            matches!(qualifier, IrImportQualifier::None) && self.rust_module_path.is_some() && !is_pub_library_import;
         let export_module_import = is_incan_source_stdlib || is_rust_crate_reexport;
 
         if let Some(alias_name) = alias {
@@ -267,7 +279,7 @@ impl<'a> IrEmitter<'a> {
             // When emitting Rust imports (qualifier=None), record the mapping from alias/name → full module path.
             // This enables newtype trait delegation to resolve "AxumResponse" back to "axum::response::Response" for
             // pattern matching.
-            if matches!(qualifier, IrImportQualifier::None) {
+            if matches!(qualifier, IrImportQualifier::None) && !is_pub_library_import {
                 for item in items {
                     let key = item.alias.as_ref().unwrap_or(&item.name).clone();
                     let mut full_path = path.to_vec();
