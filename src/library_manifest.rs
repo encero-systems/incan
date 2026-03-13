@@ -606,6 +606,22 @@ impl RawLibraryManifest {
             )));
         }
 
+        for activation in &self.soft_keywords.activations {
+            if activation.keyword.trim().is_empty() {
+                return Err(LibraryManifestError::Invalid("soft keyword activation keyword cannot be empty".to_string()));
+            }
+            if activation.namespace.trim().is_empty() {
+                return Err(LibraryManifestError::Invalid("soft keyword activation namespace cannot be empty".to_string()));
+            }
+            if let Some(id) = incan_core::lang::keywords::from_str(&activation.keyword) {
+                if !incan_core::lang::keywords::is_soft(id) {
+                    return Err(LibraryManifestError::Invalid(format!("keyword `{}` is not a soft keyword", activation.keyword)));
+                }
+            } else {
+                return Err(LibraryManifestError::Invalid(format!("unknown soft keyword `{}`", activation.keyword)));
+            }
+        }
+
         Ok(())
     }
 }
@@ -696,5 +712,47 @@ mod tests {
         let err = LibraryManifest::from_json_str(content);
         assert!(err.is_err(), "expected newer compiler requirement to fail");
         Ok(())
+    }
+
+    #[test]
+    fn manifest_reader_rejects_invalid_soft_keyword() {
+        let content = format!(
+            r#"{{
+  "name": "mylib",
+  "version": "0.1.0",
+  "incan_version": "0.1.0",
+  "manifest_format": {},
+  "exports": {{}},
+  "soft_keywords": {{
+    "activations": [
+      {{ "namespace": "mylib.dsl", "keyword": "not_a_real_keyword" }}
+    ]
+  }}
+}}"#,
+            LIBRARY_MANIFEST_FORMAT
+        );
+        let err = LibraryManifest::from_json_str(&content);
+        assert!(matches!(err, Err(LibraryManifestError::Invalid(msg)) if msg.contains("unknown soft keyword `not_a_real_keyword`")));
+    }
+
+    #[test]
+    fn manifest_reader_rejects_hard_keyword_in_soft_keyword_activations() {
+        let content = format!(
+            r#"{{
+  "name": "mylib",
+  "version": "0.1.0",
+  "incan_version": "0.1.0",
+  "manifest_format": {},
+  "exports": {{}},
+  "soft_keywords": {{
+    "activations": [
+      {{ "namespace": "mylib.dsl", "keyword": "def" }}
+    ]
+  }}
+}}"#,
+            LIBRARY_MANIFEST_FORMAT
+        );
+        let err = LibraryManifest::from_json_str(&content);
+        assert!(matches!(err, Err(LibraryManifestError::Invalid(msg)) if msg.contains("keyword `def` is not a soft keyword")));
     }
 }

@@ -1617,4 +1617,21 @@ const ANSWER: int = 42
         let result = parse_str(source);
         assert!(result.is_err(), "rust.module with missing closing paren should be an error");
     }
+
+    #[test]
+    fn test_library_import_activates_soft_keywords() {
+        let source = "import pub::mylib\n\nasync def my_func() -> None:\n    pass\n";
+        let tokens = crate::lexer::lex(source).expect("Lexing failed");
+
+        // Without context, async should fail
+        let result_no_context = crate::parser::parse(&tokens);
+        assert!(result_no_context.is_err(), "Expected async function without soft keyword context to fail");
+
+        // With context mapping mylib -> async, it should succeed
+        let mut map = std::collections::HashMap::new();
+        map.insert("mylib".to_string(), vec![incan_core::lang::keywords::KeywordId::Async]);
+
+        let result_with_context = crate::parser::parse_with_context(&tokens, None, Some(&map));
+        assert!(result_with_context.is_ok(), "Expected async function to parse with soft keyword context");
+    }
 }

@@ -28,6 +28,7 @@ pub struct Parser<'a> {
     warnings: Vec<CompileError>,
     active_soft_keywords: std::collections::HashSet<KeywordId>,
     module_path: Option<String>,
+    library_soft_keywords: std::collections::HashMap<String, Vec<KeywordId>>,
 }
 
 impl<'a> Parser<'a> {
@@ -36,11 +37,20 @@ impl<'a> Parser<'a> {
     /// ## Parameters
     /// - `tokens`: Token stream produced by `incan_syntax::lexer`.
     pub fn new(tokens: &'a [Token]) -> Self {
-        Self::new_with_module_path(tokens, None)
+        Self::new_with_context(tokens, None, None)
     }
 
     /// Create a new parser for a token stream with optional module path context.
     pub fn new_with_module_path(tokens: &'a [Token], module_path: Option<String>) -> Self {
+        Self::new_with_context(tokens, module_path, None)
+    }
+
+    /// Create a new parser for a token stream with optional module path and library keyword context.
+    pub fn new_with_context(
+        tokens: &'a [Token],
+        module_path: Option<String>,
+        library_soft_keywords: Option<&std::collections::HashMap<String, Vec<KeywordId>>>,
+    ) -> Self {
         Self {
             tokens,
             pos: 0,
@@ -48,6 +58,7 @@ impl<'a> Parser<'a> {
             warnings: Vec::new(),
             active_soft_keywords: std::collections::HashSet::new(),
             module_path,
+            library_soft_keywords: library_soft_keywords.cloned().unwrap_or_default(),
         }
     }
 
@@ -178,23 +189,32 @@ impl<'a> Parser<'a> {
             == Some("src")
     }
 
-    /// Activate soft keywords introduced by stdlib imports in this declaration.
+    /// Activate soft keywords introduced by stdlib or library imports in this declaration.
     fn activate_soft_keywords_for_declaration(&mut self, decl: &Declaration) {
-        let import_path = match decl {
-            Declaration::Import(import) => match &import.kind {
-                ImportKind::Module(path) => Some(path),
-                ImportKind::From { module, .. } => Some(module),
-                _ => None,
-            },
-            _ => None,
-        };
-
-        let Some(path) = import_path else {
-            return;
-        };
-
-        for kw in incan_core::lang::stdlib::soft_keywords_for_import(&path.segments) {
-            self.active_soft_keywords.insert(kw);
+        if let Declaration::Import(import) = decl {
+            match &import.kind {
+                ImportKind::Module(path) => {
+                    for kw in incan_core::lang::stdlib::soft_keywords_for_import(&path.segments) {
+                        self.active_soft_keywords.insert(kw);
+                    }
+                }
+                ImportKind::From { module, .. } => {
+                    for kw in incan_core::lang::stdlib::soft_keywords_for_import(&module.segments) {
+                        self.active_soft_keywords.insert(kw);
+                    }
+                }
+                ImportKind::PubLibrary { library } => {
+                    if let Some(keywords) = self.library_soft_keywords.get(library) {
+                        self.active_soft_keywords.extend(keywords.iter().copied());
+                    }
+                }
+                ImportKind::PubFrom { library, .. } => {
+                    if let Some(keywords) = self.library_soft_keywords.get(library) {
+                        self.active_soft_keywords.extend(keywords.iter().copied());
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }

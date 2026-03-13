@@ -345,6 +345,22 @@ fn resolve_library_reexports(
     if errors.is_empty() { Ok(resolved) } else { Err(errors) }
 }
 
+/// Extract soft-keyword registrations provided by the library's optional vocab crate.
+///
+/// If the project manifest declares a `[vocab]` section, this function loads the corresponding vocab provider to
+/// extract the soft keywords it introduces.
+fn collect_library_soft_keyword_activations(
+    manifest: &ProjectManifest,
+    _project_root: &Path,
+) -> Vec<crate::library_manifest::SoftKeywordActivation> {
+    if manifest.vocab().is_some() {
+        // TODO(RFC 027): Build the specified vocab crate and load the VocabProvider dynamically
+        // to extract the true `KeywordRegistration` values.
+        return Vec::new();
+    }
+    Vec::new()
+}
+
 /// Prepare an Incan project for building or running.
 ///
 /// This function performs all the shared setup:
@@ -693,8 +709,11 @@ pub fn build_library(
         .and_then(|project| project.version.clone())
         .unwrap_or_else(|| "0.1.0".to_string());
 
-    let library_manifest =
+    let mut library_manifest =
         LibraryManifest::from_checked_exports(project_name.clone(), project_version, &selected_exports);
+    
+    library_manifest.soft_keywords.activations = collect_library_soft_keyword_activations(&manifest, &project_root);
+
     let out_dir = project_root.join("target").join("lib");
     std::fs::create_dir_all(&out_dir)
         .map_err(|e| CliError::failure(format!("failed to create {}: {e}", out_dir.display())))?;

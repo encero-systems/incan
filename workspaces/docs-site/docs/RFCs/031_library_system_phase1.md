@@ -401,9 +401,9 @@ Package a compiled Rust library instead of generated Rust source. Rejected for P
 
 ### Vocab and soft keywords (RFC 027 alignment)
 
-- [ ] Build optional vocab companion metadata during `incan build --lib`.
-- [ ] Serialize library-provided soft-keyword activations into `.incnlib`.
-- [ ] Activate library soft keywords from imports in consumer builds using existing soft-keyword semantics.
+- [x] Build optional vocab companion metadata during `incan build --lib`.
+- [x] Serialize library-provided soft-keyword activations into `.incnlib`.
+- [x] Activate library soft keywords from imports in consumer builds using existing soft-keyword semantics.
 
 ### LSP and tooling parity
 

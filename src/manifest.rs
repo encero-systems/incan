@@ -118,6 +118,12 @@ pub struct BuildSection {
     pub source_root: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VocabSection {
+    #[serde(rename = "crate")]
+    pub crate_path: Option<String>,
+}
+
 /// A manifest that can be serialized to TOML.
 ///
 /// Used by `incan init` and any future code that needs to write `incan.toml`.
@@ -128,6 +134,8 @@ pub struct WritableManifest {
     pub project: Option<ProjectSection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build: Option<BuildSection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vocab: Option<VocabSection>,
 }
 
 impl WritableManifest {
@@ -146,6 +154,8 @@ pub struct ProjectManifest {
     pub project: Option<ProjectSection>,
     /// `[build]` configuration (optional).
     pub build: Option<BuildSection>,
+    /// `[vocab]` configuration (optional).
+    pub vocab: Option<VocabSection>,
     /// `[dependencies]` (Incan library dependencies).
     library_dependencies: HashMap<String, LibraryDependencySpec>,
     /// `[rust-dependencies]` (Rust crate dependencies).
@@ -215,6 +225,11 @@ impl ProjectManifest {
     pub fn project_root(&self) -> &Path {
         self.path.parent().unwrap_or_else(|| Path::new("."))
     }
+
+    /// Optional vocab configuration.
+    pub fn vocab(&self) -> Option<&VocabSection> {
+        self.vocab.as_ref()
+    }
 }
 
 // ============================================================================
@@ -227,6 +242,8 @@ struct RawManifest {
     project: Option<ProjectSection>,
     #[serde(default)]
     build: Option<BuildSection>,
+    #[serde(default)]
+    vocab: Option<VocabSection>,
     #[serde(default)]
     dependencies: Option<DependencyTable>,
     #[serde(rename = "rust-dependencies", default)]
@@ -302,10 +319,27 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
 
     validate_package_collisions(&rust_dependencies, &rust_dev_dependencies, path)?;
 
+    if let Some(vocab) = &raw.vocab {
+        if let Some(crate_path) = &vocab.crate_path {
+            if crate_path.trim().is_empty() {
+                return Err(ManifestError::Invalid {
+                    path: path.to_path_buf(),
+                    message: "[vocab].crate cannot be empty".to_string(),
+                });
+            }
+        } else {
+            return Err(ManifestError::Invalid {
+                path: path.to_path_buf(),
+                message: "[vocab] section requires a `crate` field".to_string(),
+            });
+        }
+    }
+
     Ok(ProjectManifest {
         path: path.to_path_buf(),
         project: raw.project,
         build: raw.build,
+        vocab: raw.vocab,
         library_dependencies,
         rust_dependencies,
         rust_dev_dependencies,
@@ -795,6 +829,38 @@ parent_crate = "2.0"
         let manifest = ProjectManifest::discover(&subdir)?.ok_or("should find manifest in parent")?;
         assert!(manifest.rust_dependencies().contains_key("parent_crate"));
         Ok(())
+    }
+
+    #[test]
+    fn parse_vocab_section() -> TestResult {
+        let content = r#"
+[vocab]
+crate = "crates/mylib-vocab"
+"#;
+        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let vocab = manifest.vocab().ok_or("missing vocab section")?;
+        assert_eq!(vocab.crate_path.as_deref(), Some("crates/mylib-vocab"));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_vocab_section_rejects_empty_crate() {
+        let content = r#"
+[vocab]
+crate = "   "
+"#;
+        let err = ProjectManifest::from_str(content, Path::new("incan.toml"));
+        assert!(matches!(err, Err(ManifestError::Invalid { .. })));
+    }
+
+    #[test]
+    fn parse_vocab_section_rejects_missing_crate() {
+        let content = r#"
+[vocab]
+some_other_field = "value"
+"#;
+        let err = ProjectManifest::from_str(content, Path::new("incan.toml"));
+        assert!(matches!(err, Err(ManifestError::Invalid { .. })));
     }
 
     fn tempdir_with_manifest(content: &str) -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {

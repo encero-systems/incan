@@ -105,6 +105,28 @@ impl LibraryManifestIndex {
         }
         dependencies
     }
+
+    /// Return the mapped soft keywords for all successfully loaded library artifacts.
+    /// The keys are the `dependency_key` (alias), making them ready for parser use.
+    pub fn library_soft_keywords(&self) -> HashMap<String, Vec<incan_core::lang::keywords::KeywordId>> {
+        let mut map = HashMap::new();
+        for (key, entry) in &self.entries {
+            if let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry {
+                let mut ids = Vec::new();
+                for activation in &manifest.soft_keywords.activations {
+                    if let Some(id) = incan_core::lang::keywords::from_str(&activation.keyword)
+                        && incan_core::lang::keywords::is_soft(id)
+                    {
+                        ids.push(id);
+                    }
+                }
+                if !ids.is_empty() {
+                    map.insert(key.clone(), ids);
+                }
+            }
+        }
+        map
+    }
 }
 
 fn load_library_manifest_entry(dependency_key: &str, dependency_root: &Path) -> LibraryManifestIndexEntry {

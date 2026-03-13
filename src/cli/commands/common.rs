@@ -12,6 +12,7 @@ use crate::cli::{CliError, CliResult};
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::{DependencyError, InlineRustImport};
 use crate::frontend::ast::{ImportKind, Span};
+use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
@@ -204,6 +205,14 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
     let path = Path::new(entry_path);
     let base_dir = path.parent().unwrap_or(Path::new("."));
 
+    let project_root = resolve_project_root(path);
+    let manifest = ProjectManifest::discover(&project_root).unwrap_or_default();
+    let library_manifest_index = manifest
+        .as_ref()
+        .map(LibraryManifestIndex::from_project_manifest)
+        .unwrap_or_default();
+    let library_soft_keywords = library_manifest_index.library_soft_keywords();
+
     let mut modules = Vec::new();
     let mut processed = HashSet::new();
     let mut incan_source_stdlib_module_paths: HashMap<String, PathBuf> = HashMap::new();
@@ -230,7 +239,7 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
             }
         };
 
-        let ast = match parser::parse_with_module_path(&tokens, Some(&file_path)) {
+        let ast = match parser::parse_with_context(&tokens, Some(&file_path), Some(&library_soft_keywords)) {
             Ok(a) => {
                 // Surface any non-fatal parser warnings (e.g. RFC 005 dot-notation nudges) immediately,
                 // so they reach the user regardless of which build/run/debug command was invoked.
