@@ -4345,7 +4345,7 @@ For inline import syntax, see: <a href="../../../language/how-to/rust_interop/">
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;my_app&quot;</span>
 
-<span class="k">[dependencies]</span>
+<span class="k">[rust-dependencies]</span>
 <span class="n">tokio</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1.35&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;full&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 <span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;derive&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 <span class="n">serde_json</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span>
@@ -4365,17 +4365,17 @@ annotations for that crate are not allowed — use bare imports instead:</p>
 </code></pre></div>
 <p>When multiple files import the same crate, features are unioned automatically.</p>
 <h3 id="in-incantoml">In <code>incan.toml</code><a class="headerlink" href="#in-incantoml" title="Permanent link">&para;</a></h3>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[rust-dependencies]</span>
 <span class="n">tokio</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1.35&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;full&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 <span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;derive&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <p>To disable default features:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[rust-dependencies]</span>
 <span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">default-features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;derive&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <h2 id="dev-only-dependencies">Dev-only dependencies<a class="headerlink" href="#dev-only-dependencies" title="Permanent link">&para;</a></h2>
-<p>Use <code>[dev-dependencies]</code> for crates needed only during testing:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[dev-dependencies]</span>
+<p>Use <code>[rust-dev-dependencies]</code> for crates needed only during testing:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[rust-dev-dependencies]</span>
 <span class="n">criterion</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.5&quot;</span>
 <span class="n">test_helpers</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../test-helpers&quot;</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>

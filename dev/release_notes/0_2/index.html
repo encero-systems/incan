@@ -3805,6 +3805,48 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#project-manifest-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Project Manifest Changes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#incan-libraries-experimental" class="md-nav__link">
+    <span class="md-ellipsis">
+      Incan Libraries (Experimental)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Incan Libraries (Experimental)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#building-a-library" class="md-nav__link">
+    <span class="md-ellipsis">
+      Building a library
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#consuming-a-library" class="md-nav__link">
+    <span class="md-ellipsis">
+      Consuming a library
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#migrating-from-01" class="md-nav__link">
     <span class="md-ellipsis">
       Migrating from 0.1
@@ -4013,6 +4055,48 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#project-manifest-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Project Manifest Changes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#incan-libraries-experimental" class="md-nav__link">
+    <span class="md-ellipsis">
+      Incan Libraries (Experimental)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Incan Libraries (Experimental)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#building-a-library" class="md-nav__link">
+    <span class="md-ellipsis">
+      Building a library
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#consuming-a-library" class="md-nav__link">
+    <span class="md-ellipsis">
+      Consuming a library
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#migrating-from-01" class="md-nav__link">
     <span class="md-ellipsis">
       Migrating from 0.1
@@ -4140,6 +4224,34 @@
 This is a breaking change to import syntax — all stdlib imports and decorators must now use their fully qualified paths.</p>
 <p>This release lays the groundwork for a cleaner stdlib architecture where the compiler knows less about domain-specific
 modules (web, testing, async) and the stdlib can grow without polluting the global namespace.</p>
+<h2 id="project-manifest-changes">Project Manifest Changes<a class="headerlink" href="#project-manifest-changes" title="Permanent link">&para;</a></h2>
+<p>Incan 0.2 introduces a distinction between <strong>Incan Library dependencies</strong> and <strong>Rust crate dependencies</strong>.
+As a result, the dependency tables in <code>incan.toml</code> have been renamed to clarify their purpose:</p>
+<ul>
+<li><code>[dependencies]</code> is now reserved for <strong>Incan Library</strong> dependencies.</li>
+<li><code>[rust-dependencies]</code> is the new table for <strong>Rust crate</strong> dependencies.</li>
+<li><code>[dev-dependencies]</code> is now <code>[rust-dev-dependencies]</code>.</li>
+</ul>
+<p>Using <code>[dependencies]</code> for Rust crates will now emit a helpful migration error pointing you to the correct table name.</p>
+<h2 id="incan-libraries-experimental">Incan Libraries (Experimental)<a class="headerlink" href="#incan-libraries-experimental" title="Permanent link">&para;</a></h2>
+<p>This release introduces the foundation for <strong>Incan Libraries</strong> (<a href="/dev/RFCs/closed/implemented/031_library_system_phase1">RFC 031</a>).
+You can now build an Incan project as a library that exports functions, models, classes, and constants for other Incan projects to consume.</p>
+<h3 id="building-a-library">Building a library<a class="headerlink" href="#building-a-library" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>--lib<span class="w"> </span>path/to/project
+</code></pre></div>
+<p>This generates a <code>.incnlib</code> library manifest describing the public API of your library.</p>
+<h3 id="consuming-a-library">Consuming a library<a class="headerlink" href="#consuming-a-library" title="Permanent link">&para;</a></h3>
+<p>Add the library to your <code>incan.toml</code>:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
+<span class="n">mylib</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../mylib&quot;</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>And import it in your Incan code using the <code>pub::</code> namespace prefix:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">mylib</span> <span class="kn">import</span><span class="w"> </span><span class="nn">my_function</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">my_function</span><span class="p">()</span>
+</code></pre></div>
+<p>This feature is in its early stages and currently supports local path dependencies. Further enhancements to the library system are planned for future releases.</p>
 <h2 id="migrating-from-01">Migrating from 0.1<a class="headerlink" href="#migrating-from-01" title="Permanent link">&para;</a></h2>
 <p>Use this checklist when moving a 0.1 codebase to 0.2.</p>
 <h3 id="import-paths">Import paths<a class="headerlink" href="#import-paths" title="Permanent link">&para;</a></h3>

@@ -3096,7 +3096,16 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="[dependencies]">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rust-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      [rust-dependencies]
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[rust-dependencies]">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -3132,27 +3141,27 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#dev-dependencies" class="md-nav__link">
+  <a href="#rust-dev-dependencies" class="md-nav__link">
     <span class="md-ellipsis">
-      [dev-dependencies]
+      [rust-dev-dependencies]
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#dependenciesoptional" class="md-nav__link">
+  <a href="#rust-dependenciesoptional" class="md-nav__link">
     <span class="md-ellipsis">
-      [dependencies.optional]
+      [rust-dependencies.optional]
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#rustdependencies-rustdev-dependencies" class="md-nav__link">
+  <a href="#legacy-alias-tables" class="md-nav__link">
     <span class="md-ellipsis">
-      [rust.dependencies] / [rust.dev-dependencies]
+      Legacy alias tables
     </span>
   </a>
   
@@ -4186,7 +4195,16 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="[dependencies]">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rust-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      [rust-dependencies]
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[rust-dependencies]">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4222,27 +4240,27 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#dev-dependencies" class="md-nav__link">
+  <a href="#rust-dev-dependencies" class="md-nav__link">
     <span class="md-ellipsis">
-      [dev-dependencies]
+      [rust-dev-dependencies]
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#dependenciesoptional" class="md-nav__link">
+  <a href="#rust-dependenciesoptional" class="md-nav__link">
     <span class="md-ellipsis">
-      [dependencies.optional]
+      [rust-dependencies.optional]
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#rustdependencies-rustdev-dependencies" class="md-nav__link">
+  <a href="#legacy-alias-tables" class="md-nav__link">
     <span class="md-ellipsis">
-      [rust.dependencies] / [rust.dev-dependencies]
+      Legacy alias tables
     </span>
   </a>
   
@@ -4392,16 +4410,21 @@ a <code>FILE</code> argument.</p>
 <p>Most projects use the conventional <code>src/</code> layout and don't need to set this field. It exists for projects that keep
 their source in a different directory (e.g. <code>lib/</code>).</p>
 <h2 id="dependencies"><code>[dependencies]</code><a class="headerlink" href="#dependencies" title="Permanent link">&para;</a></h2>
+<p>Incan library dependencies available in all contexts. (Note: for Rust crates, see <code>[rust-dependencies]</code>).</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
+<span class="n">mylib</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../mylib&quot;</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<h2 id="rust-dependencies"><code>[rust-dependencies]</code><a class="headerlink" href="#rust-dependencies" title="Permanent link">&para;</a></h2>
 <p>Rust crate dependencies available in all contexts (build, run, test).</p>
 <h3 id="string-shorthand">String shorthand<a class="headerlink" href="#string-shorthand" title="Permanent link">&para;</a></h3>
 <p>For simple registry dependencies with just a version:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[rust-dependencies]</span>
 <span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span>
 <span class="n">rand</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.8&quot;</span>
 </code></pre></div>
 <h3 id="table-form">Table form<a class="headerlink" href="#table-form" title="Permanent link">&para;</a></h3>
 <p>For dependencies that need features, sources, or other options:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[rust-dependencies]</span>
 <span class="n">tokio</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1.35&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;full&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 <span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;derive&quot;</span><span class="p">],</span><span class="w"> </span><span class="n">default-features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
@@ -4467,57 +4490,44 @@ their source in a different directory (e.g. <code>lib/</code>).</p>
 </tr>
 </tbody>
 </table>
-<h2 id="dev-dependencies"><code>[dev-dependencies]</code><a class="headerlink" href="#dev-dependencies" title="Permanent link">&para;</a></h2>
-<p>Dependencies available only in test contexts (<code>tests/</code> directory). Same syntax as <code>[dependencies]</code>.</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[dev-dependencies]</span>
+<h2 id="rust-dev-dependencies"><code>[rust-dev-dependencies]</code><a class="headerlink" href="#rust-dev-dependencies" title="Permanent link">&para;</a></h2>
+<p>Dependencies available only in test contexts (<code>tests/</code> directory). Same syntax as <code>[rust-dependencies]</code>.</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[rust-dev-dependencies]</span>
 <span class="n">criterion</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.5&quot;</span>
 <span class="n">test_helpers</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../test-helpers&quot;</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <p>Importing a dev-only crate from production code is a compile-time error:</p>
 <div class="language-text highlight"><pre><span></span><code>error: Rust crate `criterion` is dev-only and cannot be imported from production code
-hint: Move the dependency to [dependencies], or import it only from tests.
+hint: Move the dependency to [rust-dependencies], or import it only from tests.
 </code></pre></div>
-<p><strong>Overlap rules</strong>: If the same crate appears in both <code>[dependencies]</code> and <code>[dev-dependencies]</code>, the version, source,
-and default-features must match. Features are unioned, and the crate is treated as a normal dependency.</p>
-<h2 id="dependenciesoptional"><code>[dependencies.optional]</code><a class="headerlink" href="#dependenciesoptional" title="Permanent link">&para;</a></h2>
+<p><strong>Overlap rules</strong>: If the same crate appears in both <code>[rust-dependencies]</code> and <code>[rust-dev-dependencies]</code>, the version, source, and default-features must match. Features are unioned, and the crate is treated as a normal dependency.</p>
+<h2 id="rust-dependenciesoptional"><code>[rust-dependencies.optional]</code><a class="headerlink" href="#rust-dependenciesoptional" title="Permanent link">&para;</a></h2>
 <p>Syntactic sugar for declaring optional (rust) dependencies. Entries here are equivalent to setting <code>optional = true</code>:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies.optional]</span>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[rust-dependencies.optional]</span>
 <span class="n">fancy_logging</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.3&quot;</span>
 <span class="n">metrics</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;prometheus&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <p>is equivalent to:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[rust-dependencies]</span>
 <span class="n">fancy_logging</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;0.3&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">optional</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">}</span>
 <span class="n">metrics</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;prometheus&quot;</span><span class="p">],</span><span class="w"> </span><span class="n">optional</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <p>Optional dependencies generate a Cargo feature gate. Enable them at build time:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--cargo-features<span class="w"> </span>fancy_logging
 </code></pre></div>
-<h2 id="rustdependencies-rustdev-dependencies"><code>[rust.dependencies]</code> / <code>[rust.dev-dependencies]</code><a class="headerlink" href="#rustdependencies-rustdev-dependencies" title="Permanent link">&para;</a></h2>
-<p>These are aliases for <code>[dependencies]</code> and <code>[dev-dependencies]</code> respectively. They exist for readability when the
-manifest contains non-Rust configuration.</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="c1"># These two are equivalent:</span>
-<span class="k">[dependencies]</span>
-<span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span>
-
-<span class="k">[rust.dependencies]</span>
-<span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span>
-</code></pre></div>
-<div class="admonition warning">
-<p class="admonition-title">Mutual exclusion</p>
-<p>You cannot use both <code>[dependencies]</code> and <code>[rust.dependencies]</code> in the same manifest (same for dev).
-The compiler will error if both are present.</p>
-</div>
+<h2 id="legacy-alias-tables">Legacy alias tables<a class="headerlink" href="#legacy-alias-tables" title="Permanent link">&para;</a></h2>
+<p><code>[rust.dependencies]</code> and <code>[rust.dev-dependencies]</code> remain supported as backward-compatible aliases for <code>[rust-dependencies]</code> and <code>[rust-dev-dependencies]</code>.
+Prefer the non-nested table names in new manifests.</p>
 <h2 id="dependency-sources">Dependency sources<a class="headerlink" href="#dependency-sources" title="Permanent link">&para;</a></h2>
 <h3 id="registry-default">Registry (default)<a class="headerlink" href="#registry-default" title="Permanent link">&para;</a></h3>
 <p>The default source is crates.io. Version is required:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[rust-dependencies]</span>
 <span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span>
 <span class="n">tokio</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1.35&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;full&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <h3 id="git">Git<a class="headerlink" href="#git" title="Permanent link">&para;</a></h3>
 <p>Specify a git repository URL with exactly one of <code>branch</code>, <code>tag</code>, or <code>rev</code>:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[rust-dependencies]</span>
 <span class="n">my_internal_lib</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">git</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;https://github.com/company/lib.git&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">tag</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;v1.0.0&quot;</span><span class="w"> </span><span class="p">}</span>
 <span class="n">bleeding_edge</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">git</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;https://github.com/company/lib.git&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">branch</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;main&quot;</span><span class="w"> </span><span class="p">}</span>
 <span class="n">pinned</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">git</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;https://github.com/company/lib.git&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">rev</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;abc1234&quot;</span><span class="w"> </span><span class="p">}</span>
@@ -4529,12 +4539,12 @@ because branches are not reproducible. Use <code>tag</code> or <code>rev</code> 
 </div>
 <h3 id="path">Path<a class="headerlink" href="#path" title="Permanent link">&para;</a></h3>
 <p>Local path dependencies, relative to the <code>incan.toml</code> location:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[rust-dependencies]</span>
 <span class="n">shared_utils</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../shared-utils&quot;</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <h3 id="package-renames">Package renames<a class="headerlink" href="#package-renames" title="Permanent link">&para;</a></h3>
 <p>Use <code>package</code> to use a different crate name than the dependency key. For example:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[rust-dependencies]</span>
 <span class="n">json</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">package</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;serde_json&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <p>This lets you <code>import rust::json</code> instead of <code>import rust::serde_json</code>.</p>
