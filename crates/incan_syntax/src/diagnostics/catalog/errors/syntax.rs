@@ -78,7 +78,19 @@ pub fn empty_index_not_allowed(span: Span) -> CompileError {
 // -- Imports & decorators ----------------------------------------------------
 
 pub fn pub_modifier_not_allowed_on_import(span: Span) -> CompileError {
-    CompileError::syntax("The 'pub' modifier is not supported on imports".to_string(), span)
+    CompileError::syntax(
+        "The 'pub' modifier is only supported on `from ... import ...` re-exports".to_string(),
+        span,
+    )
+    .with_hint("Use `pub from module import Name` in `src/lib.incn`, or remove `pub`")
+}
+
+pub fn pub_reexport_only_allowed_in_library_entrypoint(span: Span) -> CompileError {
+    CompileError::syntax(
+        "`pub from ... import ...` is only valid in `src/lib.incn`".to_string(),
+        span,
+    )
+    .with_hint("Move this re-export to `src/lib.incn`, or remove `pub` for an internal import")
 }
 
 pub fn decorator_path_expected(span: Span) -> CompileError {
@@ -101,6 +113,32 @@ pub fn import_list_empty(span: Span) -> CompileError {
 pub fn rust_import_features_require_version(span: Span) -> CompileError {
     CompileError::syntax("Rust import features require a version annotation".to_string(), span)
         .with_hint("Use `@ \"version\" with [\"feature\"]` on the rust import")
+}
+
+/// Which surface form of `pub` import triggered a namespace-separator diagnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PubImportForm {
+    /// `from pub... import Item`
+    From,
+    /// `import pub...`
+    Import,
+}
+
+pub fn pub_import_expected_namespace_separator(span: Span, form: PubImportForm) -> CompileError {
+    let hint = match form {
+        PubImportForm::From => "Use `from pub::library import Item`",
+        PubImportForm::Import => "Use `import pub::library`",
+    };
+    CompileError::syntax("Expected `::` after `pub` in library import".to_string(), span).with_hint(hint)
+}
+
+pub fn pub_import_submodule_not_supported(span: Span) -> CompileError {
+    CompileError::syntax(
+        "`pub::` imports only accept a single library name in this phase".to_string(),
+        span,
+    )
+    .with_hint("Use `from pub::library import Name` and import exported names directly")
 }
 
 /// Which surface form of `rust` import triggered a dot-notation warning.

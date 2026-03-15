@@ -14,6 +14,8 @@ pub use incan_syntax::{ast, diagnostics, lexer, parser};
 
 // Compiler-specific pieces remain local.
 pub mod decorator_resolution;
+pub mod library_exports;
+pub mod library_manifest_index;
 pub mod module;
 pub mod resolver;
 pub mod surface_semantics;

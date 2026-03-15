@@ -56,6 +56,7 @@ pub enum IrDeclKind {
 
     /// Import (preserved for codegen)
     Import {
+        origin: IrImportOrigin,
         qualifier: IrImportQualifier,
         path: Vec<String>,
         alias: Option<String>,
@@ -65,6 +66,18 @@ pub enum IrDeclKind {
 
     /// Impl block for methods on structs/enums
     Impl(IrImpl),
+}
+
+/// Semantic origin of an import.
+///
+/// This keeps `pub::` imports first-class in IR so lowering/emission can preserve library dependency semantics without
+/// overloading path segments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IrImportOrigin {
+    /// Standard Incan module or Rust import.
+    Standard,
+    /// Library import resolved from `[dependencies]` (`pub::name`).
+    PubLibrary { dependency_key: String },
 }
 
 /// How an import path should be qualified in generated Rust.

@@ -5,6 +5,7 @@
 use crate::backend::IrCodegen;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::frontend::ast::Program;
+use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser, typechecker};
 use crate::manifest::ProjectManifest;
 use std::path::Path;
@@ -45,7 +46,7 @@ pub fn parse_file(file_path: &str) -> CliResult<ExitCode> {
         }
     };
 
-    match parser::parse(&tokens) {
+    match parser::parse_with_module_path(&tokens, Some(file_path)) {
         Ok(ast) => {
             println!("{:#?}", ast);
             Ok(ExitCode::SUCCESS)
@@ -66,7 +67,11 @@ pub fn check_file(file_path: &str) -> CliResult<ExitCode> {
 
     let project_root = resolve_project_root(Path::new(file_path));
     let manifest = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))?;
-    let declared = manifest.as_ref().map(|m| m.declared_crate_names());
+    let declared = manifest.as_ref().map(|m| m.declared_rust_crate_names());
+    let library_manifest_index = manifest
+        .as_ref()
+        .map(LibraryManifestIndex::from_project_manifest)
+        .unwrap_or_default();
 
     let mut all_errors: String = String::new();
     for (idx, module) in modules.iter().enumerate() {
@@ -76,6 +81,7 @@ pub fn check_file(file_path: &str) -> CliResult<ExitCode> {
         if let Some(names) = declared.clone() {
             checker.set_declared_crate_names(names);
         }
+        checker.set_library_manifest_index(library_manifest_index.clone());
         match checker.check_with_imports(&module.ast, &deps_for_module) {
             Ok(()) => {
                 for warn in checker.warnings() {
@@ -120,8 +126,13 @@ pub fn emit_rust(file_path: &str, strict: bool) -> CliResult<ExitCode> {
     let project_root = resolve_project_root(Path::new(file_path));
     let manifest = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))?;
     if let Some(m) = manifest.as_ref() {
-        codegen.set_declared_crate_names(m.declared_crate_names());
+        codegen.set_declared_crate_names(m.declared_rust_crate_names());
     }
+    let library_manifest_index = manifest
+        .as_ref()
+        .map(LibraryManifestIndex::from_project_manifest)
+        .unwrap_or_default();
+    codegen.set_library_manifest_index(library_manifest_index);
 
     for module in &modules[..modules.len() - 1] {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());

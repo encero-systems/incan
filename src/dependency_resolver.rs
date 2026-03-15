@@ -68,9 +68,17 @@ pub fn resolve_dependencies(
 ) -> Result<ResolvedDependencies, Vec<DependencyError>> {
     let mut errors = Vec::new();
 
-    let (mut manifest_deps, mut manifest_dev_deps) = match manifest {
-        Some(manifest) => (manifest.dependencies().clone(), manifest.dev_dependencies().clone()),
-        None => (HashMap::new(), HashMap::new()),
+    let (mut manifest_deps, mut manifest_dev_deps, library_dep_names) = match manifest {
+        Some(manifest) => (
+            manifest.rust_dependencies().clone(),
+            manifest.rust_dev_dependencies().clone(),
+            manifest
+                .library_dependencies()
+                .keys()
+                .cloned()
+                .collect::<HashSet<String>>(),
+        ),
+        None => (HashMap::new(), HashMap::new(), HashSet::new()),
     };
 
     normalize_specs(&mut manifest_deps);
@@ -83,7 +91,13 @@ pub fn resolve_dependencies(
         errors.append(&mut merge_errors);
     }
 
-    let inline_merge = merge_inline_imports(inline_imports, &manifest_deps, &manifest_dev_deps, &mut errors);
+    let inline_merge = merge_inline_imports(
+        inline_imports,
+        &manifest_deps,
+        &manifest_dev_deps,
+        &library_dep_names,
+        &mut errors,
+    );
 
     // Combine manifest deps with resolved inline specs.
     let mut resolved_deps: HashMap<String, DependencySpec> = manifest_deps.clone();
@@ -137,6 +151,7 @@ fn merge_inline_imports(
     inline_imports: &[InlineRustImport],
     manifest_deps: &HashMap<String, DependencySpec>,
     manifest_dev_deps: &HashMap<String, DependencySpec>,
+    library_dep_names: &HashSet<String>,
     errors: &mut Vec<DependencyError>,
 ) -> HashMap<String, InlineMergedSpec> {
     let mut merged: HashMap<String, InlineMergedSpec> = HashMap::new();
@@ -178,6 +193,30 @@ fn merge_inline_imports(
             }
         }
 
+        if library_dep_names.contains(&import.crate_name)
+            && !manifest_deps.contains_key(&import.crate_name)
+            && !manifest_dev_deps.contains_key(&import.crate_name)
+        {
+            errors.push(DependencyError {
+                file_path: import.file_path.clone(),
+                error: with_rust_import_context(
+                    CompileError::new(
+                        format!(
+                            "Rust crate `{}` is declared under `[dependencies]`, which is reserved for Incan library dependencies",
+                            import.crate_name
+                        ),
+                        import.span,
+                    )
+                    .with_hint(format!(
+                        "Move `{}` to `[rust-dependencies]` in incan.toml for `rust::` imports.",
+                        import.crate_name
+                    )),
+                    import,
+                ),
+            });
+            continue;
+        }
+
         if manifest_deps.contains_key(&import.crate_name) || manifest_dev_deps.contains_key(&import.crate_name) {
             if has_inline_spec {
                 errors.push(DependencyError {
@@ -210,7 +249,7 @@ fn merge_inline_imports(
                             ),
                             import.span,
                         )
-                        .with_hint("Move the dependency to [dependencies], or import it only from tests."),
+                        .with_hint("Move the dependency to [rust-dependencies], or import it only from tests."),
                         import,
                     ),
                 });
@@ -362,7 +401,7 @@ fn merge_overlapping_dev_dependencies(
                 file_path,
                 error: CompileError::new(
                     format!(
-                        "dependency `{}` is declared in both [dependencies] and [dev-dependencies] with incompatible specs",
+                        "dependency `{}` is declared in both [rust-dependencies] and [rust-dev-dependencies] with incompatible specs",
                         name
                     ),
                     Span::default(),
@@ -576,7 +615,7 @@ mod tests {
     #[test]
     fn manifest_forbids_inline_annotation() {
         let toml_str = r#"
-[dependencies]
+[rust-dependencies]
 serde = "1.0"
 "#;
         let manifest = ProjectManifest::from_str(toml_str, Path::new(".")).unwrap();
@@ -596,7 +635,7 @@ serde = "1.0"
     #[test]
     fn manifest_crate_without_inline_is_ok() {
         let toml_str = r#"
-[dependencies]
+[rust-dependencies]
 serde = "1.0"
 "#;
         let manifest = ProjectManifest::from_str(toml_str, Path::new(".")).unwrap();
@@ -613,7 +652,7 @@ serde = "1.0"
     #[test]
     fn dev_dep_in_production_code_is_error() {
         let toml_str = r#"
-[dev-dependencies]
+[rust-dev-dependencies]
 test_lib = "0.5"
 "#;
         let manifest = ProjectManifest::from_str(toml_str, Path::new(".")).unwrap();
@@ -632,7 +671,7 @@ test_lib = "0.5"
     #[test]
     fn dev_dep_in_test_context_is_ok() {
         let toml_str = r#"
-[dev-dependencies]
+[rust-dev-dependencies]
 test_lib = "0.5"
 "#;
         let manifest = ProjectManifest::from_str(toml_str, Path::new(".")).unwrap();
@@ -724,7 +763,7 @@ test_lib = "0.5"
     #[test]
     fn manifest_takes_precedence_over_known_good() {
         let toml_str = r#"
-[dependencies]
+[rust-dependencies]
 serde = { version = "2.0", features = ["custom"] }
 "#;
         let manifest = ProjectManifest::from_str(toml_str, Path::new(".")).unwrap();
@@ -744,7 +783,7 @@ serde = { version = "2.0", features = ["custom"] }
     #[test]
     fn git_branch_dep_appears_in_resolved_for_strict_check() {
         let toml_str = r#"
-[dependencies]
+[rust-dependencies]
 my_lib = { git = "https://github.com/example/my_lib.git", branch = "main" }
 "#;
         let manifest = ProjectManifest::from_str(toml_str, Path::new(".")).unwrap();
@@ -763,7 +802,7 @@ my_lib = { git = "https://github.com/example/my_lib.git", branch = "main" }
     #[test]
     fn optional_dep_without_feature_flag_is_error() {
         let toml_str = r#"
-[dependencies.optional]
+[rust-dependencies.optional]
 extra_lib = "1.0"
 "#;
         let manifest = ProjectManifest::from_str(toml_str, Path::new(".")).unwrap();
@@ -781,7 +820,7 @@ extra_lib = "1.0"
     #[test]
     fn optional_dep_with_feature_flag_is_ok() {
         let toml_str = r#"
-[dependencies.optional]
+[rust-dependencies.optional]
 extra_lib = "1.0"
 "#;
         let manifest = ProjectManifest::from_str(toml_str, Path::new(".")).unwrap();
@@ -798,6 +837,30 @@ extra_lib = "1.0"
             resolved.dependencies.iter().any(|d| d.crate_name == "extra_lib"),
             "expected extra_lib in resolved deps"
         );
+    }
+
+    #[test]
+    fn rust_import_declared_in_library_dependencies_emits_migration_error() -> Result<(), Box<dyn std::error::Error>> {
+        let toml_str = r#"
+[dependencies]
+legacy_rust = { path = "../legacy_rust" }
+"#;
+        let manifest = ProjectManifest::from_str(toml_str, Path::new("."))?;
+        let imports = vec![inline("legacy_rust", None, &[], false)];
+
+        let err = resolve_dependencies(Some(&manifest), &imports, false, &default_cargo_features()).unwrap_err();
+        assert!(!err.is_empty());
+        assert!(
+            err[0].error.message.contains("reserved for Incan library dependencies"),
+            "expected migration diagnostic, got: {}",
+            err[0].error.message
+        );
+        assert!(
+            err[0].error.hints.iter().any(|h| h.contains("[rust-dependencies]")),
+            "expected rust-dependencies migration hint, got: {:?}",
+            err[0].error.hints
+        );
+        Ok(())
     }
 
     // ---- SemVer validation (RFC 013, Phase 1.2) ----

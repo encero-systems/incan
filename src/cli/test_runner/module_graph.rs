@@ -146,9 +146,9 @@ pub(super) fn collect_source_modules_for_test(
             msg
         })?;
 
-        let ast = parser::parse(&tokens).map_err(|errs| {
+        let fp = file_path.to_string_lossy();
+        let ast = parser::parse_with_module_path(&tokens, Some(fp.as_ref())).map_err(|errs| {
             let mut msg = String::new();
-            let fp = file_path.to_string_lossy();
             for err in &errs {
                 msg.push_str(&diagnostics::format_error(&fp, &source, err));
             }

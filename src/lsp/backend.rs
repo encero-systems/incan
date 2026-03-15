@@ -11,6 +11,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 use crate::frontend::ast::{Declaration, Program, Span, Type};
+use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::resolve_import_path;
 use crate::frontend::{lexer, parser, typechecker};
 use crate::lsp::diagnostics::{compile_error_to_diagnostic, position_to_offset, span_to_range};
@@ -29,8 +30,8 @@ pub struct DocumentState {
     pub version: i32,
     /// Resolved const types from the typechecker (post “const-freezing”).
     ///
-    /// This is used to make hover text reflect the actual type of a const binding, even if the
-    /// user annotated `str`/`List[T]` and the compiler froze it to `FrozenStr`/`FrozenList[T]`.
+    /// This is used to make hover text reflect the actual type of a const binding, even if the user annotated
+    /// `str`/`List[T]` and the compiler froze it to `FrozenStr`/`FrozenList[T]`.
     pub const_types: HashMap<String, String>,
 }
 
@@ -67,8 +68,26 @@ impl IncanLanguageServer {
             }
         };
 
+        // Step 1.5: Discover manifest and library soft keywords
+        let module_path = uri.to_file_path().ok();
+        let mut declared_crates = HashSet::new();
+        let mut library_soft_keywords = HashMap::new();
+        let mut library_manifest_index = LibraryManifestIndex::default();
+        if let Some(path) = &module_path
+            && let Some(start_dir) = path.parent()
+            && let Ok(Some(manifest)) = ProjectManifest::discover(start_dir)
+        {
+            declared_crates = manifest.declared_rust_crate_names();
+            library_manifest_index = LibraryManifestIndex::from_project_manifest(&manifest);
+            library_soft_keywords = library_manifest_index.library_soft_keywords();
+        }
+
         // Step 2: Parse
-        let ast = match parser::parse(&tokens) {
+        let ast = match parser::parse_with_context(
+            &tokens,
+            module_path.as_deref().and_then(|path| path.to_str()),
+            Some(&library_soft_keywords),
+        ) {
             Ok(ast) => {
                 // Forward non-fatal parser warnings (e.g. RFC 005 dot-notation nudges) to the LSP.
                 for warn in &ast.warnings {
@@ -90,15 +109,12 @@ impl IncanLanguageServer {
 
         // Step 3: Type check (with multi-file import resolution)
         let mut checker = typechecker::TypeChecker::new();
-        // RFC 023: if a project manifest exists, use it to validate `rust.module()` crate segments.
-        if let Ok(entry_path) = uri.to_file_path()
-            && let Some(start_dir) = entry_path.parent()
-            && let Ok(manifest) = ProjectManifest::discover(start_dir)
-            && let Some(m) = manifest
-        {
-            checker.set_declared_crate_names(m.declared_crate_names());
-        }
-        let (deps, mut dep_summary_diags) = self.collect_dependency_modules(uri, &ast, source, version).await;
+        checker.set_declared_crate_names(declared_crates);
+        checker.set_library_manifest_index(library_manifest_index);
+
+        let (deps, mut dep_summary_diags) = self
+            .collect_dependency_modules(uri, &ast, source, version, Some(&library_soft_keywords))
+            .await;
         let dep_refs: Vec<(&str, &Program)> = deps.iter().map(|(name, program)| (name.as_str(), program)).collect();
 
         if let Err(errors) = checker.check_with_imports(&ast, &dep_refs) {
@@ -154,6 +170,7 @@ impl IncanLanguageServer {
         ast: &Program,
         entry_source: &str,
         _entry_version: i32,
+        library_soft_keywords: Option<&HashMap<String, Vec<keywords::KeywordId>>>,
     ) -> (Vec<(String, Program)>, Vec<Diagnostic>) {
         let Ok(entry_path) = uri.to_file_path() else {
             return (Vec::new(), Vec::new());
@@ -227,37 +244,39 @@ impl IncanLanguageServer {
                     continue;
                 }
             };
-            let dep_ast = match parser::parse(&dep_tokens) {
-                Ok(a) => a,
-                Err(errors) => {
-                    // Guardrail: surface dependency parse errors.
-                    if let Some(u) = dep_uri.clone() {
-                        let mut diags = Vec::new();
-                        for e in &errors {
-                            diags.push(compile_error_to_diagnostic(e, &dep_source, &u));
+            let dep_path_display = canonical.to_string_lossy();
+            let dep_ast =
+                match parser::parse_with_context(&dep_tokens, Some(dep_path_display.as_ref()), library_soft_keywords) {
+                    Ok(a) => a,
+                    Err(errors) => {
+                        // Guardrail: surface dependency parse errors.
+                        if let Some(u) = dep_uri.clone() {
+                            let mut diags = Vec::new();
+                            for e in &errors {
+                                diags.push(compile_error_to_diagnostic(e, &dep_source, &u));
+                            }
+                            let ver = dep_doc.map(|d| d.version);
+                            self.client.publish_diagnostics(u.clone(), diags, ver).await;
                         }
-                        let ver = dep_doc.map(|d| d.version);
-                        self.client.publish_diagnostics(u.clone(), diags, ver).await;
-                    }
 
-                    let range = span_to_range(entry_source, import_span.start, import_span.end);
-                    entry_diags.push(Diagnostic {
-                        range,
-                        severity: Some(DiagnosticSeverity::ERROR),
-                        code: None,
-                        code_description: None,
-                        source: Some("incan".to_string()),
-                        message: format!(
-                            "Failed to parse dependency '{}'; open that file for details",
-                            canonical.display()
-                        ),
-                        related_information: None,
-                        tags: None,
-                        data: None,
-                    });
-                    continue;
-                }
-            };
+                        let range = span_to_range(entry_source, import_span.start, import_span.end);
+                        entry_diags.push(Diagnostic {
+                            range,
+                            severity: Some(DiagnosticSeverity::ERROR),
+                            code: None,
+                            code_description: None,
+                            source: Some("incan".to_string()),
+                            message: format!(
+                                "Failed to parse dependency '{}'; open that file for details",
+                                canonical.display()
+                            ),
+                            related_information: None,
+                            tags: None,
+                            data: None,
+                        });
+                        continue;
+                    }
+                };
 
             // Dependency parsed successfully: clear old dependency diagnostics if any.
             if let Some(u) = dep_uri.clone() {

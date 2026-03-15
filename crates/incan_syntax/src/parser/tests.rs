@@ -12,6 +12,11 @@ mod tests {
         parse(&tokens)
     }
 
+    fn parse_str_with_module_path(source: &str, module_path: Option<&str>) -> Result<Program, Vec<CompileError>> {
+        let tokens = lexer::lex(source).map_err(|_| vec![])?;
+        parse_with_module_path(&tokens, module_path)
+    }
+
     #[test]
     fn test_unexpected_indent_at_toplevel_is_single_clear_error() {
         // We intentionally allow the lexer to emit INDENT/DEDENT tokens at the top-level.
@@ -668,6 +673,54 @@ def add(a: int, b: int) -> int:
     }
 
     #[test]
+    fn test_parse_pub_from_in_src_lib_is_public_reexport() -> Result<(), Vec<CompileError>> {
+        let source = "pub from widgets import Widget, Layout as UiLayout\n";
+        let program = parse_str_with_module_path(source, Some("project/src/lib.incn"))?;
+        assert_eq!(program.declarations.len(), 1);
+
+        let Declaration::Import(import) = &program.declarations[0].node else {
+            panic!("Expected import declaration");
+        };
+        assert!(matches!(import.visibility, Visibility::Public));
+        let ImportKind::From { module, items } = &import.kind else {
+            panic!("Expected from-import");
+        };
+        assert_eq!(module.segments, vec!["widgets".to_string()]);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].name, "Widget");
+        assert_eq!(items[0].alias, None);
+        assert_eq!(items[1].name, "Layout");
+        assert_eq!(items[1].alias, Some("UiLayout".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_pub_from_outside_src_lib_is_error() {
+        let source = "pub from widgets import Widget\n";
+        let result = parse_str_with_module_path(source, Some("project/src/main.incn"));
+        assert!(result.is_err(), "Expected parser to reject `pub from` outside src/lib.incn");
+        let err = result.err().unwrap_or_default();
+        assert!(
+            err[0].message.contains("only valid in `src/lib.incn`"),
+            "Unexpected error: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
+    fn test_parse_pub_import_is_error() {
+        let source = "pub import widgets\n";
+        let result = parse_str_with_module_path(source, Some("project/src/lib.incn"));
+        assert!(result.is_err(), "Expected parser to reject `pub import`");
+        let err = result.err().unwrap_or_default();
+        assert!(
+            err[0].message.contains("only supported on `from ... import ...`"),
+            "Unexpected error: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
     fn test_parse_rust_import_with_version_and_features() -> Result<(), Vec<CompileError>> {
         let source = r#"import rust::tokio @ "1.0" with ["full", "macros"] as rt"#;
         let program = parse_str(source)?;
@@ -727,6 +780,70 @@ def add(a: int, b: int) -> int:
         };
         assert!(
             err[0].message.contains("features require a version"),
+            "Unexpected error: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
+    fn test_parse_pub_library_import_with_alias() -> Result<(), Vec<CompileError>> {
+        let source = "import pub::mylib as lib\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::PubLibrary { library } => {
+                    assert_eq!(library, "mylib");
+                    assert_eq!(i.alias.as_deref(), Some("lib"));
+                }
+                _ => panic!("Expected pub library import"),
+            },
+            _ => panic!("Expected import"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_pub_from_import_parenthesized_items() -> Result<(), Vec<CompileError>> {
+        let source = "from pub::mylib import (\n    Widget,\n    make_widget as build_widget,\n)\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::PubFrom { library, items } => {
+                    assert_eq!(library, "mylib");
+                    assert_eq!(items.len(), 2);
+                    assert_eq!(items[0].name, "Widget");
+                    assert_eq!(items[0].alias, None);
+                    assert_eq!(items[1].name, "make_widget");
+                    assert_eq!(items[1].alias.as_deref(), Some("build_widget"));
+                }
+                _ => panic!("Expected pub from import"),
+            },
+            _ => panic!("Expected import"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_pub_import_dot_notation_is_error() {
+        let source = "from pub.mylib import Widget\n";
+        let Err(err) = parse_str(source) else {
+            panic!("Expected parser to reject dot-notation `pub` import");
+        };
+        assert!(
+            err[0].message.contains("Expected `::` after `pub`"),
+            "Unexpected error: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
+    fn test_parse_pub_import_nested_path_is_error() {
+        let source = "from pub::mylib::widgets import Widget\n";
+        let Err(err) = parse_str(source) else {
+            panic!("Expected parser to reject nested `pub::` path");
+        };
+        assert!(
+            err[0].message.contains("single library name"),
             "Unexpected error: {}",
             err[0].message
         );
@@ -1447,7 +1564,10 @@ const ANSWER: int = 42
     fn test_type_alias_simple() {
         // `type Foo = Bar` should parse as Declaration::TypeAlias, not Declaration::Newtype.
         let source = "type Foo = Bar\n";
-        let prog = parse_str(source).expect("simple type alias should parse");
+        let prog = match parse_str(source) {
+            Ok(program) => program,
+            Err(errs) => panic!("simple type alias should parse: {errs:?}"),
+        };
         assert_eq!(prog.declarations.len(), 1);
         assert!(
             matches!(prog.declarations[0].node, Declaration::TypeAlias(_)),
@@ -1460,7 +1580,10 @@ const ANSWER: int = 42
     fn test_type_alias_generic() {
         // `pub type Query[T] = AxumQuery[T]` should parse as a public TypeAlias.
         let source = "pub type Query[T] = AxumQuery[T]\n";
-        let prog = parse_str(source).expect("generic type alias should parse");
+        let prog = match parse_str(source) {
+            Ok(program) => program,
+            Err(errs) => panic!("generic type alias should parse: {errs:?}"),
+        };
         assert_eq!(prog.declarations.len(), 1);
         let Declaration::TypeAlias(alias) = &prog.declarations[0].node else {
             panic!("Expected TypeAlias, got: {:?}", prog.declarations[0].node);
@@ -1475,7 +1598,10 @@ const ANSWER: int = 42
     fn test_newtype_still_parses_with_newtype_keyword() {
         // `type Foo = newtype Bar` must still produce a Newtype.
         let source = "type Foo = newtype Bar\n";
-        let prog = parse_str(source).expect("newtype should parse");
+        let prog = match parse_str(source) {
+            Ok(program) => program,
+            Err(errs) => panic!("newtype should parse: {errs:?}"),
+        };
         assert_eq!(prog.declarations.len(), 1);
         assert!(
             matches!(prog.declarations[0].node, Declaration::Newtype(_)),
@@ -1490,5 +1616,23 @@ const ANSWER: int = 42
         let source = "rust.module(\"foo\"\n\ndef bar() -> int:\n    return 1\n";
         let result = parse_str(source);
         assert!(result.is_err(), "rust.module with missing closing paren should be an error");
+    }
+
+    #[test]
+    fn test_library_import_activates_soft_keywords() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::mylib\n\nasync def my_func() -> None:\n    pass\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        // Without context, async should fail
+        let result_no_context = crate::parser::parse(&tokens);
+        assert!(result_no_context.is_err(), "Expected async function without soft keyword context to fail");
+
+        // With context mapping mylib -> async, it should succeed
+        let mut map = std::collections::HashMap::new();
+        map.insert("mylib".to_string(), vec![incan_core::lang::keywords::KeywordId::Async]);
+
+        let result_with_context = crate::parser::parse_with_context(&tokens, None, Some(&map));
+        assert!(result_with_context.is_ok(), "Expected async function to parse with soft keyword context");
+        Ok(())
     }
 }

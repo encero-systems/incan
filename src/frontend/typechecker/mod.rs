@@ -56,9 +56,11 @@ pub use const_eval::ConstValue;
 mod tests;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::{CompileError, ErrorKind, errors};
+use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{ExportedSymbol, exported_symbols};
 use crate::frontend::surface_semantics::SurfaceContext;
 use crate::frontend::symbols::*;
@@ -171,9 +173,11 @@ pub struct TypeChecker {
     pub(crate) type_info: TypeCheckInfo,
     /// Public exports for imported dependency modules, keyed by module name.
     pub(crate) dependency_exports: HashMap<String, Vec<ExportedSymbol>>,
+    /// Consumer-side dependency library manifests (`pub::`) keyed by library name.
+    pub(crate) library_manifests: Arc<LibraryManifestIndex>,
     /// Module path for the program being checked (if known).
     pub(crate) current_module_path: Option<Vec<String>>,
-    /// Declared Rust crate names from `incan.toml [dependencies]` (RFC 023 / RFC 013).
+    /// Declared Rust crate names from `incan.toml [rust-dependencies]` (RFC 023 / RFC 013).
     ///
     /// Used to validate that `rust.module()` paths reference known crates. When `None`, crate validation is skipped
     /// (e.g. single-file mode without a manifest).
@@ -215,6 +219,7 @@ impl TypeChecker {
             const_eval_cache: HashMap::new(),
             type_info: TypeCheckInfo::default(),
             dependency_exports: HashMap::new(),
+            library_manifests: Arc::new(LibraryManifestIndex::default()),
             current_module_path: None,
             declared_crate_names: None,
             stdlib_cache: stdlib_loader::StdlibAstCache::new(),
@@ -224,12 +229,22 @@ impl TypeChecker {
         }
     }
 
-    /// Set the declared Rust crate names from `incan.toml [dependencies]`.
+    /// Set the declared Rust crate names from `incan.toml [rust-dependencies]`.
     ///
     /// When set, `rust.module()` path validation will check that the first segment of the path is either `incan_stdlib`
     /// or a crate declared here.
     pub fn set_declared_crate_names(&mut self, names: HashSet<String>) {
         self.declared_crate_names = Some(names);
+    }
+
+    /// Set the loaded dependency library manifests used for `pub::` import resolution.
+    pub fn set_library_manifest_index(&mut self, index: LibraryManifestIndex) {
+        self.library_manifests = Arc::new(index);
+    }
+
+    /// Set shared dependency library manifests used for `pub::` import resolution.
+    pub fn set_library_manifest_index_shared(&mut self, index: Arc<LibraryManifestIndex>) {
+        self.library_manifests = index;
     }
 
     pub fn set_current_module_path(&mut self, path: Option<Vec<String>>) {

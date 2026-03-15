@@ -61,8 +61,12 @@ pub fn load_stdlib_modules(modules: &[crate::cli::prelude::ParsedModule]) -> Cli
             let path = match &import.kind {
                 ImportKind::From { module, .. } => module.segments.clone(),
                 ImportKind::Module(p) => p.segments.clone(),
-                // Skip rust crate imports and Python module imports
-                ImportKind::RustCrate { .. } | ImportKind::RustFrom { .. } | ImportKind::Python(_) => continue,
+                // Skip external namespace imports.
+                ImportKind::RustCrate { .. }
+                | ImportKind::RustFrom { .. }
+                | ImportKind::PubLibrary { .. }
+                | ImportKind::PubFrom { .. }
+                | ImportKind::Python(_) => continue,
             };
 
             if is_stdlib_import(&path) {

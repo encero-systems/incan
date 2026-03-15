@@ -1,0 +1,5 @@
+import pub::widgets as w
+from pub::widgets import DEFAULT_NAME
+
+def main() -> None:
+    w.make_widget(DEFAULT_NAME)

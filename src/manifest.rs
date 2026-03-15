@@ -1,8 +1,9 @@
 //! Project manifest (`incan.toml`) discovery and parsing.
 //!
-//! Implements the `incan.toml` schema from RFC 013 (Rust crate dependencies) and RFC 015 (project discovery).
+//! Implements the `incan.toml` schema from RFC 013 (Rust crate dependencies), RFC 015 (project discovery), and
+//! RFC 031 Phase 1 (Incan library dependency table split).
 //! This module is responsible for locating the manifest and parsing dependency tables into structured specs that the
-//! dependency resolver can validate.
+//! dependency resolver and future library resolver can validate.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -69,6 +70,12 @@ impl DependencySpec {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibraryDependencySpec {
+    pub library_name: String,
+    pub path: PathBuf,
+}
+
 // ============================================================================
 // Project manifest
 // ============================================================================
@@ -111,6 +118,12 @@ pub struct BuildSection {
     pub source_root: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VocabSection {
+    #[serde(rename = "crate")]
+    pub crate_path: Option<String>,
+}
+
 /// A manifest that can be serialized to TOML.
 ///
 /// Used by `incan init` and any future code that needs to write `incan.toml`.
@@ -121,6 +134,8 @@ pub struct WritableManifest {
     pub project: Option<ProjectSection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build: Option<BuildSection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vocab: Option<VocabSection>,
 }
 
 impl WritableManifest {
@@ -139,10 +154,14 @@ pub struct ProjectManifest {
     pub project: Option<ProjectSection>,
     /// `[build]` configuration (optional).
     pub build: Option<BuildSection>,
-    /// `[dependencies]` (Rust crate dependencies).
-    dependencies: HashMap<String, DependencySpec>,
-    /// `[dev-dependencies]` (dev-only Rust crates).
-    dev_dependencies: HashMap<String, DependencySpec>,
+    /// `[vocab]` configuration (optional).
+    pub vocab: Option<VocabSection>,
+    /// `[dependencies]` (Incan library dependencies).
+    library_dependencies: HashMap<String, LibraryDependencySpec>,
+    /// `[rust-dependencies]` (Rust crate dependencies).
+    rust_dependencies: HashMap<String, DependencySpec>,
+    /// `[rust-dev-dependencies]` (dev-only Rust crates).
+    rust_dev_dependencies: HashMap<String, DependencySpec>,
 }
 
 impl ProjectManifest {
@@ -172,24 +191,29 @@ impl ProjectManifest {
         parse_manifest_content(content, path)
     }
 
-    /// The set of crate names declared in `[dependencies]` (normal deps only).
-    pub fn declared_crate_names(&self) -> HashSet<String> {
-        self.dependencies.keys().cloned().collect()
+    /// The set of crate names declared in `[rust-dependencies]` (normal deps only).
+    pub fn declared_rust_crate_names(&self) -> HashSet<String> {
+        self.rust_dependencies.keys().cloned().collect()
     }
 
-    /// The set of crate names declared in `[dev-dependencies]` only.
-    pub fn declared_dev_crate_names(&self) -> HashSet<String> {
-        self.dev_dependencies.keys().cloned().collect()
+    /// The set of crate names declared in `[rust-dev-dependencies]` only.
+    pub fn declared_rust_dev_crate_names(&self) -> HashSet<String> {
+        self.rust_dev_dependencies.keys().cloned().collect()
+    }
+
+    /// Incan library dependencies from the manifest.
+    pub fn library_dependencies(&self) -> &HashMap<String, LibraryDependencySpec> {
+        &self.library_dependencies
     }
 
     /// Normal Rust dependencies from the manifest.
-    pub fn dependencies(&self) -> &HashMap<String, DependencySpec> {
-        &self.dependencies
+    pub fn rust_dependencies(&self) -> &HashMap<String, DependencySpec> {
+        &self.rust_dependencies
     }
 
     /// Dev-only Rust dependencies from the manifest.
-    pub fn dev_dependencies(&self) -> &HashMap<String, DependencySpec> {
-        &self.dev_dependencies
+    pub fn rust_dev_dependencies(&self) -> &HashMap<String, DependencySpec> {
+        &self.rust_dev_dependencies
     }
 
     /// Path to the `incan.toml` file.
@@ -200,6 +224,11 @@ impl ProjectManifest {
     /// The project root directory (parent of `incan.toml`).
     pub fn project_root(&self) -> &Path {
         self.path.parent().unwrap_or_else(|| Path::new("."))
+    }
+
+    /// Optional vocab configuration.
+    pub fn vocab(&self) -> Option<&VocabSection> {
+        self.vocab.as_ref()
     }
 }
 
@@ -214,9 +243,15 @@ struct RawManifest {
     #[serde(default)]
     build: Option<BuildSection>,
     #[serde(default)]
+    vocab: Option<VocabSection>,
+    #[serde(default)]
     dependencies: Option<DependencyTable>,
+    #[serde(rename = "rust-dependencies", default)]
+    rust_dependencies: Option<DependencyTable>,
+    #[serde(rename = "rust-dev-dependencies", default)]
+    rust_dev_dependencies: Option<DependencyTable>,
     #[serde(rename = "dev-dependencies", default)]
-    dev_dependencies: Option<DependencyTable>,
+    legacy_dev_dependencies: Option<DependencyTable>,
     #[serde(default)]
     rust: Option<RustTables>,
 }
@@ -265,56 +300,188 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         source: e,
     })?;
 
-    let (deps_table, dev_deps_table) = resolve_dependency_tables(&raw, path)?;
-    let dependencies = deps_table
-        .map(|table| parse_dependency_table(&table, path))
-        .transpose()?
-        .unwrap_or_default();
-    let dev_dependencies = dev_deps_table
-        .map(|table| parse_dependency_table(&table, path))
+    let library_dependencies = raw
+        .dependencies
+        .as_ref()
+        .map(|table| parse_library_dependency_table(table, path))
         .transpose()?
         .unwrap_or_default();
 
-    validate_package_collisions(&dependencies, &dev_dependencies, path)?;
+    let (rust_deps_table, rust_dev_deps_table) = resolve_rust_dependency_tables(&raw, path)?;
+    let rust_dependencies = rust_deps_table
+        .map(|table| parse_dependency_table(&table, path, "[rust-dependencies]"))
+        .transpose()?
+        .unwrap_or_default();
+    let rust_dev_dependencies = rust_dev_deps_table
+        .map(|table| parse_dependency_table(&table, path, "[rust-dev-dependencies]"))
+        .transpose()?
+        .unwrap_or_default();
+
+    validate_package_collisions(&rust_dependencies, &rust_dev_dependencies, path)?;
+
+    if let Some(vocab) = &raw.vocab {
+        if let Some(crate_path) = &vocab.crate_path {
+            if crate_path.trim().is_empty() {
+                return Err(ManifestError::Invalid {
+                    path: path.to_path_buf(),
+                    message: "[vocab].crate cannot be empty".to_string(),
+                });
+            }
+        } else {
+            return Err(ManifestError::Invalid {
+                path: path.to_path_buf(),
+                message: "[vocab] section requires a `crate` field".to_string(),
+            });
+        }
+    }
 
     Ok(ProjectManifest {
         path: path.to_path_buf(),
         project: raw.project,
         build: raw.build,
-        dependencies,
-        dev_dependencies,
+        vocab: raw.vocab,
+        library_dependencies,
+        rust_dependencies,
+        rust_dev_dependencies,
     })
 }
 
-fn resolve_dependency_tables(
+fn resolve_rust_dependency_tables(
     raw: &RawManifest,
     path: &Path,
 ) -> Result<(Option<DependencyTable>, Option<DependencyTable>), ManifestError> {
     let rust_tables = raw.rust.as_ref();
-    let deps = raw.dependencies.clone();
-    let rust_deps = rust_tables.and_then(|r| r.dependencies.clone());
-    let dev_deps = raw.dev_dependencies.clone();
-    let rust_dev_deps = rust_tables.and_then(|r| r.dev_dependencies.clone());
+    let rust_deps = raw.rust_dependencies.clone();
+    let legacy_rust_deps = rust_tables.and_then(|r| r.dependencies.clone());
+    let explicit_rust_dev_deps = raw.rust_dev_dependencies.clone();
+    let legacy_dev_deps = raw.legacy_dev_dependencies.clone();
+    let legacy_rust_dev_deps = rust_tables.and_then(|r| r.dev_dependencies.clone());
 
-    if deps.is_some() && rust_deps.is_some() {
+    if rust_deps.is_some() && legacy_rust_deps.is_some() {
         return Err(ManifestError::Invalid {
             path: path.to_path_buf(),
-            message: "cannot specify both [dependencies] and [rust.dependencies]".to_string(),
-        });
-    }
-    if dev_deps.is_some() && rust_dev_deps.is_some() {
-        return Err(ManifestError::Invalid {
-            path: path.to_path_buf(),
-            message: "cannot specify both [dev-dependencies] and [rust.dev-dependencies]".to_string(),
+            message: "cannot specify both [rust-dependencies] and [rust.dependencies]".to_string(),
         });
     }
 
-    Ok((deps.or(rust_deps), dev_deps.or(rust_dev_deps)))
+    if legacy_dev_deps.is_some() {
+        return Err(ManifestError::Invalid {
+            path: path.to_path_buf(),
+            message: "table [dev-dependencies] has been renamed to [rust-dev-dependencies]".to_string(),
+        });
+    }
+
+    if explicit_rust_dev_deps.is_some() && legacy_rust_dev_deps.is_some() {
+        return Err(ManifestError::Invalid {
+            path: path.to_path_buf(),
+            message: "cannot specify both [rust-dev-dependencies] and [rust.dev-dependencies]".to_string(),
+        });
+    }
+
+    Ok((
+        rust_deps.or(legacy_rust_deps),
+        explicit_rust_dev_deps.or(legacy_rust_dev_deps),
+    ))
+}
+
+fn parse_library_dependency_table(
+    table: &DependencyTable,
+    path: &Path,
+) -> Result<HashMap<String, LibraryDependencySpec>, ManifestError> {
+    if !table.optional.is_empty() {
+        return Err(ManifestError::Invalid {
+            path: path.to_path_buf(),
+            message:
+                "table [dependencies.optional] is no longer valid; move Rust optional crates to [rust-dependencies]"
+                    .to_string(),
+        });
+    }
+
+    let mut result = HashMap::new();
+    for (name, entry) in &table.entries {
+        let spec = library_dependency_from_entry(name, entry, path)?;
+        result.insert(name.clone(), spec);
+    }
+    Ok(result)
+}
+
+fn library_dependency_from_entry(
+    name: &str,
+    entry: &DependencyEntry,
+    path: &Path,
+) -> Result<LibraryDependencySpec, ManifestError> {
+    let table = match entry {
+        DependencyEntry::Version(_) => {
+            return Err(ManifestError::Invalid {
+                path: path.to_path_buf(),
+                message: format!(
+                    "dependency `{name}` in [dependencies] uses legacy Rust crate syntax. Move Rust crates to [rust-dependencies]."
+                ),
+            });
+        }
+        DependencyEntry::Table(table) => table,
+    };
+
+    if looks_like_legacy_rust_dependency(entry) {
+        return Err(ManifestError::Invalid {
+            path: path.to_path_buf(),
+            message: format!(
+                "dependency `{name}` in [dependencies] looks like a Rust crate dependency. Move it to [rust-dependencies]."
+            ),
+        });
+    }
+
+    if table.path.is_none() {
+        return Err(ManifestError::Invalid {
+            path: path.to_path_buf(),
+            message: format!(
+                "library dependency `{name}` is missing `path`. Use `{name} = {{ path = \"../{name}\" }}`."
+            ),
+        });
+    }
+
+    let raw_path = table.path.clone().unwrap_or_default();
+    if raw_path.trim().is_empty() {
+        return Err(ManifestError::Invalid {
+            path: path.to_path_buf(),
+            message: format!("library dependency `{name}` has an empty `path`"),
+        });
+    }
+    let manifest_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let raw_path_buf = PathBuf::from(raw_path);
+    let resolved_path = if raw_path_buf.is_relative() {
+        manifest_dir.join(raw_path_buf)
+    } else {
+        raw_path_buf
+    };
+
+    Ok(LibraryDependencySpec {
+        library_name: name.to_string(),
+        path: resolved_path,
+    })
+}
+
+fn looks_like_legacy_rust_dependency(entry: &DependencyEntry) -> bool {
+    match entry {
+        DependencyEntry::Version(_) => true,
+        DependencyEntry::Table(table) => {
+            table.version.is_some()
+                || table.features.is_some()
+                || table.git.is_some()
+                || table.branch.is_some()
+                || table.tag.is_some()
+                || table.rev.is_some()
+                || table.optional.is_some()
+                || table.package.is_some()
+                || table.default_features.is_some()
+        }
+    }
 }
 
 fn parse_dependency_table(
     table: &DependencyTable,
     path: &Path,
+    table_name: &str,
 ) -> Result<HashMap<String, DependencySpec>, ManifestError> {
     let mut result = HashMap::new();
 
@@ -322,10 +489,7 @@ fn parse_dependency_table(
         if table.optional.contains_key(name) {
             return Err(ManifestError::Invalid {
                 path: path.to_path_buf(),
-                message: format!(
-                    "dependency `{}` appears in both [dependencies] and [dependencies.optional]",
-                    name
-                ),
+                message: format!("dependency `{name}` appears in both {table_name} and {table_name}.optional"),
             });
         }
         let spec = dependency_from_entry(name, entry, false, path)?;
@@ -539,71 +703,89 @@ mod tests {
     #[test]
     fn parse_empty_manifest() -> Result<(), ManifestError> {
         let manifest = ProjectManifest::from_str("", Path::new("incan.toml"))?;
-        assert!(manifest.dependencies().is_empty());
-        assert!(manifest.dev_dependencies().is_empty());
+        assert!(manifest.library_dependencies().is_empty());
+        assert!(manifest.rust_dependencies().is_empty());
+        assert!(manifest.rust_dev_dependencies().is_empty());
         Ok(())
     }
 
     #[test]
-    fn parse_manifest_string_version_dependencies() -> Result<(), ManifestError> {
+    fn parse_manifest_renamed_rust_dependency_tables() -> Result<(), ManifestError> {
         let content = r#"
-[dependencies]
+[rust-dependencies]
 tokio = "1.0"
 serde = "1.0"
+
+[rust-dev-dependencies]
+pretty_assertions = "1.4"
 "#;
         let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
-        assert_eq!(manifest.dependencies().len(), 2);
-        assert!(manifest.dependencies().contains_key("tokio"));
-        assert!(manifest.dependencies().contains_key("serde"));
+        assert_eq!(manifest.rust_dependencies().len(), 2);
+        assert!(manifest.rust_dependencies().contains_key("tokio"));
+        assert!(manifest.rust_dependencies().contains_key("serde"));
+        assert!(manifest.rust_dev_dependencies().contains_key("pretty_assertions"));
         Ok(())
     }
 
     #[test]
-    fn parse_manifest_table_dependencies() -> TestResult {
+    fn parse_manifest_library_dependencies() -> TestResult {
         let content = r#"
 [dependencies]
-tokio = { version = "1.0", features = ["full"] }
-my_crate = { path = "../my_crate" }
+mylib = { path = "../mylib" }
 "#;
         let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
-        let tokio = manifest.dependencies().get("tokio").ok_or("missing tokio dep")?;
-        assert_eq!(tokio.version.as_deref(), Some("1.0"));
-        assert_eq!(tokio.features, vec!["full".to_string()]);
-        assert!(matches!(tokio.source, DependencySource::Registry));
+        let mylib = manifest
+            .library_dependencies()
+            .get("mylib")
+            .ok_or("missing mylib library dependency")?;
+        assert_eq!(mylib.library_name, "mylib");
+        assert!(
+            mylib.path.ends_with("mylib"),
+            "expected path to end with mylib, got {}",
+            mylib.path.display()
+        );
         Ok(())
     }
 
     #[test]
-    fn parse_manifest_optional_dependencies() -> TestResult {
+    fn dependencies_with_rust_version_syntax_emits_migration_error() {
+        let content = r#"
+[dependencies]
+serde = "1.0"
+"#;
+        let err = ProjectManifest::from_str(content, Path::new("incan.toml"));
+        assert!(matches!(err, Err(ManifestError::Invalid { .. })));
+    }
+
+    #[test]
+    fn dependencies_optional_subtable_emits_migration_error() {
         let content = r#"
 [dependencies.optional]
 fancy = { version = "0.3" }
 "#;
-        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
-        let fancy = manifest.dependencies().get("fancy").ok_or("missing fancy dep")?;
-        assert!(fancy.optional);
-        Ok(())
+        let err = ProjectManifest::from_str(content, Path::new("incan.toml"));
+        assert!(matches!(err, Err(ManifestError::Invalid { .. })));
     }
 
     #[test]
-    fn parse_manifest_dependency_rename() -> TestResult {
+    fn parse_renamed_rust_dependency_with_package_alias() -> TestResult {
         let content = r#"
-[dependencies]
+[rust-dependencies]
 serde_json = { package = "serde-json", version = "1.0" }
 "#;
         let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
         let dep = manifest
-            .dependencies()
+            .rust_dependencies()
             .get("serde_json")
-            .ok_or("missing serde_json dep")?;
+            .ok_or("missing serde_json rust dep")?;
         assert_eq!(dep.package.as_deref(), Some("serde-json"));
         Ok(())
     }
 
     #[test]
-    fn alias_tables_conflict() {
+    fn rust_alias_tables_conflict() {
         let content = r#"
-[dependencies]
+[rust-dependencies]
 serde = "1.0"
 
 [rust.dependencies]
@@ -614,9 +796,19 @@ tokio = "1.0"
     }
 
     #[test]
+    fn legacy_dev_dependencies_table_is_rejected() {
+        let content = r#"
+[dev-dependencies]
+pretty_assertions = "1.4"
+"#;
+        let err = ProjectManifest::from_str(content, Path::new("incan.toml"));
+        assert!(matches!(err, Err(ManifestError::Invalid { .. })));
+    }
+
+    #[test]
     fn invalid_git_source_errors() {
         let content = r#"
-[dependencies]
+[rust-dependencies]
 my_crate = { git = "https://example.com/repo", branch = "main", tag = "v1" }
 "#;
         let err = ProjectManifest::from_str(content, Path::new("incan.toml"));
@@ -627,7 +819,7 @@ my_crate = { git = "https://example.com/repo", branch = "main", tag = "v1" }
     fn discover_finds_manifest_in_parent_directory() -> TestResult {
         let dir = tempdir_with_manifest(
             r#"
-[dependencies]
+[rust-dependencies]
 parent_crate = "2.0"
 "#,
         )?;
@@ -635,8 +827,40 @@ parent_crate = "2.0"
         fs::create_dir_all(&subdir)?;
 
         let manifest = ProjectManifest::discover(&subdir)?.ok_or("should find manifest in parent")?;
-        assert!(manifest.dependencies().contains_key("parent_crate"));
+        assert!(manifest.rust_dependencies().contains_key("parent_crate"));
         Ok(())
+    }
+
+    #[test]
+    fn parse_vocab_section() -> TestResult {
+        let content = r#"
+[vocab]
+crate = "crates/mylib-vocab"
+"#;
+        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let vocab = manifest.vocab().ok_or("missing vocab section")?;
+        assert_eq!(vocab.crate_path.as_deref(), Some("crates/mylib-vocab"));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_vocab_section_rejects_empty_crate() {
+        let content = r#"
+[vocab]
+crate = "   "
+"#;
+        let err = ProjectManifest::from_str(content, Path::new("incan.toml"));
+        assert!(matches!(err, Err(ManifestError::Invalid { .. })));
+    }
+
+    #[test]
+    fn parse_vocab_section_rejects_missing_crate() {
+        let content = r#"
+[vocab]
+some_other_field = "value"
+"#;
+        let err = ProjectManifest::from_str(content, Path::new("incan.toml"));
+        assert!(matches!(err, Err(ManifestError::Invalid { .. })));
     }
 
     fn tempdir_with_manifest(content: &str) -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {

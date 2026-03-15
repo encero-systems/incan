@@ -1,6 +1,6 @@
 ---
 name: bump-rfc
-description: Transition an Incan RFC from one status to the next. Use when the user asks to promote, advance, or finalize an RFC, or says /bump-rfc. Handles Draft → Planned, Planned → In Progress, and In Progress → Done transitions.
+description: Transition an Incan RFC from one status to the next. Use when the user asks to promote, advance, or finalize an RFC, or says /bump-rfc. Handles Draft → Planned, Planned → In Progress, and In Progress → Implemented transitions.
 ---
 
 # Bump RFC — Incan Project
@@ -9,12 +9,12 @@ description: Transition an Incan RFC from one status to the next. Use when the u
 
 RFCs move through four statuses. Each transition requires specific file edits, GitHub actions, and prerequisites.
 
-| Status | Meaning |
-| ------------- | ------------------------------------------------------- |
-| `Draft` | Active design work; unresolved questions remain |
-| `Planned` | Design settled; ready for implementation |
-| `In Progress` | Active implementation underway |
-| `Done` | Implementation complete and shipped |
+| Status        | Meaning                                         |
+| ------------- | ----------------------------------------------- |
+| `Draft`       | Active design work; unresolved questions remain |
+| `Planned`     | Design settled; ready for implementation        |
+| `In Progress` | Active implementation underway                  |
+| `Implemented` | Implementation complete and shipped             |
 
 Read the RFC's current `Status:` field, then follow the matching section below.
 
@@ -157,7 +157,7 @@ gh issue comment <NNN> --repo dannys-code-corner/incan --body \
 
 ---
 
-## In Progress → Done
+## In Progress → Implemented
 
 ### Prerequisites
 
@@ -168,9 +168,12 @@ gh issue comment <NNN> --repo dannys-code-corner/incan --body \
 
 ### File changes
 
-1. Update the header: `Status: In Progress` → `Status: Done`.
-2. Fill `Shipped in: vX.Y` with the actual Incan release version.
-3. Optionally rename `## Progress Checklist` → `## Implementation log` to signal it is historical rather than active.
+1. Update the header: `Status: In Progress` → `Status: Implemented`.
+2. Fill the release field with the actual Incan release version:
+   - If the RFC uses `Shipped in:`, set `Shipped in: vX.Y`.
+   - If the RFC uses `Implemented version:`, set `Implemented version: X.Y.Z`.
+3. Move the RFC document into `workspaces/docs-site/docs/RFCs/closed/implemented/` and keep the same filename.
+4. Optionally rename `## Progress Checklist` → `## Implementation log` to signal it is historical rather than active.
 
 ### GitHub actions
 
@@ -196,4 +199,4 @@ Add an entry to `workspaces/docs-site/docs/release_notes/<vX_Y>.md` following th
 | ------------- | ------------- | ------------------------------------------------- | ------------------------------------------- |
 | `Draft` | `Planned` | Rename "Unresolved questions" → "Design Decisions"; update Status | Relabel `RFC` → `feature` |
 | `Planned` | `In Progress` | Add Implementation Plan + Progress Checklist; update Status | Post plan as issue comment |
-| `In Progress` | `Done` | Update Status; fill `Shipped in:`; rename checklist to log | Close issue with release version |
+| `In Progress` | `Implemented` | Update Status; fill release field; move file to `closed/implemented/`; optionally rename checklist to log | Close issue with release version |

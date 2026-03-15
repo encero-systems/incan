@@ -24,6 +24,72 @@ fn generate_rust(source: &str) -> String {
     normalize_codegen_output(&code)
 }
 
+/// Generate Rust code from Incan source with a populated library index
+fn generate_rust_with_widgets_manifest(source: &str) -> String {
+    use incan::frontend::library_manifest_index::{
+        LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+    };
+    use incan::library_manifest::{ConstExport, FunctionExport, LibraryManifest, ModelExport, ParamExport, TypeRef};
+    use std::collections::HashMap;
+
+    let Ok(tokens) = lexer::lex(source) else {
+        panic!("lexer failed");
+    };
+    let Ok(ast) = parser::parse(&tokens) else {
+        panic!("parser failed");
+    };
+
+    let mut artifact_root = std::env::temp_dir();
+    artifact_root.push("incan_test_widgets_artifacts");
+    artifact_root.push("target");
+    artifact_root.push("lib");
+
+    let mut manifest = LibraryManifest::new("widgets_core", "0.1.0");
+    manifest.exports.models.push(ModelExport {
+        name: "Widget".to_string(),
+        type_params: Vec::new(),
+        traits: Vec::new(),
+        fields: Vec::new(),
+        methods: Vec::new(),
+    });
+    manifest.exports.functions.push(FunctionExport {
+        name: "make_widget".to_string(),
+        type_params: Vec::new(),
+        params: vec![ParamExport {
+            name: "name".to_string(),
+            ty: TypeRef::Named {
+                name: "str".to_string(),
+            },
+        }],
+        return_type: TypeRef::Named {
+            name: "Widget".to_string(),
+        },
+        is_async: false,
+    });
+    manifest.exports.consts.push(ConstExport {
+        name: "DEFAULT_NAME".to_string(),
+        ty: TypeRef::Named {
+            name: "str".to_string(),
+        },
+    });
+
+    let index = LibraryManifestIndex::from_entries(HashMap::from([(
+        "widgets".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root("widgets", "widgets_core", artifact_root),
+        },
+    )]));
+
+    let mut codegen = IrCodegen::new();
+    codegen.set_library_manifest_index(index);
+    let code = match codegen.try_generate(&ast) {
+        Ok(c) => c,
+        Err(e) => panic!("codegen snapshot inputs must typecheck: {e:?}"),
+    };
+    normalize_codegen_output(&code)
+}
+
 /// Normalize generated output so snapshots don't churn on version bumps.
 fn normalize_codegen_output(code: &str) -> String {
     let from = format!(
@@ -51,6 +117,20 @@ fn load_test_file(name: &str) -> String {
         panic!("Failed to read test file: {}", path);
     };
     content
+}
+
+#[test]
+fn test_pub_import_expressions_codegen() {
+    let source = load_test_file("pub_import_expressions");
+    let rust_code = generate_rust_with_widgets_manifest(&source);
+    insta::assert_snapshot!("pub_import_expressions", rust_code);
+}
+
+#[test]
+fn test_pub_import_module_alias_codegen() {
+    let source = load_test_file("pub_import_module_alias");
+    let rust_code = generate_rust_with_widgets_manifest(&source);
+    insta::assert_snapshot!("pub_import_module_alias", rust_code);
 }
 
 #[test]

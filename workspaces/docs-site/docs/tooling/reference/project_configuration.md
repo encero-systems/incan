@@ -82,6 +82,15 @@ their source in a different directory (e.g. `lib/`).
 
 ## `[dependencies]`
 
+Incan library dependencies available in all contexts. (Note: for Rust crates, see `[rust-dependencies]`).
+
+```toml
+[dependencies]
+mylib = { path = "../mylib" }
+```
+
+## `[rust-dependencies]`
+
 Rust crate dependencies available in all contexts (build, run, test).
 
 ### String shorthand
@@ -89,7 +98,7 @@ Rust crate dependencies available in all contexts (build, run, test).
 For simple registry dependencies with just a version:
 
 ```toml
-[dependencies]
+[rust-dependencies]
 serde = "1.0"
 rand = "0.8"
 ```
@@ -99,7 +108,7 @@ rand = "0.8"
 For dependencies that need features, sources, or other options:
 
 ```toml
-[dependencies]
+[rust-dependencies]
 tokio = { version = "1.35", features = ["full"] }
 serde = { version = "1.0", features = ["derive"], default-features = true }
 ```
@@ -119,12 +128,12 @@ serde = { version = "1.0", features = ["derive"], default-features = true }
 | `rev`              | string     | Git commit hash (requires `git`)                         |
 | `path`             | string     | Local path, relative to `incan.toml` location            |
 
-## `[dev-dependencies]`
+## `[rust-dev-dependencies]`
 
-Dependencies available only in test contexts (`tests/` directory). Same syntax as `[dependencies]`.
+Dependencies available only in test contexts (`tests/` directory). Same syntax as `[rust-dependencies]`.
 
 ```toml
-[dev-dependencies]
+[rust-dev-dependencies]
 criterion = "0.5"
 test_helpers = { path = "../test-helpers" }
 ```
@@ -133,18 +142,17 @@ Importing a dev-only crate from production code is a compile-time error:
 
 ```text
 error: Rust crate `criterion` is dev-only and cannot be imported from production code
-hint: Move the dependency to [dependencies], or import it only from tests.
+hint: Move the dependency to [rust-dependencies], or import it only from tests.
 ```
 
-**Overlap rules**: If the same crate appears in both `[dependencies]` and `[dev-dependencies]`, the version, source,
-and default-features must match. Features are unioned, and the crate is treated as a normal dependency.
+**Overlap rules**: If the same crate appears in both `[rust-dependencies]` and `[rust-dev-dependencies]`, the version, source, and default-features must match. Features are unioned, and the crate is treated as a normal dependency.
 
-## `[dependencies.optional]`
+## `[rust-dependencies.optional]`
 
 Syntactic sugar for declaring optional (rust) dependencies. Entries here are equivalent to setting `optional = true`:
 
 ```toml
-[dependencies.optional]
+[rust-dependencies.optional]
 fancy_logging = "0.3"
 metrics = { version = "1.0", features = ["prometheus"] }
 ```
@@ -152,7 +160,7 @@ metrics = { version = "1.0", features = ["prometheus"] }
 is equivalent to:
 
 ```toml
-[dependencies]
+[rust-dependencies]
 fancy_logging = { version = "0.3", optional = true }
 metrics = { version = "1.0", features = ["prometheus"], optional = true }
 ```
@@ -163,23 +171,10 @@ Optional dependencies generate a Cargo feature gate. Enable them at build time:
 incan build src/main.incn --cargo-features fancy_logging
 ```
 
-## `[rust.dependencies]` / `[rust.dev-dependencies]`
+## Legacy alias tables
 
-These are aliases for `[dependencies]` and `[dev-dependencies]` respectively. They exist for readability when the
-manifest contains non-Rust configuration.
-
-```toml
-# These two are equivalent:
-[dependencies]
-serde = "1.0"
-
-[rust.dependencies]
-serde = "1.0"
-```
-
-!!! warning "Mutual exclusion"
-    You cannot use both `[dependencies]` and `[rust.dependencies]` in the same manifest (same for dev).
-    The compiler will error if both are present.
+`[rust.dependencies]` and `[rust.dev-dependencies]` remain supported as backward-compatible aliases for `[rust-dependencies]` and `[rust-dev-dependencies]`.
+Prefer the non-nested table names in new manifests.
 
 ## Dependency sources
 
@@ -188,7 +183,7 @@ serde = "1.0"
 The default source is crates.io. Version is required:
 
 ```toml
-[dependencies]
+[rust-dependencies]
 serde = "1.0"
 tokio = { version = "1.35", features = ["full"] }
 ```
@@ -198,7 +193,7 @@ tokio = { version = "1.35", features = ["full"] }
 Specify a git repository URL with exactly one of `branch`, `tag`, or `rev`:
 
 ```toml
-[dependencies]
+[rust-dependencies]
 my_internal_lib = { git = "https://github.com/company/lib.git", tag = "v1.0.0" }
 bleeding_edge = { git = "https://github.com/company/lib.git", branch = "main" }
 pinned = { git = "https://github.com/company/lib.git", rev = "abc1234" }
@@ -213,7 +208,7 @@ pinned = { git = "https://github.com/company/lib.git", rev = "abc1234" }
 Local path dependencies, relative to the `incan.toml` location:
 
 ```toml
-[dependencies]
+[rust-dependencies]
 shared_utils = { path = "../shared-utils" }
 ```
 
@@ -222,7 +217,7 @@ shared_utils = { path = "../shared-utils" }
 Use `package` to use a different crate name than the dependency key. For example:
 
 ```toml
-[dependencies]
+[rust-dependencies]
 json = { package = "serde_json", version = "1.0" }
 ```
 

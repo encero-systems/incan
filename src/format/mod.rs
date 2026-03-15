@@ -741,6 +741,26 @@ type Second = newtype int
     }
 
     #[test]
+    fn test_format_pub_library_import_round_trip() -> Result<(), FormatError> {
+        let source = "import pub::mylib as lib\n";
+        let formatted = format_source(source)?;
+        assert_eq!(formatted.trim_end(), source.trim_end());
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_pub_from_import_collapses_parenthesized_list() -> Result<(), FormatError> {
+        let source = "from pub::mylib import (\n    Widget,\n    make_widget as build_widget,\n)\n";
+        let config = FormatConfig::new().with_line_length(120);
+        let formatted = format_source_with_config(source, config)?;
+        assert_eq!(
+            formatted.trim_end(),
+            "from pub::mylib import Widget, make_widget as build_widget"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_format_top_level_spacing_imports_consts_and_function() -> Result<(), FormatError> {
         let source = r#"from rust::std::f64::consts import PI, E
 from rust::std::f64 import INFINITY, NAN

@@ -144,10 +144,12 @@ impl ModuleResolver {
                 errors,
             })?;
 
-            let ast = parser::parse(&tokens).map_err(|errors| ResolveError::Parser {
-                file: file_path.clone(),
-                source: source.clone(),
-                errors,
+            let ast = parser::parse_with_module_path(&tokens, Some(file_path.as_str())).map_err(|errors| {
+                ResolveError::Parser {
+                    file: file_path.clone(),
+                    source: source.clone(),
+                    errors,
+                }
             })?;
 
             // Find imports and add them to process queue

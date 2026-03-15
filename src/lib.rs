@@ -26,6 +26,7 @@ pub mod cli;
 pub mod dependency_resolver;
 pub mod format;
 pub mod frontend;
+pub mod library_manifest;
 pub mod lockfile;
 #[cfg(feature = "lsp")]
 pub mod lsp;

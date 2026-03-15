@@ -29,9 +29,11 @@
 
 use std::collections::{HashMap, HashSet};
 use std::env;
+use std::sync::Arc;
 
 use crate::frontend::ast::{Declaration, Program};
 use crate::frontend::diagnostics::CompileError;
+use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
 
@@ -321,11 +323,13 @@ pub struct IrCodegen<'a> {
     needs_list_helpers: bool,
     /// Functions imported from external Rust crates (name -> true for external)
     external_rust_functions: HashSet<String>,
-    /// Declared Rust crate names from `incan.toml [dependencies]` (RFC 013 / RFC 023).
+    /// Declared Rust crate names from `incan.toml [rust-dependencies]` (RFC 013 / RFC 023).
     ///
     /// When set, internal typechecking (used to obtain `TypeCheckInfo` for lowering) will validate `rust.module()`
     /// crate segments against this set.
     declared_crate_names: Option<HashSet<String>>,
+    /// Consumer-side `pub::` dependency metadata used by internal typechecking.
+    library_manifest_index: Option<Arc<LibraryManifestIndex>>,
 }
 
 impl<'a> IrCodegen<'a> {
@@ -343,14 +347,20 @@ impl<'a> IrCodegen<'a> {
             emit_zen_in_main: false,
             needs_list_helpers: false,
             declared_crate_names: None,
+            library_manifest_index: None,
         }
     }
 
-    /// Set declared Rust crate names from `incan.toml [dependencies]`.
+    /// Set declared Rust crate names from `incan.toml [rust-dependencies]`. (RFC 031)
     ///
     /// This is used for validating `rust.module()` paths during the internal typechecking that precedes IR lowering.
     pub fn set_declared_crate_names(&mut self, names: HashSet<String>) {
         self.declared_crate_names = Some(names);
+    }
+
+    /// Set the consumer-side library manifest index for `pub::` import validation.
+    pub fn set_library_manifest_index(&mut self, index: LibraryManifestIndex) {
+        self.library_manifest_index = Some(Arc::new(index));
     }
 
     /// Get the Rust crates imported via `import rust::` or `from rust::`
@@ -595,6 +605,9 @@ impl<'a> IrCodegen<'a> {
             if let Some(names) = self.declared_crate_names.clone() {
                 tc.set_declared_crate_names(names);
             }
+            if let Some(index) = self.library_manifest_index.clone() {
+                tc.set_library_manifest_index_shared(index);
+            }
             match tc.check_with_imports(program, &deps) {
                 Ok(()) => tc.type_info().clone(),
                 Err(errs) => return Err(GenerationError::TypeCheck(errs)),
@@ -779,6 +792,9 @@ impl<'a> IrCodegen<'a> {
                     if let Some(names) = self.declared_crate_names.clone() {
                         tc.set_declared_crate_names(names);
                     }
+                    if let Some(index) = self.library_manifest_index.clone() {
+                        tc.set_library_manifest_index_shared(index);
+                    }
                     match tc.check_with_imports_allow_private(ast, &deps) {
                         Ok(()) => tc.type_info().clone(),
                         Err(errs) => return Err(GenerationError::TypeCheck(errs)),
@@ -909,6 +925,9 @@ impl<'a> IrCodegen<'a> {
                         if let Some(names) = self.declared_crate_names.clone() {
                             tc.set_declared_crate_names(names);
                         }
+                        if let Some(index) = self.library_manifest_index.clone() {
+                            tc.set_library_manifest_index_shared(index);
+                        }
                         match tc.check_with_imports_allow_private(ast, &deps) {
                             Ok(()) => tc.type_info().clone(),
                             Err(errs) => return Err(GenerationError::TypeCheck(errs)),
@@ -956,7 +975,12 @@ impl Default for IrCodegen<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frontend::library_manifest_index::{
+        LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+    };
     use crate::frontend::{lexer, parser};
+    use crate::library_manifest::{ConstExport, FunctionExport, LibraryManifest, ModelExport, ParamExport, TypeRef};
+    use std::collections::HashMap;
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
         match result {
@@ -1000,6 +1024,49 @@ def main() -> None:
   return
 "#,
         )
+    }
+
+    fn library_index_with_widgets_exports() -> LibraryManifestIndex {
+        let mut artifact_root = std::env::temp_dir();
+        artifact_root.push("incan_test_widgets_artifacts");
+        artifact_root.push("target");
+        artifact_root.push("lib");
+
+        let mut manifest = LibraryManifest::new("widgets_core", "0.1.0");
+        manifest.exports.models.push(ModelExport {
+            name: "Widget".to_string(),
+            type_params: Vec::new(),
+            traits: Vec::new(),
+            fields: Vec::new(),
+            methods: Vec::new(),
+        });
+        manifest.exports.functions.push(FunctionExport {
+            name: "make_widget".to_string(),
+            type_params: Vec::new(),
+            params: vec![ParamExport {
+                name: "name".to_string(),
+                ty: TypeRef::Named {
+                    name: "str".to_string(),
+                },
+            }],
+            return_type: TypeRef::Named {
+                name: "Widget".to_string(),
+            },
+            is_async: false,
+        });
+        manifest.exports.consts.push(ConstExport {
+            name: "DEFAULT_NAME".to_string(),
+            ty: TypeRef::Named {
+                name: "str".to_string(),
+            },
+        });
+        LibraryManifestIndex::from_entries(HashMap::from([(
+            "widgets".to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest),
+                metadata: LibraryArtifactMetadata::from_crate_root("widgets", "widgets_core", artifact_root),
+            },
+        )]))
     }
 
     fn generate_nested_store_code(store_source: &str) -> String {
@@ -1400,5 +1467,58 @@ from db.schema import Database
         );
         assert!(store_code.contains("use crate::db::schema::Database;"));
         assert!(!store_code.contains("use db::schema::Database;"));
+    }
+
+    #[test]
+    fn test_pub_from_import_emits_dependency_crate_item_paths() {
+        let ast = parse_program(
+            r#"
+from pub::widgets import Widget as PublicWidget, make_widget
+
+def main() -> None:
+  return
+"#,
+        );
+        let mut codegen = IrCodegen::new();
+        codegen.set_library_manifest_index(library_index_with_widgets_exports());
+        let code = must_ok(codegen.try_generate(&ast));
+        assert!(code.contains("pub use widgets::Widget as PublicWidget;"));
+        assert!(code.contains("pub use widgets::make_widget;"));
+        assert!(!code.contains("pub::widgets"));
+    }
+
+    #[test]
+    fn test_pub_import_expressions_codegen() {
+        let source = r#"
+from pub::widgets import Widget, make_widget, DEFAULT_NAME
+
+def main() -> None:
+  mut w: Widget = make_widget(DEFAULT_NAME)
+"#;
+        let ast = parse_program(source);
+        let mut codegen = IrCodegen::new();
+        codegen.set_library_manifest_index(library_index_with_widgets_exports());
+        let code = must_ok(codegen.try_generate(&ast));
+        assert!(
+            code.contains("let mut w = make_widget(DEFAULT_NAME);"),
+            "Generated code did not match expected. Code was:\n{code}"
+        );
+    }
+
+    #[test]
+    fn test_pub_module_import_alias_emits_use_alias() {
+        let ast = parse_program(
+            r#"
+import pub::widgets as widgets_alias
+
+def main() -> None:
+  return
+"#,
+        );
+        let mut codegen = IrCodegen::new();
+        codegen.set_library_manifest_index(library_index_with_widgets_exports());
+        let code = must_ok(codegen.try_generate(&ast));
+        assert!(code.contains("use widgets as widgets_alias;"));
+        assert!(!code.contains("use pub::widgets"));
     }
 }

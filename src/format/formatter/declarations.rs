@@ -72,6 +72,8 @@ impl Formatter {
     // ---- Imports ----
 
     fn format_import(&mut self, import: &ImportDecl) {
+        // Only `pub from ... import ...` can be public; `pub` on other import forms is parser-invalid.
+        self.write_visibility(import.visibility);
         match &import.kind {
             ImportKind::Module(path) => {
                 self.writer.write("import ");
@@ -85,6 +87,21 @@ impl Formatter {
             ImportKind::From { module, items } => {
                 self.writer.write("from ");
                 self.format_import_path(module);
+                self.writer.write(" import ");
+                self.format_import_items(items);
+            }
+            ImportKind::PubLibrary { library } => {
+                self.writer.write("import pub::");
+                self.writer.write(library);
+                if let Some(alias) = &import.alias {
+                    self.writer.write(" as ");
+                    self.writer.write(alias);
+                }
+                self.writer.newline();
+            }
+            ImportKind::PubFrom { library, items } => {
+                self.writer.write("from pub::");
+                self.writer.write(library);
                 self.writer.write(" import ");
                 self.format_import_items(items);
             }

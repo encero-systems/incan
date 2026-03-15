@@ -1,15 +1,15 @@
 # RFC 031: Incan Library System — Phase 1 (Local Path Dependencies)
 
-- **Status:** Planned
+- **Status:** Implemented
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Issue:** [#165](https://github.com/dannys-code-corner/incan/issues/165)
-- **RFC PR:** —
+- **RFC PR:** [#177](https://github.com/dannys-code-corner/incan/pull/177)
 - **Related**:
     - RFC 027 (incan-vocab — keyword registration API)
     - RFC 034 (`incan.pub` registry)
-- **Written against:** v0.2
-- **Shipped in:** —
+- **Written against:** v0.1
+- **Shipped in:** v0.2
 
 ## Summary
 
@@ -320,6 +320,110 @@ Package a compiled Rust library instead of generated Rust source. Rejected for P
 - **Semantic analysis**: consumer projects resolve imported library items from manifests rather than from library source, so exported types, functions, and keyword metadata must be represented in a typechecker-readable artifact.
 - **Code generation and build orchestration**: `incan build --lib` must emit both the manifest and a generated Rust crate, while consumer builds must wire that crate into the generated Cargo dependency graph as a path dependency.
 - **Tooling and editor support**: the compiler and LSP should share the same manifest schema and validation rules so imported library symbols behave consistently in builds and editor workflows.
+
+## Implementation Plan
+
+### Phase 1: Project model and dependency surfaces
+
+- Finalize the Phase 1 project model where library dependencies use `[dependencies]` and Rust crates use `[rust-dependencies]`.
+- Add migration diagnostics so existing projects using Rust crates under `[dependencies]` get clear, actionable guidance.
+- Define the library-mode preconditions for `incan build --lib`, including `src/lib.incn` discovery and user-facing errors.
+
+### Phase 2: Library export surface and manifest production
+
+- Implement `pub` re-export handling in `src/lib.incn` as the checked public surface for library artifacts.
+- Generate `.incnlib` manifests from checked exports, including nominal types, function signatures, generics, and bounds metadata.
+- Keep manifest encoding behind a stable read/write boundary so the semantic contract remains stable as transport evolves.
+
+### Phase 3: Consumer import resolution and semantic integration
+
+- Add `pub::` namespace import resolution against loaded dependency manifests.
+- Integrate manifest-provided symbols into semantic name resolution and typechecking without reparsing library source.
+- Emit precise diagnostics for missing libraries, missing exports, and import collisions with local symbols.
+
+### Phase 4: Build orchestration, lowering, and Cargo wiring
+
+- Ensure `incan build --lib` emits both required artifacts: `.incnlib` and a generated Rust crate.
+- Ensure consumer builds emit Rust imports that map `pub::` symbols to the generated dependency crate.
+- Wire generated Cargo dependencies to library crate paths and rely on Cargo for transitive Rust dependency resolution.
+
+### Phase 5: Vocab and soft-keyword pipeline alignment
+
+- Integrate optional library vocab metadata extraction during `build --lib` and persist keyword activations into manifests.
+- Load library keyword activations in consumer builds and apply the same import-driven activation model used by stdlib soft keywords.
+- Keep this layer compatible with RFC 027 so later phases can extend transport and registry behavior without changing keyword semantics.
+
+### Phase 6: Tooling, validation, and rollout
+
+- Reuse the compiler's manifest parsing and validation in LSP so editor behavior matches build behavior.
+- Add comprehensive tests across parser/import semantics, manifest schema IO, typechecker resolution, and codegen/Cargo integration.
+- Update docs and release notes with migration guidance and Phase 1 usage patterns for library authors and consumers.
+
+## Implementation log
+
+### Spec / design lock
+
+- [x] Confirm all Phase 1 scope boundaries remain aligned with RFC 034 handoff (git/registry deferred).
+- [x] Confirm `pub` re-export expectations in `src/lib.incn` and document any edge-case constraints.
+- [x] Confirm manifest schema v1 fields for exports, type parameters, and bounds metadata.
+
+### Configuration and CLI behavior
+
+- [x] Parse and validate `[dependencies]` as Incan library dependencies (path-only in Phase 1).
+- [x] Parse and validate `[rust-dependencies]` as Rust crate pass-through dependencies.
+- [x] Add migration diagnostics for projects still using old Rust dependency placement.
+- [x] Implement `incan build --lib` precondition checks and clear failure messages.
+
+### Parser and import resolution
+
+- [x] Support `pub::` import path handling as a first-class namespace prefix.
+- [x] Ensure import diagnostics distinguish unresolved library names vs unresolved exported symbols.
+- [x] Ensure namespace collision diagnostics suggest import aliasing patterns.
+
+### Manifest producer and consumer reader
+
+- [x] Build manifest export entries from the checked public API rather than source reparse.
+- [x] Serialize and deserialize recursive `TypeRef` trees with generic applications and wrappers.
+- [x] Preserve declaration-site type-parameter bounds metadata in manifest exports.
+- [x] Enforce manifest version and compiler compatibility checks on load.
+
+### Typechecker integration
+
+- [x] Register manifest exports in semantic lookup so imported library symbols typecheck like local declarations.
+- [x] Resolve library nominal types and function signatures from manifest-backed symbols in expression contexts.
+- [x] Keep local-module and library symbol resolution behavior deterministic and well-diagnosed.
+
+### Lowering, emission, and Cargo integration
+
+- [x] Emit generated Rust that imports library symbols from dependency crates.
+- [x] Generate consumer Cargo dependency entries targeting each library's generated crate path.
+- [x] Validate that consumer builds compile and link against generated library crates without re-lowering library Incan source.
+
+### Vocab and soft keywords (RFC 027 alignment)
+
+- [x] Build optional vocab companion metadata during `incan build --lib`.
+- [x] Serialize library-provided soft-keyword activations into `.incnlib`.
+- [x] Activate library soft keywords from imports in consumer builds using existing soft-keyword semantics.
+
+### LSP and tooling parity
+
+- [x] Reuse shared manifest parser/validator between compiler and LSP.
+- [x] Ensure editor diagnostics for `pub::` imports match compiler diagnostics.
+- [x] Validate completion and hover behavior for manifest-backed library symbols.
+
+### Tests and snapshots
+
+- [x] Add parser tests for `pub::` import forms and edge-case diagnostics.
+- [x] Add typechecker tests for valid/invalid manifest-backed imports.
+- [x] Add manifest IO tests for schema compatibility and bounds fidelity.
+- [x] Add codegen snapshot tests covering `pub::` usage in expression positions.
+- [x] Add integration tests for library build + consumer build end-to-end flow.
+
+### Docs and release notes
+
+- [x] Update docs-site pages for dependency configuration and library workflows.
+- [x] Document migration from old Rust dependency table naming to `[rust-dependencies]`.
+- [x] Add release notes entries for the library system Phase 1 user-facing changes.
 
 ## Design Decisions
 
