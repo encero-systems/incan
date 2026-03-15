@@ -56,6 +56,7 @@ pub use const_eval::ConstValue;
 mod tests;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::{CompileError, ErrorKind, errors};
@@ -173,7 +174,7 @@ pub struct TypeChecker {
     /// Public exports for imported dependency modules, keyed by module name.
     pub(crate) dependency_exports: HashMap<String, Vec<ExportedSymbol>>,
     /// Consumer-side dependency library manifests (`pub::`) keyed by library name.
-    pub(crate) library_manifests: LibraryManifestIndex,
+    pub(crate) library_manifests: Arc<LibraryManifestIndex>,
     /// Module path for the program being checked (if known).
     pub(crate) current_module_path: Option<Vec<String>>,
     /// Declared Rust crate names from `incan.toml [rust-dependencies]` (RFC 023 / RFC 013).
@@ -218,7 +219,7 @@ impl TypeChecker {
             const_eval_cache: HashMap::new(),
             type_info: TypeCheckInfo::default(),
             dependency_exports: HashMap::new(),
-            library_manifests: LibraryManifestIndex::default(),
+            library_manifests: Arc::new(LibraryManifestIndex::default()),
             current_module_path: None,
             declared_crate_names: None,
             stdlib_cache: stdlib_loader::StdlibAstCache::new(),
@@ -238,6 +239,11 @@ impl TypeChecker {
 
     /// Set the loaded dependency library manifests used for `pub::` import resolution.
     pub fn set_library_manifest_index(&mut self, index: LibraryManifestIndex) {
+        self.library_manifests = Arc::new(index);
+    }
+
+    /// Set shared dependency library manifests used for `pub::` import resolution.
+    pub fn set_library_manifest_index_shared(&mut self, index: Arc<LibraryManifestIndex>) {
         self.library_manifests = index;
     }
 

@@ -1,0 +1,6 @@
+from pub::widgets import Widget, make_widget, DEFAULT_NAME
+import pub::widgets
+
+def main() -> None:
+    mut w: Widget = make_widget(DEFAULT_NAME)
+    widgets.make_widget(DEFAULT_NAME)

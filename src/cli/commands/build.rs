@@ -263,13 +263,6 @@ fn merge_library_path_dependencies(
     Ok(())
 }
 
-fn checked_export_map(exports: Vec<CheckedNamedExport>) -> HashMap<String, CheckedNamedExport> {
-    exports
-        .into_iter()
-        .map(|export| (export.name.clone(), export))
-        .collect()
-}
-
 fn rename_checked_export(export: &CheckedNamedExport, exported_name: &str) -> CheckedNamedExport {
     let mut renamed = export.clone();
     renamed.name = exported_name.to_string();
@@ -288,61 +281,71 @@ fn rename_checked_export(export: &CheckedNamedExport, exported_name: &str) -> Ch
     renamed
 }
 
-fn resolve_library_reexports(
-    lib_module: &ParsedModule,
-    module_exports: &HashMap<String, HashMap<String, CheckedNamedExport>>,
-) -> Result<Vec<CheckedNamedExport>, Vec<crate::frontend::diagnostics::CompileError>> {
-    let mut errors = Vec::new();
-    let mut resolved = Vec::new();
-    let mut exported_names: HashSet<String> = HashSet::new();
-    let known_modules: Vec<String> = module_exports.keys().cloned().collect();
+struct LibraryReexportResolver<'a> {
+    module_exports: &'a HashMap<String, HashMap<String, CheckedNamedExport>>,
+}
 
-    for decl in &lib_module.ast.declarations {
-        let Declaration::Import(import) = &decl.node else {
-            continue;
-        };
-        if !matches!(import.visibility, crate::frontend::ast::Visibility::Public) {
-            continue;
-        }
+impl<'a> LibraryReexportResolver<'a> {
+    fn new(module_exports: &'a HashMap<String, HashMap<String, CheckedNamedExport>>) -> Self {
+        Self { module_exports }
+    }
 
-        let ImportKind::From { module, items } = &import.kind else {
-            errors.push(diagnostics::errors::library_pub_reexport_requires_from(decl.span));
-            continue;
-        };
+    fn resolve(
+        &self,
+        lib_module: &ParsedModule,
+    ) -> Result<Vec<CheckedNamedExport>, Vec<crate::frontend::diagnostics::CompileError>> {
+        let mut errors = Vec::new();
+        let mut resolved = Vec::new();
+        let mut exported_names: HashSet<String> = HashSet::new();
+        let known_modules: Vec<String> = self.module_exports.keys().cloned().collect();
 
-        let module_name = module_key(&module.segments);
-        let Some(exports_by_name) = module_exports.get(&module_name) else {
-            errors.push(diagnostics::errors::library_reexport_unknown_module(
-                &module.to_rust_path(),
-                &known_modules,
-                decl.span,
-            ));
-            continue;
-        };
-
-        for item in items {
-            let exported_name = item.alias.as_ref().unwrap_or(&item.name).clone();
-            if !exported_names.insert(exported_name.clone()) {
-                errors.push(diagnostics::errors::duplicate_library_export(&exported_name, decl.span));
+        for decl in &lib_module.ast.declarations {
+            let Declaration::Import(import) = &decl.node else {
+                continue;
+            };
+            if !matches!(import.visibility, crate::frontend::ast::Visibility::Public) {
                 continue;
             }
 
-            let Some(export) = exports_by_name.get(&item.name) else {
-                let available: Vec<String> = exports_by_name.keys().cloned().collect();
-                errors.push(diagnostics::errors::import_not_exported(
-                    &item.name,
+            let ImportKind::From { module, items } = &import.kind else {
+                errors.push(diagnostics::errors::library_pub_reexport_requires_from(decl.span));
+                continue;
+            };
+
+            let module_name = module_key(&module.segments);
+            let Some(exports_by_name) = self.module_exports.get(&module_name) else {
+                errors.push(diagnostics::errors::library_reexport_unknown_module(
                     &module.to_rust_path(),
-                    &available,
+                    &known_modules,
                     decl.span,
                 ));
                 continue;
             };
 
-            resolved.push(rename_checked_export(export, &exported_name));
-        }
-    }
+            for item in items {
+                let exported_name = item.alias.as_ref().unwrap_or(&item.name).clone();
+                if !exported_names.insert(exported_name.clone()) {
+                    errors.push(diagnostics::errors::duplicate_library_export(&exported_name, decl.span));
+                    continue;
+                }
 
-    if errors.is_empty() { Ok(resolved) } else { Err(errors) }
+                let Some(export) = exports_by_name.get(&item.name) else {
+                    let available: Vec<String> = exports_by_name.keys().cloned().collect();
+                    errors.push(diagnostics::errors::import_not_exported(
+                        &item.name,
+                        &module.to_rust_path(),
+                        &available,
+                        decl.span,
+                    ));
+                    continue;
+                };
+
+                resolved.push(rename_checked_export(export, &exported_name));
+            }
+        }
+
+        if errors.is_empty() { Ok(resolved) } else { Err(errors) }
+    }
 }
 
 /// Extract soft-keyword registrations provided by the library's optional vocab crate.
@@ -352,13 +355,13 @@ fn resolve_library_reexports(
 fn collect_library_soft_keyword_activations(
     manifest: &ProjectManifest,
     _project_root: &Path,
-) -> Vec<crate::library_manifest::SoftKeywordActivation> {
+) -> CliResult<Vec<crate::library_manifest::SoftKeywordActivation>> {
     if manifest.vocab().is_some() {
-        // TODO(RFC 027): Build the specified vocab crate and load the VocabProvider dynamically
-        // to extract the true `KeywordRegistration` values.
-        return Vec::new();
+        return Err(CliError::failure(
+            "Library vocab metadata extraction is not yet supported (pending RFC 027). Please remove `[vocab]` from incan.toml for now.",
+        ));
     }
-    Vec::new()
+    Ok(Vec::new())
 }
 
 /// Prepare an Incan project for building or running.
@@ -661,7 +664,13 @@ pub fn build_library(
                     );
                 }
                 let module_exports = collect_checked_public_exports(&module.ast, &checker);
-                checked_exports_by_module.insert(module_key(&module.path_segments), checked_export_map(module_exports));
+                checked_exports_by_module.insert(
+                    module_key(&module.path_segments),
+                    module_exports
+                        .into_iter()
+                        .map(|export| (export.name.clone(), export))
+                        .collect(),
+                );
             }
             Err(errs) => {
                 for err in &errs {
@@ -679,17 +688,19 @@ pub fn build_library(
         return Err(CliError::failure(all_errors.trim_end()));
     }
 
-    let selected_exports = resolve_library_reexports(lib_module, &checked_exports_by_module).map_err(|errs| {
-        let mut msg = String::new();
-        for err in &errs {
-            msg.push_str(&diagnostics::format_error(
-                lib_module.file_path.to_string_lossy().as_ref(),
-                &lib_module.source,
-                err,
-            ));
-        }
-        CliError::failure(msg.trim_end())
-    })?;
+    let selected_exports = LibraryReexportResolver::new(&checked_exports_by_module)
+        .resolve(lib_module)
+        .map_err(|errs| {
+            let mut msg = String::new();
+            for err in &errs {
+                msg.push_str(&diagnostics::format_error(
+                    lib_module.file_path.to_string_lossy().as_ref(),
+                    &lib_module.source,
+                    err,
+                ));
+            }
+            CliError::failure(msg.trim_end())
+        })?;
 
     let project_name = manifest
         .project
@@ -711,8 +722,8 @@ pub fn build_library(
 
     let mut library_manifest =
         LibraryManifest::from_checked_exports(project_name.clone(), project_version, &selected_exports);
-    
-    library_manifest.soft_keywords.activations = collect_library_soft_keyword_activations(&manifest, &project_root);
+
+    library_manifest.soft_keywords.activations = collect_library_soft_keyword_activations(&manifest, &project_root)?;
 
     let out_dir = project_root.join("target").join("lib");
     std::fs::create_dir_all(&out_dir)
@@ -967,7 +978,9 @@ mod tests {
             HashMap::from([(widget_export.name.clone(), widget_export)]),
         );
 
-        let resolved = resolve_library_reexports(&lib_module, &module_exports).map_err(|errs| format!("{errs:?}"))?;
+        let resolved = LibraryReexportResolver::new(&module_exports)
+            .resolve(&lib_module)
+            .map_err(|errs| format!("{errs:?}"))?;
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].name, "PublicWidget");
         match &resolved[0].kind {
@@ -992,7 +1005,7 @@ mod tests {
         };
 
         let module_exports: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
-        let result = resolve_library_reexports(&lib_module, &module_exports);
+        let result = LibraryReexportResolver::new(&module_exports).resolve(&lib_module);
         assert!(result.is_err(), "expected missing module to fail");
         Ok(())
     }
@@ -1025,7 +1038,7 @@ mod tests {
             HashMap::from([(widget_export.name.clone(), widget_export)]),
         );
 
-        let result = resolve_library_reexports(&lib_module, &module_exports);
+        let result = LibraryReexportResolver::new(&module_exports).resolve(&lib_module);
         assert!(result.is_err(), "expected duplicate export to fail");
         Ok(())
     }

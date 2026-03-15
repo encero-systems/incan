@@ -408,22 +408,22 @@ Package a compiled Rust library instead of generated Rust source. Rejected for P
 ### LSP and tooling parity
 
 - [x] Reuse shared manifest parser/validator between compiler and LSP.
-- [ ] Ensure editor diagnostics for `pub::` imports match compiler diagnostics.
-- [ ] Validate completion and hover behavior for manifest-backed library symbols.
+- [x] Ensure editor diagnostics for `pub::` imports match compiler diagnostics.
+- [x] Validate completion and hover behavior for manifest-backed library symbols.
 
 ### Tests and snapshots
 
-- [ ] Add parser tests for `pub::` import forms and edge-case diagnostics.
+- [x] Add parser tests for `pub::` import forms and edge-case diagnostics.
 - [x] Add typechecker tests for valid/invalid manifest-backed imports.
 - [x] Add manifest IO tests for schema compatibility and bounds fidelity.
-- [ ] Add codegen snapshot tests covering `pub::` usage in expression positions.
+- [x] Add codegen snapshot tests covering `pub::` usage in expression positions.
 - [x] Add integration tests for library build + consumer build end-to-end flow.
 
 ### Docs and release notes
 
-- [ ] Update docs-site pages for dependency configuration and library workflows.
-- [ ] Document migration from old Rust dependency table naming to `[rust-dependencies]`.
-- [ ] Add release notes entries for the library system Phase 1 user-facing changes.
+- [x] Update docs-site pages for dependency configuration and library workflows.
+- [x] Document migration from old Rust dependency table naming to `[rust-dependencies]`.
+- [x] Add release notes entries for the library system Phase 1 user-facing changes.
 
 ## Design Decisions
 

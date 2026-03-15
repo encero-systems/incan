@@ -29,6 +29,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::env;
+use std::sync::Arc;
 
 use crate::frontend::ast::{Declaration, Program};
 use crate::frontend::diagnostics::CompileError;
@@ -328,7 +329,7 @@ pub struct IrCodegen<'a> {
     /// crate segments against this set.
     declared_crate_names: Option<HashSet<String>>,
     /// Consumer-side `pub::` dependency metadata used by internal typechecking.
-    library_manifest_index: Option<LibraryManifestIndex>,
+    library_manifest_index: Option<Arc<LibraryManifestIndex>>,
 }
 
 impl<'a> IrCodegen<'a> {
@@ -359,7 +360,7 @@ impl<'a> IrCodegen<'a> {
 
     /// Set the consumer-side library manifest index for `pub::` import validation.
     pub fn set_library_manifest_index(&mut self, index: LibraryManifestIndex) {
-        self.library_manifest_index = Some(index);
+        self.library_manifest_index = Some(Arc::new(index));
     }
 
     /// Get the Rust crates imported via `import rust::` or `from rust::`
@@ -605,7 +606,7 @@ impl<'a> IrCodegen<'a> {
                 tc.set_declared_crate_names(names);
             }
             if let Some(index) = self.library_manifest_index.clone() {
-                tc.set_library_manifest_index(index);
+                tc.set_library_manifest_index_shared(index);
             }
             match tc.check_with_imports(program, &deps) {
                 Ok(()) => tc.type_info().clone(),
@@ -792,7 +793,7 @@ impl<'a> IrCodegen<'a> {
                         tc.set_declared_crate_names(names);
                     }
                     if let Some(index) = self.library_manifest_index.clone() {
-                        tc.set_library_manifest_index(index);
+                        tc.set_library_manifest_index_shared(index);
                     }
                     match tc.check_with_imports_allow_private(ast, &deps) {
                         Ok(()) => tc.type_info().clone(),
@@ -925,7 +926,7 @@ impl<'a> IrCodegen<'a> {
                             tc.set_declared_crate_names(names);
                         }
                         if let Some(index) = self.library_manifest_index.clone() {
-                            tc.set_library_manifest_index(index);
+                            tc.set_library_manifest_index_shared(index);
                         }
                         match tc.check_with_imports_allow_private(ast, &deps) {
                             Ok(()) => tc.type_info().clone(),
@@ -978,7 +979,7 @@ mod tests {
         LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
     };
     use crate::frontend::{lexer, parser};
-    use crate::library_manifest::{FunctionExport, LibraryManifest, ModelExport, ParamExport, TypeRef};
+    use crate::library_manifest::{ConstExport, FunctionExport, LibraryManifest, ModelExport, ParamExport, TypeRef};
     use std::collections::HashMap;
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
@@ -1052,6 +1053,12 @@ def main() -> None:
                 name: "Widget".to_string(),
             },
             is_async: false,
+        });
+        manifest.exports.consts.push(ConstExport {
+            name: "DEFAULT_NAME".to_string(),
+            ty: TypeRef::Named {
+                name: "str".to_string(),
+            },
         });
         LibraryManifestIndex::from_entries(HashMap::from([(
             "widgets".to_string(),
@@ -1478,6 +1485,24 @@ def main() -> None:
         assert!(code.contains("pub use widgets::Widget as PublicWidget;"));
         assert!(code.contains("pub use widgets::make_widget;"));
         assert!(!code.contains("pub::widgets"));
+    }
+
+    #[test]
+    fn test_pub_import_expressions_codegen() {
+        let source = r#"
+from pub::widgets import Widget, make_widget, DEFAULT_NAME
+
+def main() -> None:
+  mut w: Widget = make_widget(DEFAULT_NAME)
+"#;
+        let ast = parse_program(source);
+        let mut codegen = IrCodegen::new();
+        codegen.set_library_manifest_index(library_index_with_widgets_exports());
+        let code = must_ok(codegen.try_generate(&ast));
+        assert!(
+            code.contains("let mut w = make_widget(DEFAULT_NAME);"),
+            "Generated code did not match expected. Code was:\n{code}"
+        );
     }
 
     #[test]

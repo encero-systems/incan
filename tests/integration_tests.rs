@@ -1411,7 +1411,10 @@ mod rfc031_pub_import_integration_tests {
     use incan::library_manifest::{LibraryManifest, ModelExport};
 
     fn incan_bin_path() -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("incan")
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("debug")
+            .join("incan")
     }
 
     fn write_project_files(
@@ -1427,10 +1430,7 @@ mod rfc031_pub_import_integration_tests {
     }
 
     fn run_check(main_path: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
-        Ok(Command::new(incan_bin_path())
-            .arg("--check")
-            .arg(main_path)
-            .output()?)
+        Ok(Command::new(incan_bin_path()).arg("--check").arg(main_path).output()?)
     }
 
     fn run_build(main_path: &Path, out_dir: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {

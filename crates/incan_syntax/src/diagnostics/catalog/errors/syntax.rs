@@ -117,6 +117,7 @@ pub fn rust_import_features_require_version(span: Span) -> CompileError {
 
 /// Which surface form of `pub` import triggered a namespace-separator diagnostic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PubImportForm {
     /// `from pub... import Item`
     From,

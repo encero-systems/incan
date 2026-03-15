@@ -697,9 +697,9 @@ def add(a: int, b: int) -> int:
     #[test]
     fn test_parse_pub_from_outside_src_lib_is_error() {
         let source = "pub from widgets import Widget\n";
-        let Err(err) = parse_str_with_module_path(source, Some("project/src/main.incn")) else {
-            panic!("Expected parser to reject `pub from` outside src/lib.incn");
-        };
+        let result = parse_str_with_module_path(source, Some("project/src/main.incn"));
+        assert!(result.is_err(), "Expected parser to reject `pub from` outside src/lib.incn");
+        let err = result.err().unwrap_or_default();
         assert!(
             err[0].message.contains("only valid in `src/lib.incn`"),
             "Unexpected error: {}",
@@ -710,9 +710,9 @@ def add(a: int, b: int) -> int:
     #[test]
     fn test_parse_pub_import_is_error() {
         let source = "pub import widgets\n";
-        let Err(err) = parse_str_with_module_path(source, Some("project/src/lib.incn")) else {
-            panic!("Expected parser to reject `pub import`");
-        };
+        let result = parse_str_with_module_path(source, Some("project/src/lib.incn"));
+        assert!(result.is_err(), "Expected parser to reject `pub import`");
+        let err = result.err().unwrap_or_default();
         assert!(
             err[0].message.contains("only supported on `from ... import ...`"),
             "Unexpected error: {}",
@@ -1619,9 +1619,9 @@ const ANSWER: int = 42
     }
 
     #[test]
-    fn test_library_import_activates_soft_keywords() {
+    fn test_library_import_activates_soft_keywords() -> Result<(), Box<dyn std::error::Error>> {
         let source = "import pub::mylib\n\nasync def my_func() -> None:\n    pass\n";
-        let tokens = crate::lexer::lex(source).expect("Lexing failed");
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
 
         // Without context, async should fail
         let result_no_context = crate::parser::parse(&tokens);
@@ -1633,5 +1633,6 @@ const ANSWER: int = 42
 
         let result_with_context = crate::parser::parse_with_context(&tokens, None, Some(&map));
         assert!(result_with_context.is_ok(), "Expected async function to parse with soft keyword context");
+        Ok(())
     }
 }

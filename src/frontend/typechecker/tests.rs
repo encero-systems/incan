@@ -90,11 +90,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
         "mylib".to_string(),
         LibraryManifestIndexEntry::Loaded {
             manifest: Box::new(manifest),
-            metadata: LibraryArtifactMetadata::from_crate_root(
-                "mylib",
-                "mylib",
-                synthetic_artifact_root("mylib"),
-            ),
+            metadata: LibraryArtifactMetadata::from_crate_root("mylib", "mylib", synthetic_artifact_root("mylib")),
         },
     )]))
 }
@@ -2553,6 +2549,58 @@ def build() -> Widget:
 "#;
     let result = check_str_with_library_index(source, library_index_with_mylib_exports());
     assert!(result.is_ok(), "expected pub import to typecheck, got: {result:?}");
+}
+
+#[test]
+fn test_pub_from_import_manifest_symbols_are_in_symbol_table() -> Result<(), Box<dyn std::error::Error>> {
+    // This test simulates what the LSP needs for completion and hover tooltips. It verifies that `pub::` symbols are
+    // properly resolved and available in `checker.symbols` so that the LSP can extract their types and signatures.
+    let source = "from pub::mylib import Widget, make_widget, DEFAULT_NAME\n";
+    let tokens = lexer::lex(source).map_err(|errs| format!("lex failed: {errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("parse failed: {errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.set_library_manifest_index(library_index_with_mylib_exports());
+    let _ = checker.check_program(&ast);
+
+    // Verify Widget
+    let widget_id = checker
+        .symbols
+        .lookup("Widget")
+        .ok_or_else(|| "Widget should be in symbols".to_string())?;
+    let widget_sym = checker
+        .symbols
+        .get(widget_id)
+        .ok_or_else(|| "Widget symbol id should resolve".to_string())?;
+    assert!(matches!(
+        widget_sym.kind,
+        crate::frontend::symbols::SymbolKind::Type(crate::frontend::symbols::TypeInfo::Model(_))
+    ));
+
+    // Verify make_widget
+    let fn_id = checker
+        .symbols
+        .lookup("make_widget")
+        .ok_or_else(|| "make_widget should be in symbols".to_string())?;
+    let fn_sym = checker
+        .symbols
+        .get(fn_id)
+        .ok_or_else(|| "make_widget symbol id should resolve".to_string())?;
+    assert!(matches!(fn_sym.kind, crate::frontend::symbols::SymbolKind::Function(_)));
+
+    // Verify DEFAULT_NAME
+    let const_id = checker
+        .symbols
+        .lookup("DEFAULT_NAME")
+        .ok_or_else(|| "DEFAULT_NAME should be in symbols".to_string())?;
+    let const_sym = checker
+        .symbols
+        .get(const_id)
+        .ok_or_else(|| "DEFAULT_NAME symbol id should resolve".to_string())?;
+    assert!(matches!(
+        const_sym.kind,
+        crate::frontend::symbols::SymbolKind::Variable(_)
+    ));
+    Ok(())
 }
 
 #[test]

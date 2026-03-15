@@ -72,6 +72,7 @@ impl Formatter {
     // ---- Imports ----
 
     fn format_import(&mut self, import: &ImportDecl) {
+        // Only `pub from ... import ...` can be public; `pub` on other import forms is parser-invalid.
         self.write_visibility(import.visibility);
         match &import.kind {
             ImportKind::Module(path) => {

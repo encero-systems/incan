@@ -37,7 +37,7 @@ This creates a starter `incan.toml`. Then declare your dependencies:
 [project]
 name = "my_app"
 
-[dependencies]
+[rust-dependencies]
 tokio = { version = "1.35", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -68,7 +68,7 @@ When multiple files import the same crate, features are unioned automatically.
 ### In `incan.toml`
 
 ```toml
-[dependencies]
+[rust-dependencies]
 tokio = { version = "1.35", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 ```
@@ -76,16 +76,16 @@ serde = { version = "1.0", features = ["derive"] }
 To disable default features:
 
 ```toml
-[dependencies]
+[rust-dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 ```
 
 ## Dev-only dependencies
 
-Use `[dev-dependencies]` for crates needed only during testing:
+Use `[rust-dev-dependencies]` for crates needed only during testing:
 
 ```toml
-[dev-dependencies]
+[rust-dev-dependencies]
 criterion = "0.5"
 test_helpers = { path = "../test-helpers" }
 ```

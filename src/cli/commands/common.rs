@@ -206,12 +206,14 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
     let base_dir = path.parent().unwrap_or(Path::new("."));
 
     let project_root = resolve_project_root(path);
-    let manifest = ProjectManifest::discover(&project_root).unwrap_or_default();
-    let library_manifest_index = manifest
+    let manifest = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))?;
+    let library_soft_keywords = manifest
         .as_ref()
-        .map(LibraryManifestIndex::from_project_manifest)
+        .and_then(|manifest| {
+            (!manifest.library_dependencies().is_empty())
+                .then(|| LibraryManifestIndex::from_project_manifest(manifest).library_soft_keywords())
+        })
         .unwrap_or_default();
-    let library_soft_keywords = library_manifest_index.library_soft_keywords();
 
     let mut modules = Vec::new();
     let mut processed = HashSet::new();

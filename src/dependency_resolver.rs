@@ -840,12 +840,12 @@ extra_lib = "1.0"
     }
 
     #[test]
-    fn rust_import_declared_in_library_dependencies_emits_migration_error() {
+    fn rust_import_declared_in_library_dependencies_emits_migration_error() -> Result<(), Box<dyn std::error::Error>> {
         let toml_str = r#"
 [dependencies]
 legacy_rust = { path = "../legacy_rust" }
 "#;
-        let manifest = ProjectManifest::from_str(toml_str, Path::new(".")).unwrap();
+        let manifest = ProjectManifest::from_str(toml_str, Path::new("."))?;
         let imports = vec![inline("legacy_rust", None, &[], false)];
 
         let err = resolve_dependencies(Some(&manifest), &imports, false, &default_cargo_features()).unwrap_err();
@@ -860,6 +860,7 @@ legacy_rust = { path = "../legacy_rust" }
             "expected rust-dependencies migration hint, got: {:?}",
             err[0].error.hints
         );
+        Ok(())
     }
 
     // ---- SemVer validation (RFC 013, Phase 1.2) ----

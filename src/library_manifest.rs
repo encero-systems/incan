@@ -358,6 +358,72 @@ fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
     }
 }
 
+/// Convert a manifest-level [`TypeRef`] into frontend semantic [`ResolvedType`].
+///
+/// This keeps manifest type decoding in one place so both compiler consumers (typechecker, LSP, etc.) follow the same
+/// mapping contract.
+pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
+    match ty {
+        TypeRef::Named { name } => resolved_named_type_from_manifest(name),
+        TypeRef::Applied { name, args } => {
+            let resolved_args: Vec<ResolvedType> = args.iter().map(resolved_type_from_manifest_type_ref).collect();
+            match collections::from_str(name.as_str()) {
+                Some(CollectionTypeId::FrozenList) => ResolvedType::FrozenList(Box::new(
+                    resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown),
+                )),
+                Some(CollectionTypeId::FrozenSet) => ResolvedType::FrozenSet(Box::new(
+                    resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown),
+                )),
+                Some(CollectionTypeId::FrozenDict) => ResolvedType::FrozenDict(
+                    Box::new(resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown)),
+                    Box::new(resolved_args.get(1).cloned().unwrap_or(ResolvedType::Unknown)),
+                ),
+                Some(collection_id) => {
+                    ResolvedType::Generic(collections::as_str(collection_id).to_string(), resolved_args)
+                }
+                None => ResolvedType::Generic(name.clone(), resolved_args),
+            }
+        }
+        TypeRef::Function { params, return_type } => ResolvedType::Function(
+            params.iter().map(resolved_type_from_manifest_type_ref).collect(),
+            Box::new(resolved_type_from_manifest_type_ref(return_type)),
+        ),
+        TypeRef::Tuple { elements } => {
+            ResolvedType::Tuple(elements.iter().map(resolved_type_from_manifest_type_ref).collect())
+        }
+        TypeRef::TypeParam { name } => ResolvedType::TypeVar(name.clone()),
+        TypeRef::SelfType => ResolvedType::SelfType,
+        TypeRef::Ref { inner } => ResolvedType::Ref(Box::new(resolved_type_from_manifest_type_ref(inner))),
+        TypeRef::Unknown => ResolvedType::Unknown,
+    }
+}
+
+fn resolved_named_type_from_manifest(name: &str) -> ResolvedType {
+    if let Some(id) = numerics::from_str(name) {
+        return match id {
+            NumericTypeId::Int => ResolvedType::Int,
+            NumericTypeId::Float => ResolvedType::Float,
+            NumericTypeId::Bool => ResolvedType::Bool,
+        };
+    }
+    if let Some(id) = stringlike::from_str(name) {
+        return match id {
+            StringLikeId::Str => ResolvedType::Str,
+            StringLikeId::Bytes => ResolvedType::Bytes,
+            StringLikeId::FrozenStr => ResolvedType::FrozenStr,
+            StringLikeId::FrozenBytes => ResolvedType::FrozenBytes,
+            StringLikeId::FString => ResolvedType::Str,
+        };
+    }
+    if let Some(id) = collections::from_str(name) {
+        return ResolvedType::Named(collections::as_str(id).to_string());
+    }
+    if name == conventions::UNIT_TYPE_NAME || name == conventions::NONE_TYPE_NAME {
+        return ResolvedType::Unit;
+    }
+    ResolvedType::Named(name.to_string())
+}
+
 fn named_type_ref(name: impl Into<String>) -> TypeRef {
     TypeRef::Named { name: name.into() }
 }
@@ -608,17 +674,27 @@ impl RawLibraryManifest {
 
         for activation in &self.soft_keywords.activations {
             if activation.keyword.trim().is_empty() {
-                return Err(LibraryManifestError::Invalid("soft keyword activation keyword cannot be empty".to_string()));
+                return Err(LibraryManifestError::Invalid(
+                    "soft keyword activation keyword cannot be empty".to_string(),
+                ));
             }
             if activation.namespace.trim().is_empty() {
-                return Err(LibraryManifestError::Invalid("soft keyword activation namespace cannot be empty".to_string()));
+                return Err(LibraryManifestError::Invalid(
+                    "soft keyword activation namespace cannot be empty".to_string(),
+                ));
             }
             if let Some(id) = incan_core::lang::keywords::from_str(&activation.keyword) {
                 if !incan_core::lang::keywords::is_soft(id) {
-                    return Err(LibraryManifestError::Invalid(format!("keyword `{}` is not a soft keyword", activation.keyword)));
+                    return Err(LibraryManifestError::Invalid(format!(
+                        "keyword `{}` is not a soft keyword",
+                        activation.keyword
+                    )));
                 }
             } else {
-                return Err(LibraryManifestError::Invalid(format!("unknown soft keyword `{}`", activation.keyword)));
+                return Err(LibraryManifestError::Invalid(format!(
+                    "unknown soft keyword `{}`",
+                    activation.keyword
+                )));
             }
         }
 
@@ -732,7 +808,9 @@ mod tests {
             LIBRARY_MANIFEST_FORMAT
         );
         let err = LibraryManifest::from_json_str(&content);
-        assert!(matches!(err, Err(LibraryManifestError::Invalid(msg)) if msg.contains("unknown soft keyword `not_a_real_keyword`")));
+        assert!(
+            matches!(err, Err(LibraryManifestError::Invalid(msg)) if msg.contains("unknown soft keyword `not_a_real_keyword`"))
+        );
     }
 
     #[test]
@@ -753,6 +831,8 @@ mod tests {
             LIBRARY_MANIFEST_FORMAT
         );
         let err = LibraryManifest::from_json_str(&content);
-        assert!(matches!(err, Err(LibraryManifestError::Invalid(msg)) if msg.contains("keyword `def` is not a soft keyword")));
+        assert!(
+            matches!(err, Err(LibraryManifestError::Invalid(msg)) if msg.contains("keyword `def` is not a soft keyword"))
+        );
     }
 }

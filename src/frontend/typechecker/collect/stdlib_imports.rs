@@ -14,14 +14,10 @@ use crate::frontend::testing_markers::load_testing_marker_semantics;
 use crate::frontend::typechecker::TypeChecker;
 use crate::library_manifest::{
     ClassExport, ConstExport, EnumExport, FieldExport, FunctionExport, LibraryManifest, MethodExport, ModelExport,
-    NewtypeExport, ParamExport, ReceiverExport, TraitExport, TypeParamExport, TypeRef,
+    NewtypeExport, ParamExport, ReceiverExport, TraitExport, TypeParamExport, resolved_type_from_manifest_type_ref,
 };
-use incan_core::lang::conventions;
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::types as surface_types;
-use incan_core::lang::types::collections::{self, CollectionTypeId};
-use incan_core::lang::types::numerics::{self, NumericTypeId};
-use incan_core::lang::types::stringlike::{self, StringLikeId};
 use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
 
 enum ManifestExportRef<'a> {
@@ -496,7 +492,7 @@ impl TypeChecker {
                 SymbolKind::Type(TypeInfo::Newtype(self.newtype_info_from_manifest(export)))
             }
             ManifestExportRef::Const(export) => SymbolKind::Variable(VariableInfo {
-                ty: self.resolved_type_from_manifest(&export.ty),
+                ty: resolved_type_from_manifest_type_ref(&export.ty),
                 is_mutable: false,
                 is_used: false,
             }),
@@ -634,7 +630,7 @@ impl TypeChecker {
     fn function_info_from_manifest(&self, export: &FunctionExport) -> FunctionInfo {
         FunctionInfo {
             params: self.params_from_manifest(&export.params),
-            return_type: self.resolved_type_from_manifest(&export.return_type),
+            return_type: resolved_type_from_manifest_type_ref(&export.return_type),
             is_async: export.is_async,
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
             type_param_bounds: self.type_param_bounds_from_manifest(&export.type_params),
@@ -669,7 +665,12 @@ impl TypeChecker {
             requires: export
                 .requires
                 .iter()
-                .map(|required| (required.name.clone(), self.resolved_type_from_manifest(&required.ty)))
+                .map(|required| {
+                    (
+                        required.name.clone(),
+                        resolved_type_from_manifest_type_ref(&required.ty),
+                    )
+                })
                 .collect(),
         }
     }
@@ -684,7 +685,7 @@ impl TypeChecker {
     fn newtype_info_from_manifest(&self, export: &NewtypeExport) -> NewtypeInfo {
         NewtypeInfo {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
-            underlying: self.resolved_type_from_manifest(&export.underlying),
+            underlying: resolved_type_from_manifest_type_ref(&export.underlying),
             methods: self.methods_from_manifest(&export.methods),
         }
     }
@@ -711,7 +712,7 @@ impl TypeChecker {
                 (
                     field.name.clone(),
                     FieldInfo {
-                        ty: self.resolved_type_from_manifest(&field.ty),
+                        ty: resolved_type_from_manifest_type_ref(&field.ty),
                         has_default: field.has_default,
                         alias: field.alias.clone(),
                         description: field.description.clone(),
@@ -730,7 +731,7 @@ impl TypeChecker {
                     MethodInfo {
                         receiver: self.receiver_from_manifest(method.receiver.as_ref()),
                         params: self.params_from_manifest(&method.params),
-                        return_type: self.resolved_type_from_manifest(&method.return_type),
+                        return_type: resolved_type_from_manifest_type_ref(&method.return_type),
                         is_async: method.is_async,
                         has_body: method.has_body,
                     },
@@ -742,7 +743,7 @@ impl TypeChecker {
     fn params_from_manifest(&self, params: &[ParamExport]) -> Vec<(String, ResolvedType)> {
         params
             .iter()
-            .map(|param| (param.name.clone(), self.resolved_type_from_manifest(&param.ty)))
+            .map(|param| (param.name.clone(), resolved_type_from_manifest_type_ref(&param.ty)))
             .collect()
     }
 
@@ -752,75 +753,6 @@ impl TypeChecker {
             Some(ReceiverExport::Mutable) => Some(Receiver::Mutable),
             None => None,
         }
-    }
-
-    fn resolved_type_from_manifest(&self, ty: &TypeRef) -> ResolvedType {
-        match ty {
-            TypeRef::Named { name } => self.resolved_named_type(name),
-            TypeRef::Applied { name, args } => {
-                let resolved_args: Vec<ResolvedType> =
-                    args.iter().map(|arg| self.resolved_type_from_manifest(arg)).collect();
-                match collections::from_str(name.as_str()) {
-                    Some(CollectionTypeId::FrozenList) => ResolvedType::FrozenList(Box::new(
-                        resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown),
-                    )),
-                    Some(CollectionTypeId::FrozenSet) => ResolvedType::FrozenSet(Box::new(
-                        resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown),
-                    )),
-                    Some(CollectionTypeId::FrozenDict) => ResolvedType::FrozenDict(
-                        Box::new(resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown)),
-                        Box::new(resolved_args.get(1).cloned().unwrap_or(ResolvedType::Unknown)),
-                    ),
-                    Some(collection_id) => {
-                        ResolvedType::Generic(collections::as_str(collection_id).to_string(), resolved_args)
-                    }
-                    None => ResolvedType::Generic(name.clone(), resolved_args),
-                }
-            }
-            TypeRef::Function { params, return_type } => ResolvedType::Function(
-                params
-                    .iter()
-                    .map(|param| self.resolved_type_from_manifest(param))
-                    .collect(),
-                Box::new(self.resolved_type_from_manifest(return_type)),
-            ),
-            TypeRef::Tuple { elements } => ResolvedType::Tuple(
-                elements
-                    .iter()
-                    .map(|element| self.resolved_type_from_manifest(element))
-                    .collect(),
-            ),
-            TypeRef::TypeParam { name } => ResolvedType::TypeVar(name.clone()),
-            TypeRef::SelfType => ResolvedType::SelfType,
-            TypeRef::Ref { inner } => ResolvedType::Ref(Box::new(self.resolved_type_from_manifest(inner))),
-            TypeRef::Unknown => ResolvedType::Unknown,
-        }
-    }
-
-    fn resolved_named_type(&self, name: &str) -> ResolvedType {
-        if let Some(id) = numerics::from_str(name) {
-            return match id {
-                NumericTypeId::Int => ResolvedType::Int,
-                NumericTypeId::Float => ResolvedType::Float,
-                NumericTypeId::Bool => ResolvedType::Bool,
-            };
-        }
-        if let Some(id) = stringlike::from_str(name) {
-            return match id {
-                StringLikeId::Str => ResolvedType::Str,
-                StringLikeId::Bytes => ResolvedType::Bytes,
-                StringLikeId::FrozenStr => ResolvedType::FrozenStr,
-                StringLikeId::FrozenBytes => ResolvedType::FrozenBytes,
-                StringLikeId::FString => ResolvedType::Str,
-            };
-        }
-        if let Some(id) = collections::from_str(name) {
-            return ResolvedType::Named(collections::as_str(id).to_string());
-        }
-        if name == conventions::UNIT_TYPE_NAME || name == conventions::NONE_TYPE_NAME {
-            return ResolvedType::Unit;
-        }
-        ResolvedType::Named(name.to_string())
     }
 
     /// Ensure imported items are public in the dependency module.
