@@ -1,15 +1,15 @@
 # RFC 031: Incan Library System — Phase 1 (Local Path Dependencies)
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Issue:** [#165](https://github.com/dannys-code-corner/incan/issues/165)
-- **RFC PR:** —
+- **RFC PR:** [#177](https://github.com/dannys-code-corner/incan/pull/177)
 - **Related**:
     - RFC 027 (incan-vocab — keyword registration API)
     - RFC 034 (`incan.pub` registry)
-- **Written against:** v0.2
-- **Shipped in:** —
+- **Written against:** v0.1
+- **Shipped in:** v0.2
 
 ## Summary
 
@@ -359,11 +359,11 @@ Package a compiled Rust library instead of generated Rust source. Rejected for P
 - Add comprehensive tests across parser/import semantics, manifest schema IO, typechecker resolution, and codegen/Cargo integration.
 - Update docs and release notes with migration guidance and Phase 1 usage patterns for library authors and consumers.
 
-## Progress Checklist
+## Implementation log
 
 ### Spec / design lock
 
-- [ ] Confirm all Phase 1 scope boundaries remain aligned with RFC 034 handoff (git/registry deferred).
+- [x] Confirm all Phase 1 scope boundaries remain aligned with RFC 034 handoff (git/registry deferred).
 - [x] Confirm `pub` re-export expectations in `src/lib.incn` and document any edge-case constraints.
 - [x] Confirm manifest schema v1 fields for exports, type parameters, and bounds metadata.
 
