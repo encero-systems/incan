@@ -276,7 +276,7 @@ For Phase 1, activation remains **import-driven**, not project-wide. Depending o
 - **`rust::` imports (RFC 005)**: `pub::` and `rust::` are parallel namespace prefixes. They share the same import syntax, differing only in resolution mechanism (manifest lookup vs. Rust crate path).
 - **Stdlib namespaces (RFC 022/023)**: `std.*` imports are compiler-provided and always available. `pub::*` imports are user-declared and require `[dependencies]`. They coexist without overlap.
 - **Soft keywords (RFC 022)**: Library soft keywords use the same import-activated model as stdlib soft keywords. The language must not introduce a separate library-only activation rule.
-- **Vocab crate (RFC 027)**: `incan-vocab` defines the shared types (`VocabProvider`, `KeywordRegistration`, `KeywordSpec`, manifest metadata types) used by both library authors and the compiler. This RFC uses those types to populate the built library artifact.
+- **Vocab crate (RFC 027)**: `incan-vocab` defines the shared types (`VocabRegistration`, `DslSurface`, `DeclarationSurface`, `ClauseSurface`, lower-level keyword DTOs, and manifest metadata types) used by both library authors and the compiler. This RFC uses those types to populate the built library artifact.
 
 ### Compatibility / migration
 

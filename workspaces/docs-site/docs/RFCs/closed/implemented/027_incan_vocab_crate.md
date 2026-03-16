@@ -80,10 +80,7 @@ Key insight:
 **2. Export `library_vocab()`** — In `crates/studiokit-vocab/src/lib.rs`:
 
 ```rust
-use incan_vocab::{
-    ClauseSurface, DeclarationSurface, DslSurface, FunctionExport, LibraryManifest,
-    ManifestFormatVersion, ModuleExport, TypeRef, VocabRegistration,
-};
+use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, LibraryManifest, VocabRegistration};
 
 pub struct StudioKitDesugarer;
 
@@ -122,20 +119,7 @@ pub fn library_vocab() -> VocabRegistration {
                         .with_statement_body(),
                 ),
         )
-        .with_library_manifest(LibraryManifest {
-            format_version: ManifestFormatVersion::V1,
-            modules: vec![ModuleExport {
-                path: "studiokit".into(),
-                functions: vec![FunctionExport {
-                    name: "run_workflow".into(),
-                    params: vec![("name".into(), TypeRef::named("str"))],
-                    return_type: None,
-                    is_async: true,
-                }],
-                types: vec![],
-            }],
-            ..LibraryManifest::default()
-        })
+        .with_library_manifest(LibraryManifest::default())
         .with_desugarer(StudioKitDesugarer)
 }
 ```
@@ -171,7 +155,7 @@ crate = "crates/studiokit-vocab"
 Consumers do not interact with the vocab crate at all. They just use the library:
 
 ```incan
-from studiokit import query, step, workflow
+from pub::studiokit import query, step, workflow
 
 sales_story = query {
     FROM orders
@@ -1274,10 +1258,7 @@ The examples below are intentionally split into two categories:
 **Companion crate surface:**
 
 ```rust
-use incan_vocab::{
-    ClauseSurface, DeclarationSurface, DslSurface, FunctionExport, LibraryManifest,
-    ManifestFormatVersion, ModuleExport, TypeRef, VocabRegistration,
-};
+use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, LibraryManifest, VocabRegistration};
 
 pub struct StudioKitDesugarer;
 
@@ -1313,20 +1294,7 @@ pub fn library_vocab() -> VocabRegistration {
                         .with_statement_body(),
                 ),
         )
-        .with_library_manifest(LibraryManifest {
-            format_version: ManifestFormatVersion::V1,
-            modules: vec![ModuleExport {
-                path: "studiokit".into(),
-                functions: vec![FunctionExport {
-                    name: "run_workflow".into(),
-                    params: vec![("name".into(), TypeRef::named("str"))],
-                    return_type: None,
-                    is_async: true,
-                }],
-                types: vec![],
-            }],
-            ..LibraryManifest::default()
-        })
+        .with_library_manifest(LibraryManifest::default())
         .with_desugarer(StudioKitDesugarer)
 }
 ```
@@ -1334,7 +1302,7 @@ pub fn library_vocab() -> VocabRegistration {
 **Consumer usage:**
 
 ```incan
-from studiokit import query, step, workflow
+from pub::studiokit import query, step, workflow
 
 sales_story = query {
     FROM orders
@@ -1376,6 +1344,8 @@ The same surface must still read well for smaller DSLs. A simpler routing DSL ca
 ```rust
 use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, LibraryManifest, VocabRegistration};
 
+pub struct RoutekitDesugarer;
+
 pub fn library_vocab() -> VocabRegistration {
     VocabRegistration::new()
         .with_surface(
@@ -1387,6 +1357,7 @@ pub fn library_vocab() -> VocabRegistration {
             ),
         )
         .with_library_manifest(LibraryManifest::default())
+        .with_desugarer(RoutekitDesugarer)
 }
 ```
 

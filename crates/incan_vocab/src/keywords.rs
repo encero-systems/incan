@@ -1,7 +1,8 @@
-//! Keyword registration surface shared by vocab providers and compiler tooling.
+//! High-level DSL surface types plus low-level keyword registration DTOs (Data Transfer Object).
 //!
-//! These types describe *what* a library contributes to the parser surface, not how the compiler internally implements
-//! those keywords.
+//! Companion crates should usually describe their grammar through [`DslSurface`], [`DeclarationSurface`], and
+//! [`ClauseSurface`] inside the `library_vocab()` entrypoint. [`crate::VocabRegistration`], [`KeywordRegistration`],
+//! and [`KeywordSpec`] remain available for compiler tooling and simple escape-hatch registrations.
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

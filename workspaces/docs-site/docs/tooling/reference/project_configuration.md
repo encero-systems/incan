@@ -94,8 +94,8 @@ Use this only for library projects that export vocab entries. Projects without c
 
 ### Fields
 
-| Field   | Type   | Description                                                                 |
-| ------- | ------ | --------------------------------------------------------------------------- |
+|  Field  |  Type  |                                      Description                                      |
+| ------- | ------ | ------------------------------------------------------------------------------------- |
 | `crate` | string | Path to the vocab companion crate directory, relative to project root unless absolute |
 
 During `incan build --lib`, the compiler:
@@ -103,10 +103,10 @@ During `incan build --lib`, the compiler:
 1. resolves `[vocab].crate`
 2. validates that the directory contains `Cargo.toml` and `src/lib.rs`
 3. runs `cargo build` for that companion crate
-4. reads `vocab_metadata.json` from the crate root
-5. packages the resulting vocab metadata into the built `.incnlib` artifact
+4. derives the vocab payload from the companion crate's `library_vocab()` registration
+5. packages the resulting metadata into the built `.incnlib` artifact
 
-If the companion crate declares a desugarer artifact via `incan_vocab::DesugarerMetadata`, `incan build --lib` also packages the matching Wasm artifact from the companion crate's `target/` output.
+If the companion crate registers a desugarer via `incan_vocab::DesugarerRegistration`, `incan build --lib` also packages the matching Wasm artifact from the companion crate's build output. Any intermediate serialized metadata is a tooling concern (rather than part of the author-facing contract).
 
 ## `[dependencies]`
 
@@ -143,18 +143,18 @@ serde = { version = "1.0", features = ["derive"], default-features = true }
 
 ### All fields
 
-| Field              | Type       | Description                                              |
-| ------------------ | ---------- | -------------------------------------------------------- |
-| `version`          | string     | Cargo SemVer version requirement (required for registry) |
-| `features`         | list       | Cargo features to enable                                 |
-| `default-features` | bool       | Whether to include default features (default: `true`)    |
-| `optional`         | bool       | Mark as optional (see below)                             |
-| `package`          | string     | The actual crate name if renaming (e.g. `serde-json`)    |
-| `git`              | string     | Git repository URL (mutually exclusive with `path`)      |
-| `branch`           | string     | Git branch (requires `git`)                              |
-| `tag`              | string     | Git tag (requires `git`)                                 |
-| `rev`              | string     | Git commit hash (requires `git`)                         |
-| `path`             | string     | Local path, relative to `incan.toml` location            |
+|       Field        |  Type  |                       Description                        |
+| ------------------ | ------ | -------------------------------------------------------- |
+| `version`          | string | Cargo SemVer version requirement (required for registry) |
+| `features`         | list   | Cargo features to enable                                 |
+| `default-features` | bool   | Whether to include default features (default: `true`)    |
+| `optional`         | bool   | Mark as optional (see below)                             |
+| `package`          | string | The actual crate name if renaming (e.g. `serde-json`)    |
+| `git`              | string | Git repository URL (mutually exclusive with `path`)      |
+| `branch`           | string | Git branch (requires `git`)                              |
+| `tag`              | string | Git tag (requires `git`)                                 |
+| `rev`              | string | Git commit hash (requires `git`)                         |
+| `path`             | string | Local path, relative to `incan.toml` location            |
 
 ## `[rust-dev-dependencies]`
 

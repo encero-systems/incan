@@ -20,6 +20,9 @@ pub const ROUTE_KW: &str = "route";
 pub const MIDDLEWARE_KW: &str = "middleware";
 
 /// Return the complete vocabulary registration for the example companion crate.
+///
+/// This simple example uses the same canonical `library_vocab()` entrypoint as richer DSLs.
+/// The compiler-facing metadata payload is derived from this registration.
 #[must_use]
 pub fn library_vocab() -> VocabRegistration {
     VocabRegistration::new()

@@ -24,32 +24,53 @@ In other words: library authors should not need to rewrite their vocab companion
 
 ## Public API overview
 
-### `VocabProvider`
+### Canonical entrypoint
 
-Implement this trait in a companion crate to describe the vocabulary surface your library exports.
+Companion crates should export one obvious Rust function:
 
-- `keyword_registrations()` returns the parser-facing keyword declarations.
-- `library_manifest()` returns any additional machine-readable metadata your library wants serialized.
-- `desugarer()` reserves a future hook for block desugaring without forcing every provider to implement it.
-- `metadata()` assembles the stable serialized output shape consumed by the compiler.
+```rust
+use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, VocabRegistration};
 
-### `keywords`
+pub fn library_vocab() -> VocabRegistration {
+    VocabRegistration::new().with_surface(
+        DslSurface::on_import("demo.surface").with_declaration(
+            DeclarationSurface::named("query")
+                .with_clause_body()
+                .desugars_to_expression()
+                .with_clauses([
+                    ClauseSurface::expr("FROM").required(),
+                    ClauseSurface::expr_list("SELECT").required().after("FROM"),
+                ]),
+        ),
+    )
+}
+```
 
-The `keywords` module contains the core registration model:
+`VocabRegistration` is the source of truth for one library's activated DSL surfaces, machine-readable manifest metadata, and optional Rust desugarer.
 
-- `KeywordRegistration`: a set of keywords that share one activation rule
-- `KeywordActivation`: when the keywords become active
-- `KeywordSpec`: the shape of an individual keyword
-- `KeywordPlacement`: where the keyword is valid
-- `KeywordSurfaceKind`: what parser surface the keyword occupies
+### High-level surface types
 
-### `manifest`
+These are the main author-facing types:
 
-The `manifest` module contains stable, serde-friendly DTOs for machine-readable library metadata. These types are intentionally plain data structures so that companion crates can construct them without depending on compiler internals.
+- `VocabRegistration`: the canonical bundle returned by `library_vocab()`
+- `DslSurface`: one activation-scoped group of DSL declarations
+- `DeclarationSurface`: one top-level DSL declaration such as `query`, `step`, or `route`
+- `ClauseSurface`: one declaration-owned clause such as `FROM`, `SELECT`, or `middleware`
+- `LibraryManifest`: exported module metadata plus any required Cargo or stdlib requirements
 
-### `ast` and `desugar`
+### Public desugaring contract
 
-These modules define the public syntax/desugaring contract. They are intentionally separate from the compiler's internal AST so the compiler can change implementation details without forcing companion crates to follow every internal refactor.
+The `ast` and `desugar` modules define the stable bridge between the compiler and library desugarers:
+
+- `VocabSyntaxNode`: the public AST node handed to desugarers
+- `DesugarOutput`: statement-valued or expression-valued output
+- `VocabDesugarer`: the trait implemented by companion crates that need custom lowering
+
+These types are intentionally separate from the compiler's internal AST so companion crates do not need to track every internal refactor.
+
+### Low-level transport DTOs
+
+`KeywordRegistration`, `KeywordSpec`, and `VocabMetadata` still exist, but they are lower-level transport and escape-hatch types. Tooling may derive or serialize them as part of packaging, yet the intended authoring flow starts from `library_vocab() -> VocabRegistration`.
 
 ## Serialization
 

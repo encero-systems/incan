@@ -66,7 +66,7 @@ pub struct VocabKeywordMetadata {
     pub activation_namespace: String,
     /// Surface kind used by the parser.
     pub surface_kind: crate::KeywordSurfaceKind,
-    /// Placement rule declared by the provider.
+    /// Placement rule declared by the companion crate.
     pub placement: crate::KeywordPlacement,
 }
 

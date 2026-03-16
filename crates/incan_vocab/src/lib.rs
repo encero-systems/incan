@@ -1,17 +1,37 @@
 //! Stable vocabulary registration contract for Incan library companion crates.
 //!
-//! This crate intentionally exposes a small, compiler-independent API surface.
+//! Companion crates should expose one canonical Rust entrypoint:
 //!
-//! Library authors depend on it directly to declare activated DSL surfaces, machine-readable manifest metadata, and
-//! Rust desugarers without taking a dependency on the full Incan compiler implementation.
+//! ```rust
+//! use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, VocabRegistration};
+//!
+//! pub fn library_vocab() -> VocabRegistration {
+//!     VocabRegistration::new().with_surface(
+//!         DslSurface::on_import("demo.surface").with_declaration(
+//!             DeclarationSurface::named("query")
+//!                 .with_clause_body()
+//!                 .desugars_to_expression()
+//!                 .with_clauses([
+//!                     ClauseSurface::expr("FROM").required(),
+//!                     ClauseSurface::expr_list("SELECT").required().after("FROM"),
+//!                 ]),
+//!         ),
+//!     )
+//! }
+//! ```
+//!
+//! [`VocabRegistration`], [`DslSurface`], [`DeclarationSurface`], [`ClauseSurface`], [`VocabSyntaxNode`], and
+//! [`DesugarOutput`] are the canonical author-facing surface. [`VocabMetadata`] and [`KeywordRegistration`] remain
+//! available as lower-level transport and escape-hatch types, but they are not the intended starting point for normal
+//! companion-crate authoring.
 
 /// Public AST types used by vocab desugarers.
 pub mod ast;
 /// Desugaring traits and error types for library-provided syntax lowering.
 pub mod desugar;
-/// Keyword registration DTOs shared by companion crates and compiler tooling.
+/// Low-level keyword DTOs shared by companion crates and compiler tooling.
 pub mod keywords;
-/// Stable manifest DTOs produced by vocab companion crates.
+/// Stable manifest DTOs carried inside a vocabulary registration.
 pub mod manifest;
 /// Version constants for serialized vocab metadata.
 pub mod version;
@@ -81,14 +101,14 @@ impl VocabRegistration {
         Self::default()
     }
 
-    /// Add one low-level keyword registration group.
+    /// Add one low-level keyword registration group as an escape hatch.
     #[must_use]
     pub fn with_keyword_registration(mut self, registration: KeywordRegistration) -> Self {
         self.keyword_registrations.push(registration);
         self
     }
 
-    /// Add multiple low-level keyword registration groups.
+    /// Add multiple low-level keyword registration groups as an escape hatch.
     #[must_use]
     pub fn with_keyword_registrations<I>(mut self, registrations: I) -> Self
     where
@@ -163,7 +183,7 @@ impl VocabRegistration {
         self.desugarer.as_ref()
     }
 
-    /// Derive the transport metadata consumed by build tooling.
+    /// Derive the compiler-facing transport metadata consumed by build tooling.
     #[must_use]
     pub fn metadata(&self) -> VocabMetadata {
         VocabMetadata {

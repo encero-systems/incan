@@ -54,6 +54,9 @@ pub const STEP_KW: &str = "step";
 pub const WORKFLOW_KW: &str = "workflow";
 
 /// Return the complete vocabulary registration for the surrogate companion crate.
+///
+/// This is the canonical author-facing entrypoint. Any serialized metadata or packaged desugarer
+/// artifacts are derived from this registration by tooling.
 #[must_use]
 pub fn library_vocab() -> VocabRegistration {
     VocabRegistration::new()

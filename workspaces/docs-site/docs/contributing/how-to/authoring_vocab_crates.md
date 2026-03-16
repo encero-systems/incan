@@ -1,21 +1,35 @@
 # Author Library DSLs with `incan_vocab`
 
-This guide is for library authors who want to ship import-activated DSL syntax such as `routes:`, `GET`, or `middleware:` without changing the core Incan compiler.
+This guide is for library authors who want to ship import-activated DSL syntax such as `route`, `GET`, or `middleware:` without changing the core Incan compiler.
 
 Use this path when the syntax belongs to one library and should only become active after importing that library. If you are changing the language itself, follow [Extending the language](extending_language.md) instead.
 
-## What a vocab companion crate does
+## The public contract
 
-A vocab companion crate is a small Rust crate that lives next to your Incan library and describes three things:
+A vocab companion crate is a small Rust crate that lives next to your Incan library and exports one canonical Rust entrypoint:
 
-- which keywords your library introduces
-- when those keywords become active
-- what extra manifest metadata consumer builds need
+```rust
+pub fn library_vocab() -> VocabRegistration
+```
 
-During `incan build --lib`, the compiler builds that companion crate, reads its `vocab_metadata.json`, and packages the resulting vocab payload into the `.incnlib` artifact for your library.
+That registration is the source of truth for three things:
 
-!!! note "Today’s shipped workflow"
-    The stable Rust authoring surface is `incan_vocab`, but the compiler currently consumes the companion crate through a generated `vocab_metadata.json` file at the crate root. The easiest way to keep that file in sync is to generate it from a `VocabProvider` in `build.rs`.
+- activated DSL surfaces
+- machine-readable library metadata
+- an optional Rust desugarer
+
+The intended author-facing surface is:
+
+- `VocabRegistration`
+- `DslSurface`
+- `DeclarationSurface`
+- `ClauseSurface`
+- `LibraryManifest`
+- `VocabDesugarer`
+- `VocabSyntaxNode`
+- `DesugarOutput`
+
+`KeywordRegistration` and `VocabMetadata` still exist, but they are lower-level transport and escape-hatch types. They are not the standard starting point for companion-crate authoring.
 
 ## When to use this path
 
@@ -25,19 +39,18 @@ During `incan build --lib`, the compiler builds that companion crate, reads its 
 
 ## Recommended layout
 
-This is what the recommended layout would look like for an imaginary library called `routekit`
+This is what the recommended layout looks like for an imaginary library called `routekit`:
 
 ```text
-routekit/             # the parent folder
+routekit/
 ├── incan.toml
 ├── src/
-│   └── lib.incn      # libraries need a `lib.incn` file to be considered a library
-└── vocab_companion/  # the vocab companion crate
+│   └── lib.incn
+└── vocab_companion/
     ├── Cargo.toml
-    ├── build.rs
     └── src/
-        ├── lib.rs
-        └── provider.rs
+        ├── desugar.rs
+        └── lib.rs
 ```
 
 `src/lib.incn` is your actual Incan library. `vocab_companion/` is the Rust crate that describes its DSL surface.
@@ -72,120 +85,85 @@ path = "src/lib.rs"
 
 [dependencies]
 incan_vocab = "0.1"
-
-[build-dependencies]
-incan_vocab = "0.1"
 ```
 
-The compiler validates that the companion crate has both `Cargo.toml` and `src/lib.rs`, so keep it as a real Rust crate even if most of the interesting logic lives in a shared `provider.rs`.
+Keep the companion crate as a real Rust crate with `Cargo.toml` and `src/lib.rs`, even when the DSL description itself is quite small.
 
-You do not need to depend on `serde_json` just to emit `vocab_metadata.json`. `incan_vocab` provides a helper for that. Add JSON tooling separately only if your own custom build/desugarer pipeline needs it.
+## 3. Describe the DSL in `library_vocab()`
 
-## 3. Describe the DSL with `VocabProvider`
+Put the registration in `src/lib.rs`:
 
-Put the registration logic in `src/provider.rs` so both the library crate and `build.rs` can reuse it:
+```rust title="routekit/vocab_companion/src/lib.rs"
+mod desugar;
 
-```rust
-use incan_vocab::{
-    KeywordActivation, KeywordPlacement, KeywordRegistration, KeywordSpec, KeywordSurfaceKind, LibraryManifest,
-    VocabMetadata, VocabProvider,
-};
+use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, LibraryManifest, VocabRegistration};
 
-pub struct RoutekitVocab;
+pub use desugar::RoutekitDesugarer;
 
-impl VocabProvider for RoutekitVocab {
-    fn keyword_registrations(&self) -> Vec<KeywordRegistration> {
-        vec![KeywordRegistration {
-            activation: KeywordActivation::OnImport {
-                namespace: "routekit".to_string(),
-            },
-            keywords: vec![
-                KeywordSpec::new("routes", KeywordSurfaceKind::BlockDeclaration),
-                KeywordSpec {
-                    name: "GET".to_string(),
-                    surface_kind: KeywordSurfaceKind::BlockContextKeyword,
-                    compound_tokens: Vec::new(),
-                    placement: KeywordPlacement::InBlock(vec!["routes".to_string()]),
-                },
-                KeywordSpec {
-                    name: "middleware".to_string(),
-                    surface_kind: KeywordSurfaceKind::SubBlock,
-                    compound_tokens: Vec::new(),
-                    placement: KeywordPlacement::InBlock(vec!["routes".to_string()]),
-                },
-            ],
-            valid_decorators: Vec::new(),
-        }]
-    }
-
-    fn library_manifest(&self) -> LibraryManifest {
-        LibraryManifest::default()
-    }
-}
-
-pub fn metadata() -> VocabMetadata {
-    RoutekitVocab.metadata()
+pub fn library_vocab() -> VocabRegistration {
+    VocabRegistration::new()
+        .with_surface(
+            DslSurface::on_import("routekit").with_declaration(
+                DeclarationSurface::named("route")
+                    .with_header_args()
+                    .with_mixed_body()
+                    .with_clause(ClauseSurface::nested_items("middleware").optional()),
+            ),
+        )
+        .with_library_manifest(LibraryManifest::default())
+        .with_desugarer(RoutekitDesugarer)
 }
 ```
 
 Key rules:
 
-- `KeywordActivation::OnImport { namespace }` must match the consumer-facing import spelling without the `pub::` prefix. In the current library-system phase, `pub::` imports only accept the library name, so `from pub::routekit import routekit_name` activates `namespace: "routekit"`.
-- `KeywordPlacement::InBlock(...)` scopes nested entries to the parent DSL block.
-- `library_manifest()` is where you describe any extra exported metadata or build requirements that should ride along with the library artifact.
+- `DslSurface::on_import("routekit")` must match the consumer-facing import spelling after `pub::`.
+- Declarations own their clause grammar directly, so nested DSL structure stays close to the declaration that introduces it.
+- `LibraryManifest` is where you describe exported module metadata plus any Cargo dependencies or stdlib features that must travel with the library artifact.
+- `KeywordRegistration` remains available only as a lower-level escape hatch for especially simple or incremental cases.
 
-If your desugared output needs extra runtime requirements, populate them in `library_manifest()`:
+If your desugared output needs extra runtime requirements, declare them in `LibraryManifest`:
 
 ```rust
 use incan_vocab::{CargoDependency, CargoDependencySource, LibraryManifest};
 
-fn library_manifest(&self) -> LibraryManifest {
-    LibraryManifest {
-        required_dependencies: vec![CargoDependency {
-            crate_name: "axum".to_string(),
-            source: CargoDependencySource::Version("0.8".to_string()),
-        }],
-        required_stdlib_features: vec!["web".to_string()],
-        ..LibraryManifest::default()
+let manifest = LibraryManifest {
+    required_dependencies: vec![CargoDependency {
+        crate_name: "axum".to_string(),
+        source: CargoDependencySource::Version("0.8".to_string()),
+    }],
+    required_stdlib_features: vec!["web".to_string()],
+    ..LibraryManifest::default()
+};
+```
+
+## 4. Add an optional desugarer
+
+Parser activation alone teaches the compiler how to recognize your DSL surface. If the DSL needs custom lowering, register a Rust desugarer from the same `library_vocab()` bundle.
+
+```rust title="routekit/vocab_companion/src/desugar.rs"
+use incan_vocab::{DesugarError, DesugarOutput, IncanExpr, IncanStatement, VocabDesugarer, VocabSyntaxNode};
+
+pub struct RoutekitDesugarer;
+
+impl VocabDesugarer for RoutekitDesugarer {
+    fn desugar(&self, node: &VocabSyntaxNode) -> Result<DesugarOutput, DesugarError> {
+        let keyword = match node {
+            VocabSyntaxNode::Declaration(decl) => &decl.keyword,
+            _ => return Err(DesugarError::new("routekit desugarer expected a declaration node")),
+        };
+
+        Ok(DesugarOutput::Statements(vec![IncanStatement::Expr(IncanExpr::Call {
+            callee: Box::new(IncanExpr::Name("print".to_string())),
+            args: vec![IncanExpr::Str(format!("{keyword} block desugared"))],
+        })]))
     }
 }
 ```
 
-## 4. Generate `vocab_metadata.json`
+Use `DesugarOutput::Statements(...)` when the DSL lowers into host statements and `DesugarOutput::Expression(...)` when it lowers into an expression position.
 
-The compiler looks for `vocab_metadata.json` at the companion crate root after `cargo build` finishes. A build script keeps that file synchronized automatically.
-
-`src/lib.rs`:
-
-```rust
-mod provider;
-
-pub use provider::RoutekitVocab;
-```
-
-`build.rs`:
-
-```rust
-use std::path::PathBuf;
-
-#[path = "src/provider.rs"]
-mod provider;
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let out_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vocab_metadata.json");
-    incan_vocab::write_metadata_json(out_path, &provider::RoutekitVocab)?;
-
-    println!("cargo:rerun-if-changed=src/provider.rs");
-    println!("cargo:rerun-if-changed=src/lib.rs");
-    Ok(())
-}
-```
-
-This is the most practical pattern today:
-
-- author the metadata once in Rust via `VocabProvider`
-- serialize it to the file the compiler actually reads
-- avoid hand-editing JSON
+If you need non-default packaging metadata, register the desugarer with `with_desugarer_registration(...)` and override fields on `DesugarerRegistration` or `DesugarerMetadata`. The default packaging profile targets `wasm32-wasip1` in `release` mode.
 
 ## 5. Build the library artifact
 
@@ -198,9 +176,11 @@ incan build --lib
 This requires `src/lib.incn`. During the build, Incan:
 
 1. reads `[vocab].crate`
-2. runs `cargo build` for the companion crate
-3. reads `vocab_metadata.json`
-4. packages the vocab payload into `target/lib/<library>.incnlib`
+2. builds the companion crate
+3. derives the vocab payload from `library_vocab()`
+4. packages the derived metadata and any registered desugarer into `target/lib/<library>.incnlib`
+
+Any serialized JSON sidecars or extraction glue are tooling details rather than part of the standard authoring workflow.
 
 ## 6. Consume the DSL from another project
 
@@ -211,7 +191,7 @@ The consumer depends on the built library artifact:
 routekit = { path = "../routekit/target/lib" }
 ```
 
-Then import the library. That import both exposes the symbols you request and activates the registered keywords for the file:
+Then import the library. That import both exposes the requested symbols and activates the registered DSL surface for the file:
 
 ```incan
 from pub::routekit import routekit_name
@@ -219,46 +199,13 @@ from pub::routekit import routekit_name
 # Any `pub::routekit` import activates the registered DSL entries for this file.
 ```
 
-## Block DSLs need a desugarer
-
-Registering `BlockDeclaration`, `BlockContextKeyword`, and `SubBlock` teaches the parser how to recognize your DSL surface. It does not, by itself, make raw DSL blocks typecheck.
-
-For block-style DSLs, you also need to package a desugarer artifact so the compiler can rewrite raw vocab blocks into ordinary Incan statements before typechecking.
-
-Declare that artifact from your provider:
-
-```rust
-use incan_vocab::DesugarerMetadata;
-
-fn desugarer_metadata(&self) -> Option<DesugarerMetadata> {
-    Some(DesugarerMetadata::default())
-}
-```
-
-`DesugarerMetadata::default()` means:
-
-- target: `wasm32-wasip1`
-- profile: `release`
-- output file name: `<package_name>.wasm`
-- entrypoint: `desugar_block`
-
-The compiler packages that artifact from `target/<target>/<profile>/` into the library output during `incan build --lib`.
-
-!!! warning "Important"
-    External block DSLs are only complete once both pieces exist:
-
-    - the vocab metadata (`keyword_registrations`, manifest requirements, optional desugarer metadata)
-    - the desugarer artifact itself
-
-    If you register block keywords but do not package a desugarer artifact, the parser may accept the syntax, but raw vocab blocks will be rejected before typechecking finishes.
-
 ## Common pitfalls
 
 - `[vocab].crate` points to a directory, not a Cargo package name.
-- `vocab_metadata.json` must live at the companion crate root, not inside `target/`.
 - The activation namespace must match the consumer import spelling after `pub::`.
-- If desugared code needs Rust crates or stdlib features, declare them in `library_manifest()` so consumer builds get the same requirements.
-- Block DSL registrations need desugarer metadata and a packaged Wasm artifact, not just keyword registrations.
+- Do not split the public contract across `build.rs`, convention functions, or hand-maintained `vocab_metadata.json` files.
+- If desugared code needs Rust crates or stdlib features, declare them in `LibraryManifest` so consumer builds get the same requirements.
+- Block or clause-oriented DSL registrations need a desugarer when they cannot continue through the compiler as ordinary Incan syntax on their own.
 
 ## See also
 

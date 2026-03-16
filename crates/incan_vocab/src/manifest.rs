@@ -1,4 +1,4 @@
-//! Shared manifest DTOs used by vocab providers.
+//! Shared manifest DTOs carried inside a vocabulary registration.
 //!
 //! The types in this module are intentionally plain data structures. They are designed to be easy for companion crates
 //! to construct and easy for the compiler to serialize into library artifacts.
@@ -16,7 +16,7 @@ pub enum ManifestFormatVersion {
     V1,
 }
 
-/// Machine-readable library surface metadata contributed by a vocab provider.
+/// Machine-readable library surface metadata contributed by a companion crate registration.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct LibraryManifest {
@@ -56,7 +56,7 @@ pub struct FunctionExport {
     /// Parameter list as `(name, type)` pairs.
     #[cfg_attr(feature = "serde", serde(default))]
     pub params: Vec<(String, TypeRef)>,
-    /// Return type, if the provider wants to specify it.
+    /// Return type, if the companion crate wants to specify it.
     pub return_type: Option<TypeRef>,
     /// Whether the function is async.
     pub is_async: bool,
