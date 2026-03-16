@@ -43,7 +43,7 @@ pub use emit_service::EmitService;
 pub use expr::{BuiltinFn, IrExpr, IrExprKind, MethodKind, TypedExpr};
 pub use facade::CodegenFacade;
 pub use lower::{AstLowering, LoweringError, LoweringErrors};
-pub use scanners::{check_for_this_import, collect_rust_crates, detect_serde_usage};
+pub use scanners::{check_for_this_import, collect_rust_crates, detect_serde_non_import_usage, detect_serde_usage};
 pub use stmt::{IrStmt, IrStmtKind};
 pub use types::{IrType, Mutability, Ownership};
 

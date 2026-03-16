@@ -15,13 +15,24 @@ use incan_core::lang::derives::{self, DeriveId};
 
 use super::decorators::{collect_import_aliases, has_stdlib_import, resolve_decorator_id};
 
-/// Detect whether serde derives are used anywhere in the program.
+/// Detect whether serde-backed runtime support is needed for this program.
+///
+/// This is the broad compatibility detector used by codegen. It returns `true` for both:
+/// - import-driven activation (`std.serde.*`)
+/// - legacy non-import usage (`@derive(Serialize/Deserialize)` and bare `json_stringify`)
 pub fn detect_serde_usage(program: &Program) -> bool {
     // Fast path: explicit `import std.serde.json` or `from std.serde import ...`
     if has_stdlib_import(program, "serde") {
         return true;
     }
 
+    detect_serde_non_import_usage(program)
+}
+
+/// Detect serde requirements that do *not* come from explicit `std.serde` imports.
+///
+/// This helper intentionally captures compatibility behavior that cannot yet be represented by import activation alone.
+pub fn detect_serde_non_import_usage(program: &Program) -> bool {
     // Check for `@derive(Serialize)` / `@derive(Deserialize)` on models/classes.
     if has_serde_derive(program) {
         return true;

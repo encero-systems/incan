@@ -7,7 +7,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::backend::ir::detect_serde_usage;
+use crate::backend::ir::detect_serde_non_import_usage;
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult};
 use crate::dependency_resolver::ResolvedDependencies;
@@ -68,11 +68,13 @@ pub(crate) fn collect_project_requirements(
         }
     }
 
-    // Legacy serde-driven surfaces (`@derive(Serialize/Deserialize)`, `to_json`, `json_stringify`) can be used without
-    // importing `std.serde.*`, so import-only namespace discovery is not sufficient for collecting required Cargo
-    // dependencies.
-    let needs_serde_runtime = modules.iter().any(|module| detect_serde_usage(&module.ast));
-    if needs_serde_runtime {
+    // Legacy serde-driven surfaces (`@derive(Serialize/Deserialize)`, `to_json`, `json_stringify`) can still be used
+    // without importing `std.serde.*`. Keep this as an explicit compatibility fallback, but treat import/provider
+    // manifests as the primary source of dependency and feature requirements.
+    let needs_legacy_serde_runtime = modules
+        .iter()
+        .any(|module| detect_serde_non_import_usage(&module.ast));
+    if needs_legacy_serde_runtime {
         stdlib_namespaces.insert("serde".to_string());
     }
 
@@ -131,7 +133,7 @@ pub(crate) fn collect_project_requirements(
         }
     }
 
-    if needs_serde_runtime {
+    if needs_legacy_serde_runtime {
         let serde = DependencySpec {
             crate_name: "serde".to_string(),
             version: Some("1.0".to_string()),
@@ -145,7 +147,7 @@ pub(crate) fn collect_project_requirements(
         merge_requirement_dependency(
             &mut requirements.dependencies,
             serde,
-            "serde usage in source".to_string(),
+            "legacy serde usage in source".to_string(),
         )?;
 
         let serde_json = DependencySpec {
@@ -161,7 +163,7 @@ pub(crate) fn collect_project_requirements(
         merge_requirement_dependency(
             &mut requirements.dependencies,
             serde_json,
-            "serde usage in source".to_string(),
+            "legacy serde usage in source".to_string(),
         )?;
     }
 

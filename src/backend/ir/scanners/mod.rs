@@ -9,5 +9,5 @@ mod serde;
 mod this;
 
 pub use rust_crates::collect_rust_crates;
-pub use serde::detect_serde_usage;
+pub use serde::{detect_serde_non_import_usage, detect_serde_usage};
 pub use this::check_for_this_import;

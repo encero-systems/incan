@@ -441,7 +441,7 @@ impl<'a> IrCodegen<'a> {
     /// This remains an internal compatibility hook because serde-backed derives and legacy
     /// `json_stringify` usage can still require serde emission without import-activated provider
     /// metadata.
-    fn scan_for_serde(&mut self, program: &Program) {
+    fn update_serde_requirement(&mut self, program: &Program) {
         if detect_serde_usage(program) {
             self.needs_serde = true;
         }
@@ -518,14 +518,14 @@ impl<'a> IrCodegen<'a> {
         self.current_program = Some(program);
 
         // Scan for emission-relevant features
-        self.scan_for_serde(program);
+        self.update_serde_requirement(program);
         self.collect_rust_crates(program);
         self.check_for_this_import(program);
         self.collect_external_rust_functions(program);
 
         // Scan dependencies
         for (_mod_name, dep_ast, _mod_path_segments) in &self.dependency_modules.clone() {
-            self.scan_for_serde(dep_ast);
+            self.update_serde_requirement(dep_ast);
             self.collect_rust_crates(dep_ast);
             self.collect_external_rust_functions(dep_ast);
         }
@@ -708,11 +708,11 @@ impl<'a> IrCodegen<'a> {
         self.current_program = Some(program);
 
         // Scan all modules for emission-relevant features
-        self.scan_for_serde(program);
+        self.update_serde_requirement(program);
         self.collect_rust_crates(program);
 
         for (_mod_name, dep_ast, _mod_path_segments) in &self.dependency_modules.clone() {
-            self.scan_for_serde(dep_ast);
+            self.update_serde_requirement(dep_ast);
             self.collect_rust_crates(dep_ast);
         }
 
@@ -831,11 +831,11 @@ impl<'a> IrCodegen<'a> {
         }
 
         // Scan all modules for emission-relevant features
-        self.scan_for_serde(program);
+        self.update_serde_requirement(program);
         self.collect_rust_crates(program);
 
         for (_mod_name, dep_ast, _mod_path_segments) in &self.dependency_modules.clone() {
-            self.scan_for_serde(dep_ast);
+            self.update_serde_requirement(dep_ast);
             self.collect_rust_crates(dep_ast);
         }
 
@@ -1077,7 +1077,7 @@ model Config:
         let tokens = must_ok(lexer::lex(source));
         let ast = must_ok(parser::parse(&tokens));
         let mut codegen = IrCodegen::new();
-        codegen.scan_for_serde(&ast);
+        codegen.update_serde_requirement(&ast);
         assert!(codegen.needs_serde());
     }
 
@@ -1091,7 +1091,7 @@ model User:
         let tokens = must_ok(lexer::lex(source));
         let ast = must_ok(parser::parse(&tokens));
         let mut codegen = IrCodegen::new();
-        codegen.scan_for_serde(&ast);
+        codegen.update_serde_requirement(&ast);
         assert!(codegen.needs_serde());
     }
 
@@ -1105,7 +1105,7 @@ model User:
         let tokens = must_ok(lexer::lex(source));
         let ast = must_ok(parser::parse(&tokens));
         let mut codegen = IrCodegen::new();
-        codegen.scan_for_serde(&ast);
+        codegen.update_serde_requirement(&ast);
         assert!(!codegen.needs_serde());
     }
 
@@ -1118,7 +1118,7 @@ def main() -> None:
         let tokens = must_ok(lexer::lex(source));
         let ast = must_ok(parser::parse(&tokens));
         let mut codegen = IrCodegen::new();
-        codegen.scan_for_serde(&ast);
+        codegen.update_serde_requirement(&ast);
         assert!(codegen.needs_serde());
     }
 
