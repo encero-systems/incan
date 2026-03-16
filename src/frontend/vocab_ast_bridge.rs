@@ -233,6 +233,16 @@ pub fn public_statement_to_internal(stmt: &incan_vocab::IncanStatement) -> Resul
     }
 }
 
+/// Convert one public `incan_vocab::IncanExpr` into internal compiler expression AST.
+///
+/// # Errors
+///
+/// Returns [`VocabAstBridgeError::UnsupportedPublicExpression`] when the expression shape or operators are not
+/// currently represented in the internal bridge mapping.
+pub fn public_expression_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, VocabAstBridgeError> {
+    public_expr_to_internal(expr)
+}
+
 /// Convert a list of internal spanned statements to public statements.
 ///
 /// This is the internal utility used for block body conversion in the internal -> public direction.

@@ -2147,7 +2147,7 @@ mod rfc031_pub_import_integration_tests {
     }
 
     #[test]
-    fn consumer_check_rejects_expression_desugar_output_in_statement_position() -> Result<(), Box<dyn std::error::Error>>
+    fn consumer_check_accepts_expression_desugar_output_in_statement_position() -> Result<(), Box<dyn std::error::Error>>
     {
         let tmp = tempfile::tempdir()?;
         let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Int(1));
@@ -2163,19 +2163,10 @@ mod rfc031_pub_import_integration_tests {
 
         let output = run_check(&main_path)?;
         assert!(
-            !output.status.success(),
-            "expected check to fail when wasm desugarer returns expression output.\nstdout:\n{}\nstderr:\n{}",
+            output.status.success(),
+            "expected check to succeed when wasm desugarer returns expression output.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
-        );
-        let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&output.stderr));
-        assert!(
-            stderr.contains("only statement output is currently supported"),
-            "expected statement-only desugar diagnostic, got:\n{stderr}"
-        );
-        assert!(
-            stderr.contains("route"),
-            "expected failing keyword name in diagnostic, got:\n{stderr}"
         );
         Ok(())
     }

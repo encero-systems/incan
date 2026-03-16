@@ -145,14 +145,6 @@ pub enum VocabDesugarPassError {
         /// JSON serialize failure.
         source: serde_json::Error,
     },
-    /// Desugarer returned an expression where the current compiler path expects statements.
-    #[error(
-        "desugarer returned expression output for block keyword `{keyword}`, but only statement output is currently supported"
-    )]
-    UnexpectedExpressionOutput {
-        /// Parsed keyword that introduced the failing block.
-        keyword: String,
-    },
     /// Desugarer returned an output variant this compiler version does not understand yet.
     #[error("desugarer returned an unsupported output variant for block keyword `{keyword}`")]
     UnsupportedOutput {
@@ -372,14 +364,8 @@ fn rewrite_statement_list(
 
                 let public_statements = match desugared.output {
                     incan_vocab::DesugarOutput::Statements(statements) => statements,
-                    incan_vocab::DesugarOutput::Expression(_) => {
-                        errors.push(error_from_pass_error(
-                            VocabDesugarPassError::UnexpectedExpressionOutput {
-                                keyword: bridged.keyword.clone(),
-                            },
-                            span,
-                        ));
-                        continue;
+                    incan_vocab::DesugarOutput::Expression(expression) => {
+                        vec![incan_vocab::IncanStatement::Expr(expression)]
                     }
                     _ => {
                         errors.push(error_from_pass_error(
