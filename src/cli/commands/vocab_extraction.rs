@@ -1,9 +1,12 @@
 //! Producer-side vocab companion crate extraction for `incan build --lib`.
 
 use std::collections::HashSet;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cli::{CliError, CliResult};
 use crate::library_manifest::{SoftKeywordActivation, VocabDesugarerArtifact, VocabExports};
@@ -43,11 +46,7 @@ pub(crate) fn collect_library_vocab_metadata(
     let cargo_manifest_path = companion_crate_root.join("Cargo.toml");
     let package_name = read_companion_package_name(&cargo_manifest_path)?;
 
-    // Ensure the declared companion crate at least compiles before metadata extraction.
-    run_cargo_build(&cargo_manifest_path)?;
-
-    let metadata_path = companion_crate_root.join("vocab_metadata.json");
-    let metadata = read_vocab_metadata(&metadata_path)?;
+    let metadata = extract_vocab_metadata_from_library_entrypoint(&companion_crate_root, &package_name)?;
     if let Some(desugarer) = metadata.desugarer.as_ref() {
         run_cargo_build_for_target(&cargo_manifest_path, &desugarer.target, &desugarer.profile)?;
     }
@@ -135,27 +134,6 @@ fn read_companion_package_name(cargo_manifest_path: &Path) -> CliResult<String> 
     Ok(package_name.to_string())
 }
 
-fn run_cargo_build(cargo_manifest_path: &Path) -> CliResult<()> {
-    let output = Command::new("cargo")
-        .arg("build")
-        .arg("--quiet")
-        .arg("--manifest-path")
-        .arg(cargo_manifest_path)
-        .output()
-        .map_err(|err| CliError::failure(format!("failed to run cargo build: {err}")))?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(CliError::failure(format!(
-        "vocab companion crate failed to build ({}):\n{}",
-        cargo_manifest_path.display(),
-        stderr.trim()
-    )))
-}
-
 fn run_cargo_build_for_target(cargo_manifest_path: &Path, target: &str, profile: &str) -> CliResult<()> {
     let mut command = Command::new("cargo");
     command.arg("build").arg("--manifest-path").arg(cargo_manifest_path);
@@ -180,20 +158,105 @@ fn run_cargo_build_for_target(cargo_manifest_path: &Path, target: &str, profile:
     )))
 }
 
-fn read_vocab_metadata(metadata_path: &Path) -> CliResult<incan_vocab::VocabMetadata> {
-    let content = std::fs::read_to_string(metadata_path).map_err(|err| {
+fn extract_vocab_metadata_from_library_entrypoint(
+    companion_crate_root: &Path,
+    package_name: &str,
+) -> CliResult<incan_vocab::VocabMetadata> {
+    let extraction_dir = create_extraction_workspace_dir()?;
+    let helper_root = extraction_dir.join("runner");
+    fs::create_dir_all(helper_root.join("src")).map_err(|err| {
         CliError::failure(format!(
-            "failed to read vocab metadata at {}: {err}",
-            metadata_path.display()
+            "failed to create vocab extraction workspace {}: {err}",
+            helper_root.display()
         ))
     })?;
+    write_extraction_runner_manifest(&helper_root, companion_crate_root, package_name)?;
+    write_extraction_runner_source(&helper_root)?;
 
-    serde_json::from_str::<incan_vocab::VocabMetadata>(&content).map_err(|err| {
+    let output = Command::new("cargo")
+        .arg("run")
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg(helper_root.join("Cargo.toml"))
+        .output()
+        .map_err(|err| CliError::failure(format!("failed to run vocab extraction helper: {err}")))?;
+
+    let metadata_result = if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        serde_json::from_str::<incan_vocab::VocabMetadata>(stdout.trim()).map_err(|err| {
+            CliError::failure(format!(
+                "failed to parse metadata extracted from `library_vocab()` in {}: {err}",
+                companion_crate_root.display()
+            ))
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(CliError::failure(format!(
+            "failed to extract vocab metadata from companion crate via `library_vocab()` ({}):\n{}",
+            companion_crate_root.display(),
+            stderr.trim()
+        )))
+    };
+
+    let _ = fs::remove_dir_all(&extraction_dir);
+    metadata_result
+}
+
+fn create_extraction_workspace_dir() -> CliResult<PathBuf> {
+    static EXTRACTION_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| CliError::failure(format!("failed to compute extraction workspace timestamp: {err}")))?
+            .as_nanos(),
+        EXTRACTION_COUNTER.fetch_add(1, Ordering::Relaxed)
+    );
+    let dir = env::temp_dir().join(format!("incan_vocab_extract_{nonce}"));
+    fs::create_dir_all(&dir).map_err(|err| {
         CliError::failure(format!(
-            "failed to parse vocab metadata at {}: {err}",
-            metadata_path.display()
+            "failed to create temporary vocab extraction directory {}: {err}",
+            dir.display()
+        ))
+    })?;
+    Ok(dir)
+}
+
+fn write_extraction_runner_manifest(
+    helper_root: &Path,
+    companion_crate_root: &Path,
+    package_name: &str,
+) -> CliResult<()> {
+    let helper_manifest = helper_root.join("Cargo.toml");
+    let escaped_companion_path = escape_cargo_toml_string(companion_crate_root);
+    let escaped_incan_vocab_path =
+        escape_cargo_toml_string(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/incan_vocab"));
+    let escaped_package_name = package_name.replace('\\', "\\\\").replace('"', "\\\"");
+    let manifest = format!(
+        "[package]\nname = \"incan_vocab_extraction_runner\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{escaped_incan_vocab_path}\" }}\ncompanion = {{ package = \"{escaped_package_name}\", path = \"{escaped_companion_path}\" }}\n"
+    );
+    fs::write(&helper_manifest, manifest).map_err(|err| {
+        CliError::failure(format!(
+            "failed to write vocab extraction helper manifest {}: {err}",
+            helper_manifest.display()
         ))
     })
+}
+
+fn write_extraction_runner_source(helper_root: &Path) -> CliResult<()> {
+    let source_path = helper_root.join("src").join("main.rs");
+    let source = "fn main() {\n    let registration = companion::library_vocab();\n    let encoded = match incan_vocab::serialize_registration_json_pretty(&registration) {\n        Ok(encoded) => encoded,\n        Err(err) => {\n            eprintln!(\"failed to serialize registration metadata: {err}\");\n            std::process::exit(1);\n        }\n    };\n    match String::from_utf8(encoded) {\n        Ok(text) => {\n            print!(\"{text}\");\n        }\n        Err(err) => {\n            eprintln!(\"registration metadata was not valid utf-8: {err}\");\n            std::process::exit(1);\n        }\n    }\n}\n";
+    fs::write(&source_path, source).map_err(|err| {
+        CliError::failure(format!(
+            "failed to write vocab extraction helper source {}: {err}",
+            source_path.display()
+        ))
+    })
+}
+
+fn escape_cargo_toml_string(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn build_pending_desugarer_artifact(
@@ -302,10 +365,17 @@ mod tests {
         fs::write(
             crate_root.join("Cargo.toml"),
             format!(
-                "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n"
+                "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[lib]\npath = \"src/lib.rs\"\n",
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("crates")
+                    .join("incan_vocab")
+                    .display()
             ),
         )?;
-        fs::write(crate_root.join("src/lib.rs"), "pub fn register_vocab() {}\n")?;
+        fs::write(
+            crate_root.join("src/lib.rs"),
+            "pub fn library_vocab() -> incan_vocab::VocabRegistration {\n    incan_vocab::VocabRegistration::new().with_keyword_registration(\n        incan_vocab::KeywordRegistration {\n            activation: incan_vocab::KeywordActivation::OnImport {\n                namespace: \"widgets.dsl\".to_string(),\n            },\n            keywords: vec![incan_vocab::KeywordSpec::new(\n                \"await\",\n                incan_vocab::KeywordSurfaceKind::ControlFlow,\n            )],\n            valid_decorators: Vec::new(),\n        }\n    )\n}\n",
+        )?;
         Ok(crate_root)
     }
 
@@ -381,38 +451,32 @@ mod tests {
     }
 
     #[test]
-    fn read_vocab_metadata_parses_valid_payload() -> Result<(), Box<dyn std::error::Error>> {
+    fn extract_vocab_metadata_from_library_entrypoint_parses_valid_payload() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
-        let metadata_path = temp.path().join("vocab_metadata.json");
-        let metadata = incan_vocab::VocabMetadata {
-            keyword_registrations: vec![incan_vocab::KeywordRegistration {
-                activation: incan_vocab::KeywordActivation::OnImport {
-                    namespace: "widgets.dsl".to_string(),
-                },
-                keywords: vec![incan_vocab::KeywordSpec::new(
-                    "await",
-                    incan_vocab::KeywordSurfaceKind::ControlFlow,
-                )],
-                valid_decorators: Vec::new(),
-            }],
-            dsl_surfaces: Vec::new(),
-            library_manifest: incan_vocab::LibraryManifest::default(),
-            desugarer: None,
-        };
-        fs::write(&metadata_path, serde_json::to_string_pretty(&metadata)?)?;
-
-        let parsed = read_vocab_metadata(&metadata_path)?;
-        assert_eq!(parsed, metadata);
+        let crate_root = write_vocab_companion_crate(temp.path(), "vocab_companion", "widgets_vocab_companion")?;
+        let parsed = extract_vocab_metadata_from_library_entrypoint(&crate_root, "widgets_vocab_companion")?;
+        assert_eq!(parsed.keyword_registrations.len(), 1);
+        assert_eq!(
+            parsed.keyword_registrations[0].activation,
+            incan_vocab::KeywordActivation::OnImport {
+                namespace: "widgets.dsl".to_string()
+            }
+        );
         Ok(())
     }
 
     #[test]
-    fn characterization_collect_library_vocab_metadata_requires_vocab_metadata_sidecar()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn collect_library_vocab_metadata_requires_library_vocab_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let project_root = temp.path().join("project");
         fs::create_dir_all(&project_root)?;
-        write_vocab_companion_crate(&project_root, "vocab_companion", "widgets_vocab_companion")?;
+        let crate_root = project_root.join("vocab_companion");
+        fs::create_dir_all(crate_root.join("src"))?;
+        fs::write(
+            crate_root.join("Cargo.toml"),
+            "[package]\nname = \"widgets_vocab_companion\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+        )?;
+        fs::write(crate_root.join("src/lib.rs"), "pub fn register_vocab() {}\n")?;
 
         let manifest_path = project_root.join("incan.toml");
         fs::write(
@@ -423,13 +487,9 @@ mod tests {
 
         let err = collect_library_vocab_metadata(&manifest, &project_root)
             .err()
-            .ok_or("expected vocab metadata extraction to fail without vocab_metadata.json")?;
+            .ok_or("expected vocab metadata extraction to fail without library_vocab entrypoint")?;
         let message = err.to_string();
-        assert!(
-            message.contains("failed to read vocab metadata"),
-            "unexpected error: {message}"
-        );
-        assert!(message.contains("vocab_metadata.json"), "unexpected error: {message}");
+        assert!(message.contains("library_vocab"), "unexpected error: {message}");
         Ok(())
     }
 
@@ -439,36 +499,6 @@ mod tests {
         let project_root = temp.path().join("project");
         fs::create_dir_all(&project_root)?;
         write_vocab_companion_crate(&project_root, "vocab_companion", "widgets_vocab_companion")?;
-
-        let metadata = incan_vocab::VocabMetadata {
-            keyword_registrations: vec![
-                incan_vocab::KeywordRegistration {
-                    activation: incan_vocab::KeywordActivation::OnImport {
-                        namespace: "widgets.dsl".to_string(),
-                    },
-                    keywords: vec![incan_vocab::KeywordSpec::new(
-                        "await",
-                        incan_vocab::KeywordSurfaceKind::ControlFlow,
-                    )],
-                    valid_decorators: Vec::new(),
-                },
-                incan_vocab::KeywordRegistration {
-                    activation: incan_vocab::KeywordActivation::Always,
-                    keywords: vec![incan_vocab::KeywordSpec::new(
-                        "await",
-                        incan_vocab::KeywordSurfaceKind::ControlFlow,
-                    )],
-                    valid_decorators: Vec::new(),
-                },
-            ],
-            dsl_surfaces: Vec::new(),
-            library_manifest: incan_vocab::LibraryManifest::default(),
-            desugarer: None,
-        };
-        fs::write(
-            project_root.join("vocab_companion").join("vocab_metadata.json"),
-            serde_json::to_string_pretty(&metadata)?,
-        )?;
 
         let manifest_path = project_root.join("incan.toml");
         fs::write(
@@ -481,7 +511,7 @@ mod tests {
             .ok_or("expected vocab metadata extraction to return payload")?;
         assert_eq!(extraction.payload.crate_path, "vocab_companion");
         assert_eq!(extraction.payload.package_name, "widgets_vocab_companion");
-        assert_eq!(extraction.payload.keyword_registrations.len(), 2);
+        assert_eq!(extraction.payload.keyword_registrations.len(), 1);
         assert_eq!(
             extraction.compatibility_activations,
             vec![SoftKeywordActivation {

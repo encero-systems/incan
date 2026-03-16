@@ -1489,29 +1489,16 @@ mod rfc031_pub_import_integration_tests {
         std::fs::write(
             crate_root.join("Cargo.toml"),
             format!(
-                "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n"
+                "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[lib]\npath = \"src/lib.rs\"\n",
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("crates")
+                    .join("incan_vocab")
+                    .display()
             ),
         )?;
-        std::fs::write(crate_root.join("src/lib.rs"), "pub fn register_vocab() {}\n")?;
-
-        let metadata = incan_vocab::VocabMetadata {
-            keyword_registrations: vec![incan_vocab::KeywordRegistration {
-                activation: incan_vocab::KeywordActivation::OnImport {
-                    namespace: "widgets.dsl".to_string(),
-                },
-                keywords: vec![incan_vocab::KeywordSpec::new(
-                    "await",
-                    incan_vocab::KeywordSurfaceKind::ControlFlow,
-                )],
-                valid_decorators: vec!["route".to_string()],
-            }],
-            dsl_surfaces: Vec::new(),
-            library_manifest: incan_vocab::LibraryManifest::default(),
-            desugarer: None,
-        };
         std::fs::write(
-            crate_root.join("vocab_metadata.json"),
-            serde_json::to_string_pretty(&metadata)?,
+            crate_root.join("src/lib.rs"),
+            "pub fn library_vocab() -> incan_vocab::VocabRegistration {\n    incan_vocab::VocabRegistration::new().with_keyword_registration(\n        incan_vocab::KeywordRegistration {\n            activation: incan_vocab::KeywordActivation::OnImport {\n                namespace: \"widgets.dsl\".to_string(),\n            },\n            keywords: vec![incan_vocab::KeywordSpec::new(\n                \"await\",\n                incan_vocab::KeywordSurfaceKind::ControlFlow,\n            )],\n            valid_decorators: vec![\"route\".to_string()],\n        },\n    )\n}\n",
         )?;
         Ok(())
     }
@@ -1526,29 +1513,16 @@ mod rfc031_pub_import_integration_tests {
         std::fs::write(
             crate_root.join("Cargo.toml"),
             format!(
-                "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n"
+                "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[lib]\npath = \"src/lib.rs\"\n",
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("crates")
+                    .join("incan_vocab")
+                    .display()
             ),
         )?;
-        std::fs::write(crate_root.join("src/lib.rs"), "pub fn register_vocab() {}\n")?;
-
-        let metadata = incan_vocab::VocabMetadata {
-            keyword_registrations: vec![incan_vocab::KeywordRegistration {
-                activation: incan_vocab::KeywordActivation::OnImport {
-                    namespace: "widgets.dsl".to_string(),
-                },
-                keywords: vec![incan_vocab::KeywordSpec::new(
-                    "assert",
-                    incan_vocab::KeywordSurfaceKind::ControlFlow,
-                )],
-                valid_decorators: vec!["route".to_string()],
-            }],
-            dsl_surfaces: Vec::new(),
-            library_manifest: incan_vocab::LibraryManifest::default(),
-            desugarer: None,
-        };
         std::fs::write(
-            crate_root.join("vocab_metadata.json"),
-            serde_json::to_string_pretty(&metadata)?,
+            crate_root.join("src/lib.rs"),
+            "pub fn library_vocab() -> incan_vocab::VocabRegistration {\n    incan_vocab::VocabRegistration::new().with_keyword_registration(\n        incan_vocab::KeywordRegistration {\n            activation: incan_vocab::KeywordActivation::OnImport {\n                namespace: \"widgets.dsl\".to_string(),\n            },\n            keywords: vec![incan_vocab::KeywordSpec::new(\n                \"assert\",\n                incan_vocab::KeywordSurfaceKind::ControlFlow,\n            )],\n            valid_decorators: vec![\"route\".to_string()],\n        },\n    )\n}\n",
         )?;
         Ok(())
     }
