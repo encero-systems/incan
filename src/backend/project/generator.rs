@@ -50,16 +50,8 @@ pub struct ProjectGenerator {
     pub(super) name: String,
     /// Whether this is a binary (true) or library (false)
     pub(super) is_binary: bool,
-    /// Whether serde is needed (for Serialize/Deserialize derives)
-    // TODO: Replace with manifest-driven feature activation — imported modules should declare
-    // their own required Cargo features rather than the compiler scanning for them. When that
-    // model lands, `needs_serde`, `needs_tokio`, `needs_web`, and their `scan_for_*` counterparts
-    // in `IrCodegen` can all be deleted in favour of a collected set of module-declared features.
-    pub(super) needs_serde: bool,
-    /// Whether tokio is needed (for async runtime)
-    pub(super) needs_tokio: bool,
-    /// Whether web support is needed (enables the `web` stdlib feature and extra deps like `axum`).
-    pub(super) needs_web: bool,
+    /// Enabled stdlib feature flags for the generated project (for example `json`, `async`, `web`).
+    pub(super) stdlib_features: Vec<String>,
     /// Resolved Rust crate dependencies.
     pub(super) dependencies: Vec<DependencySpec>,
     /// Resolved dev-only Rust dependencies.
@@ -80,9 +72,7 @@ impl ProjectGenerator {
             output_dir: output_dir.as_ref().to_path_buf(),
             name: name.to_string(),
             is_binary,
-            needs_serde: false,
-            needs_tokio: false,
-            needs_web: false,
+            stdlib_features: Vec::new(),
             dependencies: Vec::new(),
             dev_dependencies: Vec::new(),
             include_dev_dependencies: false,
@@ -92,37 +82,16 @@ impl ProjectGenerator {
         }
     }
 
-    /// Enable serde support (for JSON serialization).
-    pub fn with_serde(mut self) -> Self {
-        self.needs_serde = true;
-        self
-    }
-
-    /// Set whether serde is needed.
-    pub fn set_needs_serde(&mut self, needs: bool) {
-        self.needs_serde = needs;
-    }
-
-    /// Enable tokio support (for async runtime).
-    pub fn with_tokio(mut self) -> Self {
-        self.needs_tokio = true;
-        self
-    }
-
-    /// Set whether tokio is needed.
-    pub fn set_needs_tokio(&mut self, needs: bool) {
-        self.needs_tokio = needs;
-    }
-
-    /// Enable web support (stdlib `web` feature + framework dependencies).
-    pub fn with_web(mut self) -> Self {
-        self.needs_web = true;
-        self
-    }
-
-    /// Set whether web support is needed.
-    pub fn set_needs_web(&mut self, needs: bool) {
-        self.needs_web = needs;
+    /// Set the stdlib feature flags required by this generated project.
+    pub fn set_stdlib_features(&mut self, features: Vec<String>) {
+        let mut normalized: Vec<String> = features
+            .into_iter()
+            .map(|feature| feature.trim().to_string())
+            .filter(|feature| !feature.is_empty())
+            .collect();
+        normalized.sort();
+        normalized.dedup();
+        self.stdlib_features = normalized;
     }
 
     /// Set resolved Rust dependencies.

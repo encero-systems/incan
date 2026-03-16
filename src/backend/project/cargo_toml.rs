@@ -13,7 +13,6 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use incan_core::lang::stdlib::{STDLIB_NAMESPACES, StdlibExtraCrateSource};
 use serde::Serialize;
 
 use crate::manifest::{DependencySource, DependencySpec, GitReference};
@@ -106,7 +105,12 @@ fn dependency_spec_to_toml(spec: &DependencySpec, output_dir: &Path) -> (String,
             }
         }
         DependencySource::Path { path } => {
-            let rel = relative_path(output_dir, path);
+            // Resolve symlinked path aliases (e.g. `/var` -> `/private/var` on macOS) before computing a relative path.
+            // Without this, generated path dependencies can point at non-existent siblings like `/private/Users/...`
+            // in integration test temp dirs.
+            let from = output_dir.canonicalize().unwrap_or_else(|_| output_dir.to_path_buf());
+            let to = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+            let rel = relative_path(&from, &to);
             let path_str = rel.to_string_lossy().replace('\\', "/");
             table.insert("path".into(), path_str.into());
         }
@@ -133,11 +137,11 @@ fn dependency_spec_to_toml(spec: &DependencySpec, output_dir: &Path) -> (String,
 }
 
 /// Build a [`toml::Value::Table`] for a path-only dependency (used for stdlib/derive crates).
-fn path_dependency(path: &Path, features: &[&str]) -> toml::Value {
+fn path_dependency(path: &Path, features: &[String]) -> toml::Value {
     let mut table = toml::Table::new();
     table.insert("path".into(), path.display().to_string().into());
     if !features.is_empty() {
-        let feat_values: Vec<toml::Value> = features.iter().map(|f| (*f).into()).collect();
+        let feat_values: Vec<toml::Value> = features.iter().map(|f| f.clone().into()).collect();
         table.insert("features".into(), toml::Value::Array(feat_values));
     }
     toml::Value::Table(table)
@@ -164,60 +168,14 @@ impl ProjectGenerator {
         let mut deps = toml::Table::new();
         let mut added_crates: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-        // Always add incan_stdlib (enable features based on needs)
-        let mut stdlib_features: Vec<&str> = Vec::new();
-        if self.needs_web {
-            stdlib_features.push("web");
-        }
-        if self.needs_tokio {
-            stdlib_features.push("async");
-        }
-        if self.needs_serde {
-            stdlib_features.push("json");
-        }
+        // Always add incan_stdlib with the resolved feature set.
+        let stdlib_features = self.stdlib_features.clone();
         deps.insert("incan_stdlib".into(), path_dependency(&stdlib_path, &stdlib_features));
         added_crates.insert("incan_stdlib".into());
 
         // Always add incan_derive for derive macros
-        deps.insert("incan_derive".into(), path_dependency(&derive_path, &[]));
+        deps.insert("incan_derive".into(), path_dependency(&derive_path, &Vec::new()));
         added_crates.insert("incan_derive".into());
-
-        // Add implicit serde if needed
-        if self.needs_serde {
-            let mut serde_table = toml::Table::new();
-            serde_table.insert("version".into(), "1.0".into());
-            serde_table.insert("features".into(), toml::Value::Array(vec!["derive".into()]));
-            deps.insert("serde".into(), toml::Value::Table(serde_table));
-            deps.insert("serde_json".into(), toml::Value::String("1.0".into()));
-            added_crates.insert("serde".into());
-            added_crates.insert("serde_json".into());
-        }
-
-        // Add stdlib namespace-specific extra dependencies based on enabled features.
-        let enabled_stdlib_features: std::collections::HashSet<&str> = stdlib_features.iter().copied().collect();
-        for namespace in STDLIB_NAMESPACES {
-            let Some(feature) = namespace.feature else {
-                continue;
-            };
-            if !enabled_stdlib_features.contains(feature) {
-                continue;
-            }
-            for dep in namespace.extra_crate_deps {
-                if added_crates.contains(dep.crate_name) {
-                    continue;
-                }
-                match dep.source {
-                    StdlibExtraCrateSource::Path(relative_path) => {
-                        let dep_path = workspace_root.join(relative_path);
-                        deps.insert(dep.crate_name.into(), path_dependency(&dep_path, &[]));
-                    }
-                    StdlibExtraCrateSource::Version(version) => {
-                        deps.insert(dep.crate_name.into(), toml::Value::String(version.to_string()));
-                    }
-                }
-                added_crates.insert(dep.crate_name.to_string());
-            }
-        }
 
         // Add resolved user dependencies
         let mut optional_features = Vec::new();
@@ -538,7 +496,38 @@ mod tests {
     #[test]
     fn test_cargo_toml_web_feature_adds_namespace_extra_deps() -> Result<(), Box<dyn std::error::Error>> {
         let mut generator = ProjectGenerator::new("/tmp/test_web_extras", "test_web_extras", true);
-        generator.set_needs_web(true);
+        generator.set_stdlib_features(vec!["web".to_string()]);
+        generator.set_dependencies(vec![
+            crate::manifest::DependencySpec {
+                crate_name: "inventory".to_string(),
+                version: Some("0.3".to_string()),
+                features: vec![],
+                default_features: true,
+                source: crate::manifest::DependencySource::Registry,
+                optional: false,
+                package: None,
+            },
+            crate::manifest::DependencySpec {
+                crate_name: "axum".to_string(),
+                version: Some("0.8".to_string()),
+                features: vec![],
+                default_features: true,
+                source: crate::manifest::DependencySource::Registry,
+                optional: false,
+                package: None,
+            },
+            crate::manifest::DependencySpec {
+                crate_name: "incan_web_macros".to_string(),
+                version: None,
+                features: vec![],
+                default_features: true,
+                source: crate::manifest::DependencySource::Path {
+                    path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/incan_web_macros"),
+                },
+                optional: false,
+                package: None,
+            },
+        ]);
 
         let toml = generator.generate_cargo_toml()?;
 

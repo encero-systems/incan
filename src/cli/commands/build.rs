@@ -4,6 +4,7 @@
 //! resolution, project generation, and Cargo build/run.
 
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::backend::{IrCodegen, ProjectGenerator};
@@ -16,14 +17,15 @@ use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, typechecker};
 use crate::library_manifest::LibraryManifest;
 use crate::lockfile::CargoFeatureSelection;
-use crate::manifest::{DependencySpec, ProjectManifest};
+use crate::manifest::ProjectManifest;
 use std::collections::{HashMap, HashSet};
 
 use super::common::{
-    build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_modules, collect_stdlib_usage,
-    format_dependency_error, merge_stdlib_extra_dependencies, resolve_project_root, validate_output_dir,
+    build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_modules, collect_project_requirements,
+    format_dependency_error, merge_project_requirement_dependencies, resolve_project_root, validate_output_dir,
 };
 use super::lock::{LockResolutionRequest, resolve_lock_payload};
+use super::vocab_extraction::{PendingDesugarerArtifact, collect_library_vocab_metadata};
 use crate::cli::prelude::ParsedModule;
 
 // ============================================================================
@@ -240,29 +242,6 @@ fn module_key(path_segments: &[String]) -> String {
     path_segments.join("_")
 }
 
-fn merge_library_path_dependencies(
-    resolved_dependencies: &mut Vec<DependencySpec>,
-    library_manifest_index: &LibraryManifestIndex,
-) -> CliResult<()> {
-    for library_dep in library_manifest_index.cargo_path_dependencies() {
-        if let Some(existing) = resolved_dependencies
-            .iter()
-            .find(|existing| existing.crate_name == library_dep.crate_name)
-        {
-            if existing != &library_dep {
-                return Err(CliError::failure(format!(
-                    "dependency `{}` conflicts between rust dependencies and `pub::` library artifact wiring",
-                    library_dep.crate_name
-                )));
-            }
-            continue;
-        }
-        resolved_dependencies.push(library_dep);
-    }
-    resolved_dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
-    Ok(())
-}
-
 fn rename_checked_export(export: &CheckedNamedExport, exported_name: &str) -> CheckedNamedExport {
     let mut renamed = export.clone();
     renamed.name = exported_name.to_string();
@@ -348,22 +327,6 @@ impl<'a> LibraryReexportResolver<'a> {
     }
 }
 
-/// Extract soft-keyword registrations provided by the library's optional vocab crate.
-///
-/// If the project manifest declares a `[vocab]` section, this function loads the corresponding vocab provider to
-/// extract the soft keywords it introduces.
-fn collect_library_soft_keyword_activations(
-    manifest: &ProjectManifest,
-    _project_root: &Path,
-) -> CliResult<Vec<crate::library_manifest::SoftKeywordActivation>> {
-    if manifest.vocab().is_some() {
-        return Err(CliError::failure(
-            "Library vocab metadata extraction is not yet supported (pending RFC 027). Please remove `[vocab]` from incan.toml for now.",
-        ));
-    }
-    Ok(Vec::new())
-}
-
 /// Prepare an Incan project for building or running.
 ///
 /// This function performs all the shared setup:
@@ -389,8 +352,6 @@ fn prepare_project(
     };
 
     let dep_modules = &modules[..modules.len() - 1];
-    let stdlib_usage = collect_stdlib_usage(&modules);
-
     let path = Path::new(file_path);
     let project_root = resolve_project_root(path);
 
@@ -399,6 +360,7 @@ fn prepare_project(
         .as_ref()
         .map(LibraryManifestIndex::from_project_manifest)
         .unwrap_or_default();
+    let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
 
     // Type check all modules (dependencies + stdlib first), so diagnostics are associated with the correct file.
     let declared = manifest.as_ref().map(|m| m.declared_rust_crate_names());
@@ -464,26 +426,9 @@ fn prepare_project(
     for module in dep_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
-    // Scan for feature requirements (serde, async, web, list helpers)
-    codegen.scan_for_serde(&main_module.ast);
-    codegen.scan_for_async(&main_module.ast);
-    codegen.scan_for_web(&main_module.ast);
-    codegen.scan_for_list_helpers(&main_module.ast);
-    for module in dep_modules {
-        codegen.scan_for_serde(&module.ast);
-        codegen.scan_for_async(&module.ast);
-        codegen.scan_for_web(&module.ast);
-        codegen.scan_for_list_helpers(&module.ast);
-    }
-    let needs_serde = codegen.needs_serde() || stdlib_usage.needs_serde;
-    let needs_tokio = codegen.needs_tokio() || stdlib_usage.needs_tokio;
-    let needs_web = codegen.needs_web() || stdlib_usage.needs_web;
-
     // ---- Setup project generator ----
     let mut generator = ProjectGenerator::new(&out_dir, project_name.as_str(), true);
-    generator.set_needs_serde(needs_serde);
-    generator.set_needs_tokio(needs_tokio);
-    generator.set_needs_web(needs_web);
+    generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(false);
     generator.set_rust_edition(
         manifest
@@ -516,8 +461,7 @@ fn prepare_project(
             return Err(CliError::failure(msg.trim_end()));
         }
     };
-    merge_stdlib_extra_dependencies(&mut resolved, &stdlib_usage);
-    merge_library_path_dependencies(&mut resolved.dependencies, &library_manifest_index)?;
+    merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
 
     // Resolve lock payload before moving deps into generator (borrows resolved)
     let lock_payload = resolve_lock_payload(LockResolutionRequest {
@@ -525,7 +469,7 @@ fn prepare_project(
         project_name: project_name.as_str(),
         manifest: manifest.as_ref(),
         resolved: &resolved,
-        stdlib_usage: &stdlib_usage,
+        project_requirements: &project_requirements,
         cargo_features: &cargo_features,
         locked,
         frozen,
@@ -722,16 +666,22 @@ pub fn build_library(
 
     let mut library_manifest =
         LibraryManifest::from_checked_exports(project_name.clone(), project_version, &selected_exports);
+    let mut pending_desugarer_artifact: Option<PendingDesugarerArtifact> = None;
 
-    library_manifest.soft_keywords.activations = collect_library_soft_keyword_activations(&manifest, &project_root)?;
+    if let Some(vocab_extraction) = collect_library_vocab_metadata(&manifest, &project_root)? {
+        pending_desugarer_artifact = vocab_extraction.pending_desugarer_artifact;
+        library_manifest.vocab = Some(vocab_extraction.payload);
+        library_manifest.soft_keywords.activations = vocab_extraction.compatibility_activations;
+    }
 
     let out_dir = project_root.join("target").join("lib");
     std::fs::create_dir_all(&out_dir)
         .map_err(|e| CliError::failure(format!("failed to create {}: {e}", out_dir.display())))?;
+    package_desugarer_artifact(&out_dir, pending_desugarer_artifact.as_ref())?;
     let manifest_path = out_dir.join(format!("{project_name}.incnlib"));
 
     let dep_modules = &modules[..modules.len() - 1];
-    let stdlib_usage = collect_stdlib_usage(&modules);
+    let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
     let rust_extern_contexts = collect_rust_extern_contexts(&modules);
 
     let mut codegen = IrCodegen::new();
@@ -740,21 +690,8 @@ pub fn build_library(
     for module in dep_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
-    for module in &modules {
-        codegen.scan_for_serde(&module.ast);
-        codegen.scan_for_async(&module.ast);
-        codegen.scan_for_web(&module.ast);
-        codegen.scan_for_list_helpers(&module.ast);
-    }
-
-    let needs_serde = codegen.needs_serde() || stdlib_usage.needs_serde;
-    let needs_tokio = codegen.needs_tokio() || stdlib_usage.needs_tokio;
-    let needs_web = codegen.needs_web() || stdlib_usage.needs_web;
-
     let mut generator = ProjectGenerator::new(&out_dir, project_name.as_str(), false);
-    generator.set_needs_serde(needs_serde);
-    generator.set_needs_tokio(needs_tokio);
-    generator.set_needs_web(needs_web);
+    generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(false);
     generator.set_rust_edition(manifest.build.as_ref().and_then(|build| build.rust_edition.clone()));
 
@@ -781,15 +718,14 @@ pub fn build_library(
             return Err(CliError::failure(msg.trim_end()));
         }
     };
-    merge_stdlib_extra_dependencies(&mut resolved, &stdlib_usage);
-    merge_library_path_dependencies(&mut resolved.dependencies, &library_manifest_index)?;
+    merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
 
     let lock_payload = resolve_lock_payload(LockResolutionRequest {
         project_root: &project_root,
         project_name: project_name.as_str(),
         manifest: Some(&manifest),
         resolved: &resolved,
-        stdlib_usage: &stdlib_usage,
+        project_requirements: &project_requirements,
         cargo_features: &cargo_features,
         locked,
         frozen,
@@ -843,6 +779,36 @@ pub fn build_library(
     println!("Generated manifest: {}", manifest_path.display());
 
     Ok(ExitCode::SUCCESS)
+}
+
+fn package_desugarer_artifact(out_dir: &Path, artifact: Option<&PendingDesugarerArtifact>) -> CliResult<()> {
+    let Some(artifact) = artifact else {
+        return Ok(());
+    };
+
+    let destination = out_dir.join(&artifact.metadata.relative_path);
+    let destination_parent = destination.parent().ok_or_else(|| {
+        CliError::failure(format!(
+            "invalid desugarer artifact destination path: {}",
+            destination.display()
+        ))
+    })?;
+
+    fs::create_dir_all(destination_parent).map_err(|err| {
+        CliError::failure(format!(
+            "failed to create desugarer artifact directory {}: {err}",
+            destination_parent.display()
+        ))
+    })?;
+    fs::copy(&artifact.source_path, &destination).map_err(|err| {
+        CliError::failure(format!(
+            "failed to package vocab desugarer artifact {} -> {}: {err}",
+            artifact.source_path.display(),
+            destination.display()
+        ))
+    })?;
+
+    Ok(())
 }
 
 /// Build and run an Incan file.

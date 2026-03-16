@@ -20,6 +20,7 @@ pub mod format;
 pub mod init;
 pub mod lock;
 pub mod stdlib_loader;
+pub(crate) mod vocab_extraction;
 
 // Re-export public API so callers can use `commands::build_file()` etc.
 pub use build::{build_file, build_library, run_file};

@@ -18,7 +18,7 @@ pub use super::lower::{AstLowering, LoweringError};
 pub use super::{FunctionRegistry, FunctionSignature, IrProgram};
 
 // Scanners
-pub use super::scanners::{check_for_this_import, collect_rust_crates, detect_list_helpers_usage, detect_serde_usage};
+pub use super::scanners::{check_for_this_import, collect_rust_crates, detect_serde_usage};
 
 // Services
 pub use super::emit_service::EmitService;

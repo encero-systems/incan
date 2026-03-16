@@ -1627,12 +1627,220 @@ const ANSWER: int = 42
         let result_no_context = crate::parser::parse(&tokens);
         assert!(result_no_context.is_err(), "Expected async function without soft keyword context to fail");
 
-        // With context mapping mylib -> async, it should succeed
+        // With imported vocab registrations mapping mylib -> async modifier, it should succeed.
         let mut map = std::collections::HashMap::new();
-        map.insert("mylib".to_string(), vec![incan_core::lang::keywords::KeywordId::Async]);
+        map.insert(
+            "mylib".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "mylib.dsl".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "async".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::FunctionDecl,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+        );
 
         let result_with_context = crate::parser::parse_with_context(&tokens, None, Some(&map));
         assert!(result_with_context.is_ok(), "Expected async function to parse with soft keyword context");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_imported_vocab_block_statement() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::routes\n\ndef configure() -> None:\n  route \"/health\":\n    pass\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "routes".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "routes.dsl".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "route".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: vec!["cached".to_string()],
+            }],
+        );
+
+        let program = crate::parser::parse_with_context(&tokens, None, Some(&map))
+            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        assert!(matches!(
+            function.body[0].node,
+            crate::ast::Statement::VocabBlock(_)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_imported_vocab_keyword_can_still_parse_assignment_statement() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::routes\n\ndef configure() -> None:\n  route = \"/health\"\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "routes".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "routes.dsl".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "route".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+        );
+
+        let program = crate::parser::parse_with_context(&tokens, None, Some(&map))
+            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        assert!(matches!(
+            function.body[0].node,
+            crate::ast::Statement::Assignment(_)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_imported_vocab_keyword_can_still_parse_expression_statement() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::routes\n\ndef configure() -> None:\n  route(\"/health\")\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "routes".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "routes.dsl".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "route".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+        );
+
+        let program = crate::parser::parse_with_context(&tokens, None, Some(&map))
+            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        assert!(matches!(function.body[0].node, crate::ast::Statement::Expr(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_nested_vocab_block_with_in_block_placement() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::routes\n\ndef configure() -> None:\n  route \"/home\":\n    get:\n      pass\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "routes".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "routes.dsl".to_string(),
+                },
+                keywords: vec![
+                    incan_vocab::KeywordSpec {
+                        name: "route".to_string(),
+                        surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                        compound_tokens: Vec::new(),
+                        placement: incan_vocab::KeywordPlacement::TopLevel,
+                    },
+                    incan_vocab::KeywordSpec {
+                        name: "get".to_string(),
+                        surface_kind: incan_vocab::KeywordSurfaceKind::SubBlock,
+                        compound_tokens: Vec::new(),
+                        placement: incan_vocab::KeywordPlacement::InBlock(vec!["route".to_string()]),
+                    },
+                ],
+                valid_decorators: Vec::new(),
+            }],
+        );
+
+        let program = crate::parser::parse_with_context(&tokens, None, Some(&map))
+            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::VocabBlock(route_block) = &function.body[0].node else {
+            return Err("expected top-level vocab block in function body".into());
+        };
+        assert!(matches!(
+            route_block.body[0].node,
+            crate::ast::Statement::VocabBlock(_)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_block_context_keyword_surface_as_vocab_block() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::routes\n\ndef configure() -> None:\n  route \"/home\":\n    middleware auth:\n      pass\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "routes".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "routes.dsl".to_string(),
+                },
+                keywords: vec![
+                    incan_vocab::KeywordSpec {
+                        name: "route".to_string(),
+                        surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                        compound_tokens: Vec::new(),
+                        placement: incan_vocab::KeywordPlacement::TopLevel,
+                    },
+                    incan_vocab::KeywordSpec {
+                        name: "middleware".to_string(),
+                        surface_kind: incan_vocab::KeywordSurfaceKind::BlockContextKeyword,
+                        compound_tokens: Vec::new(),
+                        placement: incan_vocab::KeywordPlacement::InBlock(vec!["route".to_string()]),
+                    },
+                ],
+                valid_decorators: Vec::new(),
+            }],
+        );
+
+        let program = crate::parser::parse_with_context(&tokens, None, Some(&map))
+            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::VocabBlock(route_block) = &function.body[0].node else {
+            return Err("expected top-level vocab block in function body".into());
+        };
+        let crate::ast::Statement::VocabBlock(context_block) = &route_block.body[0].node else {
+            return Err("expected nested context vocab block in route body".into());
+        };
+        assert_eq!(context_block.keyword, "middleware");
         Ok(())
     }
 }

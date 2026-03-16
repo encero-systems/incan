@@ -14,6 +14,16 @@ enum IndexOrSlice {
     Slice(SliceExpr),
 }
 
+#[derive(Debug, Clone)]
+struct ActiveImportedKeywordSpec {
+    keyword_name: String,
+    dependency_key: String,
+    activation_namespace: String,
+    valid_decorators: Vec<String>,
+    surface_kind: incan_vocab::KeywordSurfaceKind,
+    placement: incan_vocab::KeywordPlacement,
+}
+
 /// Parser state.
 ///
 /// ## Notes
@@ -27,8 +37,10 @@ pub struct Parser<'a> {
     /// Non-fatal warnings accumulated during parsing (e.g. style nudges that don't block compilation).
     warnings: Vec<CompileError>,
     active_soft_keywords: std::collections::HashSet<KeywordId>,
+    active_imported_keyword_specs: std::collections::HashMap<String, Vec<ActiveImportedKeywordSpec>>,
+    vocab_block_stack: Vec<String>,
     module_path: Option<String>,
-    library_soft_keywords: std::collections::HashMap<String, Vec<KeywordId>>,
+    library_imported_vocab: ImportedLibraryVocab,
 }
 
 impl<'a> Parser<'a> {
@@ -49,7 +61,7 @@ impl<'a> Parser<'a> {
     pub fn new_with_context(
         tokens: &'a [Token],
         module_path: Option<String>,
-        library_soft_keywords: Option<&std::collections::HashMap<String, Vec<KeywordId>>>,
+        library_imported_vocab: Option<&ImportedLibraryVocab>,
     ) -> Self {
         Self {
             tokens,
@@ -57,8 +69,10 @@ impl<'a> Parser<'a> {
             errors: Vec::new(),
             warnings: Vec::new(),
             active_soft_keywords: std::collections::HashSet::new(),
+            active_imported_keyword_specs: std::collections::HashMap::new(),
+            vocab_block_stack: Vec::new(),
             module_path,
-            library_soft_keywords: library_soft_keywords.cloned().unwrap_or_default(),
+            library_imported_vocab: library_imported_vocab.cloned().unwrap_or_default(),
         }
     }
 
@@ -204,17 +218,69 @@ impl<'a> Parser<'a> {
                     }
                 }
                 ImportKind::PubLibrary { library } => {
-                    if let Some(keywords) = self.library_soft_keywords.get(library) {
-                        self.active_soft_keywords.extend(keywords.iter().copied());
-                    }
+                    self.activate_imported_keywords_for_library(library);
                 }
                 ImportKind::PubFrom { library, .. } => {
-                    if let Some(keywords) = self.library_soft_keywords.get(library) {
-                        self.active_soft_keywords.extend(keywords.iter().copied());
-                    }
+                    self.activate_imported_keywords_for_library(library);
                 }
                 _ => {}
             }
         }
+    }
+
+    /// Activate keyword registrations contributed by a `pub::` library dependency.
+    ///
+    /// This bridges serialized vocab metadata into parser state by:
+    /// - recording compatible soft-keyword ids in `active_soft_keywords` (for existing parser flows), and
+    /// - recording imported keyword surface specs in `active_imported_keyword_specs`
+    ///   (for surface-kind checks driven by imported metadata).
+    fn activate_imported_keywords_for_library(&mut self, library: &str) {
+        let Some(registrations) = self.library_imported_vocab.get(library) else {
+            return;
+        };
+
+        for registration in registrations {
+            if !registration_applies_to_pub_import(registration, library) {
+                continue;
+            }
+
+            for keyword in &registration.keywords {
+                let specs = self
+                    .active_imported_keyword_specs
+                    .entry(keyword.name.clone())
+                    .or_default();
+                specs.push(ActiveImportedKeywordSpec {
+                    keyword_name: keyword.name.clone(),
+                    dependency_key: library.to_string(),
+                    activation_namespace: match &registration.activation {
+                        incan_vocab::KeywordActivation::OnImport { namespace } => namespace.clone(),
+                        _ => library.to_string(),
+                    },
+                    valid_decorators: registration.valid_decorators.clone(),
+                    surface_kind: keyword.surface_kind,
+                    placement: keyword.placement.clone(),
+                });
+                if let Some(id) = incan_core::lang::keywords::from_str(&keyword.name)
+                    && incan_core::lang::keywords::is_soft(id)
+                {
+                    self.active_soft_keywords.insert(id);
+                }
+            }
+        }
+    }
+}
+
+/// Return `true` when a registration should be activated for `pub::library` imports.
+///
+/// `OnImport` namespaces match either the library key exactly (`widgets`) or one of its child namespaces
+/// (`widgets.dsl`).
+fn registration_applies_to_pub_import(registration: &incan_vocab::KeywordRegistration, library: &str) -> bool {
+    match &registration.activation {
+        incan_vocab::KeywordActivation::Always => true,
+        incan_vocab::KeywordActivation::OnImport { namespace } => {
+            let trimmed = namespace.trim();
+            !trimmed.is_empty() && (trimmed == library || trimmed.starts_with(&format!("{library}.")))
+        }
+        _ => false,
     }
 }

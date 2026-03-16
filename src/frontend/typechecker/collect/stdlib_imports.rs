@@ -26,6 +26,10 @@ enum ManifestExportRef<'a> {
     Function(&'a FunctionExport),
     Trait(&'a TraitExport),
     Enum(&'a EnumExport),
+    EnumVariant {
+        enum_name: &'a str,
+        fields: &'a [crate::library_manifest::TypeRef],
+    },
     TypeAlias,
     Newtype(&'a NewtypeExport),
     Const(&'a ConstExport),
@@ -406,6 +410,13 @@ impl TypeChecker {
         names.extend(manifest.exports.functions.iter().map(|item| item.name.clone()));
         names.extend(manifest.exports.traits.iter().map(|item| item.name.clone()));
         names.extend(manifest.exports.enums.iter().map(|item| item.name.clone()));
+        names.extend(
+            manifest
+                .exports
+                .enums
+                .iter()
+                .flat_map(|item| item.variants.iter().map(|variant| variant.name.clone())),
+        );
         names.extend(manifest.exports.type_aliases.iter().map(|item| item.name.clone()));
         names.extend(manifest.exports.newtypes.iter().map(|item| item.name.clone()));
         names.extend(manifest.exports.consts.iter().map(|item| item.name.clone()));
@@ -429,6 +440,14 @@ impl TypeChecker {
         }
         if let Some(item) = manifest.exports.enums.iter().find(|item| item.name == name) {
             return Some(ManifestExportRef::Enum(item));
+        }
+        for enum_export in &manifest.exports.enums {
+            if let Some(variant) = enum_export.variants.iter().find(|variant| variant.name == name) {
+                return Some(ManifestExportRef::EnumVariant {
+                    enum_name: &enum_export.name,
+                    fields: &variant.fields,
+                });
+            }
         }
         if manifest.exports.type_aliases.iter().any(|item| item.name == name) {
             return Some(ManifestExportRef::TypeAlias);
@@ -487,6 +506,10 @@ impl TypeChecker {
             ManifestExportRef::Function(export) => SymbolKind::Function(self.function_info_from_manifest(export)),
             ManifestExportRef::Trait(export) => SymbolKind::Trait(self.trait_info_from_manifest(export)),
             ManifestExportRef::Enum(export) => SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(export))),
+            ManifestExportRef::EnumVariant { enum_name, fields } => SymbolKind::Variant(VariantInfo {
+                enum_name: enum_name.to_string(),
+                fields: fields.iter().map(resolved_type_from_manifest_type_ref).collect(),
+            }),
             ManifestExportRef::TypeAlias => SymbolKind::Type(TypeInfo::TypeAlias),
             ManifestExportRef::Newtype(export) => {
                 SymbolKind::Type(TypeInfo::Newtype(self.newtype_info_from_manifest(export)))

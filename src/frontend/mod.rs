@@ -22,3 +22,5 @@ pub mod surface_semantics;
 pub mod symbols;
 pub mod testing_markers;
 pub mod typechecker;
+pub mod vocab_ast_bridge;
+pub mod vocab_desugar_pass;

@@ -75,8 +75,6 @@ The single public entry point is `IrCodegen`:
 use incan::backend::IrCodegen;
 
 let mut codegen = IrCodegen::new();
-codegen.scan_for_serde(&ast);
-codegen.scan_for_async(&ast);
 let rust_code = codegen.generate(&ast);
 ```
 

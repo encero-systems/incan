@@ -3,17 +3,18 @@
 //! This module contains functions for source file reading, module collection, project root resolution,
 //! dependency helpers, and Cargo flag construction.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::backend::ir::detect_serde_usage;
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult};
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::{DependencyError, InlineRustImport};
 use crate::frontend::ast::{ImportKind, Span};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
-use crate::frontend::{diagnostics, lexer, parser};
+use crate::frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
 use crate::manifest::{DependencySource, DependencySpec};
@@ -24,23 +25,21 @@ use incan_core::lang::stdlib::{self, StdlibExtraCrateSource};
 /// Files larger than this are rejected to prevent out-of-memory conditions during compilation.
 const MAX_SOURCE_SIZE: u64 = 100 * 1024 * 1024;
 
-/// Stdlib-derived runtime requirements discovered from parsed modules.
+/// Unified project requirements collected from parsed modules and loaded provider manifests.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct StdlibUsage {
-    pub needs_serde: bool,
-    pub needs_tokio: bool,
-    pub needs_web: bool,
-    namespaces: HashSet<String>,
+pub(crate) struct ProjectRequirements {
+    /// Required stdlib feature flags, such as `json`, `async`, and `web`.
+    pub stdlib_features: Vec<String>,
+    /// Required Cargo dependencies contributed by stdlib namespaces and provider manifests.
+    pub dependencies: Vec<DependencySpec>,
 }
 
-/// Derive stdlib namespace usage from import statements across parsed modules.
-///
-/// This is the shared source of truth for build/test/lock behavior:
-/// - runtime feature toggles (`json`, `async`, `web`)
-/// - namespace-driven extra Cargo dependencies
-pub(crate) fn collect_stdlib_usage(modules: &[ParsedModule]) -> StdlibUsage {
-    let mut usage = StdlibUsage::default();
-
+/// Collect a unified set of project requirements from source imports and loaded provider manifests.
+pub(crate) fn collect_project_requirements(
+    modules: &[ParsedModule],
+    library_manifest_index: &LibraryManifestIndex,
+) -> CliResult<ProjectRequirements> {
+    let mut stdlib_namespaces = HashSet::new();
     for module in modules {
         for decl in &module.ast.declarations {
             let crate::frontend::ast::Declaration::Import(import) = &decl.node else {
@@ -65,46 +64,41 @@ pub(crate) fn collect_stdlib_usage(modules: &[ParsedModule]) -> StdlibUsage {
             if path.len() < 2 || path[0] != stdlib::STDLIB_ROOT {
                 continue;
             }
-            usage.namespaces.insert(path[1].clone());
+            stdlib_namespaces.insert(path[1].clone());
         }
     }
 
-    for namespace_name in &usage.namespaces {
+    // Legacy serde-driven surfaces (`@derive(Serialize/Deserialize)`, `to_json`, `json_stringify`) can be used without
+    // importing `std.serde.*`, so import-only namespace discovery is not sufficient for collecting required Cargo
+    // dependencies.
+    let needs_serde_runtime = modules.iter().any(|module| detect_serde_usage(&module.ast));
+    if needs_serde_runtime {
+        stdlib_namespaces.insert("serde".to_string());
+    }
+
+    let mut stdlib_features: BTreeSet<String> = BTreeSet::new();
+    for namespace_name in &stdlib_namespaces {
         let Some(namespace) = stdlib::find_namespace(namespace_name) else {
             continue;
         };
-        match namespace.feature {
-            Some("json") => usage.needs_serde = true,
-            Some("async") => usage.needs_tokio = true,
-            Some("web") => usage.needs_web = true,
-            _ => {}
+        if let Some(feature) = namespace.feature {
+            stdlib_features.insert(feature.to_string());
         }
     }
+    for feature in library_manifest_index.merged_provider_required_stdlib_features() {
+        stdlib_features.insert(feature);
+    }
 
-    usage
-}
-
-/// Merge stdlib namespace-provided extra dependencies into resolved dependencies.
-///
-/// Existing dependency entries win; this function only adds missing stdlib extras.
-pub(crate) fn merge_stdlib_extra_dependencies(resolved: &mut ResolvedDependencies, usage: &StdlibUsage) {
-    let mut known: HashSet<String> = resolved
-        .dependencies
-        .iter()
-        .map(|d| d.crate_name.clone())
-        .chain(resolved.dev_dependencies.iter().map(|d| d.crate_name.clone()))
-        .collect();
-
+    let mut requirements = ProjectRequirements {
+        stdlib_features: stdlib_features.into_iter().collect(),
+        dependencies: Vec::new(),
+    };
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-
-    for namespace_name in &usage.namespaces {
+    for namespace_name in &stdlib_namespaces {
         let Some(namespace) = stdlib::find_namespace(namespace_name) else {
             continue;
         };
         for dep in namespace.extra_crate_deps {
-            if known.contains(dep.crate_name) {
-                continue;
-            }
             let spec = match dep.source {
                 StdlibExtraCrateSource::Version(version) => DependencySpec {
                     crate_name: dep.crate_name.to_string(),
@@ -128,10 +122,132 @@ pub(crate) fn merge_stdlib_extra_dependencies(resolved: &mut ResolvedDependencie
                 },
             }
             .normalized();
-            resolved.dependencies.push(spec);
-            known.insert(dep.crate_name.to_string());
+
+            merge_requirement_dependency(
+                &mut requirements.dependencies,
+                spec,
+                format!("stdlib namespace `std.{namespace_name}`"),
+            )?;
         }
     }
+
+    if needs_serde_runtime {
+        let serde = DependencySpec {
+            crate_name: "serde".to_string(),
+            version: Some("1.0".to_string()),
+            features: vec!["derive".to_string()],
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: None,
+        }
+        .normalized();
+        merge_requirement_dependency(
+            &mut requirements.dependencies,
+            serde,
+            "serde usage in source".to_string(),
+        )?;
+
+        let serde_json = DependencySpec {
+            crate_name: "serde_json".to_string(),
+            version: Some("1.0".to_string()),
+            features: vec![],
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: None,
+        }
+        .normalized();
+        merge_requirement_dependency(
+            &mut requirements.dependencies,
+            serde_json,
+            "serde usage in source".to_string(),
+        )?;
+    }
+
+    for spec in library_manifest_index.cargo_path_dependencies() {
+        merge_requirement_dependency(
+            &mut requirements.dependencies,
+            spec,
+            "pub:: dependency artifact".to_string(),
+        )?;
+    }
+    for spec in library_manifest_index
+        .merged_provider_required_dependencies()
+        .map_err(|err| CliError::failure(format!("failed to merge provider requirements: {err}")))?
+    {
+        merge_requirement_dependency(
+            &mut requirements.dependencies,
+            spec,
+            "provider manifest requirement".to_string(),
+        )?;
+    }
+
+    Ok(requirements)
+}
+
+/// Merge a dependency requirement into a collection of requirements.
+///
+/// Existing entries with the same crate name must be compatible.
+fn merge_requirement_dependency(
+    merged: &mut Vec<DependencySpec>,
+    candidate: DependencySpec,
+    source_label: String,
+) -> CliResult<()> {
+    if let Some(existing) = merged.iter().find(|dep| dep.crate_name == candidate.crate_name) {
+        if existing != &candidate {
+            return Err(CliError::failure(format!(
+                "dependency requirement `{}` conflicts with existing collected requirements ({source_label})",
+                candidate.crate_name
+            )));
+        }
+        return Ok(());
+    }
+    merged.push(candidate);
+    merged.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    Ok(())
+}
+
+/// Merge collected requirement dependencies into resolved dependency sets.
+///
+/// Existing entries with the same crate name must be compatible.
+pub(crate) fn merge_project_requirement_dependencies(
+    resolved: &mut ResolvedDependencies,
+    requirements: &ProjectRequirements,
+) -> CliResult<()> {
+    for required in &requirements.dependencies {
+        let already_in_dependencies = resolved
+            .dependencies
+            .iter()
+            .find(|spec| spec.crate_name == required.crate_name);
+        if let Some(existing) = already_in_dependencies {
+            if existing != required {
+                return Err(CliError::failure(format!(
+                    "dependency `{}` conflicts between resolved imports and collected project requirements",
+                    required.crate_name
+                )));
+            }
+            continue;
+        }
+        let already_in_dev = resolved
+            .dev_dependencies
+            .iter()
+            .find(|spec| spec.crate_name == required.crate_name);
+        if let Some(existing) = already_in_dev {
+            if existing != required {
+                return Err(CliError::failure(format!(
+                    "dependency `{}` conflicts between dev dependencies and collected project requirements",
+                    required.crate_name
+                )));
+            }
+            continue;
+        }
+        resolved.dependencies.push(required.clone());
+    }
+    resolved
+        .dependencies
+        .sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    Ok(())
 }
 
 /// Resolve the source path for a stdlib module path (e.g. `["std", "testing"]`).
@@ -207,13 +323,13 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
 
     let project_root = resolve_project_root(path);
     let manifest = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))?;
-    let library_soft_keywords = manifest
+    let library_manifest_index = manifest
         .as_ref()
         .and_then(|manifest| {
-            (!manifest.library_dependencies().is_empty())
-                .then(|| LibraryManifestIndex::from_project_manifest(manifest).library_soft_keywords())
+            (!manifest.library_dependencies().is_empty()).then(|| LibraryManifestIndex::from_project_manifest(manifest))
         })
         .unwrap_or_default();
+    let library_imported_vocab = library_manifest_index.library_imported_vocab();
 
     let mut modules = Vec::new();
     let mut processed = HashSet::new();
@@ -241,7 +357,7 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
             }
         };
 
-        let ast = match parser::parse_with_context(&tokens, Some(&file_path), Some(&library_soft_keywords)) {
+        let mut ast = match parser::parse_with_context(&tokens, Some(&file_path), Some(&library_imported_vocab)) {
             Ok(a) => {
                 // Surface any non-fatal parser warnings (e.g. RFC 005 dot-notation nudges) immediately,
                 // so they reach the user regardless of which build/run/debug command was invoked.
@@ -259,6 +375,16 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
                 return Err(CliError::failure(msg.trim_end()));
             }
         };
+        if let Err(errs) =
+            vocab_desugar_pass::desugar_program_vocab_blocks(&mut ast, Some(&file_path), &library_manifest_index)
+        {
+            let mut msg = String::new();
+            for err in &errs {
+                msg.push_str(&diagnostics::format_error(&file_path, &source, err));
+                msg.push('\n');
+            }
+            return Err(CliError::failure(msg.trim_end()));
+        }
 
         // Find imports and add them to process queue
         for decl in &ast.declarations {
@@ -276,23 +402,34 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
                         continue;
                     }
 
-                    if path.parent_levels == 0 && !path.is_absolute && stdlib::is_any_stdlib_path(&path.segments) {
-                        let stdlib_key = path.segments.join(".");
-                        let source_path = if let Some(cached_path) = incan_source_stdlib_module_paths.get(&stdlib_key) {
-                            cached_path.clone()
-                        } else {
-                            let resolved = resolve_stdlib_module_source_path(&path.segments)?;
-                            incan_source_stdlib_module_paths.insert(stdlib_key, resolved.clone());
-                            resolved
-                        };
+                    if path.parent_levels == 0
+                        && !path.is_absolute
+                        && path
+                            .segments
+                            .first()
+                            .is_some_and(|segment| segment == stdlib::STDLIB_ROOT)
+                    {
+                        if stdlib::stdlib_stub_path(&path.segments).is_some() {
+                            let stdlib_key = path.segments.join(".");
+                            let source_path =
+                                if let Some(cached_path) = incan_source_stdlib_module_paths.get(&stdlib_key) {
+                                    cached_path.clone()
+                                } else {
+                                    let resolved = resolve_stdlib_module_source_path(&path.segments)?;
+                                    incan_source_stdlib_module_paths.insert(stdlib_key, resolved.clone());
+                                    resolved
+                                };
 
-                        let mut module_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
-                        module_segments.extend(path.segments.iter().skip(1).cloned());
-                        let module_name = module_segments.join("_");
-                        let dep_path_str = source_path.to_string_lossy().to_string();
-                        if !processed.contains(&dep_path_str) {
-                            to_process.push((dep_path_str, module_name, module_segments));
+                            let mut module_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
+                            module_segments.extend(path.segments.iter().skip(1).cloned());
+                            let module_name = module_segments.join("_");
+                            let dep_path_str = source_path.to_string_lossy().to_string();
+                            if !processed.contains(&dep_path_str) {
+                                to_process.push((dep_path_str, module_name, module_segments));
+                            }
                         }
+                        // Unknown `std.*` imports are diagnosed by frontend validation with stdlib hinting;
+                        // do not fail early here by trying to resolve them as source files.
                         continue;
                     }
 
@@ -701,7 +838,7 @@ source-root = "lib"
     }
 
     #[test]
-    fn collect_stdlib_usage_tracks_async_namespace_features() -> Result<(), Box<dyn std::error::Error>> {
+    fn collect_project_requirements_tracks_async_namespace_features() -> Result<(), Box<dyn std::error::Error>> {
         let module = parsed_module_for_test(
             r#"
 import std.async
@@ -709,32 +846,79 @@ from std.math import sqrt
 "#,
         )?;
 
-        let usage = collect_stdlib_usage(&[module]);
-        assert!(usage.needs_tokio, "std.async should enable tokio runtime support");
-        assert!(usage.namespaces.contains("async"));
-        assert!(usage.namespaces.contains("math"));
+        let requirements = collect_project_requirements(&[module], &LibraryManifestIndex::default())?;
+        assert!(
+            requirements.stdlib_features.iter().any(|feature| feature == "async"),
+            "std.async should enable async stdlib feature"
+        );
+        assert!(
+            requirements.stdlib_features.iter().any(|f| f == "async"),
+            "expected async feature"
+        );
         Ok(())
     }
 
     #[test]
-    fn merge_stdlib_extra_dependencies_adds_math_runtime_crate() -> Result<(), Box<dyn std::error::Error>> {
+    fn collect_project_requirements_adds_serde_runtime_deps_from_derives() -> Result<(), Box<dyn std::error::Error>> {
+        let module = parsed_module_for_test(
+            r#"
+@derive(Serialize)
+model User:
+    name: str
+"#,
+        )?;
+
+        let requirements = collect_project_requirements(&[module], &LibraryManifestIndex::default())?;
+        assert!(
+            requirements.stdlib_features.iter().any(|feature| feature == "json"),
+            "serde usage should enable the json stdlib feature"
+        );
+        assert!(
+            requirements.dependencies.iter().any(|dep| dep.crate_name == "serde"),
+            "serde usage should inject serde dependency"
+        );
+        assert!(
+            requirements
+                .dependencies
+                .iter()
+                .any(|dep| dep.crate_name == "serde_json"),
+            "serde usage should inject serde_json dependency"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_project_requirement_dependencies_adds_math_runtime_crate() -> Result<(), Box<dyn std::error::Error>> {
         let module = parsed_module_for_test(
             r#"
 from std.math import sqrt
 "#,
         )?;
-        let usage = collect_stdlib_usage(&[module]);
+        let requirements = collect_project_requirements(&[module], &LibraryManifestIndex::default())?;
         let mut resolved = ResolvedDependencies {
             dependencies: Vec::new(),
             dev_dependencies: Vec::new(),
         };
 
-        merge_stdlib_extra_dependencies(&mut resolved, &usage);
+        merge_project_requirement_dependencies(&mut resolved, &requirements)?;
 
         assert!(
             resolved.dependencies.iter().any(|dep| dep.crate_name == "libm"),
             "std.math should inject libm for generated projects"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn collect_modules_skips_unknown_stdlib_source_resolution() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        let entry = src_dir.join("main.incn");
+        std::fs::write(&entry, "from std.unknown_module import thing\n")?;
+
+        let modules = collect_modules(entry.to_string_lossy().as_ref())?;
+        assert_eq!(modules.len(), 1, "unknown std.* imports should not queue source stubs");
         Ok(())
     }
 }

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # Smoke-test examples:
+# - Pre-build nested example library projects (`incan.toml` + `src/lib.incn`)
 # - Typecheck every example file under examples/ (recursively)
 # - Run only entrypoints (files that define `def main(...)`)
 # - Skip long-running examples (web examples) and anything that times out
@@ -20,6 +21,9 @@ if [[ -z "$INCAN_BIN" ]]; then
   else
     INCAN_BIN="incan"
   fi
+fi
+if [[ "$INCAN_BIN" == ./* ]]; then
+  INCAN_BIN="$ROOT_DIR/${INCAN_BIN#./}"
 fi
 
 TIMEOUT_SECS="${INCAN_EXAMPLES_TIMEOUT:-5}"
@@ -58,6 +62,30 @@ should_skip_run() {
   return 1
 }
 
+prebuild_example_libraries() {
+  local manifest
+  while IFS= read -r manifest; do
+    [[ -z "$manifest" ]] && continue
+    local project_dir
+    project_dir="$(dirname "$manifest")"
+    if [[ ! -f "$project_dir/src/lib.incn" && ! -f "$project_dir/src/lib.incan" ]]; then
+      continue
+    fi
+
+    echo "==> build-lib: $project_dir"
+    if (cd "$project_dir" && INCAN_NO_BANNER=1 "$INCAN_BIN" build --lib >/dev/null); then
+      :
+    else
+      echo "FAILED: build --lib $project_dir"
+      failed=$((failed + 1))
+    fi
+  done < <(
+    find examples \
+      \( -type d -name target -o -type d -name __pycache__ \) -prune -o \
+      -type f -name 'incan.toml' -print | sort
+  )
+}
+
 checked=0
 ran=0
 skipped=0
@@ -65,6 +93,8 @@ failed=0
 timed_out=0
 
 found_any=0
+
+prebuild_example_libraries
 
 # Note: macOS ships Bash 3.2 by default; avoid `mapfile` (Bash 4+).
 while IFS= read -r f; do

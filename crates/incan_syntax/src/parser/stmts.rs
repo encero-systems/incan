@@ -31,6 +31,8 @@ impl<'a> Parser<'a> {
             self.while_stmt()?
         } else if self.check_keyword(KeywordId::For) {
             self.for_stmt()?
+        } else if let Some(vocab_block) = self.try_vocab_block_statement()? {
+            vocab_block
         } else if let Some(surface_stmt) = self.try_surface_keyword_statement()? {
             surface_stmt
         } else if self.check_keyword(KeywordId::Break) {
@@ -92,6 +94,173 @@ impl<'a> Parser<'a> {
 
         let end = self.tokens[self.pos.saturating_sub(1)].span.end;
         Ok(Spanned::new(stmt, Span::new(start, end)))
+    }
+
+    /// Parse a raw vocab block statement driven by imported keyword registrations.
+    fn try_vocab_block_statement(&mut self) -> Result<Option<Statement>, CompileError> {
+        let decorators = if self.check_punct(PunctuationId::At) {
+            self.decorators()?
+        } else {
+            Vec::new()
+        };
+
+        let keyword_name = match &self.peek().kind {
+            TokenKind::Ident(name) => name.clone(),
+            TokenKind::Keyword(id) => incan_core::lang::keywords::as_str(*id).to_string(),
+            _ => {
+                if decorators.is_empty() {
+                    return Ok(None);
+                }
+                return Err(errors::expected_token_message(
+                    "Expected vocab block keyword after decorator",
+                    &format!("{:?}", self.peek().kind),
+                    self.current_span(),
+                ));
+            }
+        };
+
+        let parent_keyword = self.vocab_block_stack.last().cloned();
+        let Some(spec) = self.find_active_vocab_block_spec(&keyword_name, parent_keyword.as_deref()) else {
+            if decorators.is_empty() {
+                return Ok(None);
+            }
+            return Err(errors::expected_token_message(
+                "Decorator can only target a registered vocab block keyword",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        };
+        let spec_keyword_name = spec.keyword_name.clone();
+        let spec_dependency_key = spec.dependency_key.clone();
+        let spec_activation_namespace = spec.activation_namespace.clone();
+        let spec_surface_kind = spec.surface_kind;
+        let spec_placement = spec.placement.clone();
+        let spec_valid_decorators = spec.valid_decorators.clone();
+
+        // Avoid committing to vocab-block parsing unless a top-level `:` header delimiter is visible ahead. This
+        // preserves `assignment_or_expr_stmt` fallback for statements like `route = "/health"` and `route(args)` when
+        // `route` is an imported vocab keyword.
+        if decorators.is_empty() && !self.has_top_level_colon_before_statement_end(self.pos + 1) {
+            return Ok(None);
+        }
+
+        self.advance();
+
+        let mut header_args = Vec::new();
+        if !self.check_punct(PunctuationId::Colon) {
+            header_args.push(self.expression()?);
+            while self.match_punct(PunctuationId::Comma) {
+                header_args.push(self.expression()?);
+            }
+        }
+        self.expect_punct(PunctuationId::Colon, "Expected ':' after vocab block header")?;
+        self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
+        self.expect(&TokenKind::Indent, "Expected indented block after vocab keyword")?;
+
+        if !spec_valid_decorators.is_empty() {
+            for decorator in &decorators {
+                let decorator_name = decorator.node.name.as_str();
+                let decorator_full_name = decorator.node.path.segments.join(".");
+                let is_valid = spec_valid_decorators.iter().any(|allowed| {
+                    let normalized = allowed.trim().trim_start_matches('@');
+                    normalized == decorator_name || normalized == decorator_full_name
+                });
+                if !is_valid {
+                    return Err(errors::expected_token_message(
+                        &format!(
+                            "Decorator `{decorator_full_name}` is not valid on vocab block `{}`",
+                            spec_keyword_name
+                        ),
+                        &format!("{:?}", decorator.node),
+                        decorator.span,
+                    ));
+                }
+            }
+        }
+
+        self.vocab_block_stack.push(keyword_name.clone());
+        let body = self.block();
+        self.vocab_block_stack.pop();
+        let body = body?;
+        self.expect(&TokenKind::Dedent, "Expected dedent after vocab block body")?;
+
+        Ok(Some(Statement::VocabBlock(VocabBlockStmt {
+            keyword: keyword_name,
+            keyword_binding: VocabKeywordBinding {
+                dependency_key: spec_dependency_key,
+                activation_namespace: spec_activation_namespace,
+                surface_kind: spec_surface_kind,
+                placement: spec_placement,
+            },
+            decorators,
+            header_args,
+            body,
+        })))
+    }
+
+    /// Return `true` if there is a top-level `:` before the current statement ends.
+    ///
+    /// This is used as a lookahead gate for imported vocab block keywords so we only consume the keyword token when the
+    /// block header delimiter is actually present.
+    fn has_top_level_colon_before_statement_end(&self, mut idx: usize) -> bool {
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+
+        while let Some(token) = self.tokens.get(idx) {
+            match token.kind {
+                TokenKind::Punctuation(PunctuationId::LParen) => paren_depth += 1,
+                TokenKind::Punctuation(PunctuationId::RParen) => {
+                    paren_depth = paren_depth.saturating_sub(1);
+                }
+                TokenKind::Punctuation(PunctuationId::LBracket) => bracket_depth += 1,
+                TokenKind::Punctuation(PunctuationId::RBracket) => {
+                    bracket_depth = bracket_depth.saturating_sub(1);
+                }
+                TokenKind::Punctuation(PunctuationId::LBrace) => brace_depth += 1,
+                TokenKind::Punctuation(PunctuationId::RBrace) => {
+                    brace_depth = brace_depth.saturating_sub(1);
+                }
+                TokenKind::Punctuation(PunctuationId::Colon)
+                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 =>
+                {
+                    return true;
+                }
+                TokenKind::Newline | TokenKind::Dedent | TokenKind::Eof
+                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 =>
+                {
+                    return false;
+                }
+                _ => {}
+            }
+            idx += 1;
+        }
+
+        false
+    }
+
+    fn find_active_vocab_block_spec(
+        &self,
+        keyword_name: &str,
+        parent_keyword: Option<&str>,
+    ) -> Option<&ActiveImportedKeywordSpec> {
+        let specs = self.active_imported_keyword_specs.get(keyword_name)?;
+        specs.iter().find(|spec| {
+            matches!(
+                spec.surface_kind,
+                incan_vocab::KeywordSurfaceKind::BlockDeclaration
+                    | incan_vocab::KeywordSurfaceKind::BlockContextKeyword
+                    | incan_vocab::KeywordSurfaceKind::SubBlock
+            ) && match (&spec.placement, parent_keyword) {
+                (incan_vocab::KeywordPlacement::TopLevel, None) => true,
+                (incan_vocab::KeywordPlacement::TopLevel, Some(_)) => false,
+                (incan_vocab::KeywordPlacement::InBlock(allowed), Some(parent)) => {
+                    allowed.iter().any(|value| value == parent)
+                }
+                (incan_vocab::KeywordPlacement::InBlock(_), None) => false,
+                _ => false,
+            }
+        })
     }
 
     /// Parse a generic soft-keyword statement payload (`kw expr[, expr]`) and hand off to semantics.

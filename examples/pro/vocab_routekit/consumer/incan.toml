@@ -1,0 +1,6 @@
+[project]
+name = "routekit_consumer"
+version = "0.1.0"
+
+[dependencies]
+routekit = { path = "../producer" }

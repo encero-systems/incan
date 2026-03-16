@@ -67,13 +67,21 @@ pub(super) fn collect_source_modules_for_test(
 
         let Some(path) = import_path else { continue };
 
-        if path.parent_levels == 0 && !path.is_absolute && stdlib::is_any_stdlib_path(&path.segments) {
-            queue_incan_stdlib_source_module(
-                &path.segments,
-                &mut incan_source_stdlib_module_paths,
-                &processed,
-                &mut to_process,
-            )?;
+        if path.parent_levels == 0
+            && !path.is_absolute
+            && path
+                .segments
+                .first()
+                .is_some_and(|segment| segment == stdlib::STDLIB_ROOT)
+        {
+            if stdlib::stdlib_stub_path(&path.segments).is_some() {
+                queue_incan_stdlib_source_module(
+                    &path.segments,
+                    &mut incan_source_stdlib_module_paths,
+                    &processed,
+                    &mut to_process,
+                )?;
+            }
             continue;
         }
 
@@ -171,13 +179,21 @@ pub(super) fn collect_source_modules_for_test(
                 _ => continue,
             };
             let Some(dep) = dep_path else { continue };
-            if dep.parent_levels == 0 && !dep.is_absolute && stdlib::is_any_stdlib_path(&dep.segments) {
-                queue_incan_stdlib_source_module(
-                    &dep.segments,
-                    &mut incan_source_stdlib_module_paths,
-                    &processed,
-                    &mut to_process,
-                )?;
+            if dep.parent_levels == 0
+                && !dep.is_absolute
+                && dep
+                    .segments
+                    .first()
+                    .is_some_and(|segment| segment == stdlib::STDLIB_ROOT)
+            {
+                if stdlib::stdlib_stub_path(&dep.segments).is_some() {
+                    queue_incan_stdlib_source_module(
+                        &dep.segments,
+                        &mut incan_source_stdlib_module_paths,
+                        &processed,
+                        &mut to_process,
+                    )?;
+                }
                 continue;
             }
             if dep

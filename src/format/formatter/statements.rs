@@ -72,6 +72,31 @@ impl Formatter {
                 }
                 _ => self.writer.writeln("<surface_stmt>"),
             },
+            Statement::VocabBlock(vocab_block) => {
+                for decorator in &vocab_block.decorators {
+                    self.writer.write("@");
+                    self.writer.writeln(&decorator.node.path.segments.join("."));
+                }
+                self.writer.write(&vocab_block.keyword);
+                if !vocab_block.header_args.is_empty() {
+                    self.writer.write(" ");
+                    for (idx, arg) in vocab_block.header_args.iter().enumerate() {
+                        if idx > 0 {
+                            self.writer.write(", ");
+                        }
+                        self.format_expr(&arg.node);
+                    }
+                }
+                self.writer.writeln(":");
+                self.writer.indent();
+                for stmt in &vocab_block.body {
+                    self.format_statement(&stmt.node);
+                }
+                if vocab_block.body.is_empty() {
+                    self.writer.writeln("pass");
+                }
+                self.writer.dedent();
+            }
             Statement::Pass => self.writer.writeln("pass"),
             Statement::Break => self.writer.writeln("break"),
             Statement::Continue => self.writer.writeln("continue"),

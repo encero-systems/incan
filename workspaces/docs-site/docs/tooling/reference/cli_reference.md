@@ -53,13 +53,17 @@ Usage:
 
 ```text
 incan build [OPTIONS] <FILE> [OUTPUT_DIR]
+incan build --lib [OPTIONS] [OUTPUT_DIR]
 ```
 
 Behavior:
 
+- Default mode compiles a source file into an executable.
+- `--lib` builds the current project as a library. In this mode, `src/lib.incn` is required and `FILE` is optional.
 - Prints the generated Rust project path (example): `target/incan/<name>/`
 - Builds the generated Rust project and prints the binary path (example):
   `target/incan/<name>/target/release/<name>`
+- In `--lib` mode, also emits a library artifact under `target/lib/` (including `<name>.incnlib`).
 
 Dependency flags:
 
@@ -75,6 +79,7 @@ Examples:
 incan build examples/simple/hello.incn
 incan build src/main.incn --locked
 incan build src/main.incn --cargo-features fancy_logging
+incan build --lib
 ```
 
 ### `incan run`
@@ -231,6 +236,7 @@ Build outputs:
 
 - **Generated Rust project**: `target/incan/<name>/`
 - **Built binary**: `target/incan/<name>/target/release/<name>`
+- **Built library artifact (`--lib`)**: `target/lib/<name>.incnlib` plus the generated library crate output
 
 Cleaning:
 

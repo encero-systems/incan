@@ -261,6 +261,15 @@ impl AstLowering {
             }
 
             ast::Statement::Surface(surface_stmt) => self.lower_surface_statement(surface_stmt)?,
+            ast::Statement::VocabBlock(vocab_block) => {
+                return Err(LoweringError {
+                    message: format!(
+                        "raw vocab block `{}` reached lowering before desugaring",
+                        vocab_block.keyword
+                    ),
+                    span: IrSpan::default(),
+                });
+            }
 
             ast::Statement::Pass => IrStmtKind::Expr(TypedExpr::new(IrExprKind::Unit, IrType::Unit)),
             ast::Statement::Break => IrStmtKind::Break(None),
@@ -580,6 +589,14 @@ impl AstLowering {
                     }
                 }
             },
+            ast::Statement::VocabBlock(vocab_block) => {
+                for arg in &vocab_block.header_args {
+                    self.count_expr_ident_reads(&arg.node, counts);
+                }
+                for stmt in &vocab_block.body {
+                    self.count_statement_ident_reads(&stmt.node, counts);
+                }
+            }
             ast::Statement::Expr(expr) => self.count_expr_ident_reads(&expr.node, counts),
             ast::Statement::Pass | ast::Statement::Break | ast::Statement::Continue => {}
             ast::Statement::CompoundAssignment(ca) => {

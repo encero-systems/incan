@@ -14,7 +14,11 @@ Programs that exercise more involved features: collections, comprehensions, deco
 
 ### `advanced/`
 
-Programs that combine multiple features or use advanced capabilities: async/await, channels, synchronization primitives, file I/O, bytes, JSON serialization, custom traits, iterators, Rust crate interop, multi-file projects, nested projects.
+Programs that combine multiple features or use advanced capabilities: async/await, channels, synchronization primitives, file I/O, bytes, JSON serialization, custom traits, iterators, Rust crate interop, multi-file projects, and nested projects.
+
+### `pro/`
+
+Projects for library and tooling builders: companion crates, vocab/desugaring flows, and other integrations that exercise the compiler's authoring surface rather than just end-user language features.
 
 ### `web/`
 
@@ -45,3 +49,4 @@ When adding a new example:
 2. Include a `def main():` entrypoint if the example should be runnable.
 3. Run `make examples` to verify it compiles and runs within the timeout.
 4. Examples without a `main()` function are still typechecked but not executed.
+5. If an example contains a library project (`incan.toml` + `src/lib.incn`), the examples runner pre-builds it with `incan build --lib` before checking consumer files.

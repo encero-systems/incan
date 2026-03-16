@@ -31,6 +31,15 @@ impl TypeChecker {
             Statement::If(if_stmt) => self.check_if_stmt(if_stmt),
             Statement::While(while_stmt) => self.check_while_stmt(while_stmt),
             Statement::For(for_stmt) => self.check_for_stmt(for_stmt),
+            Statement::VocabBlock(vocab_block) => {
+                self.errors.push(crate::frontend::diagnostics::CompileError::type_error(
+                    format!(
+                        "raw vocab block `{}` reached typechecker before desugaring",
+                        vocab_block.keyword
+                    ),
+                    stmt.span,
+                ));
+            }
             Statement::Surface(surface_stmt) => self.check_surface_stmt(surface_stmt, stmt.span),
             Statement::Expr(expr) => {
                 self.check_expr(expr);

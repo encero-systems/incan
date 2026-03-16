@@ -1409,6 +1409,7 @@ def database() -> Database:
 mod rfc031_pub_import_integration_tests {
     use super::*;
     use incan::library_manifest::{LibraryManifest, ModelExport};
+    use sha2::{Digest, Sha256};
 
     fn incan_bin_path() -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1444,6 +1445,20 @@ mod rfc031_pub_import_integration_tests {
             .output()?)
     }
 
+    fn run_lock(entry_path: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+        Ok(Command::new(incan_bin_path())
+            .args(["lock", entry_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?)
+    }
+
+    fn run_test(target: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+        Ok(Command::new(incan_bin_path())
+            .args(["test", target.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?)
+    }
+
     fn run_build_lib(project_root: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
         Ok(Command::new(incan_bin_path())
             .args(["build", "--lib"])
@@ -1461,6 +1476,243 @@ mod rfc031_pub_import_integration_tests {
             ),
         )?;
         std::fs::write(artifact_root.join("src/lib.rs"), "pub fn linked() {}\n")?;
+        Ok(())
+    }
+
+    fn write_vocab_companion_crate(
+        project_root: &Path,
+        relative_path: &str,
+        package_name: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let crate_root = project_root.join(relative_path);
+        std::fs::create_dir_all(crate_root.join("src"))?;
+        std::fs::write(
+            crate_root.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n"
+            ),
+        )?;
+        std::fs::write(crate_root.join("src/lib.rs"), "pub fn register_vocab() {}\n")?;
+
+        let metadata = incan_vocab::VocabMetadata {
+            keyword_registrations: vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "widgets.dsl".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec::new(
+                    "await",
+                    incan_vocab::KeywordSurfaceKind::ControlFlow,
+                )],
+                valid_decorators: vec!["route".to_string()],
+            }],
+            dsl_surfaces: Vec::new(),
+            library_manifest: incan_vocab::LibraryManifest::default(),
+            desugarer: None,
+        };
+        std::fs::write(
+            crate_root.join("vocab_metadata.json"),
+            serde_json::to_string_pretty(&metadata)?,
+        )?;
+        Ok(())
+    }
+
+    fn write_vocab_companion_crate_with_assert_keyword(
+        project_root: &Path,
+        relative_path: &str,
+        package_name: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let crate_root = project_root.join(relative_path);
+        std::fs::create_dir_all(crate_root.join("src"))?;
+        std::fs::write(
+            crate_root.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n"
+            ),
+        )?;
+        std::fs::write(crate_root.join("src/lib.rs"), "pub fn register_vocab() {}\n")?;
+
+        let metadata = incan_vocab::VocabMetadata {
+            keyword_registrations: vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "widgets.dsl".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec::new(
+                    "assert",
+                    incan_vocab::KeywordSurfaceKind::ControlFlow,
+                )],
+                valid_decorators: vec!["route".to_string()],
+            }],
+            dsl_surfaces: Vec::new(),
+            library_manifest: incan_vocab::LibraryManifest::default(),
+            desugarer: None,
+        };
+        std::fs::write(
+            crate_root.join("vocab_metadata.json"),
+            serde_json::to_string_pretty(&metadata)?,
+        )?;
+        Ok(())
+    }
+
+    fn wat_data_string(text: &str) -> String {
+        let mut escaped = String::new();
+        for byte in text.as_bytes() {
+            escaped.push('\\');
+            escaped.push_str(&format!("{byte:02x}"));
+        }
+        escaped
+    }
+
+    fn compile_desugarer_wasm(
+        status_code: i32,
+        output_payload: &str,
+        error_payload: &str,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let output_offset = 0usize;
+        let output_len = output_payload.len();
+        let error_offset = output_offset + output_len + 32;
+        let input_offset = error_offset + error_payload.len() + 32;
+        let input_capacity = 4096usize;
+        let wat_source = format!(
+            r#"(module
+  (memory (export "memory") 1)
+  (global $input_ptr (export "__incan_input_ptr") i32 (i32.const {input_offset}))
+  (global (export "__incan_input_capacity") i32 (i32.const {input_capacity}))
+  (global $input_len (export "__incan_input_len") (mut i32) (i32.const 0))
+  (global (export "__incan_output_ptr") i32 (i32.const {output_offset}))
+  (global (export "__incan_output_len") i32 (i32.const {output_len}))
+  (global (export "__incan_error_ptr") i32 (i32.const {error_offset}))
+  (global (export "__incan_error_len") i32 (i32.const {error_len}))
+  (data (i32.const {output_offset}) "{output_data}")
+  (data (i32.const {error_offset}) "{error_data}")
+  (func (export "desugar_block") (result i32)
+    (i32.const {status_code})
+  )
+)"#,
+            error_len = error_payload.len(),
+            input_capacity = input_capacity,
+            output_data = wat_data_string(output_payload),
+            error_data = wat_data_string(error_payload),
+        );
+        Ok(wat::parse_str(wat_source)?)
+    }
+
+    fn compile_desugarer_wasm_requiring_request(
+        output_payload: &str,
+        error_payload: &str,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let output_offset = 0usize;
+        let output_len = output_payload.len();
+        let error_offset = output_offset + output_len + 32;
+        let input_offset = error_offset + error_payload.len() + 32;
+        let input_capacity = 4096usize;
+        let wat_source = format!(
+            r#"(module
+  (memory (export "memory") 1)
+  (global $input_ptr (export "__incan_input_ptr") i32 (i32.const {input_offset}))
+  (global (export "__incan_input_capacity") i32 (i32.const {input_capacity}))
+  (global $input_len (export "__incan_input_len") (mut i32) (i32.const 0))
+  (global (export "__incan_output_ptr") i32 (i32.const {output_offset}))
+  (global (export "__incan_output_len") i32 (i32.const {output_len}))
+  (global (export "__incan_error_ptr") i32 (i32.const {error_offset}))
+  (global (export "__incan_error_len") i32 (i32.const {error_len}))
+  (data (i32.const {output_offset}) "{output_data}")
+  (data (i32.const {error_offset}) "{error_data}")
+  (func (export "desugar_block") (result i32)
+    global.get $input_len
+    i32.eqz
+    if (result i32)
+      (i32.const 1)
+    else
+      global.get $input_ptr
+      i32.load8_u
+      i32.const 123
+      i32.eq
+      if (result i32)
+        (i32.const 0)
+      else
+        (i32.const 1)
+      end
+    end
+  )
+)"#,
+            error_len = error_payload.len(),
+            input_capacity = input_capacity,
+            output_data = wat_data_string(output_payload),
+            error_data = wat_data_string(error_payload),
+        );
+        Ok(wat::parse_str(wat_source)?)
+    }
+
+    fn write_pub_library_with_vocab_desugarer(
+        root: &Path,
+        dependency_key: &str,
+        manifest_name: &str,
+        desugarer_bytes: &[u8],
+        keyword: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let artifact_root = root.join("deps").join(dependency_key).join("target").join("lib");
+        std::fs::create_dir_all(artifact_root.join("desugarers"))?;
+        write_minimal_library_crate(&artifact_root, manifest_name)?;
+        let desugarer_path = artifact_root.join("desugarers").join("routes_desugarer.wasm");
+        std::fs::write(&desugarer_path, desugarer_bytes)?;
+
+        let mut manifest = LibraryManifest::new(manifest_name, "0.1.0");
+        manifest.vocab = Some(incan::library_manifest::VocabExports {
+            crate_path: "vocab_companion".to_string(),
+            package_name: "vocab_companion".to_string(),
+            keyword_registrations: vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: format!("{dependency_key}.dsl"),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: keyword.to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+            provider_manifest: incan_vocab::LibraryManifest::default(),
+            desugarer_artifact: Some(incan::library_manifest::VocabDesugarerArtifact {
+                artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
+                relative_path: "desugarers/routes_desugarer.wasm".to_string(),
+                target: "wasm32-wasip1".to_string(),
+                profile: "release".to_string(),
+                entrypoint: "desugar_block".to_string(),
+                sha256: hex::encode(Sha256::digest(desugarer_bytes)),
+            }),
+        });
+        manifest.write_to_path(&artifact_root.join(format!("{manifest_name}.incnlib")))?;
+        Ok(())
+    }
+
+    fn write_pub_library_with_provider_requirements(
+        root: &Path,
+        dependency_key: &str,
+        manifest_name: &str,
+        required_dependencies: Vec<incan_vocab::CargoDependency>,
+        required_stdlib_features: Vec<&str>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let artifact_root = root.join("deps").join(dependency_key).join("target").join("lib");
+        std::fs::create_dir_all(artifact_root.join("src"))?;
+        write_minimal_library_crate(&artifact_root, manifest_name)?;
+
+        let mut manifest = LibraryManifest::new(manifest_name, "0.1.0");
+        manifest.vocab = Some(incan::library_manifest::VocabExports {
+            crate_path: format!("{dependency_key}_vocab_companion"),
+            package_name: format!("{dependency_key}_vocab_companion"),
+            keyword_registrations: Vec::new(),
+            provider_manifest: incan_vocab::LibraryManifest {
+                required_dependencies,
+                required_stdlib_features: required_stdlib_features
+                    .into_iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                ..incan_vocab::LibraryManifest::default()
+            },
+            desugarer_artifact: None,
+        });
+        manifest.write_to_path(&artifact_root.join(format!("{manifest_name}.incnlib")))?;
         Ok(())
     }
 
@@ -1744,6 +1996,383 @@ mod rfc031_pub_import_integration_tests {
         assert!(
             generated_main_rs.contains("pub use widgets::make_widget;"),
             "expected pub:: item import emission, got:\n{generated_main_rs}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_lib_with_vocab_companion_embeds_vocab_payload() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("widgets_vocab_project");
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"widgets_core\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/lib.incn"),
+            "pub def make_widget(name: str) -> str:\n  return name\n",
+        )?;
+        write_vocab_companion_crate(&producer_root, "vocab_companion", "widgets_vocab_companion")?;
+
+        let producer_build = run_build_lib(&producer_root)?;
+        assert!(
+            producer_build.status.success(),
+            "expected `build --lib` with vocab companion to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&producer_build.stdout),
+            String::from_utf8_lossy(&producer_build.stderr)
+        );
+
+        let manifest_path = producer_root.join("target").join("lib").join("widgets_core.incnlib");
+        let manifest = LibraryManifest::read_from_path(&manifest_path)?;
+        let vocab = manifest.vocab.as_ref().ok_or("expected vocab payload in .incnlib")?;
+        assert_eq!(vocab.crate_path, "vocab_companion");
+        assert_eq!(vocab.package_name, "widgets_vocab_companion");
+        assert_eq!(vocab.keyword_registrations.len(), 1);
+        assert_eq!(
+            manifest.soft_keywords.activations,
+            vec![incan::library_manifest::SoftKeywordActivation {
+                namespace: "widgets.dsl".to_string(),
+                keyword: "await".to_string(),
+            }]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_uses_serialized_vocab_metadata_for_keyword_activation() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("widgets_assert_vocab_project");
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"widgets_core\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/lib.incn"),
+            "pub def make_widget(name: str) -> str:\n  return name\n",
+        )?;
+        write_vocab_companion_crate_with_assert_keyword(&producer_root, "vocab_companion", "widgets_vocab_companion")?;
+
+        let producer_build = run_build_lib(&producer_root)?;
+        assert!(
+            producer_build.status.success(),
+            "expected `build --lib` with assert vocab companion to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&producer_build.stdout),
+            String::from_utf8_lossy(&producer_build.stderr)
+        );
+
+        let consumer_root = tmp.path().join("consumer_with_vocab_keyword");
+        std::fs::create_dir_all(consumer_root.join("src"))?;
+        std::fs::write(
+            consumer_root.join("incan.toml"),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"../widgets_assert_vocab_project\" }\n",
+        )?;
+        let consumer_main = consumer_root.join("src/main.incn");
+        std::fs::write(
+            &consumer_main,
+            "import pub::widgets\n\ndef main() -> None:\n  assert true\n",
+        )?;
+
+        let check_output = run_check(&consumer_main)?;
+        assert!(
+            check_output.status.success(),
+            "expected consumer check to parse/typecheck assert keyword from serialized vocab metadata.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&check_output.stdout),
+            String::from_utf8_lossy(&check_output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_desugars_external_vocab_block_via_wasm() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::statements(vec![incan_vocab::IncanStatement::Let {
+            name: "generated".to_string(),
+            mutable: false,
+            value: incan_vocab::IncanExpr::Int(1),
+        }]);
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm(0, &output_payload, "")?;
+        write_pub_library_with_vocab_desugarer(tmp.path(), "routes", "routes_core", &wasm, "route")?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nroutes = { path = \"deps/routes\" }\n",
+            "import pub::routes\n\ndef main() -> None:\n  route \"/health\":\n    pass\n",
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected check to succeed after wasm desugaring.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_passes_request_payload_into_external_vocab_desugarer() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::statements(vec![incan_vocab::IncanStatement::Let {
+            name: "generated".to_string(),
+            mutable: false,
+            value: incan_vocab::IncanExpr::Int(1),
+        }]);
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request(&output_payload, "missing request payload")?;
+        write_pub_library_with_vocab_desugarer(tmp.path(), "routes", "routes_core", &wasm, "route")?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nroutes = { path = \"deps/routes\" }\n",
+            "import pub::routes\n\ndef main() -> None:\n  route \"/health\":\n    pass\n",
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected check to succeed when request payload is visible to the wasm desugarer.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_rejects_expression_desugar_output_in_statement_position() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Int(1));
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm(0, &output_payload, "")?;
+        write_pub_library_with_vocab_desugarer(tmp.path(), "routes", "routes_core", &wasm, "route")?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nroutes = { path = \"deps/routes\" }\n",
+            "import pub::routes\n\ndef main() -> None:\n  route \"/health\":\n    pass\n",
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            !output.status.success(),
+            "expected check to fail when wasm desugarer returns expression output.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&output.stderr));
+        assert!(
+            stderr.contains("only statement output is currently supported"),
+            "expected statement-only desugar diagnostic, got:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("route"),
+            "expected failing keyword name in diagnostic, got:\n{stderr}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_reports_external_vocab_desugarer_failure() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let wasm = compile_desugarer_wasm(1, "", "boom from wasm desugarer")?;
+        write_pub_library_with_vocab_desugarer(tmp.path(), "routes", "routes_core", &wasm, "route")?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nroutes = { path = \"deps/routes\" }\n",
+            "import pub::routes\n\ndef main() -> None:\n  route \"/health\":\n    pass\n",
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            !output.status.success(),
+            "expected check to fail when wasm desugarer reports failure.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&output.stderr));
+        assert!(
+            stderr.contains("vocab desugar pass failed"),
+            "expected desugar-pass error prefix, got:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("boom from wasm desugarer"),
+            "expected wasm runtime error message, got:\n{stderr}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn provider_requirements_flow_through_build_test_and_lock() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::create_dir_all(project_root.join("tests"))?;
+
+        write_pub_library_with_provider_requirements(
+            project_root,
+            "widgets",
+            "widgets_core",
+            vec![incan_vocab::CargoDependency {
+                crate_name: "axum".to_string(),
+                source: incan_vocab::CargoDependencySource::Version("0.8".to_string()),
+            }],
+            vec!["web"],
+        )?;
+
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"deps/widgets\" }\n",
+        )?;
+        let main_path = project_root.join("src/main.incn");
+        std::fs::write(&main_path, "def main() -> None:\n  pass\n")?;
+        std::fs::write(
+            project_root.join("tests/test_provider.incn"),
+            "def test_provider_parity() -> None:\n  pass\n",
+        )?;
+
+        let build_out_dir = project_root.join("out");
+        let build_output = run_build(&main_path, &build_out_dir)?;
+        assert!(
+            build_output.status.success(),
+            "expected build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
+
+        let lock_output = run_lock(&main_path)?;
+        assert!(
+            lock_output.status.success(),
+            "expected lock to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&lock_output.stdout),
+            String::from_utf8_lossy(&lock_output.stderr)
+        );
+
+        let test_output = run_test(&project_root.join("tests"))?;
+        assert!(
+            test_output.status.success(),
+            "expected test run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&test_output.stdout),
+            String::from_utf8_lossy(&test_output.stderr)
+        );
+
+        let build_toml = std::fs::read_to_string(build_out_dir.join("Cargo.toml"))?;
+        let lock_toml = std::fs::read_to_string(project_root.join("target/incan_lock/Cargo.toml"))?;
+        let test_toml = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_tests/test_provider_parity/Cargo.toml"),
+        )?;
+
+        for cargo_toml in [&build_toml, &lock_toml, &test_toml] {
+            assert!(
+                cargo_toml.contains(r#"axum = "0.8""#),
+                "expected provider dependency in generated Cargo.toml, got:\n{cargo_toml}"
+            );
+            assert!(
+                cargo_toml.contains("incan_stdlib"),
+                "expected stdlib dependency in generated Cargo.toml, got:\n{cargo_toml}"
+            );
+            assert!(
+                cargo_toml.contains("\"web\""),
+                "expected provider stdlib feature in generated Cargo.toml, got:\n{cargo_toml}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn conflicting_provider_requirements_fail_build_test_and_lock() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::create_dir_all(project_root.join("tests"))?;
+
+        write_pub_library_with_provider_requirements(
+            project_root,
+            "widgets",
+            "widgets_core",
+            vec![incan_vocab::CargoDependency {
+                crate_name: "serde_json".to_string(),
+                source: incan_vocab::CargoDependencySource::Version("1.0".to_string()),
+            }],
+            vec![],
+        )?;
+        write_pub_library_with_provider_requirements(
+            project_root,
+            "analytics",
+            "analytics_core",
+            vec![incan_vocab::CargoDependency {
+                crate_name: "serde_json".to_string(),
+                source: incan_vocab::CargoDependencySource::Version("2.0".to_string()),
+            }],
+            vec![],
+        )?;
+
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"deps/widgets\" }\nanalytics = { path = \"deps/analytics\" }\n",
+        )?;
+        let main_path = project_root.join("src/main.incn");
+        std::fs::write(&main_path, "def main() -> None:\n  pass\n")?;
+        std::fs::write(
+            project_root.join("tests/test_conflict.incn"),
+            "def test_conflict_path() -> None:\n  pass\n",
+        )?;
+
+        let build_output = run_build(&main_path, &project_root.join("out"))?;
+        assert!(
+            !build_output.status.success(),
+            "expected build to fail for conflicting provider deps.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
+        let build_stderr = strip_ansi_escapes(&String::from_utf8_lossy(&build_output.stderr));
+        assert!(
+            build_stderr.contains("failed to merge provider requirements"),
+            "expected provider conflict diagnostic in build stderr, got:\n{build_stderr}"
+        );
+        assert!(
+            build_stderr.contains("serde_json"),
+            "expected conflicting crate name in build stderr, got:\n{build_stderr}"
+        );
+
+        let lock_output = run_lock(&main_path)?;
+        assert!(
+            !lock_output.status.success(),
+            "expected lock to fail for conflicting provider deps.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&lock_output.stdout),
+            String::from_utf8_lossy(&lock_output.stderr)
+        );
+        let lock_stderr = strip_ansi_escapes(&String::from_utf8_lossy(&lock_output.stderr));
+        assert!(
+            lock_stderr.contains("failed to merge provider requirements"),
+            "expected provider conflict diagnostic in lock stderr, got:\n{lock_stderr}"
+        );
+        assert!(
+            lock_stderr.contains("serde_json"),
+            "expected conflicting crate name in lock stderr, got:\n{lock_stderr}"
+        );
+
+        let test_output = run_test(&project_root.join("tests"))?;
+        assert!(
+            !test_output.status.success(),
+            "expected test to fail for conflicting provider deps.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&test_output.stdout),
+            String::from_utf8_lossy(&test_output.stderr)
+        );
+        let test_stdout = strip_ansi_escapes(&String::from_utf8_lossy(&test_output.stdout));
+        assert!(
+            test_stdout.contains("failed to merge provider requirements"),
+            "expected provider conflict diagnostic in test output, got:\n{test_stdout}"
+        );
+        assert!(
+            test_stdout.contains("serde_json"),
+            "expected conflicting crate name in test output, got:\n{test_stdout}"
         );
 
         Ok(())

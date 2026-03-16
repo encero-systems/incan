@@ -104,6 +104,10 @@ fn stmt_has_call(stmt: &Spanned<Statement>, target: BuiltinFnId) -> bool {
                 args.iter().any(|arg| expr_has_call(&arg.node, target))
             }
         },
+        Statement::VocabBlock(block) => {
+            block.header_args.iter().any(|arg| expr_has_call(&arg.node, target))
+                || body_has_call_named(&block.body, target)
+        }
         Statement::If(s) => {
             body_has_call_named(&s.then_body, target)
                 || s.else_body.as_ref().is_some_and(|b| body_has_call_named(b, target))

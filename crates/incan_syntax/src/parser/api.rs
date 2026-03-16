@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 
+/// Imported-library vocab registrations keyed by dependency key (`pub::name`).
+pub type ImportedLibraryVocab = HashMap<String, Vec<incan_vocab::KeywordRegistration>>;
+
 /// Parse a token stream into an AST [`Program`].
 ///
 /// This is the main public entrypoint for parsing.
@@ -25,13 +28,15 @@ pub fn parse_with_module_path(tokens: &[Token], module_path: Option<&str>) -> Re
 
 /// Parse a token stream into an AST [`Program`] with full contextual information.
 ///
-/// `library_soft_keywords` maps dependency keys (from `pub::key`) to the list of soft keywords activated by importing
-/// from that library.
-#[tracing::instrument(skip_all, fields(token_count = tokens.len(), has_module_path = module_path.is_some(), has_library_keywords = library_soft_keywords.is_some()))]
+/// `library_imported_vocab` maps dependency keys (from `pub::key`) to the full keyword registrations serialized in
+/// dependency `.incnlib` manifests.
+///
+/// This enables consumer-side parser activation for library-defined vocabulary without reparsing producer sources.
+#[tracing::instrument(skip_all, fields(token_count = tokens.len(), has_module_path = module_path.is_some(), has_library_keywords = library_imported_vocab.is_some()))]
 pub fn parse_with_context(
     tokens: &[Token],
     module_path: Option<&str>,
-    library_soft_keywords: Option<&HashMap<String, Vec<KeywordId>>>,
+    library_imported_vocab: Option<&ImportedLibraryVocab>,
 ) -> Result<Program, Vec<CompileError>> {
-    Parser::new_with_context(tokens, module_path.map(str::to_owned), library_soft_keywords).parse()
+    Parser::new_with_context(tokens, module_path.map(str::to_owned), library_imported_vocab).parse()
 }

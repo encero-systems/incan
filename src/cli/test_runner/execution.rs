@@ -8,6 +8,7 @@ use crate::cli::commands;
 use crate::cli::commands::common;
 use crate::cli::prelude::ParsedModule;
 use crate::dependency_resolver::resolve_dependencies;
+use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{lexer, parser};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
@@ -112,7 +113,17 @@ pub(super) fn run_single_test(
         inline_imports.extend(common::collect_inline_rust_imports(module, true));
     }
 
-    let stdlib_usage = common::collect_stdlib_usage(&dependency_modules);
+    let library_manifest_index = manifest
+        .as_ref()
+        .map(LibraryManifestIndex::from_project_manifest)
+        .unwrap_or_default();
+    let project_requirements = match common::collect_project_requirements(&dependency_modules, &library_manifest_index)
+    {
+        Ok(requirements) => requirements,
+        Err(err) => {
+            return TestResult::Failed(start.elapsed(), err.message);
+        }
+    };
 
     let mut resolved = match resolve_dependencies(manifest.as_ref(), &inline_imports, true, &cargo_feature_selection) {
         Ok(resolved) => resolved,
@@ -126,7 +137,9 @@ pub(super) fn run_single_test(
             return TestResult::Failed(start.elapsed(), msg);
         }
     };
-    common::merge_stdlib_extra_dependencies(&mut resolved, &stdlib_usage);
+    if let Err(err) = common::merge_project_requirement_dependencies(&mut resolved, &project_requirements) {
+        return TestResult::Failed(start.elapsed(), err.message);
+    }
 
     let project_name = manifest
         .as_ref()
@@ -143,7 +156,7 @@ pub(super) fn run_single_test(
         project_name: &project_name,
         manifest: manifest.as_ref(),
         resolved: &resolved,
-        stdlib_usage: &stdlib_usage,
+        project_requirements: &project_requirements,
         cargo_features: &cargo_feature_selection,
         locked,
         frozen,
@@ -161,18 +174,6 @@ pub(super) fn run_single_test(
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
 
-    // Scan all modules for feature flags.
-    codegen.scan_for_serde(&ast);
-    codegen.scan_for_async(&ast);
-    codegen.scan_for_web(&ast);
-    codegen.scan_for_list_helpers(&ast);
-    for module in &source_modules {
-        codegen.scan_for_serde(&module.ast);
-        codegen.scan_for_async(&module.ast);
-        codegen.scan_for_web(&module.ast);
-        codegen.scan_for_list_helpers(&module.ast);
-    }
-
     // ---- Determine unique temp dir ----
     // Parametrized variants include the case ID in the directory name to avoid collisions.
     let dir_suffix = test
@@ -183,9 +184,7 @@ pub(super) fn run_single_test(
     let temp_dir = format!("target/incan_tests/{}", dir_suffix);
 
     let mut generator = ProjectGenerator::new(&temp_dir, "test_runner", true);
-    generator.set_needs_serde(codegen.needs_serde() || stdlib_usage.needs_serde);
-    generator.set_needs_tokio(codegen.needs_tokio() || stdlib_usage.needs_tokio);
-    generator.set_needs_web(codegen.needs_web() || stdlib_usage.needs_web);
+    generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(true);
     generator.set_dependencies(resolved.dependencies);
     generator.set_dev_dependencies(resolved.dev_dependencies);

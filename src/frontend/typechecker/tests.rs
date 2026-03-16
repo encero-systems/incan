@@ -7,7 +7,8 @@ use crate::frontend::library_manifest_index::{
 };
 use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
-    ConstExport, FunctionExport, LibraryExports, LibraryManifest, ModelExport, ParamExport, TypeRef,
+    ConstExport, EnumExport, EnumVariantExport, FunctionExport, LibraryExports, LibraryManifest, ModelExport,
+    ParamExport, TypeRef,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -73,7 +74,20 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 is_async: false,
             }],
             traits: Vec::new(),
-            enums: Vec::new(),
+            enums: vec![EnumExport {
+                name: "Status".to_string(),
+                type_params: Vec::new(),
+                variants: vec![
+                    EnumVariantExport {
+                        name: "Active".to_string(),
+                        fields: Vec::new(),
+                    },
+                    EnumVariantExport {
+                        name: "Disabled".to_string(),
+                        fields: Vec::new(),
+                    },
+                ],
+            }],
             type_aliases: Vec::new(),
             newtypes: Vec::new(),
             consts: vec![ConstExport {
@@ -83,6 +97,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 },
             }],
         },
+        vocab: None,
         soft_keywords: Default::default(),
     };
 
@@ -2664,6 +2679,37 @@ def build() -> LibWidget:
 "#;
     let result = check_str_with_library_index(source, library_index_with_mylib_exports());
     assert!(result.is_ok(), "expected alias recovery to typecheck, got: {result:?}");
+}
+
+#[test]
+fn test_pub_import_module_alias_resolves_manifest_exports() {
+    let source = r#"
+import pub::mylib as lib
+from pub::mylib import Widget
+
+def build() -> Widget:
+  return lib.make_widget("ok")
+"#;
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    assert!(
+        result.is_ok(),
+        "expected module alias pub import to typecheck, got: {result:?}"
+    );
+}
+
+#[test]
+fn test_pub_from_import_enum_variant_parity() {
+    let source = r#"
+from pub::mylib import Status, Active
+
+def current() -> Status:
+  return Active
+"#;
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    assert!(
+        result.is_ok(),
+        "expected enum variant pub import to typecheck, got: {result:?}"
+    );
 }
 
 #[test]

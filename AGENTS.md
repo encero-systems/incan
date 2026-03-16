@@ -35,6 +35,7 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 3. **Run tests**: `make test` must pass before considering work complete. Run targeted tests during development; run the full suite when you finish.
 4. **Update snapshots**: `INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests` to update changed snapshots.
 5. **Boy Scout Rule**: Leave every file you touch in better shape than you found it — fix stale TODOs, missing doc comments, unused imports, misleading names.
+6. **Documentation gate (mandatory)**: Before finalizing any change, audit every touched Rust module and ensure rustdocs are present and accurate for all new/changed public APIs and non-obvious internal helpers.
 
 ### Common commands
 
@@ -89,6 +90,16 @@ Guidelines:
 
 - Wrap rustdoc prose naturally — don't worry about line length.
 - Use `make fmt` to format the codebase after making changes, and before running tests.
+
+### Documentation requirements (mandatory)
+
+Agents must treat documentation updates as part of implementation, not optional polish.
+
+- **Public API docs are required**: Any new/changed `pub` module, type, enum variant intent, struct field intent (when not obvious), and function/method must have rustdoc that explains purpose and contract.
+- **Error types need variant-level docs**: For `thiserror` enums and diagnostic types, document what each variant represents and when it is emitted.
+- **Non-obvious internal helpers need concise docs**: If a private function encodes protocol/runtime/bridge behavior, add a short rustdoc or precise inline comment describing invariants and expected inputs/outputs.
+- **Behavioral boundaries must be explicit**: For pipeline boundaries (parser -> desugar -> typecheck -> lowering), docs should state what must and must not cross the boundary.
+- **Done criterion**: Do not mark work complete until this rustdoc audit is done for all touched files.
 
 ## Rust Anti-Patterns to Avoid
 

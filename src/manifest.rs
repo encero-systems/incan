@@ -835,11 +835,11 @@ parent_crate = "2.0"
     fn parse_vocab_section() -> TestResult {
         let content = r#"
 [vocab]
-crate = "crates/mylib-vocab"
+crate = "crates/mylib_vocab"
 "#;
         let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
         let vocab = manifest.vocab().ok_or("missing vocab section")?;
-        assert_eq!(vocab.crate_path.as_deref(), Some("crates/mylib-vocab"));
+        assert_eq!(vocab.crate_path.as_deref(), Some("crates/mylib_vocab"));
         Ok(())
     }
 

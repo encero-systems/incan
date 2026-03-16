@@ -1,0 +1,5 @@
+import pub::routes
+
+def main() -> None:
+  route "/health":
+    pass

@@ -2,7 +2,7 @@
 
 use incan_semantics_core::SurfaceFeatureKey;
 
-use super::{Expr, Ident, Span, Spanned, Type};
+use super::{Decorator, Expr, Ident, Span, Spanned, Type};
 
 // ============================================================================
 // Statements
@@ -42,6 +42,8 @@ pub enum Statement {
     ChainedAssignment(ChainedAssignmentStmt),
     /// Generic surface statement routed to semantics handlers.
     Surface(SurfaceStmt),
+    /// Raw library vocab block preserved for post-parse desugaring.
+    VocabBlock(VocabBlockStmt),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -153,6 +155,25 @@ pub struct AssertStmt {
 pub struct SurfaceStmt {
     pub key: SurfaceFeatureKey,
     pub payload: SurfaceStmtPayload,
+}
+
+/// Parser metadata describing how a raw vocab block keyword was resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VocabKeywordBinding {
+    pub dependency_key: String,
+    pub activation_namespace: String,
+    pub surface_kind: incan_vocab::KeywordSurfaceKind,
+    pub placement: incan_vocab::KeywordPlacement,
+}
+
+/// Raw vocab block statement captured before desugaring.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VocabBlockStmt {
+    pub keyword: String,
+    pub keyword_binding: VocabKeywordBinding,
+    pub decorators: Vec<Spanned<Decorator>>,
+    pub header_args: Vec<Spanned<Expr>>,
+    pub body: Vec<Spanned<Statement>>,
 }
 
 /// Surface statement payload variants.

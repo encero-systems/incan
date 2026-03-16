@@ -57,6 +57,8 @@ If the feature is “some behavior” (logging, printing, tracing, helpers), it 
 - A **stdlib function** (preferred), or
 - A **compiler builtin** (when it must lower to special Rust code).
 
+If the syntax belongs to a library and should only activate after import, do **not** add it to the core compiler first. Use a vocab companion crate instead; see [Author library DSLs with `incan_vocab`](authoring_vocab_crates.md).
+
 ---
 
 <!-- markdownlint-disable MD033 -->

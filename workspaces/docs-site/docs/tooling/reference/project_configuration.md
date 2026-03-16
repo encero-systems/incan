@@ -5,8 +5,9 @@ This is the reference for the `incan.toml` project manifest format. For a practi
 
 ## Overview
 
-`incan.toml` is an optional project manifest that lives at your project root. It declares project metadata, Rust crate
-dependencies, and build configuration. The compiler discovers it by walking upward from the source file's directory.
+`incan.toml` is an optional project manifest that lives at your project root. It declares project metadata, build
+configuration, Incan library dependencies, Rust crate dependencies, and optional vocab companion crate settings. The
+compiler discovers it by walking upward from the source file's directory.
 
 ```text
 my_project/
@@ -79,6 +80,33 @@ The directory where the compiler and test runner look for user modules. Resoluti
 
 Most projects use the conventional `src/` layout and don't need to set this field. It exists for projects that keep
 their source in a different directory (e.g. `lib/`).
+
+## `[vocab]`
+
+Optional companion crate configuration for library-defined DSL metadata.
+
+```toml
+[vocab]
+crate = "vocab_companion"
+```
+
+Use this only for library projects that export vocab entries. Projects without custom library DSLs can omit the section entirely.
+
+### Fields
+
+| Field   | Type   | Description                                                                 |
+| ------- | ------ | --------------------------------------------------------------------------- |
+| `crate` | string | Path to the vocab companion crate directory, relative to project root unless absolute |
+
+During `incan build --lib`, the compiler:
+
+1. resolves `[vocab].crate`
+2. validates that the directory contains `Cargo.toml` and `src/lib.rs`
+3. runs `cargo build` for that companion crate
+4. reads `vocab_metadata.json` from the crate root
+5. packages the resulting vocab metadata into the built `.incnlib` artifact
+
+If the companion crate declares a desugarer artifact via `incan_vocab::DesugarerMetadata`, `incan build --lib` also packages the matching Wasm artifact from the companion crate's `target/` output.
 
 ## `[dependencies]`
 
@@ -238,16 +266,22 @@ main = "src/main.incn"
 [build]
 rust-edition = "2021"
 
+[vocab]
+crate = "vocab_companion"
+
 [dependencies]
+mylib = { path = "../mylib/target/lib" }
+
+[rust-dependencies]
 tokio = { version = "1.35", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqlx = { version = "0.7", features = ["runtime-tokio", "postgres"] }
 
-[dependencies.optional]
+[rust-dependencies.optional]
 fancy_logging = "0.3"
 
-[dev-dependencies]
+[rust-dev-dependencies]
 criterion = "0.5"
 ```
 
@@ -256,3 +290,4 @@ criterion = "0.5"
 - [Managing dependencies](../how-to/dependencies.md) - Practical guide
 - [Rust interop](../../language/how-to/rust_interop.md) - Inline version annotations
 - [CLI reference](cli_reference.md) - `incan init`, `incan lock`, and dependency flags
+- [Author library DSLs with `incan_vocab`](../../contributing/how-to/authoring_vocab_crates.md) - Companion crate workflow

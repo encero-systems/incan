@@ -39,7 +39,7 @@ use incan_core::lang::derives::{self, DeriveId};
 
 use super::scanners::{
     check_for_this_import as scan_check_for_this_import, collect_rust_crates as scan_collect_rust_crates,
-    detect_list_helpers_usage, detect_serde_usage, detect_web_usage,
+    detect_serde_usage,
 };
 use super::{AstLowering, EmitError, EmitService, IrEmitter, LoweringErrors};
 
@@ -304,23 +304,15 @@ pub struct IrCodegen<'a> {
     /// segments (used for correct Rust qualification in codegen).
     dependency_modules: Vec<(&'a str, &'a Program, Option<Vec<String>>)>,
     /// Whether serde is needed (for Serialize/Deserialize derives)
-    // TODO: Replace with manifest-driven feature activation — imported modules should declare
-    // their own required Cargo features rather than the compiler scanning for them. When that
-    // model lands, `needs_serde`, `needs_tokio`, `needs_web`, and their `scan_for_*` methods
-    // can all be deleted.
+    // Serde still affects emitted Rust imports and derive augmentation in IR emission, so this remains an
+    // emission-internal signal even after project-level requirement collection moved to provider manifests.
     needs_serde: bool,
-    /// Whether tokio is needed (for async runtime)
-    needs_tokio: bool,
-    /// Whether web support is needed (`std.web` imports / submodules)
-    needs_web: bool,
     /// Fixtures available for test functions (name -> (has_teardown, dependencies))
     fixtures: HashMap<String, (bool, Vec<String>)>,
     /// Rust crates imported via `import rust::` or `from rust::`
     rust_crates: HashSet<String>,
     /// Whether to emit the Zen of Incan at the start of main (set by `import this`)
     emit_zen_in_main: bool,
-    /// Whether list helper functions are needed (for remove, count, index)
-    needs_list_helpers: bool,
     /// Functions imported from external Rust crates (name -> true for external)
     external_rust_functions: HashSet<String>,
     /// Declared Rust crate names from `incan.toml [rust-dependencies]` (RFC 013 / RFC 023).
@@ -340,12 +332,9 @@ impl<'a> IrCodegen<'a> {
             dependency_modules: Vec::new(),
             needs_serde: false,
             external_rust_functions: HashSet::new(),
-            needs_tokio: false,
-            needs_web: false,
             fixtures: HashMap::new(),
             rust_crates: HashSet::new(),
             emit_zen_in_main: false,
-            needs_list_helpers: false,
             declared_crate_names: None,
             library_manifest_index: None,
         }
@@ -373,19 +362,10 @@ impl<'a> IrCodegen<'a> {
         self.fixtures.insert(name.to_string(), (has_teardown, dependencies));
     }
 
-    /// Check if serde is needed
-    pub fn needs_serde(&self) -> bool {
+    /// Check if serde is needed.
+    #[cfg(test)]
+    fn needs_serde(&self) -> bool {
         self.needs_serde
-    }
-
-    /// Check if tokio is needed
-    pub fn needs_tokio(&self) -> bool {
-        self.needs_tokio
-    }
-
-    /// Check if web support is needed
-    pub fn needs_web(&self) -> bool {
-        self.needs_web
     }
 
     /// Add a dependency module (for multi-file compilation)
@@ -456,32 +436,14 @@ impl<'a> IrCodegen<'a> {
         }
     }
 
-    /// Scan a program for Serialize/Deserialize derives
-    pub fn scan_for_serde(&mut self, program: &Program) {
+    /// Scan a program for Serialize/Deserialize derives.
+    ///
+    /// This remains an internal compatibility hook because serde-backed derives and legacy
+    /// `json_stringify` usage can still require serde emission without import-activated provider
+    /// metadata.
+    fn scan_for_serde(&mut self, program: &Program) {
         if detect_serde_usage(program) {
             self.needs_serde = true;
-        }
-    }
-
-    /// Scan a program for async usage via the semantics registry.
-    pub fn scan_for_async(&mut self, program: &Program) {
-        use crate::semantics_registry::semantics_registry;
-        if incan_syntax::scanners::runtime::needs_async_runtime(program, &semantics_registry()) {
-            self.needs_tokio = true;
-        }
-    }
-
-    /// Scan a program for list helper usage (remove, count, index)
-    pub fn scan_for_list_helpers(&mut self, program: &Program) {
-        if detect_list_helpers_usage(program) {
-            self.needs_list_helpers = true;
-        }
-    }
-
-    /// Scan a program for web usage (`std.web` imports/submodules)
-    pub fn scan_for_web(&mut self, program: &Program) {
-        if detect_web_usage(program) {
-            self.needs_web = true;
         }
     }
 
@@ -555,11 +517,8 @@ impl<'a> IrCodegen<'a> {
     fn try_generate_internal(&mut self, program: &'a Program) -> Result<String, GenerationError> {
         self.current_program = Some(program);
 
-        // Scan for features
+        // Scan for emission-relevant features
         self.scan_for_serde(program);
-        self.scan_for_async(program);
-        self.scan_for_list_helpers(program);
-        self.scan_for_web(program);
         self.collect_rust_crates(program);
         self.check_for_this_import(program);
         self.collect_external_rust_functions(program);
@@ -567,9 +526,6 @@ impl<'a> IrCodegen<'a> {
         // Scan dependencies
         for (_mod_name, dep_ast, _mod_path_segments) in &self.dependency_modules.clone() {
             self.scan_for_serde(dep_ast);
-            self.scan_for_async(dep_ast);
-            self.scan_for_list_helpers(dep_ast);
-            self.scan_for_web(dep_ast);
             self.collect_rust_crates(dep_ast);
             self.collect_external_rust_functions(dep_ast);
         }
@@ -648,7 +604,6 @@ impl<'a> IrCodegen<'a> {
             }
             inner.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
             inner.set_needs_serde(self.needs_serde);
-            inner.set_needs_tokio(self.needs_tokio);
             inner.set_external_rust_functions(self.external_rust_functions.clone());
             Ok(svc.emit_program(&ir_program)?)
         } else {
@@ -659,7 +614,6 @@ impl<'a> IrCodegen<'a> {
             }
             emitter.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
             emitter.set_needs_serde(self.needs_serde);
-            emitter.set_needs_tokio(self.needs_tokio);
             emitter.set_external_rust_functions(self.external_rust_functions.clone());
             Ok(emitter.emit_program(&ir_program)?)
         }
@@ -713,7 +667,6 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_emit_zen(true);
             }
             emitter.set_needs_serde(self.needs_serde);
-            emitter.set_needs_tokio(self.needs_tokio);
             Ok(emitter.emit_program(&ir_program)?)
         }
     }
@@ -754,18 +707,12 @@ impl<'a> IrCodegen<'a> {
     ) -> Result<(String, HashMap<String, String>), GenerationError> {
         self.current_program = Some(program);
 
-        // Scan all modules for features
+        // Scan all modules for emission-relevant features
         self.scan_for_serde(program);
-        self.scan_for_async(program);
-        self.scan_for_list_helpers(program);
-        self.scan_for_web(program);
         self.collect_rust_crates(program);
 
         for (_mod_name, dep_ast, _mod_path_segments) in &self.dependency_modules.clone() {
             self.scan_for_serde(dep_ast);
-            self.scan_for_async(dep_ast);
-            self.scan_for_list_helpers(dep_ast);
-            self.scan_for_web(dep_ast);
             self.collect_rust_crates(dep_ast);
         }
 
@@ -883,18 +830,12 @@ impl<'a> IrCodegen<'a> {
             }
         }
 
-        // Scan all modules for features
+        // Scan all modules for emission-relevant features
         self.scan_for_serde(program);
-        self.scan_for_async(program);
-        self.scan_for_list_helpers(program);
-        self.scan_for_web(program);
         self.collect_rust_crates(program);
 
         for (_mod_name, dep_ast, _mod_path_segments) in &self.dependency_modules.clone() {
             self.scan_for_serde(dep_ast);
-            self.scan_for_async(dep_ast);
-            self.scan_for_list_helpers(dep_ast);
-            self.scan_for_web(dep_ast);
             self.collect_rust_crates(dep_ast);
         }
 
@@ -1127,21 +1068,6 @@ model User:
     }
 
     #[test]
-    fn test_async_detection() {
-        let source = r#"
-import std.async
-
-async def fetch() -> str:
-  return "hello"
-"#;
-        let tokens = must_ok(lexer::lex(source));
-        let ast = must_ok(parser::parse(&tokens));
-        let mut codegen = IrCodegen::new();
-        codegen.scan_for_async(&ast);
-        assert!(codegen.needs_tokio());
-    }
-
-    #[test]
     fn test_serde_detection() {
         let source = r#"
 @derive(Serialize, Deserialize)
@@ -1194,34 +1120,6 @@ def main() -> None:
         let mut codegen = IrCodegen::new();
         codegen.scan_for_serde(&ast);
         assert!(codegen.needs_serde());
-    }
-
-    #[test]
-    fn test_no_async_when_not_used() {
-        let source = r#"
-def fetch() -> str:
-  return "hello"
-"#;
-        let tokens = must_ok(lexer::lex(source));
-        let ast = must_ok(parser::parse(&tokens));
-        let mut codegen = IrCodegen::new();
-        codegen.scan_for_async(&ast);
-        assert!(!codegen.needs_tokio());
-    }
-
-    #[test]
-    fn test_web_detection() {
-        let source = r#"
-from std.web import App
-
-def main() -> None:
-  app = App()
-"#;
-        let tokens = must_ok(lexer::lex(source));
-        let ast = must_ok(parser::parse(&tokens));
-        let mut codegen = IrCodegen::new();
-        codegen.scan_for_web(&ast);
-        assert!(codegen.needs_web());
     }
 
     #[test]

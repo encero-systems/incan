@@ -4,9 +4,7 @@ Utility scripts for development and CI.
 
 ## Contents
 
-|      Script       |                                                                                              Purpose                                                                                              |   Invoked by    |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
-| `run_examples.sh` | Smoke-tests all examples: typechecks every `.incn` file under `examples/`, then runs files that define `def main(...)` with a configurable timeout. Skips web examples and long-running programs. | `make examples` |
+- `run_examples.sh`: Smoke-tests all examples. It pre-builds nested example library projects, typechecks every `.incn` file under `examples/`, and then runs files that define `def main(...)` with a configurable timeout. Invoked by `make examples`.
 
 ## Configuration
 

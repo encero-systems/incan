@@ -106,10 +106,23 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Return `true` if keyword `id` is allowed in the requested parser surface.
+    ///
+    /// Imported-library registrations are checked first so consumer-side vocab metadata can widen accepted surfaces for active soft keywords; builtin metadata is used as fallback.
     fn keyword_supports_surface_usage(&self, id: KeywordId, usage: KeywordSurfaceKind) -> bool {
+        let keyword_name = incan_core::lang::keywords::as_str(id);
+        if let Some(specs) = self.active_imported_keyword_specs.get(keyword_name)
+            && specs.iter().any(|spec| {
+                keyword_surface_supports_usage(spec.surface_kind, usage)
+                    && matches!(spec.placement, incan_vocab::KeywordPlacement::TopLevel)
+            })
+        {
+            return true;
+        }
         incan_core::lang::keywords::supports_surface_kind(id, usage)
     }
 
+    /// Return the active soft keyword id if it is valid for the requested parser surface.
     fn current_surface_keyword(&self, usage: KeywordSurfaceKind) -> Option<KeywordId> {
         let id = self.current_active_soft_keyword()?;
         if self.keyword_supports_surface_usage(id, usage) {
@@ -119,6 +132,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Consume and return the active soft keyword id if it is valid for the requested parser surface.
     fn match_surface_keyword(&mut self, usage: KeywordSurfaceKind) -> Option<KeywordId> {
         let id = self.current_surface_keyword(usage)?;
         self.advance();
@@ -178,6 +192,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// If the current token matches `id` (including active soft-keyword spellings), consume it.
     fn match_keyword(&mut self, id: KeywordId) -> bool {
         if self.check_keyword(id) {
             self.advance();
@@ -187,6 +202,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// If the current token matches punctuation `id`, consume it.
     fn match_punct(&mut self, id: PunctuationId) -> bool {
         if self.check_punct(id) {
             self.advance();
@@ -196,6 +212,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// If the current token matches operator `id`, consume it.
     fn match_op(&mut self, id: OperatorId) -> bool {
         if self.check_op(id) {
             self.advance();
@@ -217,6 +234,9 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Expect keyword `id` at the current position.
+    ///
+    /// Accepts either a hard-keyword token or an active soft-keyword identifier spelling.
     fn expect_keyword(&mut self, id: KeywordId, msg: &str) -> Result<&Token, CompileError> {
         if self.check_keyword(id) {
             Ok(self.advance())
@@ -229,6 +249,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Expect punctuation `id` at the current position.
     fn expect_punct(&mut self, id: PunctuationId, msg: &str) -> Result<&Token, CompileError> {
         if self.check_punct(id) {
             Ok(self.advance())
@@ -241,6 +262,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Expect operator `id` at the current position.
     fn expect_op(&mut self, id: OperatorId, msg: &str) -> Result<&Token, CompileError> {
         if self.check_op(id) {
             Ok(self.advance())
@@ -264,6 +286,9 @@ impl<'a> Parser<'a> {
         while self.match_token(&TokenKind::Dedent) {}
     }
 
+    /// Advance until a likely declaration boundary after a parse error.
+    ///
+    /// This targets top-level declaration starters and newline boundaries to reduce cascading diagnostics.
     fn synchronize(&mut self) {
         self.advance();
         while !self.is_at_end() {
@@ -286,11 +311,12 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Span of the current token.
     fn current_span(&self) -> Span {
         self.peek().span
     }
 
-    /// Check if the current token can start an expression
+    /// Return `true` when the current token can begin an expression.
     fn is_at_expr_start(&self) -> bool {
         matches!(
             self.peek().kind,
@@ -314,4 +340,23 @@ impl<'a> Parser<'a> {
             || self.check_op(OperatorId::Minus)
     }
 
+}
+
+fn keyword_surface_supports_usage(
+    surface_kind: incan_vocab::KeywordSurfaceKind,
+    usage: KeywordSurfaceKind,
+) -> bool {
+    matches!(
+        (surface_kind, usage),
+        (
+            incan_vocab::KeywordSurfaceKind::ControlFlow | incan_vocab::KeywordSurfaceKind::BlockContextKeyword,
+            KeywordSurfaceKind::StatementKeywordArgs
+        ) | (
+            incan_vocab::KeywordSurfaceKind::FunctionDecl,
+            KeywordSurfaceKind::DeclarationModifier
+        ) | (
+            incan_vocab::KeywordSurfaceKind::TryBlock,
+            KeywordSurfaceKind::PrefixExpression
+        )
+    )
 }

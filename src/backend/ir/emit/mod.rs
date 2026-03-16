@@ -52,8 +52,6 @@ pub struct IrEmitter<'a> {
     emit_zen_in_main: bool,
     /// Whether serde is needed (for Serialize/Deserialize derives)
     needs_serde: RefCell<bool>,
-    /// Whether tokio is needed (for async runtime)
-    needs_tokio: bool,
     /// Function registry for call-site type checking
     function_registry: &'a FunctionRegistry,
     /// Track struct derives for generating serde methods in impl blocks
@@ -111,7 +109,6 @@ impl<'a> IrEmitter<'a> {
             add_clippy_allows: true,
             emit_zen_in_main: false,
             needs_serde: RefCell::new(false),
-            needs_tokio: false,
             function_registry,
             struct_derives: std::collections::HashMap::new(),
             current_function_return_type: RefCell::new(None),
@@ -162,13 +159,8 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Set whether serde is needed.
-    pub fn set_needs_serde(&mut self, needs: bool) {
+    pub(crate) fn set_needs_serde(&mut self, needs: bool) {
         *self.needs_serde.borrow_mut() = needs;
-    }
-
-    /// Set whether tokio is needed.
-    pub fn set_needs_tokio(&mut self, needs: bool) {
-        self.needs_tokio = needs;
     }
 
     /// Create a Rust identifier for emission, using raw identifiers for keywords.

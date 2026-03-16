@@ -219,6 +219,7 @@ nav:
               - 8. Docsite contributor loop: contributing/tutorials/book/08_docsite_contributor_loop.md
       - How-to:
           - Extending the language: contributing/how-to/extending_language.md
+          - Author library DSLs with incan_vocab: contributing/how-to/authoring_vocab_crates.md
           - Benchmarks & profiling (repository): contributing/how-to/benchmarks_and_profiling.md
           - CI & automation (repository): contributing/how-to/ci_and_automation.md
           - Writing RFCs: contributing/how-to/writing_rfcs.md

@@ -10,6 +10,7 @@ use incan_core::lang::conventions;
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_core::lang::types::numerics::{self, NumericTypeId};
 use incan_core::lang::types::stringlike::{self, StringLikeId};
+use incan_vocab::{KeywordRegistration as VocabKeywordRegistration, LibraryManifest as VocabProviderManifest};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +44,7 @@ pub struct LibraryManifest {
     pub incan_version: String,
     pub manifest_format: u32,
     pub exports: LibraryExports,
+    pub vocab: Option<VocabExports>,
     pub soft_keywords: SoftKeywordExports,
 }
 
@@ -61,6 +63,25 @@ pub struct LibraryExports {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SoftKeywordExports {
     pub activations: Vec<SoftKeywordActivation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VocabExports {
+    pub crate_path: String,
+    pub package_name: String,
+    pub keyword_registrations: Vec<VocabKeywordRegistration>,
+    pub provider_manifest: VocabProviderManifest,
+    pub desugarer_artifact: Option<VocabDesugarerArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VocabDesugarerArtifact {
+    pub artifact_kind: incan_vocab::DesugarerArtifactKind,
+    pub relative_path: String,
+    pub target: String,
+    pub profile: String,
+    pub entrypoint: String,
+    pub sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,6 +243,7 @@ impl LibraryManifest {
             incan_version: crate::version::INCAN_VERSION.to_string(),
             manifest_format: LIBRARY_MANIFEST_FORMAT,
             exports: LibraryExports::default(),
+            vocab: None,
             soft_keywords: SoftKeywordExports::default(),
         }
     }
@@ -573,6 +595,8 @@ struct RawLibraryManifest {
     incan_version: String,
     manifest_format: u32,
     exports: RawLibraryExports,
+    #[serde(default)]
+    vocab: Option<RawVocabExports>,
     soft_keywords: RawSoftKeywordExports,
 }
 
@@ -602,6 +626,18 @@ struct RawSoftKeywordExports {
     activations: Vec<SoftKeywordActivation>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct RawVocabExports {
+    crate_path: String,
+    package_name: String,
+    #[serde(default)]
+    keyword_registrations: Vec<VocabKeywordRegistration>,
+    #[serde(default)]
+    provider_manifest: VocabProviderManifest,
+    #[serde(default)]
+    desugarer_artifact: Option<VocabDesugarerArtifact>,
+}
+
 impl RawLibraryManifest {
     fn from_semantic(semantic: &LibraryManifest) -> Self {
         Self {
@@ -619,6 +655,13 @@ impl RawLibraryManifest {
                 newtypes: semantic.exports.newtypes.clone(),
                 consts: semantic.exports.consts.clone(),
             },
+            vocab: semantic.vocab.as_ref().map(|vocab| RawVocabExports {
+                crate_path: vocab.crate_path.clone(),
+                package_name: vocab.package_name.clone(),
+                keyword_registrations: vocab.keyword_registrations.clone(),
+                provider_manifest: vocab.provider_manifest.clone(),
+                desugarer_artifact: vocab.desugarer_artifact.clone(),
+            }),
             soft_keywords: RawSoftKeywordExports {
                 activations: semantic.soft_keywords.activations.clone(),
             },
@@ -641,6 +684,13 @@ impl RawLibraryManifest {
                 newtypes: self.exports.newtypes,
                 consts: self.exports.consts,
             },
+            vocab: self.vocab.map(|vocab| VocabExports {
+                crate_path: vocab.crate_path,
+                package_name: vocab.package_name,
+                keyword_registrations: vocab.keyword_registrations,
+                provider_manifest: vocab.provider_manifest,
+                desugarer_artifact: vocab.desugarer_artifact,
+            }),
             soft_keywords: SoftKeywordExports {
                 activations: self.soft_keywords.activations,
             },
@@ -670,6 +720,46 @@ impl RawLibraryManifest {
                 "manifest requires Incan {} but compiler is {}",
                 manifest_version, compiler_version
             )));
+        }
+
+        if let Some(vocab) = &self.vocab {
+            if vocab.crate_path.trim().is_empty() {
+                return Err(LibraryManifestError::Invalid(
+                    "vocab crate_path cannot be empty".to_string(),
+                ));
+            }
+            if vocab.package_name.trim().is_empty() {
+                return Err(LibraryManifestError::Invalid(
+                    "vocab package_name cannot be empty".to_string(),
+                ));
+            }
+            if let Some(desugarer) = &vocab.desugarer_artifact {
+                if desugarer.relative_path.trim().is_empty() {
+                    return Err(LibraryManifestError::Invalid(
+                        "vocab desugarer_artifact.relative_path cannot be empty".to_string(),
+                    ));
+                }
+                if desugarer.target.trim().is_empty() {
+                    return Err(LibraryManifestError::Invalid(
+                        "vocab desugarer_artifact.target cannot be empty".to_string(),
+                    ));
+                }
+                if desugarer.profile.trim().is_empty() {
+                    return Err(LibraryManifestError::Invalid(
+                        "vocab desugarer_artifact.profile cannot be empty".to_string(),
+                    ));
+                }
+                if desugarer.entrypoint.trim().is_empty() {
+                    return Err(LibraryManifestError::Invalid(
+                        "vocab desugarer_artifact.entrypoint cannot be empty".to_string(),
+                    ));
+                }
+                if desugarer.sha256.trim().is_empty() {
+                    return Err(LibraryManifestError::Invalid(
+                        "vocab desugarer_artifact.sha256 cannot be empty".to_string(),
+                    ));
+                }
+            }
         }
 
         for activation in &self.soft_keywords.activations {
@@ -834,5 +924,38 @@ mod tests {
         assert!(
             matches!(err, Err(LibraryManifestError::Invalid(msg)) if msg.contains("keyword `def` is not a soft keyword"))
         );
+    }
+
+    #[test]
+    fn manifest_io_round_trip_preserves_vocab_payload() -> Result<(), Box<dyn std::error::Error>> {
+        let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+        manifest.vocab = Some(VocabExports {
+            crate_path: "crates/mylib_vocab".to_string(),
+            package_name: "mylib_vocab".to_string(),
+            keyword_registrations: vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "mylib.dsl".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec::new(
+                    "await",
+                    incan_vocab::KeywordSurfaceKind::ControlFlow,
+                )],
+                valid_decorators: vec!["route".to_string()],
+            }],
+            provider_manifest: incan_vocab::LibraryManifest::default(),
+            desugarer_artifact: None,
+        });
+        manifest.soft_keywords.activations = vec![SoftKeywordActivation {
+            namespace: "mylib.dsl".to_string(),
+            keyword: "await".to_string(),
+        }];
+
+        let tmp = tempfile::tempdir()?;
+        let path = tmp.path().join("mylib.incnlib");
+        manifest.write_to_path(&path)?;
+        let loaded = LibraryManifest::read_from_path(&path)?;
+
+        assert_eq!(loaded, manifest);
+        Ok(())
     }
 }
