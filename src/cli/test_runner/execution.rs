@@ -9,6 +9,7 @@ use crate::cli::commands::common;
 use crate::cli::prelude::ParsedModule;
 use crate::dependency_resolver::resolve_dependencies;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{lexer, parser};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
@@ -52,16 +53,34 @@ pub(super) fn run_single_test(
         }
     };
 
+    let manifest = match ProjectManifest::discover(test.file_path.parent().unwrap_or_else(|| Path::new("."))) {
+        Ok(manifest) => manifest,
+        Err(err) => {
+            return TestResult::Failed(start.elapsed(), format!("Manifest error: {}", err));
+        }
+    };
+    let library_manifest_index = manifest
+        .as_ref()
+        .map(LibraryManifestIndex::from_project_manifest)
+        .unwrap_or_default();
+    let library_imported_vocab = library_manifest_index.library_imported_vocab();
+
     let tokens = match lexer::lex(&source) {
         Ok(t) => t,
         Err(e) => return TestResult::Failed(start.elapsed(), format!("Lexer error: {:?}", e)),
     };
 
     let path_display = test.file_path.to_string_lossy();
-    let ast = match parser::parse_with_module_path(&tokens, Some(path_display.as_ref())) {
+    let mut ast = match parser::parse_with_context(&tokens, Some(path_display.as_ref()), Some(&library_imported_vocab))
+    {
         Ok(a) => a,
         Err(e) => return TestResult::Failed(start.elapsed(), format!("Parser error: {:?}", e)),
     };
+    if let Err(errors) =
+        vocab_desugar_pass::desugar_program_vocab_blocks(&mut ast, Some(path_display.as_ref()), &library_manifest_index)
+    {
+        return TestResult::Failed(start.elapsed(), format!("Vocab desugar error: {:?}", errors));
+    }
 
     let module_for_imports = ParsedModule {
         name: "test".to_string(),
@@ -69,12 +88,6 @@ pub(super) fn run_single_test(
         file_path: test.file_path.clone(),
         source: source.clone(),
         ast: ast.clone(),
-    };
-    let manifest = match ProjectManifest::discover(test.file_path.parent().unwrap_or_else(|| Path::new("."))) {
-        Ok(manifest) => manifest,
-        Err(err) => {
-            return TestResult::Failed(start.elapsed(), format!("Manifest error: {}", err));
-        }
     };
 
     let cargo_feature_selection = CargoFeatureSelection {
@@ -90,7 +103,12 @@ pub(super) fn run_single_test(
         .map(|m| m.project_root().to_path_buf())
         .unwrap_or_else(|| test.file_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf());
     let source_root = common::resolve_source_root(&project_root, manifest.as_ref());
-    let source_modules = match collect_source_modules_for_test(&ast, &source_root) {
+    let source_modules = match collect_source_modules_for_test(
+        &ast,
+        &source_root,
+        Some(&library_imported_vocab),
+        Some(&library_manifest_index),
+    ) {
         Ok(m) => m,
         Err(e) => {
             return TestResult::Failed(start.elapsed(), format!("Failed to collect source modules: {}", e));
@@ -113,10 +131,6 @@ pub(super) fn run_single_test(
         inline_imports.extend(common::collect_inline_rust_imports(module, true));
     }
 
-    let library_manifest_index = manifest
-        .as_ref()
-        .map(LibraryManifestIndex::from_project_manifest)
-        .unwrap_or_default();
     let project_requirements = match common::collect_project_requirements(&dependency_modules, &library_manifest_index)
     {
         Ok(requirements) => requirements,
@@ -169,6 +183,7 @@ pub(super) fn run_single_test(
 
     // ---- Setup codegen ----
     let mut codegen = IrCodegen::new();
+    codegen.set_library_manifest_index(library_manifest_index.clone());
 
     for module in &source_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());

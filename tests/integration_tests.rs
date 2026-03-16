@@ -1690,6 +1690,36 @@ mod rfc031_pub_import_integration_tests {
         Ok(())
     }
 
+    fn write_pub_library_with_assert_keyword(
+        root: &Path,
+        dependency_key: &str,
+        manifest_name: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let artifact_root = root.join("deps").join(dependency_key).join("target").join("lib");
+        std::fs::create_dir_all(artifact_root.join("src"))?;
+        write_minimal_library_crate(&artifact_root, manifest_name)?;
+
+        let mut manifest = LibraryManifest::new(manifest_name, "0.1.0");
+        manifest.vocab = Some(incan::library_manifest::VocabExports {
+            crate_path: format!("{dependency_key}_vocab_companion"),
+            package_name: format!("{dependency_key}_vocab_companion"),
+            keyword_registrations: vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: format!("{dependency_key}.dsl"),
+                },
+                keywords: vec![incan_vocab::KeywordSpec::new(
+                    "assert",
+                    incan_vocab::KeywordSurfaceKind::ControlFlow,
+                )],
+                valid_decorators: Vec::new(),
+            }],
+            provider_manifest: incan_vocab::LibraryManifest::default(),
+            desugarer_artifact: None,
+        });
+        manifest.write_to_path(&artifact_root.join(format!("{manifest_name}.incnlib")))?;
+        Ok(())
+    }
+
     fn mylib_manifest_with_widget() -> LibraryManifest {
         let mut manifest = LibraryManifest::new("mylib", "0.1.0");
         manifest.exports.models.push(ModelExport {
@@ -2256,6 +2286,65 @@ mod rfc031_pub_import_integration_tests {
             );
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_runner_activates_pub_vocab_keywords_from_dependency_manifest() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::create_dir_all(project_root.join("tests"))?;
+
+        write_pub_library_with_assert_keyword(project_root, "widgets", "widgets_core")?;
+
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"deps/widgets\" }\n",
+        )?;
+        std::fs::write(project_root.join("src/main.incn"), "def main() -> None:\n  pass\n")?;
+        std::fs::write(
+            project_root.join("tests/test_pub_vocab.incn"),
+            "import pub::widgets\n\ndef test_pub_vocab() -> None:\n  assert true\n",
+        )?;
+
+        let test_output = run_test(&project_root.join("tests"))?;
+        assert!(
+            test_output.status.success(),
+            "expected `incan test` to honor serialized pub vocab keywords.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&test_output.stdout),
+            String::from_utf8_lossy(&test_output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn lock_parses_tests_using_pub_vocab_keywords() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::create_dir_all(project_root.join("tests"))?;
+
+        write_pub_library_with_assert_keyword(project_root, "widgets", "widgets_core")?;
+
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"deps/widgets\" }\n",
+        )?;
+        let main_path = project_root.join("src/main.incn");
+        std::fs::write(&main_path, "def main() -> None:\n  pass\n")?;
+        std::fs::write(
+            project_root.join("tests/test_pub_vocab.incn"),
+            "import pub::widgets\n\ndef test_pub_vocab() -> None:\n  assert true\n",
+        )?;
+
+        let lock_output = run_lock(&main_path)?;
+        assert!(
+            lock_output.status.success(),
+            "expected `incan lock` to parse test files with pub vocab keywords.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&lock_output.stdout),
+            String::from_utf8_lossy(&lock_output.stderr)
+        );
         Ok(())
     }
 

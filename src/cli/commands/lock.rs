@@ -54,13 +54,17 @@ pub fn lock_project(
 
     let modules = collect_modules(&entry_path.to_string_lossy())?;
     let library_manifest_index = LibraryManifestIndex::from_project_manifest(&manifest);
+    let library_imported_vocab = library_manifest_index.library_imported_vocab();
     let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
     let mut inline_imports = Vec::new();
     for module in &modules {
         inline_imports.extend(collect_inline_rust_imports(module, false));
     }
 
-    inline_imports.extend(collect_test_inline_imports(manifest.project_root())?);
+    inline_imports.extend(collect_test_inline_imports(
+        manifest.project_root(),
+        Some(&library_imported_vocab),
+    )?);
 
     let cargo_features = CargoFeatureSelection {
         cargo_features,
@@ -251,7 +255,10 @@ pub(crate) fn generate_lockfile(
 }
 
 /// Collect inline Rust crate imports from test files for lock resolution.
-fn collect_test_inline_imports(project_root: &Path) -> CliResult<Vec<InlineRustImport>> {
+fn collect_test_inline_imports(
+    project_root: &Path,
+    library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
+) -> CliResult<Vec<InlineRustImport>> {
     let mut imports = Vec::new();
     let test_files = crate::cli::test_runner::discover_test_files(project_root);
 
@@ -266,13 +273,15 @@ fn collect_test_inline_imports(project_root: &Path) -> CliResult<Vec<InlineRustI
             CliError::failure(msg.trim_end())
         })?;
         let path_display = file_path.to_string_lossy();
-        let ast = parser::parse_with_module_path(&tokens, Some(path_display.as_ref())).map_err(|errs| {
-            let mut msg = String::new();
-            for err in &errs {
-                msg.push_str(&diagnostics::format_error(&file_path.to_string_lossy(), &source, err));
-            }
-            CliError::failure(msg.trim_end())
-        })?;
+        let ast = parser::parse_with_context(&tokens, Some(path_display.as_ref()), library_imported_vocab).map_err(
+            |errs| {
+                let mut msg = String::new();
+                for err in &errs {
+                    msg.push_str(&diagnostics::format_error(&file_path.to_string_lossy(), &source, err));
+                }
+                CliError::failure(msg.trim_end())
+            },
+        )?;
 
         for decl in &ast.declarations {
             let crate::frontend::ast::Declaration::Import(import) = &decl.node else {
