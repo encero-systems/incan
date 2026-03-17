@@ -59,6 +59,7 @@ pub(crate) fn collect_library_vocab_metadata(
             crate_path: declared_crate_path,
             package_name,
             keyword_registrations: metadata.keyword_registrations,
+            dsl_surfaces: metadata.dsl_surfaces,
             provider_manifest: metadata.library_manifest,
             desugarer_artifact: pending_desugarer_artifact
                 .as_ref()

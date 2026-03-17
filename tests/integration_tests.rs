@@ -1646,6 +1646,7 @@ mod rfc031_pub_import_integration_tests {
                 }],
                 valid_decorators: Vec::new(),
             }],
+            dsl_surfaces: Vec::new(),
             provider_manifest: incan_vocab::LibraryManifest::default(),
             desugarer_artifact: Some(incan::library_manifest::VocabDesugarerArtifact {
                 artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
@@ -1676,6 +1677,7 @@ mod rfc031_pub_import_integration_tests {
             crate_path: format!("{dependency_key}_vocab_companion"),
             package_name: format!("{dependency_key}_vocab_companion"),
             keyword_registrations: Vec::new(),
+            dsl_surfaces: Vec::new(),
             provider_manifest: incan_vocab::LibraryManifest {
                 required_dependencies,
                 required_stdlib_features: required_stdlib_features
@@ -1713,6 +1715,7 @@ mod rfc031_pub_import_integration_tests {
                 )],
                 valid_decorators: Vec::new(),
             }],
+            dsl_surfaces: Vec::new(),
             provider_manifest: incan_vocab::LibraryManifest::default(),
             desugarer_artifact: None,
         });

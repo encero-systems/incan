@@ -186,6 +186,7 @@ fn generate_rust_with_vocab_wasm_desugaring(source: &str) -> String {
             }],
             valid_decorators: Vec::new(),
         }],
+        dsl_surfaces: Vec::new(),
         provider_manifest: incan_vocab::LibraryManifest::default(),
         desugarer_artifact: Some(VocabDesugarerArtifact {
             artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,

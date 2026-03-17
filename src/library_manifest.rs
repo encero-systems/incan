@@ -10,7 +10,9 @@ use incan_core::lang::conventions;
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_core::lang::types::numerics::{self, NumericTypeId};
 use incan_core::lang::types::stringlike::{self, StringLikeId};
-use incan_vocab::{KeywordRegistration as VocabKeywordRegistration, LibraryManifest as VocabProviderManifest};
+use incan_vocab::{
+    DslSurface, KeywordRegistration as VocabKeywordRegistration, LibraryManifest as VocabProviderManifest,
+};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
@@ -70,6 +72,7 @@ pub struct VocabExports {
     pub crate_path: String,
     pub package_name: String,
     pub keyword_registrations: Vec<VocabKeywordRegistration>,
+    pub dsl_surfaces: Vec<DslSurface>,
     pub provider_manifest: VocabProviderManifest,
     pub desugarer_artifact: Option<VocabDesugarerArtifact>,
 }
@@ -633,6 +636,8 @@ struct RawVocabExports {
     #[serde(default)]
     keyword_registrations: Vec<VocabKeywordRegistration>,
     #[serde(default)]
+    dsl_surfaces: Vec<DslSurface>,
+    #[serde(default)]
     provider_manifest: VocabProviderManifest,
     #[serde(default)]
     desugarer_artifact: Option<VocabDesugarerArtifact>,
@@ -659,6 +664,7 @@ impl RawLibraryManifest {
                 crate_path: vocab.crate_path.clone(),
                 package_name: vocab.package_name.clone(),
                 keyword_registrations: vocab.keyword_registrations.clone(),
+                dsl_surfaces: vocab.dsl_surfaces.clone(),
                 provider_manifest: vocab.provider_manifest.clone(),
                 desugarer_artifact: vocab.desugarer_artifact.clone(),
             }),
@@ -688,6 +694,7 @@ impl RawLibraryManifest {
                 crate_path: vocab.crate_path,
                 package_name: vocab.package_name,
                 keyword_registrations: vocab.keyword_registrations,
+                dsl_surfaces: vocab.dsl_surfaces,
                 provider_manifest: vocab.provider_manifest,
                 desugarer_artifact: vocab.desugarer_artifact,
             }),
@@ -942,6 +949,7 @@ mod tests {
                 )],
                 valid_decorators: vec!["route".to_string()],
             }],
+            dsl_surfaces: Vec::new(),
             provider_manifest: incan_vocab::LibraryManifest::default(),
             desugarer_artifact: None,
         });

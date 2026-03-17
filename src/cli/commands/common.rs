@@ -71,9 +71,7 @@ pub(crate) fn collect_project_requirements(
     // Legacy serde-driven surfaces (`@derive(Serialize/Deserialize)`, `to_json`, `json_stringify`) can still be used
     // without importing `std.serde.*`. Keep this as an explicit compatibility fallback, but treat import/provider
     // manifests as the primary source of dependency and feature requirements.
-    let needs_legacy_serde_runtime = modules
-        .iter()
-        .any(|module| detect_serde_non_import_usage(&module.ast));
+    let needs_legacy_serde_runtime = modules.iter().any(|module| detect_serde_non_import_usage(&module.ast));
     if needs_legacy_serde_runtime {
         stdlib_namespaces.insert("serde".to_string());
     }

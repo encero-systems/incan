@@ -890,6 +890,7 @@ widgets = { path = "deps/broken" }
                 }],
                 valid_decorators: vec!["route".to_string()],
             }],
+            dsl_surfaces: Vec::new(),
             provider_manifest: incan_vocab::LibraryManifest::default(),
             desugarer_artifact: None,
         });
@@ -938,6 +939,7 @@ widgets = { path = "deps/widgets-lib" }
             crate_path: "vocab_companion".to_string(),
             package_name: "routes_vocab_companion".to_string(),
             keyword_registrations: Vec::new(),
+            dsl_surfaces: Vec::new(),
             provider_manifest: incan_vocab::LibraryManifest::default(),
             desugarer_artifact: Some(crate::library_manifest::VocabDesugarerArtifact {
                 artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
@@ -997,6 +999,7 @@ routes = { path = "deps/routes-lib" }
             crate_path: "widgets_vocab_companion".to_string(),
             package_name: "widgets_vocab_companion".to_string(),
             keyword_registrations: Vec::new(),
+            dsl_surfaces: Vec::new(),
             provider_manifest: incan_vocab::LibraryManifest {
                 required_dependencies: vec![incan_vocab::CargoDependency {
                     crate_name: "serde_json".to_string(),
@@ -1019,6 +1022,7 @@ routes = { path = "deps/routes-lib" }
             crate_path: "analytics_vocab_companion".to_string(),
             package_name: "analytics_vocab_companion".to_string(),
             keyword_registrations: Vec::new(),
+            dsl_surfaces: Vec::new(),
             provider_manifest: incan_vocab::LibraryManifest {
                 required_dependencies: vec![incan_vocab::CargoDependency {
                     crate_name: "serde_json".to_string(),
@@ -1071,6 +1075,7 @@ analytics = { path = "deps/analytics-lib" }
             crate_path: "widgets_vocab_companion".to_string(),
             package_name: "widgets_vocab_companion".to_string(),
             keyword_registrations: Vec::new(),
+            dsl_surfaces: Vec::new(),
             provider_manifest: incan_vocab::LibraryManifest {
                 required_dependencies: vec![incan_vocab::CargoDependency {
                     crate_name: "serde_json".to_string(),
@@ -1092,6 +1097,7 @@ analytics = { path = "deps/analytics-lib" }
             crate_path: "analytics_vocab_companion".to_string(),
             package_name: "analytics_vocab_companion".to_string(),
             keyword_registrations: Vec::new(),
+            dsl_surfaces: Vec::new(),
             provider_manifest: incan_vocab::LibraryManifest {
                 required_dependencies: vec![incan_vocab::CargoDependency {
                     crate_name: "serde_json".to_string(),
