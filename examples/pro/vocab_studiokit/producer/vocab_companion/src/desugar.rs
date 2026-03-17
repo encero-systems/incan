@@ -2,9 +2,9 @@ use incan_vocab::{DesugarError, DesugarOutput, IncanExpr, VocabDesugarer, VocabS
 
 /// Minimal desugarer stub for the richer surrogate surface.
 ///
-/// The implementation is intentionally tiny. Its job is to show the shape of the desugarer
-/// contract once a DSL can lower either declarations that become expressions or declarations that
-/// become statement lists.
+/// The implementation is intentionally tiny. Its job is to show the shape of the desugarer contract once a DSL can
+/// lower either declarations that become expressions or declarations that become statement lists.
+#[derive(Default)]
 pub struct StudioKitDesugarer;
 
 impl VocabDesugarer for StudioKitDesugarer {

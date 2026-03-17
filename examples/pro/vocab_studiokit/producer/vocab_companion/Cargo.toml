@@ -5,6 +5,7 @@ edition = "2021"
 
 [lib]
 path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 # TODO(RFC 034): switch this example to the published `incan_vocab` crate once incan.pub is live.

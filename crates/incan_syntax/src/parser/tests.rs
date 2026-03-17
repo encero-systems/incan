@@ -1753,6 +1753,42 @@ const ANSWER: int = 42
     }
 
     #[test]
+    fn test_imported_vocab_keyword_can_still_parse_typed_assignment_statement()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::routes\n\ndef configure() -> None:\n  route: str = \"/health\"\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "routes".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "routes.dsl".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "route".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+        );
+
+        let program = crate::parser::parse_with_context(&tokens, None, Some(&map))
+            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        assert!(matches!(
+            function.body[0].node,
+            crate::ast::Statement::Assignment(_)
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_nested_vocab_block_with_in_block_placement() -> Result<(), Box<dyn std::error::Error>> {
         let source = "import pub::routes\n\ndef configure() -> None:\n  route \"/home\":\n    get:\n      pass\n";
         let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;

@@ -89,7 +89,9 @@ sha2 = "0.10.9"
 hex = "0.4.3"
 time = { version = "0.3.45", features = ["formatting"] }
 semver = "1.0.27"
+# WASM runtime for desugarer packaging
 wasmtime = "33"
+wasmtime-wasi = "33"
 
 [dev-dependencies]
 # Snapshot testing for codegen

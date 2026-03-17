@@ -137,9 +137,9 @@ impl<'a> Parser<'a> {
         let spec_placement = spec.placement.clone();
         let spec_valid_decorators = spec.valid_decorators.clone();
 
-        // Avoid committing to vocab-block parsing unless a top-level `:` header delimiter is visible ahead. This
-        // preserves `assignment_or_expr_stmt` fallback for statements like `route = "/health"` and `route(args)` when
-        // `route` is an imported vocab keyword.
+        // Avoid committing to vocab-block parsing unless a top-level header-delimiting `:` is visible ahead. This
+        // preserves `assignment_or_expr_stmt` fallback for statements like `route = "/health"`, `route(args)`, and
+        // `route: str = "/health"` when `route` is an imported vocab keyword.
         if decorators.is_empty() && !self.has_top_level_colon_before_statement_end(self.pos + 1) {
             return Ok(None);
         }
@@ -198,10 +198,11 @@ impl<'a> Parser<'a> {
         })))
     }
 
-    /// Return `true` if there is a top-level `:` before the current statement ends.
+    /// Return `true` if there is a top-level block-header `:` before the current statement ends.
     ///
     /// This is used as a lookahead gate for imported vocab block keywords so we only consume the keyword token when the
-    /// block header delimiter is actually present.
+    /// block header delimiter is actually present. We require the matching `:` to terminate the header immediately,
+    /// which avoids stealing ordinary assignments with type annotations such as `route: str = "/health"`.
     fn has_top_level_colon_before_statement_end(&self, mut idx: usize) -> bool {
         let mut paren_depth = 0usize;
         let mut bracket_depth = 0usize;
@@ -224,7 +225,10 @@ impl<'a> Parser<'a> {
                 TokenKind::Punctuation(PunctuationId::Colon)
                     if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 =>
                 {
-                    return true;
+                    return matches!(
+                        self.tokens.get(idx + 1).map(|token| &token.kind),
+                        Some(TokenKind::Newline)
+                    );
                 }
                 TokenKind::Newline | TokenKind::Dedent | TokenKind::Eof
                     if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 =>

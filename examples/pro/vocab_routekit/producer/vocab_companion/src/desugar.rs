@@ -4,6 +4,7 @@ use incan_vocab::{DesugarError, DesugarOutput, IncanExpr, IncanStatement, VocabD
 ///
 /// The implementation intentionally stays tiny: it turns each `route ...:` block into a visible `print(...)` call.
 /// The example proves that library-defined syntax can carry behavior.
+#[derive(Default)]
 pub struct RoutekitDesugarer;
 
 impl VocabDesugarer for RoutekitDesugarer {

@@ -12,6 +12,7 @@ use crate::cli::{CliError, CliResult};
 use crate::library_manifest::{SoftKeywordActivation, VocabDesugarerArtifact, VocabExports};
 use crate::manifest::ProjectManifest;
 use sha2::{Digest, Sha256};
+use wasmtime::{Config, Engine, ExternType, Module, ValType};
 
 pub(crate) struct LibraryVocabExtraction {
     pub(crate) payload: VocabExports,
@@ -47,7 +48,10 @@ pub(crate) fn collect_library_vocab_metadata(
     let package_name = read_companion_package_name(&cargo_manifest_path)?;
 
     let metadata = extract_vocab_metadata_from_library_entrypoint(&companion_crate_root, &package_name)?;
+    ensure_supported_vocab_metadata_version(&metadata, &companion_crate_root)?;
     if let Some(desugarer) = metadata.desugarer.as_ref() {
+        ensure_companion_supports_cdylib(&cargo_manifest_path)?;
+        ensure_rust_target_installed(&desugarer.target)?;
         run_cargo_build_for_target(&cargo_manifest_path, &desugarer.target, &desugarer.profile)?;
     }
     let compatibility_activations = project_soft_keyword_activations(&metadata.keyword_registrations);
@@ -141,8 +145,7 @@ fn run_cargo_build_for_target(cargo_manifest_path: &Path, target: &str, profile:
     if profile == "release" {
         command.arg("--release");
     }
-    command.arg("--target").arg(target);
-    command.arg("--quiet");
+    command.arg("--target").arg(target).arg("--quiet");
 
     let output = command
         .output()
@@ -157,6 +160,69 @@ fn run_cargo_build_for_target(cargo_manifest_path: &Path, target: &str, profile:
         cargo_manifest_path.display(),
         stderr.trim()
     )))
+}
+
+fn ensure_companion_supports_cdylib(cargo_manifest_path: &Path) -> CliResult<()> {
+    let content = fs::read_to_string(cargo_manifest_path)
+        .map_err(|err| CliError::failure(format!("failed to read {}: {err}", cargo_manifest_path.display())))?;
+    let cargo_toml = toml::from_str::<toml::Value>(&content)
+        .map_err(|err| CliError::failure(format!("failed to parse {}: {err}", cargo_manifest_path.display())))?;
+    let has_cdylib = cargo_toml
+        .get("lib")
+        .and_then(toml::Value::as_table)
+        .and_then(|lib| lib.get("crate-type"))
+        .and_then(toml::Value::as_array)
+        .map(|crate_types| {
+            crate_types
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .any(|crate_type| crate_type == "cdylib")
+        })
+        .unwrap_or(false);
+    if has_cdylib {
+        Ok(())
+    } else {
+        Err(CliError::failure(format!(
+            "vocab companion crate `{}` must declare `[lib].crate-type` including `cdylib` to package a desugarer (example: `crate-type = [\"rlib\", \"cdylib\"]`)",
+            cargo_manifest_path.display()
+        )))
+    }
+}
+
+fn ensure_rust_target_installed(target: &str) -> CliResult<()> {
+    let output = Command::new("rustup")
+        .arg("target")
+        .arg("list")
+        .arg("--installed")
+        .output()
+        .map_err(|err| {
+            CliError::failure(format!(
+                "failed to check installed Rust targets for vocab desugarer build: {err}"
+            ))
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(CliError::failure(format!(
+            "failed to list installed Rust targets for vocab desugarer build:\n{}",
+            stderr.trim()
+        )));
+    }
+    let installed = parse_installed_rust_targets(&String::from_utf8_lossy(&output.stdout));
+    if installed.contains(target) {
+        return Ok(());
+    }
+    Err(CliError::failure(format!(
+        "vocab desugarer target `{target}` is not installed in the Rust toolchain. Install it with `rustup target add {target}`."
+    )))
+}
+
+fn parse_installed_rust_targets(stdout: &str) -> HashSet<String> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(std::string::ToString::to_string)
+        .collect()
 }
 
 fn extract_vocab_metadata_from_library_entrypoint(
@@ -203,6 +269,27 @@ fn extract_vocab_metadata_from_library_entrypoint(
     metadata_result
 }
 
+fn ensure_supported_vocab_metadata_version(
+    metadata: &incan_vocab::VocabMetadata,
+    companion_crate_root: &Path,
+) -> CliResult<()> {
+    if metadata.metadata_version == 0 {
+        return Err(CliError::failure(format!(
+            "companion crate `{}` produced invalid vocab metadata version 0",
+            companion_crate_root.display()
+        )));
+    }
+    if metadata.metadata_version > incan_vocab::VOCAB_METADATA_VERSION {
+        return Err(CliError::failure(format!(
+            "companion crate `{}` produced vocab metadata version {} but this compiler supports up to {}",
+            companion_crate_root.display(),
+            metadata.metadata_version,
+            incan_vocab::VOCAB_METADATA_VERSION
+        )));
+    }
+    Ok(())
+}
+
 fn create_extraction_workspace_dir() -> CliResult<PathBuf> {
     static EXTRACTION_COUNTER: AtomicU64 = AtomicU64::new(0);
     let nonce = format!(
@@ -231,11 +318,9 @@ fn write_extraction_runner_manifest(
 ) -> CliResult<()> {
     let helper_manifest = helper_root.join("Cargo.toml");
     let escaped_companion_path = escape_cargo_toml_string(companion_crate_root);
-    let escaped_incan_vocab_path =
-        escape_cargo_toml_string(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/incan_vocab"));
     let escaped_package_name = package_name.replace('\\', "\\\\").replace('"', "\\\"");
     let manifest = format!(
-        "[package]\nname = \"incan_vocab_extraction_runner\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{escaped_incan_vocab_path}\" }}\ncompanion = {{ package = \"{escaped_package_name}\", path = \"{escaped_companion_path}\" }}\n"
+        "[package]\nname = \"incan_vocab_extraction_runner\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ncompanion = {{ package = \"{escaped_package_name}\", path = \"{escaped_companion_path}\" }}\nserde_json = \"1.0\"\n"
     );
     fs::write(&helper_manifest, manifest).map_err(|err| {
         CliError::failure(format!(
@@ -247,7 +332,7 @@ fn write_extraction_runner_manifest(
 
 fn write_extraction_runner_source(helper_root: &Path) -> CliResult<()> {
     let source_path = helper_root.join("src").join("main.rs");
-    let source = "fn main() {\n    let registration = companion::library_vocab();\n    let encoded = match incan_vocab::serialize_registration_json_pretty(&registration) {\n        Ok(encoded) => encoded,\n        Err(err) => {\n            eprintln!(\"failed to serialize registration metadata: {err}\");\n            std::process::exit(1);\n        }\n    };\n    match String::from_utf8(encoded) {\n        Ok(text) => {\n            print!(\"{text}\");\n        }\n        Err(err) => {\n            eprintln!(\"registration metadata was not valid utf-8: {err}\");\n            std::process::exit(1);\n        }\n    }\n}\n";
+    let source = "fn main() {\n    let registration = companion::library_vocab();\n    let metadata = registration.metadata();\n    let text = match serde_json::to_string_pretty(&metadata) {\n        Ok(text) => text,\n        Err(err) => {\n            eprintln!(\"failed to serialize registration metadata: {err}\");\n            std::process::exit(1);\n        }\n    };\n    print!(\"{text}\");\n}\n";
     fs::write(&source_path, source).map_err(|err| {
         CliError::failure(format!(
             "failed to write vocab extraction helper source {}: {err}",
@@ -301,11 +386,13 @@ fn build_pending_desugarer_artifact(
             source_path.display()
         ))
     })?;
+    validate_wasm_desugarer_entrypoint(&source_path, &bytes, &desugarer.entrypoint)?;
     let sha256 = hex::encode(Sha256::digest(&bytes));
 
     Ok(Some(PendingDesugarerArtifact {
         metadata: VocabDesugarerArtifact {
             artifact_kind,
+            abi_version: desugarer.abi_version,
             relative_path: format!("desugarers/{artifact_file_name}"),
             target: desugarer.target.clone(),
             profile: desugarer.profile.clone(),
@@ -314,6 +401,41 @@ fn build_pending_desugarer_artifact(
         },
         source_path,
     }))
+}
+
+fn validate_wasm_desugarer_entrypoint(path: &Path, bytes: &[u8], entrypoint: &str) -> CliResult<()> {
+    let mut config = Config::new();
+    config.consume_fuel(true);
+    let engine = Engine::new(&config)
+        .map_err(|err| CliError::failure(format!("failed to initialize wasm validation engine: {err}")))?;
+    let module = Module::new(&engine, bytes).map_err(|err| {
+        CliError::failure(format!(
+            "failed to compile vocab desugarer artifact `{}` as wasm: {err}",
+            path.display()
+        ))
+    })?;
+    let Some(export) = module.get_export(entrypoint) else {
+        return Err(CliError::failure(format!(
+            "vocab desugarer artifact `{}` is missing exported entrypoint `{entrypoint}`",
+            path.display()
+        )));
+    };
+    let ExternType::Func(func_ty) = export else {
+        return Err(CliError::failure(format!(
+            "vocab desugarer entrypoint `{entrypoint}` in `{}` is not a function export",
+            path.display()
+        )));
+    };
+    let params_ok = func_ty.params().len() == 0;
+    let mut results = func_ty.results();
+    let result_ok = matches!(results.next(), Some(ValType::I32)) && results.next().is_none();
+    if !params_ok || !result_ok {
+        return Err(CliError::failure(format!(
+            "vocab desugarer entrypoint `{entrypoint}` in `{}` must have signature `() -> i32`",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 fn project_soft_keyword_activations(registrations: &[incan_vocab::KeywordRegistration]) -> Vec<SoftKeywordActivation> {
@@ -452,6 +574,34 @@ mod tests {
     }
 
     #[test]
+    fn ensure_companion_supports_cdylib_accepts_cdylib_crate_type() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let cargo_toml = temp.path().join("Cargo.toml");
+        fs::write(
+            &cargo_toml,
+            "[package]\nname = \"widgets_vocab_companion\"\nversion = \"0.1.0\"\n\n[lib]\ncrate-type = [\"rlib\", \"cdylib\"]\n",
+        )?;
+        ensure_companion_supports_cdylib(&cargo_toml)?;
+        Ok(())
+    }
+
+    #[test]
+    fn ensure_companion_supports_cdylib_rejects_missing_cdylib_crate_type() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let cargo_toml = temp.path().join("Cargo.toml");
+        fs::write(
+            &cargo_toml,
+            "[package]\nname = \"widgets_vocab_companion\"\nversion = \"0.1.0\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+        )?;
+        let err = match ensure_companion_supports_cdylib(&cargo_toml) {
+            Ok(()) => return Err("expected missing cdylib to fail".into()),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("cdylib"));
+        Ok(())
+    }
+
+    #[test]
     fn extract_vocab_metadata_from_library_entrypoint_parses_valid_payload() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let crate_root = write_vocab_companion_crate(temp.path(), "vocab_companion", "widgets_vocab_companion")?;
@@ -521,5 +671,26 @@ mod tests {
             }]
         );
         Ok(())
+    }
+
+    #[test]
+    fn parse_installed_rust_targets_ignores_empty_lines() {
+        let parsed = parse_installed_rust_targets("wasm32-wasip1\n\nx86_64-apple-darwin\n");
+        assert!(parsed.contains("wasm32-wasip1"));
+        assert!(parsed.contains("x86_64-apple-darwin"));
+        assert_eq!(parsed.len(), 2);
+    }
+
+    #[test]
+    fn ensure_supported_vocab_metadata_version_rejects_newer_version() {
+        let metadata = incan_vocab::VocabMetadata {
+            metadata_version: incan_vocab::VOCAB_METADATA_VERSION + 1,
+            ..incan_vocab::VocabMetadata::default()
+        };
+        let err = match ensure_supported_vocab_metadata_version(&metadata, Path::new("/tmp/companion")) {
+            Ok(()) => panic!("expected metadata version mismatch"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("metadata version"));
     }
 }

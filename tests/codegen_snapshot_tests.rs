@@ -190,6 +190,7 @@ fn generate_rust_with_vocab_wasm_desugaring(source: &str) -> String {
         provider_manifest: incan_vocab::LibraryManifest::default(),
         desugarer_artifact: Some(VocabDesugarerArtifact {
             artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
+            abi_version: incan_vocab::WASM_DESUGAR_ABI_VERSION,
             relative_path: "desugarers/routes_desugarer.wasm".to_string(),
             target: "wasm32-wasip1".to_string(),
             profile: "release".to_string(),

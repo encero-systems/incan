@@ -37,3 +37,5 @@ pub fn library_vocab() -> VocabRegistration {
         .with_library_manifest(LibraryManifest::default())
         .with_desugarer(RoutekitDesugarer)
 }
+
+incan_vocab::export_wasm_desugarer!(RoutekitDesugarer);

@@ -25,6 +25,9 @@ pub enum DesugarerArtifactKind {
 pub struct DesugarerMetadata {
     /// Artifact kind to produce and package.
     pub artifact_kind: DesugarerArtifactKind,
+    /// WASM ABI contract version for compiler/desugarer runtime interop.
+    #[cfg_attr(feature = "serde", serde(default = "default_wasm_desugar_abi_version"))]
+    pub abi_version: u32,
     /// Target triple used to build the artifact.
     pub target: String,
     /// Cargo profile used to build the artifact (`release` by default).
@@ -39,12 +42,18 @@ impl Default for DesugarerMetadata {
     fn default() -> Self {
         Self {
             artifact_kind: DesugarerArtifactKind::WasmModule,
+            abi_version: crate::WASM_DESUGAR_ABI_VERSION,
             target: "wasm32-wasip1".to_string(),
             profile: "release".to_string(),
             file_name: None,
             entrypoint: "desugar_block".to_string(),
         }
     }
+}
+
+#[cfg(feature = "serde")]
+fn default_wasm_desugar_abi_version() -> u32 {
+    crate::WASM_DESUGAR_ABI_VERSION
 }
 
 impl DesugarerMetadata {
@@ -79,6 +88,13 @@ impl DesugarerMetadata {
     #[must_use]
     pub fn with_entrypoint(mut self, entrypoint: impl Into<String>) -> Self {
         self.entrypoint = entrypoint.into();
+        self
+    }
+
+    /// Override the desugarer ABI version.
+    #[must_use]
+    pub fn with_abi_version(mut self, abi_version: u32) -> Self {
+        self.abi_version = abi_version;
         self
     }
 }
@@ -194,6 +210,23 @@ pub trait VocabDesugarer: Send + Sync {
     }
 }
 
+/// Execute one serialized desugar request with a default-constructed desugarer.
+///
+/// This helper powers the standard WASM export macro and keeps request/response decoding logic in one canonical place.
+#[cfg(feature = "serde")]
+pub fn execute_desugar_request<D>(request_json: &[u8]) -> Result<Vec<u8>, String>
+where
+    D: VocabDesugarer + Default,
+{
+    let request = serde_json::from_slice::<DesugarRequest>(request_json)
+        .map_err(|err| format!("failed to parse desugar request json: {err}"))?;
+    let desugarer = D::default();
+    let response = desugarer
+        .desugar_with_context(&request)
+        .map_err(|err| format!("desugarer failed: {err}"))?;
+    serde_json::to_vec(&response).map_err(|err| format!("failed to serialize desugar response json: {err}"))
+}
+
 /// High-level registration for a library-provided desugarer.
 ///
 /// The common path is `DesugarerRegistration::new(MyDesugarer)` and then, only if needed, chaining metadata overrides
@@ -248,6 +281,13 @@ impl DesugarerRegistration {
     #[must_use]
     pub fn with_entrypoint(mut self, entrypoint: impl Into<String>) -> Self {
         self.metadata = self.metadata.with_entrypoint(entrypoint);
+        self
+    }
+
+    /// Override the desugarer ABI version.
+    #[must_use]
+    pub fn with_abi_version(mut self, abi_version: u32) -> Self {
+        self.metadata = self.metadata.with_abi_version(abi_version);
         self
     }
 

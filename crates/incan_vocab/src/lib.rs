@@ -33,6 +33,9 @@ pub mod desugar;
 pub mod keywords;
 /// Stable manifest DTOs carried inside a vocabulary registration.
 pub mod manifest;
+/// WASM desugarer runtime export helpers for companion crates.
+#[cfg(feature = "serde")]
+pub mod runtime;
 /// Version constants for serialized vocab metadata.
 pub mod version;
 
@@ -46,9 +49,12 @@ pub use version::*;
 ///
 /// Tooling may serialize this value into a library artifact, but library authors should generally work with
 /// [`VocabRegistration`] rather than constructing this transport DTO directly.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VocabMetadata {
+    /// Serialized metadata schema version.
+    #[cfg_attr(feature = "serde", serde(default = "default_vocab_metadata_version"))]
+    pub metadata_version: u32,
     /// The keyword registrations contributed by the library.
     #[cfg_attr(feature = "serde", serde(default))]
     pub keyword_registrations: Vec<KeywordRegistration>,
@@ -61,6 +67,23 @@ pub struct VocabMetadata {
     /// Optional desugarer artifact metadata emitted by the companion crate.
     #[cfg_attr(feature = "serde", serde(default))]
     pub desugarer: Option<DesugarerMetadata>,
+}
+
+impl Default for VocabMetadata {
+    fn default() -> Self {
+        Self {
+            metadata_version: VOCAB_METADATA_VERSION,
+            keyword_registrations: Vec::new(),
+            dsl_surfaces: Vec::new(),
+            library_manifest: LibraryManifest::default(),
+            desugarer: None,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+fn default_vocab_metadata_version() -> u32 {
+    VOCAB_METADATA_VERSION
 }
 
 /// High-level Rust entrypoint for one library's vocabulary surface.
@@ -187,6 +210,7 @@ impl VocabRegistration {
     #[must_use]
     pub fn metadata(&self) -> VocabMetadata {
         VocabMetadata {
+            metadata_version: VOCAB_METADATA_VERSION,
             keyword_registrations: self.derived_keyword_registrations(),
             dsl_surfaces: self.dsl_surfaces.clone(),
             library_manifest: self.library_manifest.clone(),
@@ -301,6 +325,7 @@ mod tests {
         let encoded = serialize_registration_json_pretty(&registration)?;
         let decoded: VocabMetadata = serde_json::from_slice(&encoded)?;
 
+        assert_eq!(decoded.metadata_version, VOCAB_METADATA_VERSION);
         assert_eq!(decoded.keyword_registrations.len(), 1);
         assert_eq!(decoded.dsl_surfaces.len(), 1);
         assert_eq!(decoded.library_manifest, LibraryManifest::default());

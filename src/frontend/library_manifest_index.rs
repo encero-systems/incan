@@ -943,6 +943,7 @@ widgets = { path = "deps/widgets-lib" }
             provider_manifest: incan_vocab::LibraryManifest::default(),
             desugarer_artifact: Some(crate::library_manifest::VocabDesugarerArtifact {
                 artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
+                abi_version: incan_vocab::WASM_DESUGAR_ABI_VERSION,
                 relative_path: "desugarers/routes_desugarer.wasm".to_string(),
                 target: "wasm32-wasip1".to_string(),
                 profile: "release".to_string(),

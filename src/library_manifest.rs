@@ -80,11 +80,17 @@ pub struct VocabExports {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VocabDesugarerArtifact {
     pub artifact_kind: incan_vocab::DesugarerArtifactKind,
+    #[serde(default = "default_wasm_desugar_abi_version")]
+    pub abi_version: u32,
     pub relative_path: String,
     pub target: String,
     pub profile: String,
     pub entrypoint: String,
     pub sha256: String,
+}
+
+fn default_wasm_desugar_abi_version() -> u32 {
+    incan_vocab::WASM_DESUGAR_ABI_VERSION
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -741,6 +747,18 @@ impl RawLibraryManifest {
                 ));
             }
             if let Some(desugarer) = &vocab.desugarer_artifact {
+                if desugarer.abi_version == 0 {
+                    return Err(LibraryManifestError::Invalid(
+                        "vocab desugarer_artifact.abi_version must be >= 1".to_string(),
+                    ));
+                }
+                if desugarer.abi_version > incan_vocab::WASM_DESUGAR_ABI_VERSION {
+                    return Err(LibraryManifestError::Invalid(format!(
+                        "vocab desugarer_artifact.abi_version {} is newer than compiler-supported version {}",
+                        desugarer.abi_version,
+                        incan_vocab::WASM_DESUGAR_ABI_VERSION
+                    )));
+                }
                 if desugarer.relative_path.trim().is_empty() {
                     return Err(LibraryManifestError::Invalid(
                         "vocab desugarer_artifact.relative_path cannot be empty".to_string(),

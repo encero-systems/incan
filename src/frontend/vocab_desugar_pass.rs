@@ -10,7 +10,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
-use wasmtime::{Config, Engine, ExternType, Instance, Linker, Module, Store, Val, ValType};
+use wasmtime::{Config, Engine, ExternType, Instance, Linker, Module, Mutability, Store, Val, ValType};
+use wasmtime_wasi::p2::WasiCtxBuilder;
+use wasmtime_wasi::preview1::WasiP1Ctx;
 
 use crate::frontend::ast;
 use crate::frontend::diagnostics::CompileError;
@@ -26,7 +28,11 @@ const ERROR_LEN_GLOBAL: &str = "__incan_error_len";
 const INPUT_PTR_GLOBAL: &str = "__incan_input_ptr";
 const INPUT_CAPACITY_GLOBAL: &str = "__incan_input_capacity";
 const INPUT_LEN_GLOBAL: &str = "__incan_input_len";
+/// Optional WASM export used to initialize macro-managed buffer globals before `desugar_block()` runs.
+const INIT_ENTRYPOINT: &str = "__incan_init_desugarer";
 const DEFAULT_WASM_FUEL: u64 = 250_000;
+
+type WasmStore = Store<WasiP1Ctx>;
 
 /// Failures produced by the vocab desugaring pass and WASM runtime bridge.
 ///
@@ -197,6 +203,7 @@ struct ResolvedWasmArtifact {
     path: PathBuf,
     expected_sha256: String,
     entrypoint: String,
+    abi_version: u32,
 }
 
 /// Stateful runtime for loading and executing dependency-provided WASM desugarers.
@@ -502,6 +509,7 @@ fn resolve_wasm_artifact_for_node(
         path: artifact_path,
         expected_sha256: desugarer_artifact.sha256.clone(),
         entrypoint: desugarer_artifact.entrypoint.clone(),
+        abi_version: desugarer_artifact.abi_version,
     })
 }
 
@@ -529,7 +537,18 @@ fn execute_desugarer_module(
     resolved: &ResolvedWasmArtifact,
     request: &incan_vocab::DesugarRequest,
 ) -> Result<incan_vocab::DesugarResponse, VocabDesugarPassError> {
-    let mut store = Store::new(engine, ());
+    if resolved.abi_version > incan_vocab::WASM_DESUGAR_ABI_VERSION {
+        return Err(VocabDesugarPassError::WasmRuntimeFailure {
+            path: resolved.path.clone(),
+            message: format!(
+                "desugarer ABI version {} is newer than compiler-supported version {}",
+                resolved.abi_version,
+                incan_vocab::WASM_DESUGAR_ABI_VERSION
+            ),
+        });
+    }
+
+    let mut store = Store::new(engine, WasiCtxBuilder::new().inherit_stdio().build_p1());
     if store.set_fuel(DEFAULT_WASM_FUEL).is_err() {
         return Err(VocabDesugarPassError::WasmRuntimeFailure {
             path: resolved.path.clone(),
@@ -537,7 +556,13 @@ fn execute_desugarer_module(
         });
     }
 
-    let linker = Linker::new(engine);
+    let mut linker = Linker::new(engine);
+    wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |ctx| ctx).map_err(|source| {
+        VocabDesugarPassError::WasmInstantiate {
+            path: resolved.path.clone(),
+            source,
+        }
+    })?;
     let instance = linker
         .instantiate(&mut store, module)
         .map_err(|source| VocabDesugarPassError::WasmInstantiate {
@@ -549,8 +574,16 @@ fn execute_desugarer_module(
         .ok_or_else(|| VocabDesugarPassError::MissingMemory {
             path: resolved.path.clone(),
         })?;
+    let uses_memory_cell_globals = maybe_initialize_desugarer_instance(&instance, &mut store, resolved)?;
     validate_entrypoint_export(module, &resolved.path, &resolved.entrypoint)?;
-    write_request_json_payload(&instance, &memory, &mut store, resolved, request)?;
+    write_request_json_payload(
+        &instance,
+        &memory,
+        &mut store,
+        resolved,
+        request,
+        uses_memory_cell_globals,
+    )?;
     let entrypoint = instance
         .get_typed_func::<(), i32>(&mut store, &resolved.entrypoint)
         .map_err(|_| VocabDesugarPassError::InvalidEntrypointSignature {
@@ -573,13 +606,9 @@ fn execute_desugarer_module(
             resolved,
             OUTPUT_PTR_GLOBAL,
             OUTPUT_LEN_GLOBAL,
+            uses_memory_cell_globals,
         )?;
-        return serde_json::from_str::<incan_vocab::DesugarResponse>(&json_text).map_err(|source| {
-            VocabDesugarPassError::OutputJson {
-                path: resolved.path.clone(),
-                source,
-            }
-        });
+        return parse_desugar_response_json(&resolved.path, &json_text);
     }
 
     let message = read_global_json_payload(
@@ -589,12 +618,31 @@ fn execute_desugarer_module(
         resolved,
         ERROR_PTR_GLOBAL,
         ERROR_LEN_GLOBAL,
+        uses_memory_cell_globals,
     )
     .unwrap_or_else(|_| "desugarer execution failed".to_string());
     Err(VocabDesugarPassError::WasmRuntimeFailure {
         path: resolved.path.clone(),
         message,
     })
+}
+
+/// Run optional desugarer initialization hook when present.
+fn maybe_initialize_desugarer_instance(
+    instance: &Instance,
+    store: &mut WasmStore,
+    resolved: &ResolvedWasmArtifact,
+) -> Result<bool, VocabDesugarPassError> {
+    let Ok(init) = instance.get_typed_func::<(), ()>(&mut *store, INIT_ENTRYPOINT) else {
+        return Ok(false);
+    };
+    init.call(&mut *store, ())
+        .map_err(|source| VocabDesugarPassError::WasmExecute {
+            path: resolved.path.clone(),
+            entrypoint: INIT_ENTRYPOINT.to_string(),
+            source,
+        })?;
+    Ok(true)
 }
 
 /// Check that a module exports the configured entrypoint as `() -> i32`.
@@ -632,13 +680,28 @@ fn validate_entrypoint_export(
 fn read_global_json_payload(
     instance: &Instance,
     memory: &wasmtime::Memory,
-    store: &mut Store<()>,
+    store: &mut WasmStore,
     resolved: &ResolvedWasmArtifact,
     ptr_global: &str,
     len_global: &str,
+    uses_memory_cell_globals: bool,
 ) -> Result<String, VocabDesugarPassError> {
-    let ptr = read_i32_global(instance, store, &resolved.path, ptr_global)?;
-    let len = read_i32_global(instance, store, &resolved.path, len_global)?;
+    let ptr = read_i32_global(
+        instance,
+        memory,
+        store,
+        &resolved.path,
+        ptr_global,
+        uses_memory_cell_globals,
+    )?;
+    let len = read_i32_global(
+        instance,
+        memory,
+        store,
+        &resolved.path,
+        len_global,
+        uses_memory_cell_globals,
+    )?;
     if ptr < 0 || len < 0 {
         return Err(VocabDesugarPassError::OutputBounds {
             path: resolved.path.clone(),
@@ -665,17 +728,32 @@ fn read_global_json_payload(
 fn write_request_json_payload(
     instance: &Instance,
     memory: &wasmtime::Memory,
-    store: &mut Store<()>,
+    store: &mut WasmStore,
     resolved: &ResolvedWasmArtifact,
     request: &incan_vocab::DesugarRequest,
+    uses_memory_cell_globals: bool,
 ) -> Result<(), VocabDesugarPassError> {
     let request_json = serde_json::to_vec(request).map_err(|source| VocabDesugarPassError::RequestJson {
         path: resolved.path.clone(),
         source,
     })?;
 
-    let ptr = read_i32_global(instance, store, &resolved.path, INPUT_PTR_GLOBAL)?;
-    let capacity = read_i32_global(instance, store, &resolved.path, INPUT_CAPACITY_GLOBAL)?;
+    let ptr = read_i32_global(
+        instance,
+        memory,
+        store,
+        &resolved.path,
+        INPUT_PTR_GLOBAL,
+        uses_memory_cell_globals,
+    )?;
+    let capacity = read_i32_global(
+        instance,
+        memory,
+        store,
+        &resolved.path,
+        INPUT_CAPACITY_GLOBAL,
+        uses_memory_cell_globals,
+    )?;
     if ptr < 0 || capacity < 0 {
         return Err(VocabDesugarPassError::InputBounds {
             path: resolved.path.clone(),
@@ -697,16 +775,26 @@ fn write_request_json_payload(
         }
         data[ptr..end].copy_from_slice(&request_json);
     }
-    set_i32_global(instance, store, &resolved.path, INPUT_LEN_GLOBAL, len_i32)?;
+    set_i32_global(
+        instance,
+        memory,
+        store,
+        &resolved.path,
+        INPUT_LEN_GLOBAL,
+        len_i32,
+        uses_memory_cell_globals,
+    )?;
     Ok(())
 }
 
 /// Read one `i32` global export value.
 fn read_i32_global(
     instance: &Instance,
-    store: &mut Store<()>,
+    memory: &wasmtime::Memory,
+    store: &mut WasmStore,
     path: &Path,
     global_name: &str,
+    uses_memory_cell_globals: bool,
 ) -> Result<i32, VocabDesugarPassError> {
     let global =
         instance
@@ -716,7 +804,15 @@ fn read_i32_global(
                 global: global_name.to_string(),
             })?;
     match global.get(&mut *store) {
-        Val::I32(value) => Ok(value),
+        Val::I32(value) => {
+            if global.ty(&mut *store).mutability() == Mutability::Var {
+                return Ok(value);
+            }
+            if !uses_memory_cell_globals {
+                return Ok(value);
+            }
+            read_i32_memory_cell(memory, store, path, global_name, value)
+        }
         _ => Err(VocabDesugarPassError::InvalidWasmGlobal {
             path: path.to_path_buf(),
             global: global_name.to_string(),
@@ -727,10 +823,12 @@ fn read_i32_global(
 /// Update one mutable `i32` global export.
 fn set_i32_global(
     instance: &Instance,
-    store: &mut Store<()>,
+    memory: &wasmtime::Memory,
+    store: &mut WasmStore,
     path: &Path,
     global_name: &str,
     value: i32,
+    uses_memory_cell_globals: bool,
 ) -> Result<(), VocabDesugarPassError> {
     let global =
         instance
@@ -739,12 +837,106 @@ fn set_i32_global(
                 path: path.to_path_buf(),
                 global: global_name.to_string(),
             })?;
-    global
-        .set(&mut *store, Val::I32(value))
-        .map_err(|_| VocabDesugarPassError::UnwritableWasmGlobal {
+    if global.ty(&mut *store).mutability() == Mutability::Var {
+        return global
+            .set(&mut *store, Val::I32(value))
+            .map_err(|_| VocabDesugarPassError::UnwritableWasmGlobal {
+                path: path.to_path_buf(),
+                global: global_name.to_string(),
+            });
+    }
+    if !uses_memory_cell_globals {
+        return Err(VocabDesugarPassError::UnwritableWasmGlobal {
             path: path.to_path_buf(),
             global: global_name.to_string(),
-        })
+        });
+    }
+    let cell_addr = match global.get(&mut *store) {
+        Val::I32(addr) => addr,
+        _ => {
+            return Err(VocabDesugarPassError::InvalidWasmGlobal {
+                path: path.to_path_buf(),
+                global: global_name.to_string(),
+            });
+        }
+    };
+    write_i32_memory_cell(memory, store, path, global_name, cell_addr, value)
+}
+
+/// Read one little-endian i32 from a guest memory cell address.
+fn read_i32_memory_cell(
+    memory: &wasmtime::Memory,
+    store: &mut WasmStore,
+    path: &Path,
+    global_name: &str,
+    cell_addr: i32,
+) -> Result<i32, VocabDesugarPassError> {
+    if cell_addr < 0 {
+        return Err(VocabDesugarPassError::InvalidWasmGlobal {
+            path: path.to_path_buf(),
+            global: global_name.to_string(),
+        });
+    }
+    let start = cell_addr as usize;
+    let end = start.saturating_add(4);
+    let data = memory.data(&mut *store);
+    if end > data.len() {
+        return Err(VocabDesugarPassError::InvalidWasmGlobal {
+            path: path.to_path_buf(),
+            global: global_name.to_string(),
+        });
+    }
+    let mut bytes = [0_u8; 4];
+    bytes.copy_from_slice(&data[start..end]);
+    Ok(i32::from_le_bytes(bytes))
+}
+
+/// Write one little-endian i32 to a guest memory cell address.
+fn write_i32_memory_cell(
+    memory: &wasmtime::Memory,
+    store: &mut WasmStore,
+    path: &Path,
+    global_name: &str,
+    cell_addr: i32,
+    value: i32,
+) -> Result<(), VocabDesugarPassError> {
+    if cell_addr < 0 {
+        return Err(VocabDesugarPassError::UnwritableWasmGlobal {
+            path: path.to_path_buf(),
+            global: global_name.to_string(),
+        });
+    }
+    let start = cell_addr as usize;
+    let end = start.saturating_add(4);
+    let data = memory.data_mut(&mut *store);
+    if end > data.len() {
+        return Err(VocabDesugarPassError::UnwritableWasmGlobal {
+            path: path.to_path_buf(),
+            global: global_name.to_string(),
+        });
+    }
+    data[start..end].copy_from_slice(&value.to_le_bytes());
+    Ok(())
+}
+
+/// Decode one desugar response payload from guest JSON.
+///
+/// The canonical format is `DesugarResponse`. We also accept legacy bare `DesugarOutput` JSON
+/// to keep older companion artifacts working during the transition period.
+fn parse_desugar_response_json(
+    module_path: &Path,
+    json_text: &str,
+) -> Result<incan_vocab::DesugarResponse, VocabDesugarPassError> {
+    match serde_json::from_str::<incan_vocab::DesugarResponse>(json_text) {
+        Ok(response) => Ok(response),
+        Err(primary_error) => match serde_json::from_str::<incan_vocab::DesugarOutput>(json_text) {
+            Ok(output) => Ok(incan_vocab::DesugarResponse { output }),
+            Err(_) => Err(VocabDesugarPassError::OutputJson {
+                path: module_path.to_path_buf(),
+                source: primary_error,
+            }),
+        },
+    }
 }
 
 /// Map a pass/runtime error into a standard type-error diagnostic.
