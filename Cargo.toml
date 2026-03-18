@@ -17,7 +17,7 @@ resolver = "2"
 version = "0.2.0-dev.3"
 description = "The Incan programming language compiler"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 license = "Apache-2.0"
 authors = ["Danny Meijer <dannys.code.corner@gmail.com>"]
 repository = "https://github.com/dannys-code-corner/incan-programming-language"
@@ -90,8 +90,8 @@ hex = "0.4.3"
 time = { version = "0.3.45", features = ["formatting"] }
 semver = "1.0.27"
 # WASM runtime for desugarer packaging
-wasmtime = "33"
-wasmtime-wasi = "33"
+wasmtime = { version = "40", default-features = false, features = ["cranelift", "runtime", "std"] }
+wasmtime-wasi = { version = "40", default-features = false, features = ["p1"] }
 
 [dev-dependencies]
 # Snapshot testing for codegen
