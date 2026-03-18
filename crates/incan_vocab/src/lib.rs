@@ -38,12 +38,36 @@ pub mod manifest;
 pub mod runtime;
 /// Version constants for serialized vocab metadata.
 pub mod version;
+/// Canonical WASM ABI names shared between desugarers and compiler tooling.
+pub mod wasm_abi;
 
-pub use ast::*;
-pub use desugar::*;
-pub use keywords::*;
-pub use manifest::*;
-pub use version::*;
+pub use ast::{
+    Decorator, DecoratorArg, DecoratorArgValue, IncanBinaryOp, IncanExpr, IncanStatement, IncanUnaryOp, Span,
+    VocabBodyItem, VocabClause, VocabClauseBody, VocabDeclaration, VocabDeclarationHead, VocabFieldSpec,
+    VocabKeywordMetadata, VocabParameter, VocabSyntaxNode, VocabTypeExpr,
+};
+#[cfg(feature = "serde")]
+pub use desugar::execute_desugar_request;
+pub use desugar::{
+    DesugarError, DesugarOutput, DesugarRequest, DesugarResponse, DesugarerArtifactKind, DesugarerMetadata,
+    DesugarerRegistration, VocabDesugarer,
+};
+pub use keywords::{
+    ClauseBodyKind, ClauseCardinality, ClausePlacement, ClauseSurface, DeclarationBodyKind, DeclarationHeadKind,
+    DeclarationSurface, DesugarTarget, DslSurface, KeywordActivation, KeywordPlacement, KeywordRegistration,
+    KeywordSpec, KeywordSurfaceKind,
+};
+pub use manifest::{
+    CargoDependency, CargoDependencySource, FieldExport, FunctionExport, HelperBinding, LibraryManifest,
+    ManifestFormatVersion, ModuleExport, TypeExport, TypeExportKind, TypeRef,
+};
+pub use version::{VOCAB_METADATA_VERSION, WASM_DESUGAR_ABI_VERSION};
+pub use wasm_abi::{
+    WASM_DESUGAR_ENTRYPOINT, WASM_DESUGAR_ERROR_LEN_GLOBAL, WASM_DESUGAR_ERROR_PTR_GLOBAL, WASM_DESUGAR_FAILURE_STATUS,
+    WASM_DESUGAR_INIT_ENTRYPOINT, WASM_DESUGAR_INPUT_CAPACITY_GLOBAL, WASM_DESUGAR_INPUT_LEN_GLOBAL,
+    WASM_DESUGAR_INPUT_PTR_GLOBAL, WASM_DESUGAR_MEMORY_EXPORT, WASM_DESUGAR_OUTPUT_LEN_GLOBAL,
+    WASM_DESUGAR_OUTPUT_PTR_GLOBAL, WASM_DESUGAR_REQUIRED_I32_GLOBAL_EXPORTS, WASM_DESUGAR_SUCCESS_STATUS,
+};
 
 /// The stable serializable output shape derived from a companion crate registration.
 ///

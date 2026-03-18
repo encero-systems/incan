@@ -161,6 +161,12 @@ let manifest = LibraryManifest {
 
 Then the desugarer can emit `IncanExpr::Helper("filter".to_string())`, and the compiler will inject a hidden `pub::` import for the matching library export before lowering the desugared code back into the host AST.
 
+`incan build --lib` validates these bindings structurally:
+
+- each helper `key` must be unique within `helper_bindings`
+- each `exported_name` must point at a real public export from the library artifact
+- empty keys or export names are rejected before the `.incnlib` artifact is written
+
 ## 4. Add an optional desugarer
 
 Parser activation alone teaches the compiler how to recognize your DSL surface. If the DSL needs custom lowering, register a Rust desugarer from the same `library_vocab()` bundle.
@@ -202,6 +208,15 @@ incan_vocab::export_wasm_desugarer!(RoutekitDesugarer);
 ```
 
 This emits the `desugar_block` entrypoint and required `__incan_*` memory globals consumed by the compiler runtime.
+
+`incan build --lib` also validates the packaged WASM artifact against the canonical ABI before it is recorded in the library artifact. In practice that means the module must export:
+
+- the standard linear memory export `memory`
+- the configured entrypoint, usually `desugar_block() -> i32`
+- the required initializer `__incan_init_desugarer()`
+- the canonical `__incan_*` runtime cell globals
+
+Malformed artifact paths, invalid checksums, or missing ABI exports fail the producer build early instead of surfacing later in consumer projects.
 
 ## 5. Build the library artifact
 

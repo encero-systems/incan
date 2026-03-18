@@ -10,6 +10,8 @@
 
 use crate::frontend::ast;
 
+const CURRENT_FIELD_SENTINEL_IDENT: &str = "__incan_vocab_current_row";
+
 /// Mapping failures produced by the AST bridge.
 ///
 /// Each variant indicates:
@@ -48,28 +50,34 @@ pub fn internal_vocab_block_to_public(
     block: &ast::VocabBlockStmt,
     span: ast::Span,
 ) -> Result<incan_vocab::VocabDeclaration, VocabAstBridgeError> {
-    let mut body = Vec::new();
-    for stmt in &block.body {
-        match &stmt.node {
-            ast::Statement::VocabBlock(nested) => body.push(incan_vocab::VocabBodyItem::Declaration(
-                internal_vocab_block_to_public(nested, stmt.span)?,
-            )),
-            _ => body.push(incan_vocab::VocabBodyItem::Statement(internal_statement_to_public(
-                &stmt.node,
-            )?)),
-        }
-    }
+    let body = block
+        .body
+        .iter()
+        .map(internal_statement_to_body_item)
+        .collect::<Result<Vec<_>, _>>()?;
 
     let decorators = block
         .decorators
         .iter()
         .map(public_decorator_from_internal)
         .collect::<Result<Vec<_>, _>>()?;
-    let header_args = block
+    let mut header_args = block
         .header_args
         .iter()
         .map(|arg| internal_expr_to_public(&arg.node))
         .collect::<Result<Vec<_>, _>>()?;
+    let head_name = match block.header_args.first() {
+        Some(first_arg) => match &first_arg.node {
+            ast::Expr::Ident(name) => {
+                if !header_args.is_empty() {
+                    header_args.remove(0);
+                }
+                Some(name.clone())
+            }
+            _ => None,
+        },
+        None => None,
+    };
 
     Ok(incan_vocab::VocabDeclaration {
         keyword: block.keyword.clone(),
@@ -80,7 +88,7 @@ pub fn internal_vocab_block_to_public(
             placement: block.keyword_binding.placement.clone(),
         }),
         head: incan_vocab::VocabDeclarationHead {
-            name: None,
+            name: head_name,
             header_args,
             parameters: Vec::new(),
             return_type: None,
@@ -89,6 +97,156 @@ pub fn internal_vocab_block_to_public(
         body,
         span: public_span(span),
     })
+}
+
+/// Classify one internal statement as a public vocab body item.
+///
+/// Nested `VocabBlock` nodes do not all mean the same thing. Block-context keywords and sub-block keywords become
+/// `VocabBodyItem::Clause`, while declaration-shaped nested blocks remain full nested declarations. Ordinary
+/// statements are bridged through the public statement model instead.
+///
+/// # Errors
+///
+/// Returns the first bridge failure from the nested clause/declaration/statement conversion.
+fn internal_statement_to_body_item(
+    statement: &ast::Spanned<ast::Statement>,
+) -> Result<incan_vocab::VocabBodyItem, VocabAstBridgeError> {
+    match &statement.node {
+        ast::Statement::VocabBlock(nested)
+            if matches!(
+                nested.keyword_binding.surface_kind,
+                incan_vocab::KeywordSurfaceKind::BlockContextKeyword | incan_vocab::KeywordSurfaceKind::SubBlock
+            ) =>
+        {
+            Ok(incan_vocab::VocabBodyItem::Clause(internal_vocab_clause_to_public(
+                nested,
+                statement.span,
+            )?))
+        }
+        ast::Statement::VocabBlock(nested) => Ok(incan_vocab::VocabBodyItem::Declaration(
+            internal_vocab_block_to_public(nested, statement.span)?,
+        )),
+        other => Ok(incan_vocab::VocabBodyItem::Statement(internal_statement_to_public(
+            other,
+        )?)),
+    }
+}
+
+/// Convert one nested internal vocab block into a public clause.
+///
+/// Clauses reuse the same parsed `VocabBlockStmt` carrier as declarations on the internal side. The surface kind on
+/// the keyword binding decides that this block should be interpreted as clause syntax instead of a nested declaration.
+///
+/// # Errors
+///
+/// Returns [`VocabAstBridgeError`] when the clause head or body cannot be represented in the public contract.
+fn internal_vocab_clause_to_public(
+    block: &ast::VocabBlockStmt,
+    span: ast::Span,
+) -> Result<incan_vocab::VocabClause, VocabAstBridgeError> {
+    let head = block
+        .header_args
+        .iter()
+        .map(|arg| internal_expr_to_public(&arg.node))
+        .collect::<Result<Vec<_>, _>>()?;
+    let body = internal_clause_body_to_public(&block.body)?;
+    Ok(incan_vocab::VocabClause {
+        keyword: block.keyword.clone(),
+        compound_tokens: Vec::new(),
+        head,
+        body,
+        span: public_span(span),
+    })
+}
+
+/// Choose the narrowest public clause-body representation for a clause body.
+///
+/// The bridge prefers specialized shapes in this order:
+/// - `Empty` for no body items
+/// - `FieldSet` for all-assignment bodies
+/// - `Expression` / `ExpressionList` for expression-only bodies
+/// - `Items` as the fully general fallback when the body mixes nested clauses/declarations/statements
+///
+/// # Errors
+///
+/// Returns the first bridge failure while probing or converting the contained statements.
+fn internal_clause_body_to_public(
+    statements: &[ast::Spanned<ast::Statement>],
+) -> Result<incan_vocab::VocabClauseBody, VocabAstBridgeError> {
+    if statements.is_empty() {
+        return Ok(incan_vocab::VocabClauseBody::Empty);
+    }
+    if let Some(fields) = try_internal_field_set(statements)? {
+        return Ok(incan_vocab::VocabClauseBody::FieldSet(fields));
+    }
+
+    let expression_only = statements
+        .iter()
+        .map(|statement| match &statement.node {
+            ast::Statement::Expr(expr) => internal_expr_to_public(&expr.node).map(Some),
+            _ => Ok(None),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if expression_only.iter().all(Option::is_some) {
+        let expressions = expression_only
+            .into_iter()
+            .map(|expr| {
+                expr.ok_or(VocabAstBridgeError::UnsupportedInternalStatement(
+                    "clause expression extraction expected expression statements",
+                ))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        return if expressions.len() == 1 {
+            Ok(incan_vocab::VocabClauseBody::Expression(
+                expressions
+                    .into_iter()
+                    .next()
+                    .ok_or(VocabAstBridgeError::UnsupportedInternalStatement(
+                        "single-expression clause conversion expected one expression item",
+                    ))?,
+            ))
+        } else {
+            Ok(incan_vocab::VocabClauseBody::ExpressionList(expressions))
+        };
+    }
+
+    let items = statements
+        .iter()
+        .map(internal_statement_to_body_item)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(incan_vocab::VocabClauseBody::Items(items))
+}
+
+/// Detect whether a clause body is representable as a public field-set payload.
+///
+/// A field set is only recognized when every statement is a non-reassignment assignment. Any other statement shape
+/// means the caller must fall back to a more general body representation.
+///
+/// # Errors
+///
+/// Returns an expression-level bridge failure when a default value cannot be mapped to the public AST.
+fn try_internal_field_set(
+    statements: &[ast::Spanned<ast::Statement>],
+) -> Result<Option<Vec<incan_vocab::VocabFieldSpec>>, VocabAstBridgeError> {
+    let mut fields = Vec::with_capacity(statements.len());
+    for statement in statements {
+        let ast::Statement::Assignment(assignment) = &statement.node else {
+            return Ok(None);
+        };
+        if matches!(assignment.binding, ast::BindingKind::Reassign) {
+            return Ok(None);
+        }
+        fields.push(incan_vocab::VocabFieldSpec {
+            name: assignment.name.clone(),
+            field_type: assignment.ty.as_ref().map(|ty| incan_vocab::VocabTypeExpr {
+                source: ty.node.to_string(),
+                span: public_span(ty.span),
+            }),
+            default_value: Some(internal_expr_to_public(&assignment.value.node)?),
+            span: public_span(statement.span),
+        });
+    }
+    Ok(Some(fields))
 }
 
 /// Convert one internal compiler statement to public `incan_vocab::IncanStatement`.
@@ -245,7 +403,12 @@ pub fn public_expression_to_internal(expr: &incan_vocab::IncanExpr) -> Result<as
 
 /// Convert a list of internal spanned statements to public statements.
 ///
-/// This is the internal utility used for block body conversion in the internal -> public direction.
+/// This helper intentionally drops span provenance and preserves only statement structure, because the public
+/// statement DTOs do not carry per-statement source spans today.
+///
+/// # Errors
+///
+/// Returns the first failure from [`internal_statement_to_public`].
 fn internal_statements_to_public(
     stmts: &[ast::Spanned<ast::Statement>],
 ) -> Result<Vec<incan_vocab::IncanStatement>, VocabAstBridgeError> {
@@ -311,10 +474,19 @@ fn internal_expr_to_public(expr: &ast::Expr) -> Result<incan_vocab::IncanExpr, V
                 args: mapped_args,
             })
         }
-        ast::Expr::Field(object, field) => Ok(incan_vocab::IncanExpr::Field {
-            object: Box::new(internal_expr_to_public(&object.node)?),
-            field: field.clone(),
-        }),
+        ast::Expr::Field(object, field) => match &object.node {
+            ast::Expr::Ident(name) if name == CURRENT_FIELD_SENTINEL_IDENT => {
+                Ok(incan_vocab::IncanExpr::CurrentField(field.clone()))
+            }
+            ast::Expr::Ident(name) => Ok(incan_vocab::IncanExpr::RelationField {
+                relation: name.clone(),
+                field: field.clone(),
+            }),
+            _ => Ok(incan_vocab::IncanExpr::Field {
+                object: Box::new(internal_expr_to_public(&object.node)?),
+                field: field.clone(),
+            }),
+        },
         _ => Err(VocabAstBridgeError::UnsupportedInternalExpression(
             "expression form is not yet supported by public vocab AST bridge",
         )),
@@ -322,6 +494,10 @@ fn internal_expr_to_public(expr: &ast::Expr) -> Result<incan_vocab::IncanExpr, V
 }
 
 /// Convert one public `incan_vocab::IncanExpr` to internal compiler expression AST.
+///
+/// This is the inverse of [`internal_expr_to_public`] for the bridgeable subset of the public vocab expression model.
+/// Special query helpers such as `CurrentField` and `RelationField` are lowered through internal field-access shapes
+/// using a sentinel identifier when necessary.
 ///
 /// # Errors
 ///
@@ -332,6 +508,20 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
         incan_vocab::IncanExpr::Str(value) => Ok(ast::Expr::Literal(ast::Literal::String(value.clone()))),
         incan_vocab::IncanExpr::Int(value) => Ok(ast::Expr::Literal(ast::Literal::Int(*value))),
         incan_vocab::IncanExpr::Bool(value) => Ok(ast::Expr::Literal(ast::Literal::Bool(*value))),
+        incan_vocab::IncanExpr::CurrentField(field) => Ok(ast::Expr::Field(
+            Box::new(ast::Spanned::new(
+                ast::Expr::Ident(CURRENT_FIELD_SENTINEL_IDENT.to_string()),
+                ast::Span::default(),
+            )),
+            field.clone(),
+        )),
+        incan_vocab::IncanExpr::RelationField { relation, field } => Ok(ast::Expr::Field(
+            Box::new(ast::Spanned::new(
+                ast::Expr::Ident(relation.clone()),
+                ast::Span::default(),
+            )),
+            field.clone(),
+        )),
         incan_vocab::IncanExpr::Tuple(values) => values
             .iter()
             .map(|value| public_expr_to_internal(value).map(|node| ast::Spanned::new(node, ast::Span::default())))
@@ -400,6 +590,9 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
 
 /// Convert one internal decorator to the public decorator DTO.
 ///
+/// Decorators stay mostly structural: path segments and named/positional arguments are preserved, while unsupported
+/// typed decorator arguments fail explicitly so the public bridge never invents a lossy encoding.
+///
 /// # Errors
 ///
 /// Returns [`VocabAstBridgeError`] for decorator argument forms that are intentionally unsupported by the public bridge
@@ -436,7 +629,8 @@ fn public_decorator_from_internal(
 
 /// Convert an internal decorator argument expression into a public decorator arg value.
 ///
-/// Literal primitives map to scalar public variants; non-literals fall back to `DecoratorArgValue::Expr`.
+/// Literal primitives map to scalar public variants; non-literals fall back to `DecoratorArgValue::Expr` so public
+/// consumers can still inspect the original expression structure.
 fn public_decorator_arg_value_from_internal_expr(
     expr: &ast::Expr,
 ) -> Result<incan_vocab::DecoratorArgValue, VocabAstBridgeError> {
@@ -449,6 +643,9 @@ fn public_decorator_arg_value_from_internal_expr(
 }
 
 /// Map internal binary operators to public binary operators.
+///
+/// This is intentionally whitelist-based so the public bridge contract expands only when both sides agree on exact
+/// operator semantics.
 ///
 /// # Errors
 ///
@@ -476,6 +673,9 @@ fn map_internal_binary_op(op: ast::BinaryOp) -> Result<incan_vocab::IncanBinaryO
 
 /// Map public binary operators to internal binary operators.
 ///
+/// This mirrors [`map_internal_binary_op`] and keeps the round-trip surface explicit instead of assuming every public
+/// enum variant already has an internal lowering.
+///
 /// # Errors
 ///
 /// Returns [`VocabAstBridgeError::UnsupportedPublicExpression`] when a public operator is not represented in the
@@ -501,9 +701,104 @@ fn map_public_binary_op(op: incan_vocab::IncanBinaryOp) -> Result<ast::BinaryOp,
 }
 
 /// Convert an internal compiler span to public `incan_vocab::Span`.
+///
+/// This is a pure shape conversion; source offsets are preserved exactly.
 fn public_span(span: ast::Span) -> incan_vocab::Span {
     incan_vocab::Span {
         start: span.start,
         end: span.end,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_keyword_binding(surface_kind: incan_vocab::KeywordSurfaceKind) -> ast::VocabKeywordBinding {
+        ast::VocabKeywordBinding {
+            dependency_key: "demo".to_string(),
+            activation_namespace: "demo.dsl".to_string(),
+            surface_kind,
+            placement: incan_vocab::KeywordPlacement::TopLevel,
+        }
+    }
+
+    #[test]
+    fn bridges_block_context_keywords_as_clauses() -> Result<(), Box<dyn std::error::Error>> {
+        let clause_block = ast::VocabBlockStmt {
+            keyword: "FROM".to_string(),
+            keyword_binding: default_keyword_binding(incan_vocab::KeywordSurfaceKind::BlockContextKeyword),
+            decorators: Vec::new(),
+            header_args: vec![ast::Spanned::new(
+                ast::Expr::Ident("orders".to_string()),
+                ast::Span::default(),
+            )],
+            body: Vec::new(),
+        };
+        let declaration_block = ast::VocabBlockStmt {
+            keyword: "query".to_string(),
+            keyword_binding: default_keyword_binding(incan_vocab::KeywordSurfaceKind::BlockDeclaration),
+            decorators: Vec::new(),
+            header_args: Vec::new(),
+            body: vec![ast::Spanned::new(
+                ast::Statement::VocabBlock(clause_block),
+                ast::Span::default(),
+            )],
+        };
+
+        let bridged = internal_vocab_block_to_public(&declaration_block, ast::Span::default())?;
+        assert_eq!(bridged.body.len(), 1);
+        match &bridged.body[0] {
+            incan_vocab::VocabBodyItem::Clause(clause) => {
+                assert_eq!(clause.keyword, "FROM");
+                assert_eq!(clause.head, vec![incan_vocab::IncanExpr::Name("orders".to_string())]);
+            }
+            other => {
+                return Err(format!("expected clause body item, got {other:?}").into());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn infers_declaration_head_name_from_first_identifier_arg() -> Result<(), Box<dyn std::error::Error>> {
+        let block = ast::VocabBlockStmt {
+            keyword: "workflow".to_string(),
+            keyword_binding: default_keyword_binding(incan_vocab::KeywordSurfaceKind::BlockDeclaration),
+            decorators: Vec::new(),
+            header_args: vec![
+                ast::Spanned::new(ast::Expr::Ident("daily".to_string()), ast::Span::default()),
+                ast::Spanned::new(
+                    ast::Expr::Literal(ast::Literal::String("reports".to_string())),
+                    ast::Span::default(),
+                ),
+            ],
+            body: Vec::new(),
+        };
+
+        let bridged = internal_vocab_block_to_public(&block, ast::Span::default())?;
+        assert_eq!(bridged.head.name.as_deref(), Some("daily"));
+        assert_eq!(
+            bridged.head.header_args,
+            vec![incan_vocab::IncanExpr::Str("reports".to_string())]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bridges_public_field_reference_variants_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        let current = incan_vocab::IncanExpr::CurrentField("amount".to_string());
+        let current_internal = public_expression_to_internal(&current)?;
+        let current_roundtrip = internal_expr_to_public(&current_internal)?;
+        assert_eq!(current_roundtrip, current);
+
+        let relation = incan_vocab::IncanExpr::RelationField {
+            relation: "orders".to_string(),
+            field: "amount".to_string(),
+        };
+        let relation_internal = public_expression_to_internal(&relation)?;
+        let relation_roundtrip = internal_expr_to_public(&relation_internal)?;
+        assert_eq!(relation_roundtrip, relation);
+        Ok(())
     }
 }

@@ -46,7 +46,7 @@ impl Default for DesugarerMetadata {
             target: "wasm32-wasip1".to_string(),
             profile: "release".to_string(),
             file_name: None,
-            entrypoint: "desugar_block".to_string(),
+            entrypoint: crate::WASM_DESUGAR_ENTRYPOINT.to_string(),
         }
     }
 }

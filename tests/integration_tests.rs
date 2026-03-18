@@ -1543,6 +1543,28 @@ mod rfc031_pub_import_integration_tests {
         Ok(())
     }
 
+    fn write_vocab_companion_crate_with_source(
+        project_root: &Path,
+        relative_path: &str,
+        package_name: &str,
+        lib_source: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let crate_root = project_root.join(relative_path);
+        std::fs::create_dir_all(crate_root.join("src"))?;
+        std::fs::write(
+            crate_root.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[lib]\npath = \"src/lib.rs\"\n",
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("crates")
+                    .join("incan_vocab")
+                    .display()
+            ),
+        )?;
+        std::fs::write(crate_root.join("src/lib.rs"), lib_source)?;
+        Ok(())
+    }
+
     fn wat_bytes_string(bytes: &[u8]) -> String {
         let mut escaped = String::new();
         for byte in bytes {
@@ -1749,6 +1771,22 @@ mod rfc031_pub_import_integration_tests {
         desugarer_bytes: &[u8],
         keyword: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        write_pub_library_with_vocab_desugarer_and_filter_helper_keywords(
+            root,
+            dependency_key,
+            manifest_name,
+            desugarer_bytes,
+            &[keyword],
+        )
+    }
+
+    fn write_pub_library_with_vocab_desugarer_and_filter_helper_keywords(
+        root: &Path,
+        dependency_key: &str,
+        manifest_name: &str,
+        desugarer_bytes: &[u8],
+        keywords: &[&str],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let artifact_root = root.join("deps").join(dependency_key).join("target").join("lib");
         std::fs::create_dir_all(artifact_root.join("desugarers"))?;
         write_library_crate_with_source(
@@ -1781,12 +1819,15 @@ mod rfc031_pub_import_integration_tests {
                 activation: incan_vocab::KeywordActivation::OnImport {
                     namespace: format!("{dependency_key}.dsl"),
                 },
-                keywords: vec![incan_vocab::KeywordSpec {
-                    name: keyword.to_string(),
-                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
-                    compound_tokens: Vec::new(),
-                    placement: incan_vocab::KeywordPlacement::TopLevel,
-                }],
+                keywords: keywords
+                    .iter()
+                    .map(|keyword| incan_vocab::KeywordSpec {
+                        name: (*keyword).to_string(),
+                        surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                        compound_tokens: Vec::new(),
+                        placement: incan_vocab::KeywordPlacement::TopLevel,
+                    })
+                    .collect(),
                 valid_decorators: Vec::new(),
             }],
             dsl_surfaces: Vec::new(),
@@ -2198,6 +2239,41 @@ mod rfc031_pub_import_integration_tests {
     }
 
     #[test]
+    fn build_lib_fails_early_for_invalid_helper_binding_manifest() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("invalid_helper_vocab_project");
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"widgets_core\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/lib.incn"),
+            "pub def make_widget(name: str) -> str:\n  return name\n",
+        )?;
+        write_vocab_companion_crate_with_source(
+            &producer_root,
+            "vocab_companion",
+            "widgets_vocab_companion",
+            "use incan_vocab::{HelperBinding, LibraryManifest, VocabRegistration};\n\npub fn library_vocab() -> VocabRegistration {\n    VocabRegistration::new().with_library_manifest(LibraryManifest {\n        helper_bindings: vec![HelperBinding {\n            key: \"filter\".to_string(),\n            exported_name: \"filter\".to_string(),\n        }],\n        ..LibraryManifest::default()\n    })\n}\n",
+        )?;
+
+        let producer_build = run_build_lib(&producer_root)?;
+        assert!(
+            !producer_build.status.success(),
+            "expected `build --lib` to fail for invalid helper binding.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&producer_build.stdout),
+            String::from_utf8_lossy(&producer_build.stderr)
+        );
+        let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&producer_build.stderr));
+        assert!(
+            stderr.contains("unknown exported symbol `filter`"),
+            "expected helper-binding validation failure, got:\n{stderr}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn consumer_check_uses_serialized_vocab_metadata_for_keyword_activation() -> Result<(), Box<dyn std::error::Error>>
     {
         let tmp = tempfile::tempdir()?;
@@ -2397,6 +2473,61 @@ mod rfc031_pub_import_integration_tests {
         assert!(
             generated_main_rs.contains("inql::filter"),
             "expected generated Rust to import the provider helper from the dependency crate, got:\n{generated_main_rs}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn equivalent_helper_backed_keywords_emit_identical_rust() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Call {
+            callee: Box::new(incan_vocab::IncanExpr::Helper("filter".to_string())),
+            args: vec![incan_vocab::IncanExpr::Int(1)],
+        });
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm(0, &output_payload, "")?;
+        write_pub_library_with_vocab_desugarer_and_filter_helper_keywords(
+            tmp.path(),
+            "querykit",
+            "querykit_core",
+            &wasm,
+            &["where", "screen"],
+        )?;
+
+        let where_main = write_project_files(
+            tmp.path().join("where_consumer").as_path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"../deps/querykit\" }\n",
+            "import pub::querykit\n\ndef main() -> None:\n  where true:\n    pass\n",
+        )?;
+        let screen_main = write_project_files(
+            tmp.path().join("screen_consumer").as_path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"../deps/querykit\" }\n",
+            "import pub::querykit\n\ndef main() -> None:\n  screen true:\n    pass\n",
+        )?;
+
+        let where_out = tmp.path().join("where_out");
+        let where_build = run_build(&where_main, &where_out)?;
+        assert!(
+            where_build.status.success(),
+            "expected helper-backed `where` build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&where_build.stdout),
+            String::from_utf8_lossy(&where_build.stderr)
+        );
+
+        let screen_out = tmp.path().join("screen_out");
+        let screen_build = run_build(&screen_main, &screen_out)?;
+        assert!(
+            screen_build.status.success(),
+            "expected helper-backed `screen` build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&screen_build.stdout),
+            String::from_utf8_lossy(&screen_build.stderr)
+        );
+
+        let where_rust = std::fs::read_to_string(where_out.join("src/main.rs"))?;
+        let screen_rust = std::fs::read_to_string(screen_out.join("src/main.rs"))?;
+        assert_eq!(
+            where_rust, screen_rust,
+            "expected equivalent helper-backed keywords to emit identical Rust"
         );
         Ok(())
     }

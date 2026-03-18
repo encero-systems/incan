@@ -414,20 +414,32 @@ fn validate_wasm_desugarer_entrypoint(path: &Path, bytes: &[u8], entrypoint: &st
             path.display()
         ))
     })?;
+    validate_wasm_memory_export(&module, path)?;
     validate_wasm_func_export(&module, path, entrypoint, Some(ValType::I32))?;
-    validate_wasm_func_export(&module, path, "__incan_init_desugarer", None)?;
-    for global_name in [
-        "__incan_input_ptr",
-        "__incan_input_capacity",
-        "__incan_input_len",
-        "__incan_output_ptr",
-        "__incan_output_len",
-        "__incan_error_ptr",
-        "__incan_error_len",
-    ] {
+    validate_wasm_func_export(&module, path, incan_vocab::WASM_DESUGAR_INIT_ENTRYPOINT, None)?;
+    for &global_name in incan_vocab::WASM_DESUGAR_REQUIRED_I32_GLOBAL_EXPORTS {
         validate_wasm_i32_global_export(&module, path, global_name)?;
     }
     Ok(())
+}
+
+fn validate_wasm_memory_export(module: &Module, path: &Path) -> CliResult<()> {
+    let Some(export) = module.get_export(incan_vocab::WASM_DESUGAR_MEMORY_EXPORT) else {
+        return Err(CliError::failure(format!(
+            "vocab desugarer artifact `{}` is missing exported memory `{}`",
+            path.display(),
+            incan_vocab::WASM_DESUGAR_MEMORY_EXPORT
+        )));
+    };
+    if matches!(export, ExternType::Memory(_)) {
+        Ok(())
+    } else {
+        Err(CliError::failure(format!(
+            "vocab desugarer export `{}` in `{}` is not a memory export",
+            incan_vocab::WASM_DESUGAR_MEMORY_EXPORT,
+            path.display()
+        )))
+    }
 }
 
 fn validate_wasm_func_export(
@@ -448,7 +460,7 @@ fn validate_wasm_func_export(
             path.display()
         )));
     };
-    let params_ok = func_ty.params().len() == 0;
+    let params_ok = func_ty.params().next().is_none();
     let mut results = func_ty.results();
     let result_ok = match expected_result {
         Some(ValType::I32) => matches!(results.next(), Some(ValType::I32)) && results.next().is_none(),

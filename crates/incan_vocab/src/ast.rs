@@ -143,11 +143,12 @@ pub struct VocabClause {
 }
 
 /// Body payload for a DSL-owned clause.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
 pub enum VocabClauseBody {
     /// No explicit body payload.
+    #[default]
     Empty,
     /// A single expression payload.
     Expression(IncanExpr),
@@ -159,12 +160,6 @@ pub enum VocabClauseBody {
     FieldSet(Vec<VocabFieldSpec>),
     /// Nested clause/declaration/body items.
     Items(Vec<VocabBodyItem>),
-}
-
-impl Default for VocabClauseBody {
-    fn default() -> Self {
-        Self::Empty
-    }
 }
 
 /// A DSL-owned declaration such as a query block, step, or pipeline.

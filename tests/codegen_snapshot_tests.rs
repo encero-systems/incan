@@ -267,6 +267,207 @@ fn generate_rust_with_vocab_wasm_desugaring(source: &str) -> String {
     normalize_codegen_output(&code)
 }
 
+/// Generate Rust from source desugared through a helper-backed vocab WASM artifact.
+fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str) -> String {
+    use incan::frontend::library_manifest_index::{
+        LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+    };
+    use incan::frontend::vocab_desugar_pass::desugar_program_vocab_blocks;
+    use incan::library_manifest::{
+        FunctionExport, LibraryManifest, ParamExport, TypeRef, VocabDesugarerArtifact, VocabExports,
+    };
+    use sha2::{Digest, Sha256};
+    use std::collections::HashMap;
+
+    let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Call {
+        callee: Box::new(incan_vocab::IncanExpr::Helper("filter".to_string())),
+        args: vec![incan_vocab::IncanExpr::Int(1)],
+    });
+    let output_payload = match serde_json::to_string(&response) {
+        Ok(payload) => payload,
+        Err(err) => panic!("failed to serialize desugar response: {err}"),
+    };
+    let wat_bytes_string = |bytes: &[u8]| {
+        let mut escaped = String::new();
+        for byte in bytes {
+            escaped.push('\\');
+            escaped.push_str(&format!("{byte:02x}"));
+        }
+        escaped
+    };
+    let wat_i32_cell = |value: i32| wat_bytes_string(&value.to_le_bytes());
+
+    let output_ptr_cell = 0usize;
+    let output_len_cell = 4usize;
+    let error_ptr_cell = 8usize;
+    let error_len_cell = 12usize;
+    let input_ptr_cell = 16usize;
+    let input_capacity_cell = 20usize;
+    let input_len_cell = 24usize;
+    let output_offset = 128usize;
+    let error_offset = 256usize;
+    let input_offset = 384usize;
+    let input_capacity = 4096usize;
+    let wat_source = format!(
+        r#"(module
+  (memory (export "memory") 1)
+  (global (export "__incan_input_ptr") i32 (i32.const {input_ptr_cell}))
+  (global (export "__incan_input_capacity") i32 (i32.const {input_capacity_cell}))
+  (global (export "__incan_input_len") i32 (i32.const {input_len_cell}))
+  (global (export "__incan_output_ptr") i32 (i32.const {output_ptr_cell}))
+  (global (export "__incan_output_len") i32 (i32.const {output_len_cell}))
+  (global (export "__incan_error_ptr") i32 (i32.const {error_ptr_cell}))
+  (global (export "__incan_error_len") i32 (i32.const {error_len_cell}))
+  (data (i32.const {output_ptr_cell}) "{output_ptr_data}")
+  (data (i32.const {output_len_cell}) "{output_len_data}")
+  (data (i32.const {error_ptr_cell}) "{error_ptr_data}")
+  (data (i32.const {error_len_cell}) "{error_len_data}")
+  (data (i32.const {input_ptr_cell}) "{input_ptr_data}")
+  (data (i32.const {input_capacity_cell}) "{input_capacity_data}")
+  (data (i32.const {input_len_cell}) "{input_len_data}")
+  (data (i32.const {output_offset}) "{out_data}")
+  (func (export "__incan_init_desugarer"))
+  (func (export "desugar_block") (result i32)
+    (i32.const 0)
+  )
+)"#,
+        input_ptr_cell = input_ptr_cell,
+        input_capacity_cell = input_capacity_cell,
+        input_len_cell = input_len_cell,
+        output_ptr_cell = output_ptr_cell,
+        output_len_cell = output_len_cell,
+        error_ptr_cell = error_ptr_cell,
+        error_len_cell = error_len_cell,
+        output_ptr_data = wat_i32_cell(output_offset as i32),
+        output_len_data = wat_i32_cell(output_payload.len() as i32),
+        error_ptr_data = wat_i32_cell(error_offset as i32),
+        error_len_data = wat_i32_cell(0),
+        input_ptr_data = wat_i32_cell(input_offset as i32),
+        input_capacity_data = wat_i32_cell(input_capacity as i32),
+        input_len_data = wat_i32_cell(0),
+        output_offset = output_offset,
+        out_data = wat_bytes_string(output_payload.as_bytes()),
+    );
+    let wasm_bytes = match wat::parse_str(wat_source) {
+        Ok(bytes) => bytes,
+        Err(err) => panic!("failed to compile wat: {err}"),
+    };
+
+    let mut artifact_root = std::env::temp_dir();
+    artifact_root.push("incan_test_vocab_helper_artifacts");
+    artifact_root.push("target");
+    artifact_root.push("lib");
+    let desugarer_dir = artifact_root.join("desugarers");
+    if let Err(err) = std::fs::create_dir_all(&desugarer_dir) {
+        panic!("failed to create desugarer artifact dir: {err}");
+    }
+    let desugarer_path = desugarer_dir.join("query_desugarer.wasm");
+    if let Err(err) = std::fs::write(&desugarer_path, &wasm_bytes) {
+        panic!("failed to write desugarer artifact: {err}");
+    }
+    if let Err(err) = std::fs::create_dir_all(artifact_root.join("src")) {
+        panic!("failed to create crate src dir: {err}");
+    }
+    if let Err(err) = std::fs::write(
+        artifact_root.join("Cargo.toml"),
+        "[package]\nname = \"query_core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    ) {
+        panic!("failed to write Cargo.toml: {err}");
+    }
+    if let Err(err) = std::fs::write(
+        artifact_root.join("src/lib.rs"),
+        "pub fn filter(value: i64) -> i64 { value }\n",
+    ) {
+        panic!("failed to write lib.rs: {err}");
+    }
+
+    let mut manifest = LibraryManifest::new("query_core", "0.1.0");
+    manifest.exports.functions.push(FunctionExport {
+        name: "filter".to_string(),
+        type_params: Vec::new(),
+        params: vec![ParamExport {
+            name: "value".to_string(),
+            ty: TypeRef::Named {
+                name: "int".to_string(),
+            },
+        }],
+        return_type: TypeRef::Named {
+            name: "int".to_string(),
+        },
+        is_async: false,
+    });
+    manifest.vocab = Some(VocabExports {
+        crate_path: "vocab_companion".to_string(),
+        package_name: "vocab_companion".to_string(),
+        keyword_registrations: vec![incan_vocab::KeywordRegistration {
+            activation: incan_vocab::KeywordActivation::OnImport {
+                namespace: "query.dsl".to_string(),
+            },
+            keywords: vec![incan_vocab::KeywordSpec {
+                name: "where".to_string(),
+                surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                compound_tokens: Vec::new(),
+                placement: incan_vocab::KeywordPlacement::TopLevel,
+            }],
+            valid_decorators: Vec::new(),
+        }],
+        dsl_surfaces: Vec::new(),
+        provider_manifest: incan_vocab::LibraryManifest {
+            helper_bindings: vec![incan_vocab::HelperBinding {
+                key: "filter".to_string(),
+                exported_name: "filter".to_string(),
+            }],
+            ..incan_vocab::LibraryManifest::default()
+        },
+        desugarer_artifact: Some(VocabDesugarerArtifact {
+            artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
+            abi_version: incan_vocab::WASM_DESUGAR_ABI_VERSION,
+            relative_path: "desugarers/query_desugarer.wasm".to_string(),
+            target: "wasm32-wasip1".to_string(),
+            profile: "release".to_string(),
+            entrypoint: "desugar_block".to_string(),
+            sha256: hex::encode(Sha256::digest(&wasm_bytes)),
+        }),
+    });
+
+    let index = LibraryManifestIndex::from_entries(HashMap::from([(
+        "query".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root("query", "query_core", artifact_root),
+        },
+    )]));
+    let imported_vocab = index.library_imported_vocab();
+
+    let tokens = match lexer::lex(source) {
+        Ok(tokens) => tokens,
+        Err(errs) => panic!("lexer failed: {errs:?}"),
+    };
+    let mut ast = match parser::parse_with_context(
+        &tokens,
+        Some("tests/codegen_snapshots/vocab_helper_backed_desugaring.incn"),
+        Some(&imported_vocab),
+    ) {
+        Ok(ast) => ast,
+        Err(errs) => panic!("parser failed: {errs:?}"),
+    };
+    if let Err(errs) = desugar_program_vocab_blocks(
+        &mut ast,
+        Some("tests/codegen_snapshots/vocab_helper_backed_desugaring.incn"),
+        &index,
+    ) {
+        panic!("desugar pass failed: {errs:?}");
+    }
+
+    let mut codegen = IrCodegen::new();
+    codegen.set_library_manifest_index(index);
+    let code = match codegen.try_generate(&ast) {
+        Ok(code) => code,
+        Err(err) => panic!("codegen failed: {err}"),
+    };
+    normalize_codegen_output(&code)
+}
+
 /// Normalize generated output so snapshots don't churn on version bumps.
 fn normalize_codegen_output(code: &str) -> String {
     let from = format!(
@@ -315,6 +516,13 @@ fn test_vocab_block_desugaring_codegen() {
     let source = load_test_file("vocab_block_desugaring");
     let rust_code = generate_rust_with_vocab_wasm_desugaring(&source);
     insta::assert_snapshot!("vocab_block_desugaring", rust_code);
+}
+
+#[test]
+fn test_vocab_helper_backed_desugaring_codegen() {
+    let source = "import pub::query\n\ndef main() -> None:\n  where true:\n    pass\n";
+    let rust_code = generate_rust_with_helper_backed_vocab_wasm_desugaring(source);
+    insta::assert_snapshot!("vocab_helper_backed_desugaring", rust_code);
 }
 
 #[test]

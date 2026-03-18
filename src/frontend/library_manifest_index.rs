@@ -198,7 +198,7 @@ impl LibraryManifestIndex {
                     }
                 }
             }
-            ids.sort_by_key(|id| *id as u16);
+            ids.sort_by_key(|id| *id as usize);
             ids.dedup();
             if !ids.is_empty() {
                 map.insert(key, ids);
@@ -948,7 +948,7 @@ widgets = { path = "deps/widgets-lib" }
                 target: "wasm32-wasip1".to_string(),
                 profile: "release".to_string(),
                 entrypoint: "desugar_block".to_string(),
-                sha256: "deadbeef".to_string(),
+                sha256: "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
             }),
         });
         manifest.write_to_path(&dep_artifact_root.join("routes_core.incnlib"))?;
