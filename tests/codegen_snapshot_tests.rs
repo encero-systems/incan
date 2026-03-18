@@ -109,36 +109,66 @@ fn generate_rust_with_vocab_wasm_desugaring(source: &str) -> String {
         Ok(payload) => payload,
         Err(err) => panic!("failed to serialize desugar response: {err}"),
     };
-    let mut output_bytes = String::new();
-    for byte in output_payload.as_bytes() {
-        output_bytes.push('\\');
-        output_bytes.push_str(&format!("{byte:02x}"));
-    }
-    let output_offset = 0usize;
-    let error_offset = 128usize;
-    let input_offset = 256usize;
+    let wat_bytes_string = |bytes: &[u8]| {
+        let mut escaped = String::new();
+        for byte in bytes {
+            escaped.push('\\');
+            escaped.push_str(&format!("{byte:02x}"));
+        }
+        escaped
+    };
+    let wat_i32_cell = |value: i32| wat_bytes_string(&value.to_le_bytes());
+
+    let output_ptr_cell = 0usize;
+    let output_len_cell = 4usize;
+    let error_ptr_cell = 8usize;
+    let error_len_cell = 12usize;
+    let input_ptr_cell = 16usize;
+    let input_capacity_cell = 20usize;
+    let input_len_cell = 24usize;
+    let output_offset = 128usize;
+    let error_offset = 256usize;
+    let input_offset = 384usize;
     let input_capacity = 4096usize;
     let wat_source = format!(
         r#"(module
   (memory (export "memory") 1)
-  (global (export "__incan_input_ptr") i32 (i32.const {input_offset}))
-  (global (export "__incan_input_capacity") i32 (i32.const {input_capacity}))
-  (global (export "__incan_input_len") (mut i32) (i32.const 0))
-  (global (export "__incan_output_ptr") i32 (i32.const {output_offset}))
-  (global (export "__incan_output_len") i32 (i32.const {out_len}))
-  (global (export "__incan_error_ptr") i32 (i32.const {error_offset}))
-  (global (export "__incan_error_len") i32 (i32.const 0))
+  (global (export "__incan_input_ptr") i32 (i32.const {input_ptr_cell}))
+  (global (export "__incan_input_capacity") i32 (i32.const {input_capacity_cell}))
+  (global (export "__incan_input_len") i32 (i32.const {input_len_cell}))
+  (global (export "__incan_output_ptr") i32 (i32.const {output_ptr_cell}))
+  (global (export "__incan_output_len") i32 (i32.const {output_len_cell}))
+  (global (export "__incan_error_ptr") i32 (i32.const {error_ptr_cell}))
+  (global (export "__incan_error_len") i32 (i32.const {error_len_cell}))
+  (data (i32.const {output_ptr_cell}) "{output_ptr_data}")
+  (data (i32.const {output_len_cell}) "{output_len_data}")
+  (data (i32.const {error_ptr_cell}) "{error_ptr_data}")
+  (data (i32.const {error_len_cell}) "{error_len_data}")
+  (data (i32.const {input_ptr_cell}) "{input_ptr_data}")
+  (data (i32.const {input_capacity_cell}) "{input_capacity_data}")
+  (data (i32.const {input_len_cell}) "{input_len_data}")
   (data (i32.const {output_offset}) "{out_data}")
+  (func (export "__incan_init_desugarer"))
   (func (export "desugar_block") (result i32)
     (i32.const 0)
   )
 )"#,
-        input_capacity = input_capacity,
-        input_offset = input_offset,
-        out_len = output_payload.len(),
+        input_ptr_cell = input_ptr_cell,
+        input_capacity_cell = input_capacity_cell,
+        input_len_cell = input_len_cell,
+        output_ptr_cell = output_ptr_cell,
+        output_len_cell = output_len_cell,
+        error_ptr_cell = error_ptr_cell,
+        error_len_cell = error_len_cell,
+        output_ptr_data = wat_i32_cell(output_offset as i32),
+        output_len_data = wat_i32_cell(output_payload.len() as i32),
+        error_ptr_data = wat_i32_cell(error_offset as i32),
+        error_len_data = wat_i32_cell(0),
+        input_ptr_data = wat_i32_cell(input_offset as i32),
+        input_capacity_data = wat_i32_cell(input_capacity as i32),
+        input_len_data = wat_i32_cell(0),
         output_offset = output_offset,
-        error_offset = error_offset,
-        out_data = output_bytes,
+        out_data = wat_bytes_string(output_payload.as_bytes()),
     );
     let wasm_bytes = match wat::parse_str(wat_source) {
         Ok(bytes) => bytes,

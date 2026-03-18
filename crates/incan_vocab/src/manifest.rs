@@ -25,12 +25,29 @@ pub struct LibraryManifest {
     /// Modules exposed by the library's vocab companion metadata.
     #[cfg_attr(feature = "serde", serde(default))]
     pub modules: Vec<ModuleExport>,
+    /// Named helper bindings that desugarers may reference symbolically.
+    ///
+    /// Each binding maps a stable helper key such as `filter` to a public library export that the
+    /// compiler can import under a hidden alias before lowering desugared code back into the host
+    /// AST.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub helper_bindings: Vec<HelperBinding>,
     /// Additional Cargo dependencies required by the library's generated surface.
     #[cfg_attr(feature = "serde", serde(default))]
     pub required_dependencies: Vec<CargoDependency>,
     /// Stdlib feature flags required by the library's generated surface.
     #[cfg_attr(feature = "serde", serde(default))]
     pub required_stdlib_features: Vec<String>,
+}
+
+/// Stable symbolic binding for a helper function used by desugarers.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct HelperBinding {
+    /// Desugarer-facing helper key, for example `filter`.
+    pub key: String,
+    /// Public library export name that should be imported when the helper is used.
+    pub exported_name: String,
 }
 
 /// Metadata for one library module.

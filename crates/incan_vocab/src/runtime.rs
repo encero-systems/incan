@@ -10,8 +10,8 @@ pub const WASM_DESUGAR_BUFFER_CAPACITY: usize = 64 * 1024;
 ///
 /// The provided type must implement `VocabDesugarer + Default`. The macro emits:
 /// - `desugar_block() -> i32` entrypoint
-/// - `__incan_*` input/output/error globals
-/// - `__incan_init_desugarer()` initializer that wires buffer pointers
+/// - `__incan_*` globals whose values are addresses of 4-byte runtime cells
+/// - `__incan_init_desugarer()` initializer that fills those cells with buffer pointers/lengths
 ///
 /// This is the canonical export surface consumed by `incan build --lib` and the compiler desugar pass.
 #[macro_export]

@@ -1408,7 +1408,7 @@ def database() -> Database:
 
 mod rfc031_pub_import_integration_tests {
     use super::*;
-    use incan::library_manifest::{LibraryManifest, ModelExport};
+    use incan::library_manifest::{FunctionExport, LibraryManifest, ModelExport, ParamExport, TypeRef};
     use sha2::{Digest, Sha256};
 
     fn incan_bin_path() -> std::path::PathBuf {
@@ -1479,6 +1479,22 @@ mod rfc031_pub_import_integration_tests {
         Ok(())
     }
 
+    fn write_library_crate_with_source(
+        artifact_root: &Path,
+        package_name: &str,
+        lib_source: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        std::fs::create_dir_all(artifact_root.join("src"))?;
+        std::fs::write(
+            artifact_root.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n"
+            ),
+        )?;
+        std::fs::write(artifact_root.join("src/lib.rs"), lib_source)?;
+        Ok(())
+    }
+
     fn write_vocab_companion_crate(
         project_root: &Path,
         relative_path: &str,
@@ -1527,13 +1543,21 @@ mod rfc031_pub_import_integration_tests {
         Ok(())
     }
 
-    fn wat_data_string(text: &str) -> String {
+    fn wat_bytes_string(bytes: &[u8]) -> String {
         let mut escaped = String::new();
-        for byte in text.as_bytes() {
+        for byte in bytes {
             escaped.push('\\');
             escaped.push_str(&format!("{byte:02x}"));
         }
         escaped
+    }
+
+    fn wat_data_string(text: &str) -> String {
+        wat_bytes_string(text.as_bytes())
+    }
+
+    fn wat_i32_cell(value: i32) -> String {
+        wat_bytes_string(&value.to_le_bytes())
     }
 
     fn compile_desugarer_wasm(
@@ -1541,7 +1565,14 @@ mod rfc031_pub_import_integration_tests {
         output_payload: &str,
         error_payload: &str,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let output_offset = 0usize;
+        let output_ptr_cell = 0usize;
+        let output_len_cell = 4usize;
+        let error_ptr_cell = 8usize;
+        let error_len_cell = 12usize;
+        let input_ptr_cell = 16usize;
+        let input_capacity_cell = 20usize;
+        let input_len_cell = 24usize;
+        let output_offset = 128usize;
         let output_len = output_payload.len();
         let error_offset = output_offset + output_len + 32;
         let input_offset = error_offset + error_payload.len() + 32;
@@ -1549,21 +1580,41 @@ mod rfc031_pub_import_integration_tests {
         let wat_source = format!(
             r#"(module
   (memory (export "memory") 1)
-  (global $input_ptr (export "__incan_input_ptr") i32 (i32.const {input_offset}))
-  (global (export "__incan_input_capacity") i32 (i32.const {input_capacity}))
-  (global $input_len (export "__incan_input_len") (mut i32) (i32.const 0))
-  (global (export "__incan_output_ptr") i32 (i32.const {output_offset}))
-  (global (export "__incan_output_len") i32 (i32.const {output_len}))
-  (global (export "__incan_error_ptr") i32 (i32.const {error_offset}))
-  (global (export "__incan_error_len") i32 (i32.const {error_len}))
+  (global $input_ptr_cell (export "__incan_input_ptr") i32 (i32.const {input_ptr_cell}))
+  (global (export "__incan_input_capacity") i32 (i32.const {input_capacity_cell}))
+  (global $input_len_cell (export "__incan_input_len") i32 (i32.const {input_len_cell}))
+  (global (export "__incan_output_ptr") i32 (i32.const {output_ptr_cell}))
+  (global (export "__incan_output_len") i32 (i32.const {output_len_cell}))
+  (global (export "__incan_error_ptr") i32 (i32.const {error_ptr_cell}))
+  (global (export "__incan_error_len") i32 (i32.const {error_len_cell}))
+  (data (i32.const {output_ptr_cell}) "{output_ptr_data}")
+  (data (i32.const {output_len_cell}) "{output_len_data}")
+  (data (i32.const {error_ptr_cell}) "{error_ptr_data}")
+  (data (i32.const {error_len_cell}) "{error_len_data}")
+  (data (i32.const {input_ptr_cell}) "{input_ptr_data}")
+  (data (i32.const {input_capacity_cell}) "{input_capacity_data}")
+  (data (i32.const {input_len_cell}) "{input_len_data}")
   (data (i32.const {output_offset}) "{output_data}")
   (data (i32.const {error_offset}) "{error_data}")
+  (func (export "__incan_init_desugarer"))
   (func (export "desugar_block") (result i32)
     (i32.const {status_code})
   )
 )"#,
-            error_len = error_payload.len(),
-            input_capacity = input_capacity,
+            output_ptr_cell = output_ptr_cell,
+            output_len_cell = output_len_cell,
+            error_ptr_cell = error_ptr_cell,
+            error_len_cell = error_len_cell,
+            input_ptr_cell = input_ptr_cell,
+            input_capacity_cell = input_capacity_cell,
+            input_len_cell = input_len_cell,
+            output_ptr_data = wat_i32_cell(output_offset as i32),
+            output_len_data = wat_i32_cell(output_payload.len() as i32),
+            error_ptr_data = wat_i32_cell(error_offset as i32),
+            error_len_data = wat_i32_cell(error_payload.len() as i32),
+            input_ptr_data = wat_i32_cell(input_offset as i32),
+            input_capacity_data = wat_i32_cell(input_capacity as i32),
+            input_len_data = wat_i32_cell(0),
             output_data = wat_data_string(output_payload),
             error_data = wat_data_string(error_payload),
         );
@@ -1574,7 +1625,14 @@ mod rfc031_pub_import_integration_tests {
         output_payload: &str,
         error_payload: &str,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let output_offset = 0usize;
+        let output_ptr_cell = 0usize;
+        let output_len_cell = 4usize;
+        let error_ptr_cell = 8usize;
+        let error_len_cell = 12usize;
+        let input_ptr_cell = 16usize;
+        let input_capacity_cell = 20usize;
+        let input_len_cell = 24usize;
+        let output_offset = 128usize;
         let output_len = output_payload.len();
         let error_offset = output_offset + output_len + 32;
         let input_offset = error_offset + error_payload.len() + 32;
@@ -1582,22 +1640,32 @@ mod rfc031_pub_import_integration_tests {
         let wat_source = format!(
             r#"(module
   (memory (export "memory") 1)
-  (global $input_ptr (export "__incan_input_ptr") i32 (i32.const {input_offset}))
-  (global (export "__incan_input_capacity") i32 (i32.const {input_capacity}))
-  (global $input_len (export "__incan_input_len") (mut i32) (i32.const 0))
-  (global (export "__incan_output_ptr") i32 (i32.const {output_offset}))
-  (global (export "__incan_output_len") i32 (i32.const {output_len}))
-  (global (export "__incan_error_ptr") i32 (i32.const {error_offset}))
-  (global (export "__incan_error_len") i32 (i32.const {error_len}))
+  (global $input_ptr_cell (export "__incan_input_ptr") i32 (i32.const {input_ptr_cell}))
+  (global (export "__incan_input_capacity") i32 (i32.const {input_capacity_cell}))
+  (global $input_len_cell (export "__incan_input_len") i32 (i32.const {input_len_cell}))
+  (global (export "__incan_output_ptr") i32 (i32.const {output_ptr_cell}))
+  (global (export "__incan_output_len") i32 (i32.const {output_len_cell}))
+  (global (export "__incan_error_ptr") i32 (i32.const {error_ptr_cell}))
+  (global (export "__incan_error_len") i32 (i32.const {error_len_cell}))
+  (data (i32.const {output_ptr_cell}) "{output_ptr_data}")
+  (data (i32.const {output_len_cell}) "{output_len_data}")
+  (data (i32.const {error_ptr_cell}) "{error_ptr_data}")
+  (data (i32.const {error_len_cell}) "{error_len_data}")
+  (data (i32.const {input_ptr_cell}) "{input_ptr_data}")
+  (data (i32.const {input_capacity_cell}) "{input_capacity_data}")
+  (data (i32.const {input_len_cell}) "{input_len_data}")
   (data (i32.const {output_offset}) "{output_data}")
   (data (i32.const {error_offset}) "{error_data}")
+  (func (export "__incan_init_desugarer"))
   (func (export "desugar_block") (result i32)
-    global.get $input_len
+    global.get $input_len_cell
+    i32.load
     i32.eqz
     if (result i32)
       (i32.const 1)
     else
-      global.get $input_ptr
+      global.get $input_ptr_cell
+      i32.load
       i32.load8_u
       i32.const 123
       i32.eq
@@ -1609,8 +1677,20 @@ mod rfc031_pub_import_integration_tests {
     end
   )
 )"#,
-            error_len = error_payload.len(),
-            input_capacity = input_capacity,
+            output_ptr_cell = output_ptr_cell,
+            output_len_cell = output_len_cell,
+            error_ptr_cell = error_ptr_cell,
+            error_len_cell = error_len_cell,
+            input_ptr_cell = input_ptr_cell,
+            input_capacity_cell = input_capacity_cell,
+            input_len_cell = input_len_cell,
+            output_ptr_data = wat_i32_cell(output_offset as i32),
+            output_len_data = wat_i32_cell(output_payload.len() as i32),
+            error_ptr_data = wat_i32_cell(error_offset as i32),
+            error_len_data = wat_i32_cell(error_payload.len() as i32),
+            input_ptr_data = wat_i32_cell(input_offset as i32),
+            input_capacity_data = wat_i32_cell(input_capacity as i32),
+            input_len_data = wat_i32_cell(0),
             output_data = wat_data_string(output_payload),
             error_data = wat_data_string(error_payload),
         );
@@ -1652,6 +1732,75 @@ mod rfc031_pub_import_integration_tests {
                 artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
                 abi_version: incan_vocab::WASM_DESUGAR_ABI_VERSION,
                 relative_path: "desugarers/routes_desugarer.wasm".to_string(),
+                target: "wasm32-wasip1".to_string(),
+                profile: "release".to_string(),
+                entrypoint: "desugar_block".to_string(),
+                sha256: hex::encode(Sha256::digest(desugarer_bytes)),
+            }),
+        });
+        manifest.write_to_path(&artifact_root.join(format!("{manifest_name}.incnlib")))?;
+        Ok(())
+    }
+
+    fn write_pub_library_with_vocab_desugarer_and_filter_helper(
+        root: &Path,
+        dependency_key: &str,
+        manifest_name: &str,
+        desugarer_bytes: &[u8],
+        keyword: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let artifact_root = root.join("deps").join(dependency_key).join("target").join("lib");
+        std::fs::create_dir_all(artifact_root.join("desugarers"))?;
+        write_library_crate_with_source(
+            &artifact_root,
+            manifest_name,
+            "pub fn filter(value: i64) -> i64 {\n    value\n}\n",
+        )?;
+        let desugarer_path = artifact_root.join("desugarers").join("inql_desugarer.wasm");
+        std::fs::write(&desugarer_path, desugarer_bytes)?;
+
+        let mut manifest = LibraryManifest::new(manifest_name, "0.1.0");
+        manifest.exports.functions.push(FunctionExport {
+            name: "filter".to_string(),
+            type_params: Vec::new(),
+            params: vec![ParamExport {
+                name: "value".to_string(),
+                ty: TypeRef::Named {
+                    name: "int".to_string(),
+                },
+            }],
+            return_type: TypeRef::Named {
+                name: "int".to_string(),
+            },
+            is_async: false,
+        });
+        manifest.vocab = Some(incan::library_manifest::VocabExports {
+            crate_path: "vocab_companion".to_string(),
+            package_name: "vocab_companion".to_string(),
+            keyword_registrations: vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: format!("{dependency_key}.dsl"),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: keyword.to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+            dsl_surfaces: Vec::new(),
+            provider_manifest: incan_vocab::LibraryManifest {
+                helper_bindings: vec![incan_vocab::HelperBinding {
+                    key: "filter".to_string(),
+                    exported_name: "filter".to_string(),
+                }],
+                ..incan_vocab::LibraryManifest::default()
+            },
+            desugarer_artifact: Some(incan::library_manifest::VocabDesugarerArtifact {
+                artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
+                abi_version: incan_vocab::WASM_DESUGAR_ABI_VERSION,
+                relative_path: "desugarers/inql_desugarer.wasm".to_string(),
                 target: "wasm32-wasip1".to_string(),
                 profile: "release".to_string(),
                 entrypoint: "desugar_block".to_string(),
@@ -2202,6 +2351,52 @@ mod rfc031_pub_import_integration_tests {
         assert!(
             stderr.contains("boom from wasm desugarer"),
             "expected wasm runtime error message, got:\n{stderr}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_build_injects_helper_import_for_vocab_desugarer_calls() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Call {
+            callee: Box::new(incan_vocab::IncanExpr::Helper("filter".to_string())),
+            args: vec![incan_vocab::IncanExpr::Int(1)],
+        });
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm(0, &output_payload, "")?;
+        write_pub_library_with_vocab_desugarer_and_filter_helper(tmp.path(), "inql", "inql_core", &wasm, "where")?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\ninql = { path = \"deps/inql\" }\n",
+            "import pub::inql\n\ndef main() -> None:\n  where true:\n    pass\n",
+        )?;
+
+        let check_output = run_check(&main_path)?;
+        assert!(
+            check_output.status.success(),
+            "expected check to succeed when desugared output uses a provider helper binding.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&check_output.stdout),
+            String::from_utf8_lossy(&check_output.stderr)
+        );
+
+        let out_dir = tmp.path().join("out");
+        let build_output = run_build(&main_path, &out_dir)?;
+        assert!(
+            build_output.status.success(),
+            "expected build to succeed when desugared output uses a provider helper binding.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
+
+        let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        assert!(
+            generated_main_rs.contains("__incan_vocab_helper_inql_filter"),
+            "expected hidden helper alias in generated Rust, got:\n{generated_main_rs}"
+        );
+        assert!(
+            generated_main_rs.contains("inql::filter"),
+            "expected generated Rust to import the provider helper from the dependency crate, got:\n{generated_main_rs}"
         );
         Ok(())
     }

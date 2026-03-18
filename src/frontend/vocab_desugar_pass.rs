@@ -5,12 +5,12 @@
 //! - sandboxed WASM desugarer loading/execution for dependency-provided artifacts
 //! - deterministic diagnostics for bridge/runtime/deserialization failures
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
-use wasmtime::{Config, Engine, ExternType, Instance, Linker, Module, Mutability, Store, Val, ValType};
+use wasmtime::{Config, Engine, ExternType, Instance, Linker, Module, Store, Val, ValType};
 use wasmtime_wasi::p2::WasiCtxBuilder;
 use wasmtime_wasi::preview1::WasiP1Ctx;
 
@@ -28,7 +28,7 @@ const ERROR_LEN_GLOBAL: &str = "__incan_error_len";
 const INPUT_PTR_GLOBAL: &str = "__incan_input_ptr";
 const INPUT_CAPACITY_GLOBAL: &str = "__incan_input_capacity";
 const INPUT_LEN_GLOBAL: &str = "__incan_input_len";
-/// Optional WASM export used to initialize macro-managed buffer globals before `desugar_block()` runs.
+/// Required WASM export used to initialize buffer cells before `desugar_block()` runs.
 const INIT_ENTRYPOINT: &str = "__incan_init_desugarer";
 const DEFAULT_WASM_FUEL: u64 = 250_000;
 
@@ -55,6 +55,14 @@ pub enum VocabDesugarPassError {
         /// Parsed keyword that needed a desugarer.
         keyword: String,
         /// Human-readable resolution detail.
+        message: String,
+    },
+    /// Desugared output referenced a helper that the provider manifest did not bind.
+    #[error("helper binding resolution failed for keyword `{keyword}`: {message}")]
+    HelperBinding {
+        /// Parsed keyword whose desugared output requested the helper.
+        keyword: String,
+        /// Human-readable helper-resolution detail.
         message: String,
     },
     /// Artifact file could not be read from disk.
@@ -101,8 +109,8 @@ pub enum VocabDesugarPassError {
         /// Expected export symbol name.
         entrypoint: String,
     },
-    /// Entrypoint export shape did not match `() -> i32`.
-    #[error("invalid entrypoint signature for `{entrypoint}` in `{path}` (expected `() -> i32`)")]
+    /// Exported runtime function shape did not match the required contract.
+    #[error("invalid runtime function signature for `{entrypoint}` in `{path}`")]
     InvalidEntrypointSignature {
         /// Absolute path to the artifact file.
         path: PathBuf,
@@ -206,6 +214,53 @@ struct ResolvedWasmArtifact {
     abi_version: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct HelperImportSpec {
+    dependency_key: String,
+    exported_name: String,
+    alias: String,
+}
+
+#[derive(Debug, Default)]
+struct HelperImportAccumulator {
+    imports: BTreeMap<(String, String), HelperImportSpec>,
+}
+
+impl HelperImportAccumulator {
+    fn register(&mut self, dependency_key: &str, exported_name: &str) -> String {
+        let key = (dependency_key.to_string(), exported_name.to_string());
+        let alias = helper_import_alias(dependency_key, exported_name);
+        let spec = HelperImportSpec {
+            dependency_key: dependency_key.to_string(),
+            exported_name: exported_name.to_string(),
+            alias: alias.clone(),
+        };
+        self.imports.entry(key).or_insert(spec);
+        alias
+    }
+
+    fn import_declarations(&self) -> Vec<ast::Spanned<ast::Declaration>> {
+        let mut declarations = Vec::new();
+        for spec in self.imports.values() {
+            declarations.push(ast::Spanned::new(
+                ast::Declaration::Import(ast::ImportDecl {
+                    visibility: ast::Visibility::Private,
+                    kind: ast::ImportKind::PubFrom {
+                        library: spec.dependency_key.clone(),
+                        items: vec![ast::ImportItem {
+                            name: spec.exported_name.clone(),
+                            alias: Some(spec.alias.clone()),
+                        }],
+                    },
+                    alias: None,
+                }),
+                ast::Span::default(),
+            ));
+        }
+        declarations
+    }
+}
+
 /// Stateful runtime for loading and executing dependency-provided WASM desugarers.
 pub struct WasmDesugarerRuntime {
     engine: Engine,
@@ -286,6 +341,7 @@ pub fn desugar_program_vocab_blocks(
         }
     };
     let mut errors = Vec::new();
+    let mut helper_imports = HelperImportAccumulator::default();
 
     for declaration in &mut program.declarations {
         match &mut declaration.node {
@@ -294,33 +350,62 @@ pub fn desugar_program_vocab_blocks(
                 module_path,
                 library_manifest_index,
                 &mut runtime,
+                &mut helper_imports,
                 &mut errors,
             ),
             ast::Declaration::Model(model) => {
                 for method in &mut model.methods {
                     if let Some(body) = method.node.body.as_mut() {
-                        rewrite_statement_list(body, module_path, library_manifest_index, &mut runtime, &mut errors);
+                        rewrite_statement_list(
+                            body,
+                            module_path,
+                            library_manifest_index,
+                            &mut runtime,
+                            &mut helper_imports,
+                            &mut errors,
+                        );
                     }
                 }
             }
             ast::Declaration::Class(class) => {
                 for method in &mut class.methods {
                     if let Some(body) = method.node.body.as_mut() {
-                        rewrite_statement_list(body, module_path, library_manifest_index, &mut runtime, &mut errors);
+                        rewrite_statement_list(
+                            body,
+                            module_path,
+                            library_manifest_index,
+                            &mut runtime,
+                            &mut helper_imports,
+                            &mut errors,
+                        );
                     }
                 }
             }
             ast::Declaration::Trait(trait_decl) => {
                 for method in &mut trait_decl.methods {
                     if let Some(body) = method.node.body.as_mut() {
-                        rewrite_statement_list(body, module_path, library_manifest_index, &mut runtime, &mut errors);
+                        rewrite_statement_list(
+                            body,
+                            module_path,
+                            library_manifest_index,
+                            &mut runtime,
+                            &mut helper_imports,
+                            &mut errors,
+                        );
                     }
                 }
             }
             ast::Declaration::Newtype(newtype_decl) => {
                 for method in &mut newtype_decl.methods {
                     if let Some(body) = method.node.body.as_mut() {
-                        rewrite_statement_list(body, module_path, library_manifest_index, &mut runtime, &mut errors);
+                        rewrite_statement_list(
+                            body,
+                            module_path,
+                            library_manifest_index,
+                            &mut runtime,
+                            &mut helper_imports,
+                            &mut errors,
+                        );
                     }
                 }
             }
@@ -328,7 +413,12 @@ pub fn desugar_program_vocab_blocks(
         }
     }
 
-    if errors.is_empty() { Ok(()) } else { Err(errors) }
+    if errors.is_empty() {
+        inject_helper_imports(program, &helper_imports);
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }
 
 fn rewrite_statement_list(
@@ -336,6 +426,7 @@ fn rewrite_statement_list(
     module_path: Option<&str>,
     library_manifest_index: &LibraryManifestIndex,
     runtime: &mut WasmDesugarerRuntime,
+    helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
     let mut rewritten = Vec::new();
@@ -384,6 +475,23 @@ fn rewrite_statement_list(
                         continue;
                     }
                 };
+                let mut public_statements = public_statements;
+                if let Err(message) = resolve_helper_bindings_in_statements(
+                    &mut public_statements,
+                    bridged.keyword_metadata.as_ref(),
+                    &bridged.keyword,
+                    library_manifest_index,
+                    helper_imports,
+                ) {
+                    errors.push(error_from_pass_error(
+                        VocabDesugarPassError::HelperBinding {
+                            keyword: bridged.keyword.clone(),
+                            message,
+                        },
+                        span,
+                    ));
+                    continue;
+                }
 
                 let mut lowered = match public_statements_to_internal(&public_statements) {
                     Ok(stmts) => stmts,
@@ -401,7 +509,14 @@ fn rewrite_statement_list(
                 for lowered_statement in &mut lowered {
                     lowered_statement.span = span;
                 }
-                rewrite_statement_list(&mut lowered, module_path, library_manifest_index, runtime, errors);
+                rewrite_statement_list(
+                    &mut lowered,
+                    module_path,
+                    library_manifest_index,
+                    runtime,
+                    helper_imports,
+                    errors,
+                );
                 rewritten.extend(lowered);
             }
             ast::Statement::If(mut if_stmt) => {
@@ -410,13 +525,28 @@ fn rewrite_statement_list(
                     module_path,
                     library_manifest_index,
                     runtime,
+                    helper_imports,
                     errors,
                 );
                 for (_, elif_body) in &mut if_stmt.elif_branches {
-                    rewrite_statement_list(elif_body, module_path, library_manifest_index, runtime, errors);
+                    rewrite_statement_list(
+                        elif_body,
+                        module_path,
+                        library_manifest_index,
+                        runtime,
+                        helper_imports,
+                        errors,
+                    );
                 }
                 if let Some(else_body) = if_stmt.else_body.as_mut() {
-                    rewrite_statement_list(else_body, module_path, library_manifest_index, runtime, errors);
+                    rewrite_statement_list(
+                        else_body,
+                        module_path,
+                        library_manifest_index,
+                        runtime,
+                        helper_imports,
+                        errors,
+                    );
                 }
                 rewritten.push(ast::Spanned::new(ast::Statement::If(if_stmt), span));
             }
@@ -426,12 +556,20 @@ fn rewrite_statement_list(
                     module_path,
                     library_manifest_index,
                     runtime,
+                    helper_imports,
                     errors,
                 );
                 rewritten.push(ast::Spanned::new(ast::Statement::While(while_stmt), span));
             }
             ast::Statement::For(mut for_stmt) => {
-                rewrite_statement_list(&mut for_stmt.body, module_path, library_manifest_index, runtime, errors);
+                rewrite_statement_list(
+                    &mut for_stmt.body,
+                    module_path,
+                    library_manifest_index,
+                    runtime,
+                    helper_imports,
+                    errors,
+                );
                 rewritten.push(ast::Spanned::new(ast::Statement::For(for_stmt), span));
             }
             other => rewritten.push(ast::Spanned::new(other, span)),
@@ -439,6 +577,241 @@ fn rewrite_statement_list(
     }
 
     *statements = rewritten;
+}
+
+fn helper_import_alias(dependency_key: &str, exported_name: &str) -> String {
+    let sanitize = |value: &str| {
+        value
+            .chars()
+            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+            .collect::<String>()
+    };
+    format!(
+        "__incan_vocab_helper_{}_{}",
+        sanitize(dependency_key),
+        sanitize(exported_name)
+    )
+}
+
+fn inject_helper_imports(program: &mut ast::Program, helper_imports: &HelperImportAccumulator) {
+    let imports = helper_imports.import_declarations();
+    if imports.is_empty() {
+        return;
+    }
+
+    let mut insert_at = 0usize;
+    while let Some(declaration) = program.declarations.get(insert_at) {
+        match declaration.node {
+            ast::Declaration::Docstring(_) | ast::Declaration::Import(_) => insert_at += 1,
+            _ => break,
+        }
+    }
+    program.declarations.splice(insert_at..insert_at, imports);
+}
+
+fn resolve_helper_bindings_in_statements(
+    statements: &mut [incan_vocab::IncanStatement],
+    keyword_metadata: Option<&incan_vocab::VocabKeywordMetadata>,
+    keyword: &str,
+    library_manifest_index: &LibraryManifestIndex,
+    helper_imports: &mut HelperImportAccumulator,
+) -> Result<(), String> {
+    for statement in statements {
+        resolve_helper_bindings_in_statement(
+            statement,
+            keyword_metadata,
+            keyword,
+            library_manifest_index,
+            helper_imports,
+        )?;
+    }
+    Ok(())
+}
+
+fn resolve_helper_bindings_in_statement(
+    statement: &mut incan_vocab::IncanStatement,
+    keyword_metadata: Option<&incan_vocab::VocabKeywordMetadata>,
+    keyword: &str,
+    library_manifest_index: &LibraryManifestIndex,
+    helper_imports: &mut HelperImportAccumulator,
+) -> Result<(), String> {
+    match statement {
+        incan_vocab::IncanStatement::Expr(expr) => {
+            resolve_helper_bindings_in_expr(expr, keyword_metadata, keyword, library_manifest_index, helper_imports)
+        }
+        incan_vocab::IncanStatement::Return(Some(expr))
+        | incan_vocab::IncanStatement::Assign { value: expr, .. }
+        | incan_vocab::IncanStatement::Let { value: expr, .. } => {
+            resolve_helper_bindings_in_expr(expr, keyword_metadata, keyword, library_manifest_index, helper_imports)
+        }
+        incan_vocab::IncanStatement::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            resolve_helper_bindings_in_expr(
+                condition,
+                keyword_metadata,
+                keyword,
+                library_manifest_index,
+                helper_imports,
+            )?;
+            resolve_helper_bindings_in_statements(
+                then_body,
+                keyword_metadata,
+                keyword,
+                library_manifest_index,
+                helper_imports,
+            )?;
+            resolve_helper_bindings_in_statements(
+                else_body,
+                keyword_metadata,
+                keyword,
+                library_manifest_index,
+                helper_imports,
+            )
+        }
+        incan_vocab::IncanStatement::While { condition, body } => {
+            resolve_helper_bindings_in_expr(
+                condition,
+                keyword_metadata,
+                keyword,
+                library_manifest_index,
+                helper_imports,
+            )?;
+            resolve_helper_bindings_in_statements(
+                body,
+                keyword_metadata,
+                keyword,
+                library_manifest_index,
+                helper_imports,
+            )
+        }
+        incan_vocab::IncanStatement::For { iter, body, .. } => {
+            resolve_helper_bindings_in_expr(iter, keyword_metadata, keyword, library_manifest_index, helper_imports)?;
+            resolve_helper_bindings_in_statements(
+                body,
+                keyword_metadata,
+                keyword,
+                library_manifest_index,
+                helper_imports,
+            )
+        }
+        incan_vocab::IncanStatement::Pass | incan_vocab::IncanStatement::Return(None) => Ok(()),
+        _ => Ok(()),
+    }
+}
+
+fn resolve_helper_bindings_in_expr(
+    expr: &mut incan_vocab::IncanExpr,
+    keyword_metadata: Option<&incan_vocab::VocabKeywordMetadata>,
+    keyword: &str,
+    library_manifest_index: &LibraryManifestIndex,
+    helper_imports: &mut HelperImportAccumulator,
+) -> Result<(), String> {
+    match expr {
+        incan_vocab::IncanExpr::Helper(helper_key) => {
+            let keyword_metadata = keyword_metadata.ok_or_else(|| {
+                format!(
+                    "keyword `{keyword}` does not carry provider metadata, so helper `{helper_key}` cannot be resolved"
+                )
+            })?;
+            let helper_binding =
+                resolve_helper_binding(library_manifest_index, &keyword_metadata.dependency_key, helper_key)?;
+            let alias = helper_imports.register(&keyword_metadata.dependency_key, &helper_binding.exported_name);
+            *expr = incan_vocab::IncanExpr::Name(alias);
+            Ok(())
+        }
+        incan_vocab::IncanExpr::List(items) | incan_vocab::IncanExpr::Tuple(items) => {
+            for item in items {
+                resolve_helper_bindings_in_expr(
+                    item,
+                    keyword_metadata,
+                    keyword,
+                    library_manifest_index,
+                    helper_imports,
+                )?;
+            }
+            Ok(())
+        }
+        incan_vocab::IncanExpr::Dict(entries) => {
+            for (key_expr, value_expr) in entries {
+                resolve_helper_bindings_in_expr(
+                    key_expr,
+                    keyword_metadata,
+                    keyword,
+                    library_manifest_index,
+                    helper_imports,
+                )?;
+                resolve_helper_bindings_in_expr(
+                    value_expr,
+                    keyword_metadata,
+                    keyword,
+                    library_manifest_index,
+                    helper_imports,
+                )?;
+            }
+            Ok(())
+        }
+        incan_vocab::IncanExpr::Binary(left, _, right) => {
+            resolve_helper_bindings_in_expr(left, keyword_metadata, keyword, library_manifest_index, helper_imports)?;
+            resolve_helper_bindings_in_expr(right, keyword_metadata, keyword, library_manifest_index, helper_imports)
+        }
+        incan_vocab::IncanExpr::Unary(_, value) => {
+            resolve_helper_bindings_in_expr(value, keyword_metadata, keyword, library_manifest_index, helper_imports)
+        }
+        incan_vocab::IncanExpr::Call { callee, args } => {
+            resolve_helper_bindings_in_expr(
+                callee,
+                keyword_metadata,
+                keyword,
+                library_manifest_index,
+                helper_imports,
+            )?;
+            for arg in args {
+                resolve_helper_bindings_in_expr(
+                    arg,
+                    keyword_metadata,
+                    keyword,
+                    library_manifest_index,
+                    helper_imports,
+                )?;
+            }
+            Ok(())
+        }
+        incan_vocab::IncanExpr::Field { object, .. } => resolve_helper_bindings_in_expr(
+            object,
+            keyword_metadata,
+            keyword,
+            library_manifest_index,
+            helper_imports,
+        ),
+        _ => Ok(()),
+    }
+}
+
+fn resolve_helper_binding<'a>(
+    library_manifest_index: &'a LibraryManifestIndex,
+    dependency_key: &str,
+    helper_key: &str,
+) -> Result<&'a incan_vocab::HelperBinding, String> {
+    let Some(entry) = library_manifest_index.get(dependency_key) else {
+        return Err(format!("provider `pub::{dependency_key}` is not loaded"));
+    };
+    let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
+        return Err(format!("provider `pub::{dependency_key}` failed to load"));
+    };
+    let Some(vocab) = manifest.vocab.as_ref() else {
+        return Err(format!(
+            "provider `pub::{dependency_key}` does not expose vocab metadata"
+        ));
+    };
+    vocab
+        .provider_manifest
+        .helper_bindings
+        .iter()
+        .find(|binding| binding.key == helper_key)
+        .ok_or_else(|| format!("provider `pub::{dependency_key}` does not bind helper `{helper_key}`"))
 }
 
 /// Resolve the concrete desugarer artifact for a vocab syntax node.
@@ -556,6 +929,8 @@ fn execute_desugarer_module(
         });
     }
 
+    validate_wasm_runtime_contract(module, &resolved.path, &resolved.entrypoint)?;
+
     let mut linker = Linker::new(engine);
     wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |ctx| ctx).map_err(|source| {
         VocabDesugarPassError::WasmInstantiate {
@@ -574,16 +949,8 @@ fn execute_desugarer_module(
         .ok_or_else(|| VocabDesugarPassError::MissingMemory {
             path: resolved.path.clone(),
         })?;
-    let uses_memory_cell_globals = maybe_initialize_desugarer_instance(&instance, &mut store, resolved)?;
-    validate_entrypoint_export(module, &resolved.path, &resolved.entrypoint)?;
-    write_request_json_payload(
-        &instance,
-        &memory,
-        &mut store,
-        resolved,
-        request,
-        uses_memory_cell_globals,
-    )?;
+    initialize_desugarer_instance(&instance, &mut store, resolved)?;
+    write_request_json_payload(&instance, &memory, &mut store, resolved, request)?;
     let entrypoint = instance
         .get_typed_func::<(), i32>(&mut store, &resolved.entrypoint)
         .map_err(|_| VocabDesugarPassError::InvalidEntrypointSignature {
@@ -606,7 +973,6 @@ fn execute_desugarer_module(
             resolved,
             OUTPUT_PTR_GLOBAL,
             OUTPUT_LEN_GLOBAL,
-            uses_memory_cell_globals,
         )?;
         return parse_desugar_response_json(&resolved.path, &json_text);
     }
@@ -618,7 +984,6 @@ fn execute_desugarer_module(
         resolved,
         ERROR_PTR_GLOBAL,
         ERROR_LEN_GLOBAL,
-        uses_memory_cell_globals,
     )
     .unwrap_or_else(|_| "desugarer execution failed".to_string());
     Err(VocabDesugarPassError::WasmRuntimeFailure {
@@ -627,29 +992,55 @@ fn execute_desugarer_module(
     })
 }
 
-/// Run optional desugarer initialization hook when present.
-fn maybe_initialize_desugarer_instance(
+/// Validate the exported ABI surface required by the compiler runtime.
+fn validate_wasm_runtime_contract(
+    module: &Module,
+    module_path: &Path,
+    entrypoint: &str,
+) -> Result<(), VocabDesugarPassError> {
+    validate_entrypoint_export(module, module_path, entrypoint, Some(ValType::I32))?;
+    validate_entrypoint_export(module, module_path, INIT_ENTRYPOINT, None)?;
+    for global_name in [
+        INPUT_PTR_GLOBAL,
+        INPUT_CAPACITY_GLOBAL,
+        INPUT_LEN_GLOBAL,
+        OUTPUT_PTR_GLOBAL,
+        OUTPUT_LEN_GLOBAL,
+        ERROR_PTR_GLOBAL,
+        ERROR_LEN_GLOBAL,
+    ] {
+        validate_i32_global_export(module, module_path, global_name)?;
+    }
+    Ok(())
+}
+
+/// Run the required desugarer initialization hook before any guest-memory access.
+fn initialize_desugarer_instance(
     instance: &Instance,
     store: &mut WasmStore,
     resolved: &ResolvedWasmArtifact,
-) -> Result<bool, VocabDesugarPassError> {
-    let Ok(init) = instance.get_typed_func::<(), ()>(&mut *store, INIT_ENTRYPOINT) else {
-        return Ok(false);
-    };
+) -> Result<(), VocabDesugarPassError> {
+    let init = instance
+        .get_typed_func::<(), ()>(&mut *store, INIT_ENTRYPOINT)
+        .map_err(|_| VocabDesugarPassError::InvalidEntrypointSignature {
+            path: resolved.path.clone(),
+            entrypoint: INIT_ENTRYPOINT.to_string(),
+        })?;
     init.call(&mut *store, ())
         .map_err(|source| VocabDesugarPassError::WasmExecute {
             path: resolved.path.clone(),
             entrypoint: INIT_ENTRYPOINT.to_string(),
             source,
         })?;
-    Ok(true)
+    Ok(())
 }
 
-/// Check that a module exports the configured entrypoint as `() -> i32`.
+/// Check that a module exports the configured function as `()` returning the expected value.
 fn validate_entrypoint_export(
     module: &Module,
     module_path: &Path,
     entrypoint: &str,
+    expected_result: Option<ValType>,
 ) -> Result<(), VocabDesugarPassError> {
     let export = module
         .get_export(entrypoint)
@@ -665,13 +1056,45 @@ fn validate_entrypoint_export(
     };
     let params_ok = func_ty.params().len() == 0;
     let mut results = func_ty.results();
-    let result_ok = matches!(results.next(), Some(ValType::I32)) && results.next().is_none();
+    let result_ok = match expected_result {
+        Some(ValType::I32) => matches!(results.next(), Some(ValType::I32)) && results.next().is_none(),
+        None => results.next().is_none(),
+        Some(_) => false,
+    };
     if params_ok && result_ok {
         Ok(())
     } else {
         Err(VocabDesugarPassError::InvalidEntrypointSignature {
             path: module_path.to_path_buf(),
             entrypoint: entrypoint.to_string(),
+        })
+    }
+}
+
+/// Check that a module exports one `i32` global used as a memory-cell address.
+fn validate_i32_global_export(
+    module: &Module,
+    module_path: &Path,
+    global_name: &str,
+) -> Result<(), VocabDesugarPassError> {
+    let export = module
+        .get_export(global_name)
+        .ok_or_else(|| VocabDesugarPassError::MissingWasmGlobal {
+            path: module_path.to_path_buf(),
+            global: global_name.to_string(),
+        })?;
+    let ExternType::Global(global_ty) = export else {
+        return Err(VocabDesugarPassError::InvalidWasmGlobal {
+            path: module_path.to_path_buf(),
+            global: global_name.to_string(),
+        });
+    };
+    if matches!(global_ty.content(), ValType::I32) {
+        Ok(())
+    } else {
+        Err(VocabDesugarPassError::InvalidWasmGlobal {
+            path: module_path.to_path_buf(),
+            global: global_name.to_string(),
         })
     }
 }
@@ -684,24 +1107,9 @@ fn read_global_json_payload(
     resolved: &ResolvedWasmArtifact,
     ptr_global: &str,
     len_global: &str,
-    uses_memory_cell_globals: bool,
 ) -> Result<String, VocabDesugarPassError> {
-    let ptr = read_i32_global(
-        instance,
-        memory,
-        store,
-        &resolved.path,
-        ptr_global,
-        uses_memory_cell_globals,
-    )?;
-    let len = read_i32_global(
-        instance,
-        memory,
-        store,
-        &resolved.path,
-        len_global,
-        uses_memory_cell_globals,
-    )?;
+    let ptr = read_i32_global(instance, memory, store, &resolved.path, ptr_global)?;
+    let len = read_i32_global(instance, memory, store, &resolved.path, len_global)?;
     if ptr < 0 || len < 0 {
         return Err(VocabDesugarPassError::OutputBounds {
             path: resolved.path.clone(),
@@ -731,29 +1139,14 @@ fn write_request_json_payload(
     store: &mut WasmStore,
     resolved: &ResolvedWasmArtifact,
     request: &incan_vocab::DesugarRequest,
-    uses_memory_cell_globals: bool,
 ) -> Result<(), VocabDesugarPassError> {
     let request_json = serde_json::to_vec(request).map_err(|source| VocabDesugarPassError::RequestJson {
         path: resolved.path.clone(),
         source,
     })?;
 
-    let ptr = read_i32_global(
-        instance,
-        memory,
-        store,
-        &resolved.path,
-        INPUT_PTR_GLOBAL,
-        uses_memory_cell_globals,
-    )?;
-    let capacity = read_i32_global(
-        instance,
-        memory,
-        store,
-        &resolved.path,
-        INPUT_CAPACITY_GLOBAL,
-        uses_memory_cell_globals,
-    )?;
+    let ptr = read_i32_global(instance, memory, store, &resolved.path, INPUT_PTR_GLOBAL)?;
+    let capacity = read_i32_global(instance, memory, store, &resolved.path, INPUT_CAPACITY_GLOBAL)?;
     if ptr < 0 || capacity < 0 {
         return Err(VocabDesugarPassError::InputBounds {
             path: resolved.path.clone(),
@@ -775,26 +1168,17 @@ fn write_request_json_payload(
         }
         data[ptr..end].copy_from_slice(&request_json);
     }
-    set_i32_global(
-        instance,
-        memory,
-        store,
-        &resolved.path,
-        INPUT_LEN_GLOBAL,
-        len_i32,
-        uses_memory_cell_globals,
-    )?;
+    set_i32_global(instance, memory, store, &resolved.path, INPUT_LEN_GLOBAL, len_i32)?;
     Ok(())
 }
 
-/// Read one `i32` global export value.
+/// Read one `i32` runtime cell via its exported address global.
 fn read_i32_global(
     instance: &Instance,
     memory: &wasmtime::Memory,
     store: &mut WasmStore,
     path: &Path,
     global_name: &str,
-    uses_memory_cell_globals: bool,
 ) -> Result<i32, VocabDesugarPassError> {
     let global =
         instance
@@ -804,15 +1188,7 @@ fn read_i32_global(
                 global: global_name.to_string(),
             })?;
     match global.get(&mut *store) {
-        Val::I32(value) => {
-            if global.ty(&mut *store).mutability() == Mutability::Var {
-                return Ok(value);
-            }
-            if !uses_memory_cell_globals {
-                return Ok(value);
-            }
-            read_i32_memory_cell(memory, store, path, global_name, value)
-        }
+        Val::I32(cell_addr) => read_i32_memory_cell(memory, store, path, global_name, cell_addr),
         _ => Err(VocabDesugarPassError::InvalidWasmGlobal {
             path: path.to_path_buf(),
             global: global_name.to_string(),
@@ -820,7 +1196,7 @@ fn read_i32_global(
     }
 }
 
-/// Update one mutable `i32` global export.
+/// Update one runtime cell via its exported address global.
 fn set_i32_global(
     instance: &Instance,
     memory: &wasmtime::Memory,
@@ -828,7 +1204,6 @@ fn set_i32_global(
     path: &Path,
     global_name: &str,
     value: i32,
-    uses_memory_cell_globals: bool,
 ) -> Result<(), VocabDesugarPassError> {
     let global =
         instance
@@ -837,20 +1212,6 @@ fn set_i32_global(
                 path: path.to_path_buf(),
                 global: global_name.to_string(),
             })?;
-    if global.ty(&mut *store).mutability() == Mutability::Var {
-        return global
-            .set(&mut *store, Val::I32(value))
-            .map_err(|_| VocabDesugarPassError::UnwritableWasmGlobal {
-                path: path.to_path_buf(),
-                global: global_name.to_string(),
-            });
-    }
-    if !uses_memory_cell_globals {
-        return Err(VocabDesugarPassError::UnwritableWasmGlobal {
-            path: path.to_path_buf(),
-            global: global_name.to_string(),
-        });
-    }
     let cell_addr = match global.get(&mut *store) {
         Val::I32(addr) => addr,
         _ => {

@@ -145,6 +145,22 @@ let manifest = LibraryManifest {
 };
 ```
 
+If your desugarer needs to call a library helper such as `filter`, bind that helper explicitly instead of hard-coding a bare name:
+
+```rust
+use incan_vocab::{HelperBinding, LibraryManifest};
+
+let manifest = LibraryManifest {
+    helper_bindings: vec![HelperBinding {
+        key: "filter".to_string(),
+        exported_name: "filter".to_string(),
+    }],
+    ..LibraryManifest::default()
+};
+```
+
+Then the desugarer can emit `IncanExpr::Helper("filter".to_string())`, and the compiler will inject a hidden `pub::` import for the matching library export before lowering the desugared code back into the host AST.
+
 ## 4. Add an optional desugarer
 
 Parser activation alone teaches the compiler how to recognize your DSL surface. If the DSL needs custom lowering, register a Rust desugarer from the same `library_vocab()` bundle.

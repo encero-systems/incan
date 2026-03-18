@@ -288,6 +288,11 @@ pub enum IncanUnaryOp {
 pub enum IncanExpr {
     /// An identifier reference.
     Name(String),
+    /// A symbolic helper reference resolved through the provider manifest.
+    ///
+    /// Desugarers should prefer this over hard-coded bare names when they need to call a library
+    /// helper such as `filter` or `project`.
+    Helper(String),
     /// A string literal.
     Str(String),
     /// An integer literal.

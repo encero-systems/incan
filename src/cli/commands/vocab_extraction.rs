@@ -414,28 +414,78 @@ fn validate_wasm_desugarer_entrypoint(path: &Path, bytes: &[u8], entrypoint: &st
             path.display()
         ))
     })?;
-    let Some(export) = module.get_export(entrypoint) else {
+    validate_wasm_func_export(&module, path, entrypoint, Some(ValType::I32))?;
+    validate_wasm_func_export(&module, path, "__incan_init_desugarer", None)?;
+    for global_name in [
+        "__incan_input_ptr",
+        "__incan_input_capacity",
+        "__incan_input_len",
+        "__incan_output_ptr",
+        "__incan_output_len",
+        "__incan_error_ptr",
+        "__incan_error_len",
+    ] {
+        validate_wasm_i32_global_export(&module, path, global_name)?;
+    }
+    Ok(())
+}
+
+fn validate_wasm_func_export(
+    module: &Module,
+    path: &Path,
+    export_name: &str,
+    expected_result: Option<ValType>,
+) -> CliResult<()> {
+    let Some(export) = module.get_export(export_name) else {
         return Err(CliError::failure(format!(
-            "vocab desugarer artifact `{}` is missing exported entrypoint `{entrypoint}`",
+            "vocab desugarer artifact `{}` is missing exported function `{export_name}`",
             path.display()
         )));
     };
     let ExternType::Func(func_ty) = export else {
         return Err(CliError::failure(format!(
-            "vocab desugarer entrypoint `{entrypoint}` in `{}` is not a function export",
+            "vocab desugarer export `{export_name}` in `{}` is not a function",
             path.display()
         )));
     };
     let params_ok = func_ty.params().len() == 0;
     let mut results = func_ty.results();
-    let result_ok = matches!(results.next(), Some(ValType::I32)) && results.next().is_none();
-    if !params_ok || !result_ok {
+    let result_ok = match expected_result {
+        Some(ValType::I32) => matches!(results.next(), Some(ValType::I32)) && results.next().is_none(),
+        None => results.next().is_none(),
+        Some(_) => false,
+    };
+    if params_ok && result_ok {
+        Ok(())
+    } else {
+        Err(CliError::failure(format!(
+            "vocab desugarer export `{export_name}` in `{}` has an invalid function signature",
+            path.display()
+        )))
+    }
+}
+
+fn validate_wasm_i32_global_export(module: &Module, path: &Path, export_name: &str) -> CliResult<()> {
+    let Some(export) = module.get_export(export_name) else {
         return Err(CliError::failure(format!(
-            "vocab desugarer entrypoint `{entrypoint}` in `{}` must have signature `() -> i32`",
+            "vocab desugarer artifact `{}` is missing exported global `{export_name}`",
             path.display()
         )));
+    };
+    let ExternType::Global(global_ty) = export else {
+        return Err(CliError::failure(format!(
+            "vocab desugarer export `{export_name}` in `{}` is not a global",
+            path.display()
+        )));
+    };
+    if matches!(global_ty.content(), ValType::I32) {
+        Ok(())
+    } else {
+        Err(CliError::failure(format!(
+            "vocab desugarer global `{export_name}` in `{}` must have type `i32`",
+            path.display()
+        )))
     }
-    Ok(())
 }
 
 fn project_soft_keyword_activations(registrations: &[incan_vocab::KeywordRegistration]) -> Vec<SoftKeywordActivation> {
