@@ -3397,6 +3397,8 @@
       
         
       
+        
+      
     
     
       
@@ -3439,6 +3441,27 @@
   
   <span class="md-ellipsis">
     Extending the language
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Author library DSLs with incan_vocab
   </span>
   
 
@@ -4529,7 +4552,7 @@ import_path ::= &quot;pub::&quot; IDENT          # Incan library
 <li><strong><code>rust::</code> imports (RFC 005)</strong>: <code>pub::</code> and <code>rust::</code> are parallel namespace prefixes. They share the same import syntax, differing only in resolution mechanism (manifest lookup vs. Rust crate path).</li>
 <li><strong>Stdlib namespaces (RFC 022/023)</strong>: <code>std.*</code> imports are compiler-provided and always available. <code>pub::*</code> imports are user-declared and require <code>[dependencies]</code>. They coexist without overlap.</li>
 <li><strong>Soft keywords (RFC 022)</strong>: Library soft keywords use the same import-activated model as stdlib soft keywords. The language must not introduce a separate library-only activation rule.</li>
-<li><strong>Vocab crate (RFC 027)</strong>: <code>incan-vocab</code> defines the shared types (<code>VocabProvider</code>, <code>KeywordRegistration</code>, <code>KeywordSpec</code>, manifest metadata types) used by both library authors and the compiler. This RFC uses those types to populate the built library artifact.</li>
+<li><strong>Vocab crate (RFC 027)</strong>: <code>incan-vocab</code> defines the shared types (<code>VocabRegistration</code>, <code>DslSurface</code>, <code>DeclarationSurface</code>, <code>ClauseSurface</code>, lower-level keyword DTOs, and manifest metadata types) used by both library authors and the compiler. This RFC uses those types to populate the built library artifact.</li>
 </ul>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
 <ul>

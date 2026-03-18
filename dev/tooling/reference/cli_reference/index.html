@@ -3577,6 +3577,8 @@
       
         
       
+        
+      
     
     
       
@@ -3619,6 +3621,27 @@
   
   <span class="md-ellipsis">
     Extending the language
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Author library DSLs with incan_vocab
   </span>
   
 
@@ -4242,12 +4265,16 @@ incan<span class="w"> </span>--emit-rust<span class="w"> </span>path/to/file.inc
 <h3 id="incan-build"><code>incan build</code><a class="headerlink" href="#incan-build" title="Permanent link">&para;</a></h3>
 <p>Usage:</p>
 <div class="language-text highlight"><pre><span></span><code>incan build [OPTIONS] &lt;FILE&gt; [OUTPUT_DIR]
+incan build --lib [OPTIONS] [OUTPUT_DIR]
 </code></pre></div>
 <p>Behavior:</p>
 <ul>
+<li>Default mode compiles a source file into an executable.</li>
+<li><code>--lib</code> builds the current project as a library. In this mode, <code>src/lib.incn</code> is required and <code>FILE</code> is optional.</li>
 <li>Prints the generated Rust project path (example): <code>target/incan/&lt;name&gt;/</code></li>
 <li>Builds the generated Rust project and prints the binary path (example):
   <code>target/incan/&lt;name&gt;/target/release/&lt;name&gt;</code></li>
+<li>In <code>--lib</code> mode, also emits a library artifact under <code>target/lib/</code> (including <code>&lt;name&gt;.incnlib</code>).</li>
 </ul>
 <p>Dependency flags:</p>
 <ul>
@@ -4261,6 +4288,7 @@ incan<span class="w"> </span>--emit-rust<span class="w"> </span>path/to/file.inc
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>examples/simple/hello.incn
 incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--locked
 incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--cargo-features<span class="w"> </span>fancy_logging
+incan<span class="w"> </span>build<span class="w"> </span>--lib
 </code></pre></div>
 <h3 id="incan-run"><code>incan run</code><a class="headerlink" href="#incan-run" title="Permanent link">&para;</a></h3>
 <p>Usage:</p>
@@ -4371,6 +4399,7 @@ inputs. Commit it to version control for reproducible builds.</p>
 <ul>
 <li><strong>Generated Rust project</strong>: <code>target/incan/&lt;name&gt;/</code></li>
 <li><strong>Built binary</strong>: <code>target/incan/&lt;name&gt;/target/release/&lt;name&gt;</code></li>
+<li><strong>Built library artifact (<code>--lib</code>)</strong>: <code>target/lib/&lt;name&gt;.incnlib</code> plus the generated library crate output</li>
 </ul>
 <p>Cleaning:</p>
 <div class="language-bash highlight"><pre><span></span><code>rm<span class="w"> </span>-rf<span class="w"> </span>target/incan/

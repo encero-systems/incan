@@ -14,7 +14,7 @@
         <link rel="prev" href="../../tutorials/book/08_docsite_contributor_loop/">
       
       
-        <link rel="next" href="../benchmarks_and_profiling/">
+        <link rel="next" href="../authoring_vocab_crates/">
       
       
       <link rel="icon" href="../../../assets/images/favicon.png">
@@ -3405,6 +3405,8 @@
       
         
       
+        
+      
     
     
       
@@ -3611,6 +3613,27 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../authoring_vocab_crates/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Author library DSLs with incan_vocab
+  </span>
+  
+
+      </a>
     </li>
   
 
@@ -4251,6 +4274,7 @@ touches multiple stages.</p>
 <li>A <strong>stdlib function</strong> (preferred), or</li>
 <li>A <strong>compiler builtin</strong> (when it must lower to special Rust code).</li>
 </ul>
+<p>If the syntax belongs to a library and should only activate after import, do <strong>not</strong> add it to the core compiler first. Use a vocab companion crate instead; see <a href="../authoring_vocab_crates/">Author library DSLs with <code>incan_vocab</code></a>.</p>
 <hr />
 <!-- markdownlint-disable MD033 -->
 <h2 id="path-a-adding-a-function-stdlib-or-compiler-builtin"><small><em>Path A</em>:</small> Adding a Function (Stdlib or Compiler Builtin)<a class="headerlink" href="#path-a-adding-a-function-stdlib-or-compiler-builtin" title="Permanent link">&para;</a></h2>

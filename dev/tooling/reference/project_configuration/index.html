@@ -3090,6 +3090,30 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#vocab" class="md-nav__link">
+    <span class="md-ellipsis">
+      [vocab]
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[vocab]">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fields
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#dependencies" class="md-nav__link">
     <span class="md-ellipsis">
       [dependencies]
@@ -3658,6 +3682,8 @@
       
         
       
+        
+      
     
     
       
@@ -3700,6 +3726,27 @@
   
   <span class="md-ellipsis">
     Extending the language
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Author library DSLs with incan_vocab
   </span>
   
 
@@ -4189,6 +4236,30 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#vocab" class="md-nav__link">
+    <span class="md-ellipsis">
+      [vocab]
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[vocab]">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fields
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#dependencies" class="md-nav__link">
     <span class="md-ellipsis">
       [dependencies]
@@ -4357,8 +4428,9 @@
 <p>This is the reference for the <code>incan.toml</code> project manifest format. For a practical guide to managing dependencies, see:
 <a href="../../how-to/dependencies/">Managing dependencies</a>.</p>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
-<p><code>incan.toml</code> is an optional project manifest that lives at your project root. It declares project metadata, Rust crate
-dependencies, and build configuration. The compiler discovers it by walking upward from the source file's directory.</p>
+<p><code>incan.toml</code> is an optional project manifest that lives at your project root. It declares project metadata, build
+configuration, Incan library dependencies, Rust crate dependencies, and optional vocab companion crate settings. The
+compiler discovers it by walking upward from the source file's directory.</p>
 <div class="language-text highlight"><pre><span></span><code>my_project/
 ├── src/
 │   └── main.incn
@@ -4409,6 +4481,38 @@ a <code>FILE</code> argument.</p>
 </ol>
 <p>Most projects use the conventional <code>src/</code> layout and don't need to set this field. It exists for projects that keep
 their source in a different directory (e.g. <code>lib/</code>).</p>
+<h2 id="vocab"><code>[vocab]</code><a class="headerlink" href="#vocab" title="Permanent link">&para;</a></h2>
+<p>Optional companion crate configuration for library-defined DSL metadata.</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[vocab]</span>
+<span class="n">crate</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;vocab_companion&quot;</span>
+</code></pre></div>
+<p>Use this only for library projects that export vocab entries. Projects without custom library DSLs can omit the section entirely.</p>
+<h3 id="fields">Fields<a class="headerlink" href="#fields" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>crate</code></td>
+<td>string</td>
+<td>Path to the vocab companion crate directory, relative to project root unless absolute</td>
+</tr>
+</tbody>
+</table>
+<p>During <code>incan build --lib</code>, the compiler:</p>
+<ol>
+<li>resolves <code>[vocab].crate</code></li>
+<li>validates that the directory contains <code>Cargo.toml</code> and <code>src/lib.rs</code></li>
+<li>runs <code>cargo build</code> for that companion crate</li>
+<li>derives the vocab payload from the companion crate's <code>library_vocab()</code> registration</li>
+<li>packages the resulting metadata into the built <code>.incnlib</code> artifact</li>
+</ol>
+<p>If the companion crate registers a desugarer via <code>incan_vocab::DesugarerRegistration</code>, <code>incan build --lib</code> also packages the matching Wasm artifact from the companion crate's build output. Any intermediate serialized metadata is a tooling concern (rather than part of the author-facing contract).</p>
 <h2 id="dependencies"><code>[dependencies]</code><a class="headerlink" href="#dependencies" title="Permanent link">&para;</a></h2>
 <p>Incan library dependencies available in all contexts. (Note: for Rust crates, see <code>[rust-dependencies]</code>).</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
@@ -4561,16 +4665,22 @@ because branches are not reproducible. Use <code>tag</code> or <code>rev</code> 
 <span class="k">[build]</span>
 <span class="n">rust-edition</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;2021&quot;</span>
 
+<span class="k">[vocab]</span>
+<span class="n">crate</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;vocab_companion&quot;</span>
+
 <span class="k">[dependencies]</span>
+<span class="n">mylib</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../mylib/target/lib&quot;</span><span class="w"> </span><span class="p">}</span>
+
+<span class="k">[rust-dependencies]</span>
 <span class="n">tokio</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1.35&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;full&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 <span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;derive&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 <span class="n">serde_json</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span>
 <span class="n">sqlx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;0.7&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;runtime-tokio&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;postgres&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 
-<span class="k">[dependencies.optional]</span>
+<span class="k">[rust-dependencies.optional]</span>
 <span class="n">fancy_logging</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.3&quot;</span>
 
-<span class="k">[dev-dependencies]</span>
+<span class="k">[rust-dev-dependencies]</span>
 <span class="n">criterion</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.5&quot;</span>
 </code></pre></div>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
@@ -4578,6 +4688,7 @@ because branches are not reproducible. Use <code>tag</code> or <code>rev</code> 
 <li><a href="../../how-to/dependencies/">Managing dependencies</a> - Practical guide</li>
 <li><a href="../../../language/how-to/rust_interop/">Rust interop</a> - Inline version annotations</li>
 <li><a href="../cli_reference/">CLI reference</a> - <code>incan init</code>, <code>incan lock</code>, and dependency flags</li>
+<li><a href="../../../contributing/how-to/authoring_vocab_crates/">Author library DSLs with <code>incan_vocab</code></a> - Companion crate workflow</li>
 </ul>
 
 
