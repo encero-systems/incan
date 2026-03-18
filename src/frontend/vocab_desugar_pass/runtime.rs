@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -101,21 +102,23 @@ impl WasmDesugarerRuntime {
         let resolved = resolve_wasm_artifact_for_node(library_manifest_index, node)?;
 
         // ---- Context: compile and verify only on first encounter; reuse cache on subsequent calls ----
-        let module = if let Some(existing) = self.modules.get(&resolved.path) {
-            existing.clone()
-        } else {
-            let bytes = fs::read(&resolved.path).map_err(|source| VocabDesugarPassError::ArtifactRead {
-                path: resolved.path.clone(),
-                source,
-            })?;
-            verify_artifact_checksum(&resolved.path, &bytes, &resolved.expected_sha256)?;
-            let compiled = Module::new(&self.engine, &bytes).map_err(|source| VocabDesugarPassError::WasmCompile {
-                path: resolved.path.clone(),
-                source,
-            })?;
-            self.verified_artifacts.insert(resolved.path.clone());
-            self.modules.insert(resolved.path.clone(), compiled.clone());
-            compiled
+        let module = match self.modules.entry(resolved.path.clone()) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let artifact_path = entry.key().clone();
+                let bytes = fs::read(&artifact_path).map_err(|source| VocabDesugarPassError::ArtifactRead {
+                    path: artifact_path.clone(),
+                    source,
+                })?;
+                verify_artifact_checksum(&artifact_path, &bytes, &resolved.expected_sha256)?;
+                let compiled =
+                    Module::new(&self.engine, &bytes).map_err(|source| VocabDesugarPassError::WasmCompile {
+                        path: artifact_path.clone(),
+                        source,
+                    })?;
+                self.verified_artifacts.insert(artifact_path);
+                entry.insert(compiled)
+            }
         };
 
         let request = incan_vocab::DesugarRequest {
@@ -123,7 +126,7 @@ impl WasmDesugarerRuntime {
             module_path: module_path.map(|value| value.to_string()),
         };
 
-        execute_desugarer_module(&self.engine, &module, &resolved, &request)
+        execute_desugarer_module(&self.engine, module, &resolved, &request)
     }
 }
 

@@ -147,7 +147,9 @@ fn rewrite_statement_list(
                     }
                 };
 
-                let request_node = incan_vocab::VocabSyntaxNode::Declaration(bridged.clone());
+                let bridged_keyword = bridged.keyword.clone();
+                let bridged_keyword_metadata = bridged.keyword_metadata.clone();
+                let request_node = incan_vocab::VocabSyntaxNode::Declaration(bridged);
                 let desugared = runtime.desugar_node(library_manifest_index, &request_node, module_path);
                 let desugared = match desugared {
                     Ok(value) => value,
@@ -165,7 +167,7 @@ fn rewrite_statement_list(
                     _ => {
                         errors.push(error_from_pass_error(
                             VocabDesugarPassError::UnsupportedOutput {
-                                keyword: bridged.keyword.clone(),
+                                keyword: bridged_keyword.clone(),
                             },
                             span,
                         ));
@@ -175,14 +177,14 @@ fn rewrite_statement_list(
                 let mut public_statements = public_statements;
                 if let Err(message) = resolve_helper_bindings_in_statements(
                     &mut public_statements,
-                    bridged.keyword_metadata.as_ref(),
-                    &bridged.keyword,
+                    bridged_keyword_metadata.as_ref(),
+                    &bridged_keyword,
                     library_manifest_index,
                     helper_imports,
                 ) {
                     errors.push(error_from_pass_error(
                         VocabDesugarPassError::HelperBinding {
-                            keyword: bridged.keyword.clone(),
+                            keyword: bridged_keyword.clone(),
                             message,
                         },
                         span,
@@ -195,7 +197,7 @@ fn rewrite_statement_list(
                     Err(source) => {
                         errors.push(error_from_pass_error(
                             VocabDesugarPassError::Bridge {
-                                keyword: bridged.keyword.clone(),
+                                keyword: bridged_keyword.clone(),
                                 source,
                             },
                             span,

@@ -1,18 +1,19 @@
 # RFC 027: `incan-vocab` — Library Vocabulary Registration Crate
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Issue:** [#161](https://github.com/dannys-code-corner/incan/issues/161)
 - **RFC PR:**
     - Phases 1-3: [#176](https://github.com/dannys-code-corner/incan/pull/176)
+    - Phases 4-9: [#178](https://github.com/dannys-code-corner/incan/pull/177)
 - **Related**:
     - RFC 022 (stdlib namespacing)
     - RFC 023 (compilable stdlib and Rust module binding)
     - RFC 031 (library system phase 1)
     - RFC 040 (scoped DSL glyph surfaces)
-- **Written against:** v0.2
-- **Shipped in:** —
+- **Written against:** v0.1
+- **Shipped in:** v0.2
 
 > Addendum (2026-03-16): See the addendum at the end of this RFC for the release authoring contract for companion crates. Where producer-side workflow details differ, the addendum governs.
 
@@ -1511,9 +1512,9 @@ Phases 1-3 are already public history and remain unchanged here. They establishe
 - `src/lsp/` and `src/format/`: remain registry-backed and later consume the richer declaration metadata where relevant.
 - `editors/vscode/`: continues build-time grammar generation for the static fallback story.
 
-## Progress Checklist
+## Implementation log
 
-The current public record covers phases 1-3. Later phases were re-planned after the richer companion-crate surface was accepted and should be tracked from that updated plan rather than the older exploratory sequencing.
+The checklist below records the completed rollout of RFC 027. Earlier phases landed first to establish registry parity; later phases completed the public companion-crate surface, library build/consumer integration, desugaring runtime, and release polish.
 
 ### Checklist — Phase 1: Registry extraction and parity
 
@@ -1542,42 +1543,42 @@ Phase 3 closure inventory:
 
 ### Checklist — Phase 4: Lock the richer public surface and examples
 
-- [ ] Finalize `VocabRegistration`, `DslSurface`, `DeclarationSurface`, and `ClauseSurface` as the canonical author-facing registration story.
-- [ ] Finalize the public desugar boundary around `VocabSyntaxNode` and `DesugarOutput`.
-- [ ] Replace stale provider-first examples with surface-first companion-crate examples throughout the RFC and docs.
+- [x] Finalize `VocabRegistration`, `DslSurface`, `DeclarationSurface`, and `ClauseSurface` as the canonical author-facing registration story.
+- [x] Finalize the public desugar boundary around `VocabSyntaxNode` and `DesugarOutput`.
+- [x] Replace stale provider-first examples with surface-first companion-crate examples throughout the RFC and docs.
 
 ### Checklist — Phase 5: Producer extraction from the canonical Rust entrypoint (requires RFC 031 library build scaffolding)
 
-- [ ] Parse `[vocab]` in `incan.toml`.
-- [ ] Resolve and invoke `library_vocab()` during `incan build --lib`.
-- [ ] Derive packaged metadata and packaging inputs from the returned `VocabRegistration`.
-- [ ] Add clear diagnostics for extraction and packaging failures.
+- [x] Parse `[vocab]` in `incan.toml`.
+- [x] Resolve and invoke `library_vocab()` during `incan build --lib`.
+- [x] Derive packaged metadata and packaging inputs from the returned `VocabRegistration`.
+- [x] Add clear diagnostics for extraction and packaging failures.
 
 ### Checklist — Phase 6: Consumer loading and richer syntax activation (requires Phase 5 and RFC 031 consumer loading)
 
-- [ ] Deserialize library vocab metadata during consumer builds.
-- [ ] Merge import-activated library declarations into the shared registry and activation model.
-- [ ] Wire `LibraryManifest` into import resolution and typechecker symbol loading.
-- [ ] Add integration coverage for imported companion crates and exported library types.
+- [x] Deserialize library vocab metadata during consumer builds.
+- [x] Merge import-activated library declarations into the shared registry and activation model.
+- [x] Wire `LibraryManifest` into import resolution and typechecker symbol loading.
+- [x] Add integration coverage for imported companion crates and exported library types.
 
 ### Checklist — Phase 7: End-to-end desugaring for richer DSL declarations (requires Phase 5 transport and Phase 6 loading)
 
-- [ ] Pass richer parsed library syntax to desugarers as `VocabSyntaxNode`.
-- [ ] Support both statement-valued and expression-valued desugaring through `DesugarOutput`.
-- [ ] Map public desugarer outputs back into the compiler pipeline.
-- [ ] Add end-to-end tests for query-like, workflow-like, and other richer declaration families.
+- [x] Pass richer parsed library syntax to desugarers as `VocabSyntaxNode`.
+- [x] Support both statement-valued and expression-valued desugaring through `DesugarOutput`.
+- [x] Map public desugarer outputs back into the compiler pipeline.
+- [x] Add end-to-end tests for query-like, workflow-like, and other richer declaration families.
 
 ### Checklist — Phase 8: Tooling-owned dependency and feature integration
 
-- [ ] Replace `needs_*` and `scan_for_*` where vocab metadata can express the same dependency/feature intent declaratively.
-- [ ] Collect required dependencies and stdlib feature flags from loaded library manifests.
-- [ ] Update project generation and backend wiring to consume those collected sets.
+- [x] Replace `needs_*` and `scan_for_*` where vocab metadata can express the same dependency/feature intent declaratively.
+- [x] Collect required dependencies and stdlib feature flags from loaded library manifests.
+- [x] Update project generation and backend wiring to consume those collected sets.
 
 ### Checklist — Phase 9: Docs, templates, release polish, and validation
 
-- [ ] Publish canonical docs and templates that present `library_vocab()` plus tooling-owned packaging as the default path.
-- [ ] Add end-to-end coverage for metadata-only and richer DSL companion crates.
-- [ ] Release the cleaned API only once rustdocs, examples, and generated docs all agree on the accepted surface.
+- [x] Publish canonical docs and templates that present `library_vocab()` plus tooling-owned packaging as the default path.
+- [x] Add end-to-end coverage for metadata-only and richer DSL companion crates.
+- [x] Release the cleaned API only once rustdocs, examples, and generated docs all agree on the accepted surface.
 
 ## Design decisions
 
