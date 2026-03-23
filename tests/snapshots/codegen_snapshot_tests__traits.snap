@@ -331,11 +331,11 @@ impl Serializable for Document {
         };
     }
 }
-fn draw_shape(shape: Drawable) {
+fn draw_shape<__IncanTrait0: Drawable>(shape: __IncanTrait0) {
     let output = shape.draw();
     println!("{}", output);
 }
-fn calculate_area(shape: Shape) -> f64 {
+fn calculate_area<__IncanTrait0: Shape>(shape: __IncanTrait0) -> f64 {
     return shape.area();
 }
 fn main() {

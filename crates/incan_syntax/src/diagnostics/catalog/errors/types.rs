@@ -247,6 +247,18 @@ pub fn supertrait_bound_not_trait(name: &str, span: Span) -> CompileError {
         .with_hint("Only trait names may appear in a trait's `with` clause")
 }
 
+/// Emitted when a supertrait bound supplies the wrong number of generic arguments.
+pub fn supertrait_bound_arity_mismatch(name: &str, expected: usize, found: usize, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Supertrait bound '{}' expects {} type argument(s), found {}",
+            name, expected, found
+        ),
+        span,
+    )
+    .with_hint("Match the supertrait generic arity in the `with` clause")
+}
+
 /// Emitted when a supertrait bound is not a simple trait name or generic trait instantiation.
 pub fn supertrait_bound_invalid(span: Span) -> CompileError {
     CompileError::type_error(

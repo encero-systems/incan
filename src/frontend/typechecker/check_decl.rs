@@ -20,15 +20,23 @@ fn method_infos_identical(a: &MethodInfo, b: &MethodInfo) -> bool {
 }
 
 impl TypeChecker {
-    /// Union of method names declared on the given traits (direct declarations only; excludes supertrait methods).
+    /// Union of method names reachable through the given traits, including transitive supertrait methods (RFC 042).
     ///
     /// Used when validating field `@alias` metadata so aliases cannot collide with callable members surfaced through
     /// trait adoption.
     fn collect_trait_method_names(&self, traits: &[Spanned<Ident>]) -> HashSet<String> {
         let mut names = HashSet::new();
         for trait_ref in traits {
-            if let Some(trait_info) = self.lookup_trait_info(trait_ref.node.as_str()) {
+            let trait_name = trait_ref.node.as_str();
+            if let Some(trait_info) = self.lookup_trait_info(trait_name) {
                 names.extend(trait_info.methods.keys().cloned());
+            }
+            if let Some(closure) = self.supertrait_closure.get(trait_name) {
+                for (sup_name, _) in closure {
+                    if let Some(sup_info) = self.lookup_trait_info(sup_name) {
+                        names.extend(sup_info.methods.keys().cloned());
+                    }
+                }
             }
         }
         names

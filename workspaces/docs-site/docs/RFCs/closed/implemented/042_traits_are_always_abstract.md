@@ -1,6 +1,6 @@
 # RFC 042: Traits Are Always Abstract
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-03-18
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -445,11 +445,11 @@ Supertrait relationships map naturally to Rust's supertrait syntax. A trait decl
 - Add parser, typechecker, snapshot, and integration coverage for supertraits, generic trait annotations, and error cases (cycles, ambiguity, invalid instantiation).
 - Align stdlib trait hierarchies where appropriate; update docs-site trait guidance and release notes.
 
-## Progress Checklist
+## Implementation log
 
 ### Spec / design
 
-- [ ] Confirm remaining edge cases for diamond conflicts and `Self` under trait-typed annotations are reflected in Design Decisions where needed.
+- [x] Confirm remaining edge cases for diamond conflicts and `Self` under trait-typed annotations are reflected in Design Decisions where needed.
 
 ### Parser / AST
 
@@ -459,31 +459,31 @@ Supertrait relationships map naturally to Rust's supertrait syntax. A trait decl
 
 ### Typechecker
 
-- [ ] Symbol table: store resolved supertraits per trait.
-- [ ] Transitive supertrait closure and cycle diagnostic.
-- [ ] `type_implements_trait` and `types_compatible`: generic trait annotations and transitivity.
-- [ ] Conformance: transitive supertrait method and `@requires` obligations; conflict/ambiguity diagnostics.
-- [ ] Reject trait constructor / invalid instantiation where specified.
+- [x] Symbol table: store resolved supertraits per trait.
+- [x] Transitive supertrait closure and cycle diagnostic.
+- [x] `type_implements_trait` and `types_compatible`: generic trait annotations and transitivity.
+- [x] Conformance: transitive supertrait method and `@requires` obligations; conflict/ambiguity diagnostics.
+- [x] Reject trait constructor / invalid instantiation where specified.
 
 ### Lowering / IR
 
-- [ ] IR trait: supertraits and type parameters.
-- [ ] Lowering and emission: Rust `trait Name<T>: Super<T>` shape; impl coverage for hierarchies.
+- [x] IR trait: supertraits and type parameters.
+- [x] Lowering and emission: Rust `trait Name<T>: Super<T>` shape; impl coverage for hierarchies.
 
 ### Stdlib / runtime
 
-- [ ] Document and adjust stdlib traits under the “always abstract” model; add supertrait links where hierarchies exist.
+- [x] Document and adjust stdlib traits under the “always abstract” model; add supertrait links where hierarchies exist.
 
 ### Tests
 
 - [x] Parser unit test: trait `with` (multiple and generic supertraits).
-- [ ] Additional parser / formatter round-trip tests as later phases land.
-- [ ] Typechecker tests: assignability, transitivity, cycles, missing supertrait methods, diamond ambiguity, `@requires` merge conflicts.
-- [ ] Codegen snapshots and integration tests for hierarchy examples (e.g. DataSet-style APIs).
+- [x] Additional parser / formatter round-trip tests as later phases land.
+- [x] Typechecker tests: assignability, transitivity, cycles, missing supertrait methods, diamond ambiguity, `@requires` merge conflicts.
+- [x] Codegen snapshots and integration tests for hierarchy examples (e.g. DataSet-style APIs).
 
 ### Docs
 
-- [ ] Update docs-site trait pages and teaching model.
+- [x] Update docs-site trait pages and teaching model.
 - [ ] Release notes entry when shipped.
 
 ## Design Decisions

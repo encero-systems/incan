@@ -8,7 +8,7 @@ use crate::frontend::library_manifest_index::{
 use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
     ConstExport, EnumExport, EnumVariantExport, FunctionExport, LibraryExports, LibraryManifest, ModelExport,
-    ParamExport, TypeRef,
+    ParamExport, TraitExport, TypeParamExport, TypeRef,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -106,6 +106,48 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
         LibraryManifestIndexEntry::Loaded {
             manifest: Box::new(manifest),
             metadata: LibraryArtifactMetadata::from_crate_root("mylib", "mylib", synthetic_artifact_root("mylib")),
+        },
+    )]))
+}
+
+fn library_index_with_trait_export() -> LibraryManifestIndex {
+    let manifest = LibraryManifest {
+        name: "mylib".to_string(),
+        version: "0.1.0".to_string(),
+        incan_version: crate::version::INCAN_VERSION.to_string(),
+        manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
+        exports: LibraryExports {
+            models: Vec::new(),
+            classes: Vec::new(),
+            functions: Vec::new(),
+            traits: vec![TraitExport {
+                name: "ExternBox".to_string(),
+                type_params: vec![TypeParamExport {
+                    name: "T".to_string(),
+                    bounds: Vec::new(),
+                }],
+                supertraits: Vec::new(),
+                requires: Vec::new(),
+                methods: Vec::new(),
+            }],
+            enums: Vec::new(),
+            type_aliases: Vec::new(),
+            newtypes: Vec::new(),
+            consts: Vec::new(),
+        },
+        vocab: None,
+        soft_keywords: Default::default(),
+    };
+
+    LibraryManifestIndex::from_entries(HashMap::from([(
+        "mylib".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root(
+                "mylib",
+                "mylib",
+                synthetic_artifact_root("mylib_trait_export"),
+            ),
         },
     )]))
 }
@@ -1405,6 +1447,49 @@ trait T with M:
     };
     assert!(
         errs.iter().any(|e| e.message.contains("is not a trait")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn test_supertrait_bound_rejects_arity_mismatch() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Boxed[T]:
+  def get(self) -> T: ...
+
+trait Bad with Boxed:
+  def run(self) -> int: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    let Err(errs) = checker.check_program(&ast) else {
+        panic!("expected errors for supertrait arity mismatch");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("expects 1 type argument")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn test_generic_supertrait_cycle_is_diagnosed() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait A[T] with A[list[T]]:
+  def f(self) -> int: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    let Err(errs) = checker.check_program(&ast) else {
+        panic!("expected generic supertrait cycle to be rejected");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("Supertrait cycle")),
         "unexpected errors: {:?}",
         errs.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
@@ -2983,6 +3068,36 @@ fn test_pub_from_import_manifest_symbols_are_in_symbol_table() -> Result<(), Box
         const_sym.kind,
         crate::frontend::symbols::SymbolKind::Variable(_)
     ));
+    Ok(())
+}
+
+#[test]
+fn test_type_info_records_imported_trait_metadata_for_lowering() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from pub::mylib import ExternBox
+
+model Cell[T] with ExternBox:
+  value: T
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("lex failed: {errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("parse failed: {errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.set_library_manifest_index(library_index_with_trait_export());
+    checker
+        .check_program(&ast)
+        .map_err(|errs| format!("typecheck failed: {errs:?}"))?;
+
+    let type_info = checker.type_info();
+    assert_eq!(
+        type_info.trait_type_params.get("ExternBox"),
+        Some(&vec!["T".to_string()]),
+        "Imported trait type params should be available to lowering metadata"
+    );
+    assert_eq!(
+        type_info.trait_direct_supertraits.get("ExternBox"),
+        Some(&Vec::new()),
+        "Imported trait supertraits should be recorded even when empty"
+    );
     Ok(())
 }
 

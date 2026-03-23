@@ -205,9 +205,19 @@ impl TypeChecker {
                 return None;
             }
         };
-        if self.lookup_trait_info(&trait_name).is_none() {
+        let Some(trait_info) = self.lookup_trait_info(&trait_name) else {
             self.errors
                 .push(errors::supertrait_bound_not_trait(&trait_name, bound.span));
+            return None;
+        };
+        let expected_arity = trait_info.type_params.len();
+        if args.len() != expected_arity {
+            self.errors.push(errors::supertrait_bound_arity_mismatch(
+                &trait_name,
+                expected_arity,
+                args.len(),
+                bound.span,
+            ));
             return None;
         }
         Some((trait_name, args))
@@ -240,6 +250,12 @@ impl TypeChecker {
     pub(crate) fn finalize_supertrait_graph(&mut self) {
         self.supertrait_closure.clear();
         let edges = self.supertrait_name_adjacency();
+        let trait_names: Vec<String> = self
+            .symbols
+            .all_symbols()
+            .iter()
+            .filter_map(|sym| matches!(sym.kind, SymbolKind::Trait(_)).then_some(sym.name.clone()))
+            .collect();
         if let Some(cycle) = find_supertrait_cycle_path(&edges) {
             let span = cycle
                 .first()
@@ -247,13 +263,11 @@ impl TypeChecker {
                 .map(|sym| sym.span)
                 .unwrap_or_default();
             self.errors.push(errors::supertrait_cycle(&cycle, span));
+            for name in trait_names {
+                self.supertrait_closure.insert(name, Vec::new());
+            }
+            return;
         }
-        let trait_names: Vec<String> = self
-            .symbols
-            .all_symbols()
-            .iter()
-            .filter_map(|sym| matches!(sym.kind, SymbolKind::Trait(_)).then_some(sym.name.clone()))
-            .collect();
         for name in trait_names {
             let closure = self.expand_supertraits_transitively(&name);
             self.supertrait_closure.insert(name, closure);
@@ -274,19 +288,21 @@ impl TypeChecker {
     /// Transitive supertraits of `trait_name`, with type arguments substituted along each edge.
     fn expand_supertraits_transitively(&self, trait_name: &str) -> Vec<(String, Vec<ResolvedType>)> {
         let mut result: Vec<(String, Vec<ResolvedType>)> = Vec::new();
-        let mut seen: Vec<(String, Vec<ResolvedType>)> = Vec::new();
+        let mut seen = HashSet::new();
         let mut work: Vec<(String, Vec<ResolvedType>)> = Vec::new();
         let Some(root) = self.lookup_trait_info(trait_name) else {
             return result;
         };
         work.extend(root.supertraits.clone());
         while let Some((sup_name, sup_args)) = work.pop() {
-            let key = (sup_name.clone(), sup_args.clone());
-            if seen.iter().any(|s| s == &key) {
+            let key = format!(
+                "{sup_name}<{}>",
+                sup_args.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(",")
+            );
+            if !seen.insert(key) {
                 continue;
             }
-            seen.push(key.clone());
-            result.push(key.clone());
+            result.push((sup_name.clone(), sup_args.clone()));
             let Some(sup_info) = self.lookup_trait_info(&sup_name) else {
                 continue;
             };

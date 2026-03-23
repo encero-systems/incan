@@ -98,6 +98,11 @@ pub struct TypeCheckInfo {
     /// Lowering does not retain the typechecker symbol table; this snapshot supplies resolved supertrait type
     /// arguments after a successful check.
     pub trait_direct_supertraits: HashMap<String, Vec<(String, Vec<ResolvedType>)>>,
+    /// RFC 042: Trait type parameter names keyed by trait name for lowering-time generic substitution.
+    ///
+    /// Includes locally-declared and imported traits so backend lowering can handle cross-module trait hierarchies
+    /// without relying on local AST declarations.
+    pub trait_type_params: HashMap<String, Vec<String>>,
     /// Map from expression span (start,end) -> resolved type.
     pub expr_types: HashMap<(usize, usize), ResolvedType>,
     /// Map from identifier expression span (start,end) -> how it resolved (value vs type vs module).
@@ -452,16 +457,21 @@ impl TypeChecker {
         }
     }
 
-    /// RFC 042: Copy each declared trait's direct supertraits into [`TypeCheckInfo`] for backends.
-    fn record_trait_direct_supertraits_for_lowering(&mut self, program: &Program) {
+    /// RFC 042: Snapshot trait metadata into [`TypeCheckInfo`] for backend lowering.
+    ///
+    /// This records all visible trait symbols (local and imported), not just traits declared in the current module,
+    /// so lowering can resolve supertrait graphs and generic trait arity across module boundaries.
+    fn record_trait_metadata_for_lowering(&mut self) {
         self.type_info.trait_direct_supertraits.clear();
-        for decl in &program.declarations {
-            if let Declaration::Trait(t) = &decl.node
-                && let Some(info) = self.lookup_trait_info(&t.name)
-            {
+        self.type_info.trait_type_params.clear();
+        for sym in self.symbols.all_symbols() {
+            if let SymbolKind::Trait(info) = &sym.kind {
                 self.type_info
                     .trait_direct_supertraits
-                    .insert(t.name.clone(), info.supertraits.clone());
+                    .insert(sym.name.clone(), info.supertraits.clone());
+                self.type_info
+                    .trait_type_params
+                    .insert(sym.name.clone(), info.type_params.clone());
             }
         }
     }
@@ -596,7 +606,7 @@ impl TypeChecker {
             }
         }
 
-        self.record_trait_direct_supertraits_for_lowering(program);
+        self.record_trait_metadata_for_lowering();
 
         // ---- RFC 023: validate rust.module() and @rust.extern rules ----
         self.validate_rust_module_and_extern(program);

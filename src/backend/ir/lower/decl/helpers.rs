@@ -7,9 +7,11 @@ use super::super::super::types::IrType;
 use super::super::AstLowering;
 use crate::frontend::ast::{self, Spanned};
 use crate::frontend::decorator_resolution;
+use incan_core::lang::conventions;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::trait_bounds;
+use incan_core::lang::types::numerics::{self, NumericTypeId};
 
 impl AstLowering {
     // ========================================================================
@@ -35,18 +37,27 @@ impl AstLowering {
 
     /// Lower a type that appears inside a generic trait bound.
     ///
-    /// These positions only need surface-level lowering because they occur in generic declarations, not in
-    /// expression-bearing contexts.
+    /// Uses the same `incan_core` registries as [`AstLowering::lower_type_with_type_params`] for primitive name
+    /// resolution so the two stay in sync when new primitive types are added.
     fn lower_bound_type(ty: &ast::Type) -> IrType {
         match ty {
-            ast::Type::Simple(name) => match name.as_str() {
-                "int" => IrType::Int,
-                "float" => IrType::Float,
-                "bool" => IrType::Bool,
-                "str" => IrType::String,
-                "None" | "Unit" => IrType::Unit,
-                other => IrType::Generic(other.to_string()),
-            },
+            ast::Type::Simple(name) => {
+                let n = name.as_str();
+                if n == conventions::NONE_TYPE_NAME || n == conventions::UNIT_TYPE_NAME {
+                    return IrType::Unit;
+                }
+                if let Some(id) = numerics::from_str(n) {
+                    return match id {
+                        NumericTypeId::Int => IrType::Int,
+                        NumericTypeId::Float => IrType::Float,
+                        NumericTypeId::Bool => IrType::Bool,
+                    };
+                }
+                if n == "str" {
+                    return IrType::String;
+                }
+                IrType::Generic(name.clone())
+            }
             ast::Type::Generic(base, args) => {
                 let lowered_args = args.iter().map(|arg| Self::lower_bound_type(&arg.node)).collect();
                 IrType::NamedGeneric(base.clone(), lowered_args)
@@ -88,7 +99,7 @@ impl AstLowering {
             || self
                 .type_info
                 .as_ref()
-                .is_some_and(|info| info.trait_direct_supertraits.contains_key(name))
+                .is_some_and(|info| info.trait_type_params.contains_key(name))
     }
 
     /// Lower an annotation like `Collection[int]` to a Rust trait bound shape.
