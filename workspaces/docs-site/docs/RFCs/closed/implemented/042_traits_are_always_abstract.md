@@ -9,8 +9,8 @@
     - RFC 025 (multi-instantiation trait dispatch)
     - RFC 026 (user-defined trait bridges)
     - RFC 028 (trait-based operator overloading)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/179
-- **RFC PR:** -
+- **Issue:** [#179](https://github.com/dannys-code-corner/incan/issues/179)
+- **RFC PR:** [#180](https://github.com/dannys-code-corner/incan/pull/180)
 - **Written against:** v0.1
 - **Shipped in:** v0.2
 
