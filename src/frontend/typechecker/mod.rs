@@ -93,6 +93,11 @@ use incan_core::lang::types::stringlike::StringLikeId;
 /// ```
 #[derive(Debug, Default, Clone)]
 pub struct TypeCheckInfo {
+    /// RFC 042: Direct supertraits per trait name, copied from [`TraitInfo::supertraits`] for IR lowering.
+    ///
+    /// Lowering does not retain the typechecker symbol table; this snapshot supplies resolved supertrait type
+    /// arguments after a successful check.
+    pub trait_direct_supertraits: HashMap<String, Vec<(String, Vec<ResolvedType>)>>,
     /// Map from expression span (start,end) -> resolved type.
     pub expr_types: HashMap<(usize, usize), ResolvedType>,
     /// Map from identifier expression span (start,end) -> how it resolved (value vs type vs module).
@@ -351,10 +356,10 @@ impl TypeChecker {
             if t == trait_name {
                 return true;
             }
-            if let Some(closure) = self.supertrait_closure.get(t) {
-                if closure.iter().any(|(n, _)| n == trait_name) {
-                    return true;
-                }
+            if let Some(closure) = self.supertrait_closure.get(t)
+                && closure.iter().any(|(n, _)| n == trait_name)
+            {
+                return true;
             }
         }
         false
@@ -391,6 +396,20 @@ impl TypeChecker {
         match &sym.kind {
             SymbolKind::Trait(info) => Some(info),
             _ => None,
+        }
+    }
+
+    /// RFC 042: Copy each declared trait's direct supertraits into [`TypeCheckInfo`] for backends.
+    fn record_trait_direct_supertraits_for_lowering(&mut self, program: &Program) {
+        self.type_info.trait_direct_supertraits.clear();
+        for decl in &program.declarations {
+            if let Declaration::Trait(t) = &decl.node
+                && let Some(info) = self.lookup_trait_info(&t.name)
+            {
+                self.type_info
+                    .trait_direct_supertraits
+                    .insert(t.name.clone(), info.supertraits.clone());
+            }
         }
     }
 
@@ -523,6 +542,8 @@ impl TypeChecker {
                 self.check_declaration(decl);
             }
         }
+
+        self.record_trait_direct_supertraits_for_lowering(program);
 
         // ---- RFC 023: validate rust.module() and @rust.extern rules ----
         self.validate_rust_module_and_extern(program);
@@ -662,16 +683,33 @@ impl TypeChecker {
                 let Some(t_info) = self.lookup_trait_info(trait_name) else {
                     return false;
                 };
-                if t_info.type_params.len() != actual_args.len() || t_info.type_params.len() != expected_args.len() {
+                // Trait parameter count is fixed by `trait_name`; `expected_args` must match that arity. The concrete
+                // type may have more type parameters than the trait (e.g. `Pair[A, B]` adopting `Boxed[T]`): only the
+                // leading concrete args that correspond to the trait annotation are checked — never require
+                // `actual_args.len() == t_info.type_params.len()`.
+                if t_info.type_params.len() != expected_args.len() {
+                    return false;
+                }
+                if actual_args.len() < expected_args.len() {
+                    return false;
+                }
+                let concrete_arity_ok = match self.lookup_type_info(type_name) {
+                    Some(TypeInfo::Model(m)) => actual_args.len() == m.type_params.len(),
+                    Some(TypeInfo::Class(c)) => actual_args.len() == c.type_params.len(),
+                    Some(TypeInfo::Newtype(n)) => actual_args.len() == n.type_params.len(),
+                    Some(TypeInfo::Enum(e)) => actual_args.len() == e.type_params.len(),
+                    _ => true,
+                };
+                if !concrete_arity_ok {
                     return false;
                 }
                 if !self.type_implements_trait(type_name, trait_name) {
                     return false;
                 }
-                actual_args
+                expected_args
                     .iter()
-                    .zip(expected_args.iter())
-                    .all(|(a, e)| self.types_compatible(a, e))
+                    .zip(actual_args.iter())
+                    .all(|(e, a)| self.types_compatible(a, e))
             }
             (ResolvedType::Named(type_name), ResolvedType::Generic(trait_name, expected_args))
                 if self.lookup_trait_info(trait_name).is_some() =>

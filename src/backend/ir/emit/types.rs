@@ -170,6 +170,25 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit a supertrait reference for a trait definition header (`Bar`, `DataSet<T>`), RFC 042.
+    pub(super) fn emit_supertrait_bound_path(&self, trait_path: &str, type_args: &[IrType]) -> TokenStream {
+        let segments: Vec<_> = trait_path.split("::").collect();
+        let path_tokens: Vec<TokenStream> = segments
+            .iter()
+            .map(|seg| {
+                let ident = Self::rust_ident(seg);
+                quote! { #ident }
+            })
+            .collect();
+        let base = super::decls::join_path_tokens(&path_tokens);
+        if type_args.is_empty() {
+            base
+        } else {
+            let ts: Vec<_> = type_args.iter().map(|t| self.emit_type(t)).collect();
+            quote! { #base < #(#ts),* > }
+        }
+    }
+
     /// Emit visibility modifier.
     pub(super) fn emit_visibility(&self, vis: &Visibility) -> TokenStream {
         match vis {

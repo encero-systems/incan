@@ -1467,6 +1467,45 @@ model Cell[T] with Boxed:
 }
 
 #[test]
+fn test_types_compatible_generic_trait_annotation_extra_concrete_type_params() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Boxed[T]:
+  def get(self) -> T: ...
+
+model Pair[A, B] with Boxed:
+  first: A
+  second: B
+
+  def get(self) -> A:
+    return self.first
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    let ok_actual = ResolvedType::Generic("Pair".to_string(), vec![ResolvedType::Int, ResolvedType::Str]);
+    let expected = ResolvedType::Generic("Boxed".to_string(), vec![ResolvedType::Int]);
+    assert!(
+        checker.types_compatible(&ok_actual, &expected),
+        "Concrete type with more type parameters than the trait should still match when leading args align (RFC 042)"
+    );
+
+    let bad_actual = ResolvedType::Generic("Pair".to_string(), vec![ResolvedType::Str, ResolvedType::Int]);
+    assert!(
+        !checker.types_compatible(&bad_actual, &expected),
+        "First concrete type parameter must be compatible with the trait's type argument"
+    );
+
+    let short_actual = ResolvedType::Generic("Pair".to_string(), vec![ResolvedType::Int]);
+    assert!(
+        !checker.types_compatible(&short_actual, &expected),
+        "Concrete type must supply at least as many type arguments as the trait annotation"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_supertrait_requires_merge_conflict() -> Result<(), Vec<CompileError>> {
     let source = r#"
 @requires(x: int)

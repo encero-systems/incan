@@ -363,12 +363,11 @@ impl TypeChecker {
         }
 
         for (tname, requires) in updates {
-            if let Some(id) = self.symbols.lookup(&tname) {
-                if let Some(sym) = self.symbols.get_mut(id) {
-                    if let SymbolKind::Trait(info) = &mut sym.kind {
-                        info.requires = requires;
-                    }
-                }
+            if let Some(id) = self.symbols.lookup(&tname)
+                && let Some(sym) = self.symbols.get_mut(id)
+                && let SymbolKind::Trait(info) = &mut sym.kind
+            {
+                info.requires = requires;
             }
         }
     }

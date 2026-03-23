@@ -117,6 +117,13 @@ pub struct IrImportItem {
 #[derive(Debug, Clone)]
 pub struct IrTrait {
     pub name: String,
+    /// Generic parameters (`trait Foo[T]: ...`), including `with` bounds from the source (RFC 023 / RFC 042).
+    pub type_params: Vec<IrTypeParam>,
+    /// Direct supertraits for the generated Rust trait header (`trait Foo: Bar + Baz<T> {}`), RFC 042.
+    ///
+    /// Each entry is a Rust trait path string (possibly `::`-separated, as for [`IrTraitBound::trait_path`]) plus
+    /// concrete type arguments for that bound.
+    pub supertraits: Vec<(String, Vec<IrType>)>,
     /// Methods with default implementations
     pub methods: Vec<IrFunction>,
     pub visibility: Visibility,

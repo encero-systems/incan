@@ -1,17 +1,53 @@
 //! Trait declaration lowering.
 
+use std::collections::HashSet;
+
+use incan_core::lang::trait_bounds;
+
 use super::super::super::Mutability;
 use super::super::super::decl::{FunctionParam, IrFunction, IrTrait, Visibility};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast;
+use crate::frontend::symbols::ResolvedType;
 
 impl AstLowering {
+    /// Map a supertrait name and resolved type arguments to IR for Rust trait bounds (RFC 042).
+    fn lower_supertrait_from_resolved(&self, trait_name: &str, type_args: &[ResolvedType]) -> (String, Vec<IrType>) {
+        let path = trait_bounds::incan_to_rust(trait_name)
+            .map(str::to_string)
+            .unwrap_or_else(|| trait_name.to_string());
+        let ir_args = type_args.iter().map(|ty| self.lower_resolved_type(ty)).collect();
+        (path, ir_args)
+    }
+
+    /// Lower `with` supertraits from the AST when typechecker output is unavailable (e.g. dependency lowering).
+    fn lower_supertraits_from_ast(
+        &mut self,
+        t: &ast::TraitDecl,
+        type_param_names: &HashSet<&str>,
+    ) -> Vec<(String, Vec<IrType>)> {
+        t.traits
+            .iter()
+            .map(|bound| {
+                let path = trait_bounds::incan_to_rust(&bound.node.name)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| bound.node.name.clone());
+                let ir_args = bound
+                    .node
+                    .type_args
+                    .iter()
+                    .map(|ty| self.lower_type_with_type_params(&ty.node, Some(type_param_names)))
+                    .collect();
+                (path, ir_args)
+            })
+            .collect()
+    }
+
     /// Lower a trait declaration.
     pub(in crate::backend::ir::lower) fn lower_trait(&mut self, t: &ast::TraitDecl) -> Result<IrTrait, LoweringError> {
-        let type_param_names: std::collections::HashSet<&str> =
-            t.type_params.iter().map(|tp| tp.name.as_str()).collect();
+        let type_param_names: HashSet<&str> = t.type_params.iter().map(|tp| tp.name.as_str()).collect();
         let methods: Vec<IrFunction> = t
             .methods
             .iter()
@@ -81,8 +117,22 @@ impl AstLowering {
             })
             .collect::<Result<Vec<_>, LoweringError>>()?;
 
+        let supertraits: Vec<(String, Vec<IrType>)> = if let Some(ti) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.trait_direct_supertraits.get(&t.name))
+        {
+            ti.iter()
+                .map(|(name, args)| self.lower_supertrait_from_resolved(name, args))
+                .collect()
+        } else {
+            self.lower_supertraits_from_ast(t, &type_param_names)
+        };
+
         Ok(IrTrait {
             name: t.name.clone(),
+            type_params: Self::lower_type_params(&t.type_params),
+            supertraits,
             methods,
             visibility: Self::map_visibility(t.visibility),
         })

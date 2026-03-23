@@ -429,8 +429,25 @@ impl<'a> IrEmitter<'a> {
             .map(|m| self.emit_trait_method(m))
             .collect::<Result<_, _>>()?;
 
+        // RFC 023 / RFC 042: trait-level generics and direct supertrait bounds.
+        let generics = self.emit_type_params(&trait_decl.type_params);
+        let supertrait_colon: TokenStream = if trait_decl.supertraits.is_empty() {
+            quote! {}
+        } else {
+            let bound_tokens: Vec<TokenStream> = trait_decl
+                .supertraits
+                .iter()
+                .map(|(path, args)| self.emit_supertrait_bound_path(path, args))
+                .collect();
+            let first = bound_tokens.first().cloned().unwrap_or_else(|| quote! {});
+            let rest = bound_tokens.iter().skip(1).map(|b| quote! { + #b });
+            quote! { : #first #(#rest)* }
+        };
+
+        // Note: trait items are emitted as `pub trait` regardless of Incan visibility so generated single-file crates
+        // keep stdlib and user traits addressable at crate root (matches pre–RFC-042 emission).
         Ok(quote! {
-            pub trait #name {
+            pub trait #name #generics #supertrait_colon {
                 #(#methods)*
             }
         })
