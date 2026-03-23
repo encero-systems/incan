@@ -298,6 +298,81 @@ impl TypeChecker {
         result
     }
 
+    /// Merge `@requires` fields from transitive supertraits into each trait symbol (RFC 042).
+    ///
+    /// Uses each trait's **explicit** `@requires` from a snapshot taken before merging, so order does not matter.
+    /// Incompatible requirements for the same field name emit [`errors::supertrait_requires_conflict`].
+    pub(crate) fn merge_supertrait_requires_into_traits(&mut self) {
+        let mut explicit: HashMap<String, Vec<(String, ResolvedType)>> = HashMap::new();
+        for sym in self.symbols.all_symbols() {
+            if let SymbolKind::Trait(info) = &sym.kind {
+                explicit.insert(sym.name.clone(), info.requires.clone());
+            }
+        }
+
+        let trait_names: Vec<String> = explicit.keys().cloned().collect();
+        let mut updates: Vec<(String, Vec<(String, ResolvedType)>)> = Vec::new();
+
+        for tname in trait_names {
+            let span = self
+                .symbols
+                .lookup(&tname)
+                .and_then(|id| self.symbols.get(id))
+                .map(|s| s.span)
+                .unwrap_or_default();
+
+            let mut merged: HashMap<String, ResolvedType> =
+                explicit.get(&tname).cloned().unwrap_or_default().into_iter().collect();
+
+            let closure = self.supertrait_closure.get(tname.as_str()).cloned().unwrap_or_default();
+
+            for (sup_name, sup_args) in closure {
+                let Some(sup_info) = self.lookup_trait_info(&sup_name) else {
+                    continue;
+                };
+                let sup_req = explicit.get(&sup_name).cloned().unwrap_or_default();
+                let subst = type_param_subst_map(&sup_info.type_params, &sup_args);
+                for (field, ty) in sup_req {
+                    let inst = substitute_resolved_type(&ty, &subst);
+                    match merged.get(&field) {
+                        None => {
+                            merged.insert(field, inst);
+                        }
+                        Some(existing) => {
+                            if existing == &inst {
+                                continue;
+                            }
+                            if self.types_compatible(existing, &inst) || self.types_compatible(&inst, existing) {
+                                continue;
+                            }
+                            self.errors.push(errors::supertrait_requires_conflict(
+                                &tname,
+                                &field,
+                                &existing.to_string(),
+                                &inst.to_string(),
+                                span,
+                            ));
+                        }
+                    }
+                }
+            }
+
+            let mut req_vec: Vec<(String, ResolvedType)> = merged.into_iter().collect();
+            req_vec.sort_by(|a, b| a.0.cmp(&b.0));
+            updates.push((tname, req_vec));
+        }
+
+        for (tname, requires) in updates {
+            if let Some(id) = self.symbols.lookup(&tname) {
+                if let Some(sym) = self.symbols.get_mut(id) {
+                    if let SymbolKind::Trait(info) = &mut sym.kind {
+                        info.requires = requires;
+                    }
+                }
+            }
+        }
+    }
+
     /// Register a newtype declaration with its underlying type and methods.
     fn collect_newtype(&mut self, nt: &NewtypeDecl, span: Span) {
         let underlying = self.resolve_type_checked(&nt.underlying);
@@ -406,12 +481,26 @@ fn trait_bound_to_ast_type(bound: &Spanned<TraitBound>) -> Type {
     }
 }
 
-fn type_param_subst_map(params: &[String], args: &[ResolvedType]) -> HashMap<String, ResolvedType> {
+pub(super) fn type_param_subst_map(params: &[String], args: &[ResolvedType]) -> HashMap<String, ResolvedType> {
     params
         .iter()
         .zip(args.iter())
         .map(|(p, a)| (p.clone(), a.clone()))
         .collect()
+}
+
+pub(super) fn substitute_method_info(info: &MethodInfo, map: &HashMap<String, ResolvedType>) -> MethodInfo {
+    MethodInfo {
+        receiver: info.receiver,
+        params: info
+            .params
+            .iter()
+            .map(|(n, t)| (n.clone(), substitute_resolved_type(t, map)))
+            .collect(),
+        return_type: substitute_resolved_type(&info.return_type, map),
+        is_async: info.is_async,
+        has_body: info.has_body,
+    }
 }
 
 fn substitute_resolved_type(ty: &ResolvedType, map: &HashMap<String, ResolvedType>) -> ResolvedType {

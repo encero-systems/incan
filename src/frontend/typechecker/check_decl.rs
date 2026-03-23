@@ -5,11 +5,22 @@ use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::*;
 
 use super::TypeChecker;
+use super::collect::{substitute_method_info, type_param_subst_map};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods;
 use std::collections::{HashMap, HashSet};
 
+/// Structural equality for trait method signatures (RFC 042 diamond / obligation merging).
+fn method_infos_identical(a: &MethodInfo, b: &MethodInfo) -> bool {
+    a.receiver == b.receiver
+        && a.is_async == b.is_async
+        && a.has_body == b.has_body
+        && a.params == b.params
+        && a.return_type == b.return_type
+}
+
 impl TypeChecker {
+    // TODO: missing rustdoc
     fn collect_trait_method_names(&self, traits: &[Spanned<Ident>]) -> HashSet<String> {
         let mut names = HashSet::new();
         for trait_ref in traits {
@@ -20,6 +31,7 @@ impl TypeChecker {
         names
     }
 
+    // TODO: missing rustdoc
     fn validate_field_metadata(
         &mut self,
         type_name: &str,
@@ -104,6 +116,183 @@ impl TypeChecker {
             }
         }
         self.types_compatible(&expected.return_type, &found.return_type)
+    }
+
+    /// True if `ancestor` appears in the transitive supertrait closure of trait `descendant` (RFC 042).
+    fn is_strict_supertrait_name(&self, ancestor: &str, descendant: &str) -> bool {
+        self.supertrait_closure
+            .get(descendant)
+            .is_some_and(|c| c.iter().any(|(n, _)| n == ancestor))
+    }
+
+    /// Drop supertrait obligations shadowed by a more derived trait in the same obligation group.
+    fn filter_supertrait_dominated_entries(&self, entries: Vec<(String, MethodInfo)>) -> Vec<(String, MethodInfo)> {
+        let names: Vec<String> = entries.iter().map(|(n, _)| n.clone()).collect();
+        entries
+            .into_iter()
+            .filter(|(ta, _)| {
+                !names
+                    .iter()
+                    .any(|tb| ta != tb && self.is_strict_supertrait_name(ta, tb))
+            })
+            .collect()
+    }
+
+    /// Collect abstract (`...`) methods from a trait and its transitive supertraits with supertrait type args applied.
+    fn raw_trait_abstract_method_entries(&self, trait_name: &str) -> Vec<(String, String, MethodInfo)> {
+        let mut out = Vec::new();
+        if let Some(root) = self.lookup_trait_info(trait_name) {
+            for (m, info) in &root.methods {
+                if !info.has_body {
+                    out.push((m.clone(), trait_name.to_string(), info.clone()));
+                }
+            }
+        }
+        let Some(closure) = self.supertrait_closure.get(trait_name) else {
+            return out;
+        };
+        for (sup_name, sup_args) in closure {
+            let Some(sup) = self.lookup_trait_info(sup_name) else {
+                continue;
+            };
+            let subst = type_param_subst_map(&sup.type_params, sup_args);
+            for (m, info) in &sup.methods {
+                if !info.has_body {
+                    out.push((m.clone(), sup_name.clone(), substitute_method_info(info, &subst)));
+                }
+            }
+        }
+        out
+    }
+
+    // TODO: missing rustdoc
+    fn grouped_trait_abstract_method_obligations(
+        &self,
+        trait_name: &str,
+    ) -> HashMap<String, Vec<(String, MethodInfo)>> {
+        let raw = self.raw_trait_abstract_method_entries(trait_name);
+        let mut map: HashMap<String, Vec<(String, MethodInfo)>> = HashMap::new();
+        for (method, origin, info) in raw {
+            map.entry(method).or_default().push((origin, info));
+        }
+        let mut out = HashMap::new();
+        for (m, entries) in map {
+            let filtered = self.filter_supertrait_dominated_entries(entries);
+            if !filtered.is_empty() {
+                out.insert(m, filtered);
+            }
+        }
+        out
+    }
+
+    // TODO: missing rustdoc
+    fn check_impl_against_trait_method_requirement(
+        &mut self,
+        type_name: &str,
+        via_trait: &str,
+        method_name: &str,
+        method_info: &MethodInfo,
+        methods: &HashMap<String, MethodInfo>,
+        adoption_span: Span,
+    ) {
+        if method_info.has_body {
+            return;
+        }
+        match methods.get(method_name) {
+            None => self
+                .errors
+                .push(errors::missing_trait_method(via_trait, method_name, adoption_span)),
+            Some(found) => {
+                if !self.method_sigs_compatible(method_info, found) {
+                    let expected_sig = self.method_sig_string_named(method_name, method_info);
+                    let found_sig = self.method_sig_string_named(method_name, found);
+                    self.errors.push(errors::trait_method_signature_mismatch(
+                        via_trait,
+                        type_name,
+                        method_name,
+                        &expected_sig,
+                        &found_sig,
+                        adoption_span,
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Enforce abstract methods from `trait_name` and its supertraits on a concrete type's method map (RFC 042).
+    fn enforce_trait_abstract_methods(
+        &mut self,
+        type_name: &str,
+        trait_name: &str,
+        trait_info: &TraitInfo,
+        adoption_span: Span,
+        methods: &HashMap<String, MethodInfo>,
+    ) {
+        let grouped = self.grouped_trait_abstract_method_obligations(trait_name);
+        let mut method_names: Vec<String> = grouped.keys().cloned().collect();
+        method_names.sort();
+        for method_name in method_names {
+            let Some(group) = grouped.get(&method_name) else {
+                continue;
+            };
+            if group.is_empty() {
+                continue;
+            }
+            let exp0 = &group[0].1;
+            if group.len() == 1 {
+                self.check_impl_against_trait_method_requirement(
+                    type_name,
+                    &group[0].0,
+                    method_name.as_str(),
+                    exp0,
+                    methods,
+                    adoption_span,
+                );
+                continue;
+            }
+            let all_mutually_compat = group
+                .iter()
+                .all(|(_, e)| self.method_sigs_compatible(exp0, e) && self.method_sigs_compatible(e, exp0));
+            if !all_mutually_compat {
+                self.errors.push(errors::trait_conflict(
+                    &group[0].0,
+                    &group[1].0,
+                    method_name.as_str(),
+                    adoption_span,
+                ));
+                continue;
+            }
+            let all_identical = group.iter().all(|(_, e)| method_infos_identical(exp0, e));
+            if all_identical {
+                self.check_impl_against_trait_method_requirement(
+                    type_name,
+                    &group[0].0,
+                    method_name.as_str(),
+                    exp0,
+                    methods,
+                    adoption_span,
+                );
+                continue;
+            }
+            let satisfies_all = methods
+                .get(method_name.as_str())
+                .is_some_and(|found| group.iter().all(|(_, e)| self.method_sigs_compatible(e, found)));
+            if satisfies_all {
+                continue;
+            }
+            if let Some(tm) = trait_info.methods.get(method_name.as_str())
+                && tm.has_body
+            {
+                continue;
+            }
+            self.errors.push(errors::supertrait_method_ambiguity(
+                trait_name,
+                method_name.as_str(),
+                &group[0].0,
+                &group[1].0,
+                adoption_span,
+            ));
+        }
     }
 
     // ========================================================================
@@ -300,41 +489,21 @@ impl TypeChecker {
             }
         }
 
-        // Check required methods (those without body)
-        for (method_name, method_info) in &trait_info.methods {
-            if !method_info.has_body {
-                // Prefer symbol-table method info so we can validate signatures.
-                let model_info = self
-                    .symbols
-                    .lookup(&model.name)
-                    .and_then(|id| self.symbols.get(id))
-                    .and_then(|sym| match &sym.kind {
-                        SymbolKind::Type(TypeInfo::Model(info)) => Some(info.clone()),
-                        _ => None,
-                    });
+        // Required methods: direct trait + transitive supertraits (RFC 042).
+        let model_info = self
+            .symbols
+            .lookup(&model.name)
+            .and_then(|id| self.symbols.get(id))
+            .and_then(|sym| match &sym.kind {
+                SymbolKind::Type(TypeInfo::Model(info)) => Some(info.clone()),
+                _ => None,
+            });
 
-                if let Some(mi) = model_info {
-                    match mi.methods.get(method_name) {
-                        None => self
-                            .errors
-                            .push(errors::missing_trait_method(trait_name, method_name, adoption_span)),
-                        Some(found) => {
-                            if !self.method_sigs_compatible(method_info, found) {
-                                let expected_sig = self.method_sig_string_named(method_name, method_info);
-                                let found_sig = self.method_sig_string_named(method_name, found);
-                                self.errors.push(errors::trait_method_signature_mismatch(
-                                    trait_name,
-                                    &model.name,
-                                    method_name,
-                                    &expected_sig,
-                                    &found_sig,
-                                    adoption_span,
-                                ));
-                            }
-                        }
-                    }
-                } else {
-                    // Fallback: previous behavior (name-only)
+        if let Some(mi) = model_info {
+            self.enforce_trait_abstract_methods(&model.name, trait_name, &trait_info, adoption_span, &mi.methods);
+        } else {
+            for (method_name, method_info) in &trait_info.methods {
+                if !method_info.has_body {
                     let found = model.methods.iter().any(|m| &m.node.name == method_name);
                     if !found {
                         self.errors
@@ -463,27 +632,13 @@ impl TypeChecker {
             }
         }
 
-        // Check required methods (those without body)
-        for (method_name, method_info) in &trait_info.methods {
-            if !method_info.has_body {
-                match class_info.as_ref().and_then(|ci| ci.methods.get(method_name)) {
-                    None => self
-                        .errors
-                        .push(errors::missing_trait_method(trait_name, method_name, adoption_span)),
-                    Some(found) => {
-                        if !self.method_sigs_compatible(method_info, found) {
-                            let expected_sig = self.method_sig_string_named(method_name, method_info);
-                            let found_sig = self.method_sig_string_named(method_name, found);
-                            self.errors.push(errors::trait_method_signature_mismatch(
-                                trait_name,
-                                &class.name,
-                                method_name,
-                                &expected_sig,
-                                &found_sig,
-                                adoption_span,
-                            ));
-                        }
-                    }
+        if let Some(ci) = class_info.as_ref() {
+            self.enforce_trait_abstract_methods(&class.name, trait_name, &trait_info, adoption_span, &ci.methods);
+        } else {
+            for (method_name, method_info) in &trait_info.methods {
+                if !method_info.has_body {
+                    self.errors
+                        .push(errors::missing_trait_method(trait_name, method_name, adoption_span));
                 }
             }
         }

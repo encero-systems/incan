@@ -1409,6 +1409,196 @@ trait T with M:
     Ok(())
 }
 
+// RFC 042 Phase 3: assignability, conformance, `@requires` merge, trait construction, diamond diagnostics
+
+#[test]
+fn test_type_implements_trait_includes_transitive_supertraits() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Root:
+  def r(self) -> int: ...
+
+trait Mid with Root:
+  def m(self) -> int: ...
+
+trait Leaf with Mid:
+  def l(self) -> int: ...
+
+model M with Leaf:
+  def r(self) -> int:
+    return 0
+  def m(self) -> int:
+    return 0
+  def l(self) -> int:
+    return 0
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    assert!(checker.type_implements_trait("M", "Leaf"));
+    assert!(checker.type_implements_trait("M", "Mid"));
+    assert!(checker.type_implements_trait("M", "Root"));
+    Ok(())
+}
+
+#[test]
+fn test_types_compatible_generic_trait_annotation() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Boxed[T]:
+  def get(self) -> T: ...
+
+model Cell[T] with Boxed:
+  value: T
+
+  def get(self) -> T:
+    return self.value
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let actual = ResolvedType::Generic("Cell".to_string(), vec![ResolvedType::Int]);
+    let expected = ResolvedType::Generic("Boxed".to_string(), vec![ResolvedType::Int]);
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "Generic concrete type should be assignable to matching generic trait annotation (RFC 042)"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_supertrait_requires_merge_conflict() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+@requires(x: int)
+trait A:
+  def fa(self) -> int: ...
+
+@requires(x: str)
+trait B:
+  def fb(self) -> str: ...
+
+trait C with A, B:
+  def fc(self) -> int: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    let Err(errs) = checker.check_program(&ast) else {
+        panic!("expected @requires merge conflict");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("merges conflicting @requires")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn test_cannot_instantiate_trait() {
+    let source = r#"
+trait T:
+  def f(self) -> int: ...
+
+def main() -> int:
+  let _x = T()
+  return 0
+"#;
+    let err = check_str(source).expect_err("trait constructor should be rejected");
+    assert!(
+        err.iter().any(|e| e.message.contains("Cannot construct trait")),
+        "unexpected errors: {:?}",
+        err.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_supertrait_incompatible_method_conflict() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait A:
+  def m(self) -> int: ...
+
+trait B:
+  def m(self) -> str: ...
+
+trait C with A, B:
+  def c(self) -> int: ...
+
+model M with C:
+  def c(self) -> int:
+    return 0
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    let Err(errs) = checker.check_program(&ast) else {
+        panic!("expected conflicting supertrait method requirements");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("Conflicting implementations")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn test_supertrait_method_ambiguity_param_name_only() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait A:
+  def m(self, a: int) -> int: ...
+
+trait B:
+  def m(self, b: int) -> int: ...
+
+trait C with A, B:
+  def c(self) -> int: ...
+
+model M with C:
+  def c(self) -> int:
+    return 0
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    let Err(errs) = checker.check_program(&ast) else {
+        panic!("expected ambiguous supertrait method");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("Ambiguous trait method")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn test_transitive_supertrait_abstract_method_required() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Root:
+  def root_only(self) -> int: ...
+
+trait Leaf with Root:
+  def leaf_m(self) -> int: ...
+
+model M with Leaf:
+  def leaf_m(self) -> int:
+    return 1
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    let Err(errs) = checker.check_program(&ast) else {
+        panic!("expected missing transitive supertrait method");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("requires method 'root_only'")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
 #[test]
 fn test_derive_validate_requires_validate_method() {
     let source = r#"

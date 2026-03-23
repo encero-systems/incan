@@ -1076,6 +1076,16 @@ impl TypeChecker {
                 return self.validate_function_call(name, &func_info, args, span);
             }
 
+            // RFC 042: traits are abstract — reject `TraitName(...)` constructor syntax.
+            if self
+                .lookup_symbol(name)
+                .is_some_and(|sym| matches!(sym.kind, SymbolKind::Trait(_)))
+            {
+                self.check_call_args(args);
+                self.errors.push(errors::cannot_instantiate_trait(name, span));
+                return ResolvedType::Unknown;
+            }
+
             let in_scope = self.symbols.lookup(name).is_some();
             if in_scope && let Some(tid) = surface_types::from_str(name) {
                 if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
@@ -1144,6 +1154,14 @@ impl TypeChecker {
         span: Span,
     ) -> ResolvedType {
         self.check_call_args(args);
+
+        if self
+            .lookup_symbol(name)
+            .is_some_and(|sym| matches!(sym.kind, SymbolKind::Trait(_)))
+        {
+            self.errors.push(errors::cannot_instantiate_trait(name, span));
+            return ResolvedType::Unknown;
+        }
 
         if self.symbols.lookup(name).is_some()
             && let Some(tid) = surface_types::from_str(name)

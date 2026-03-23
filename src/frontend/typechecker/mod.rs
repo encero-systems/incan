@@ -340,13 +340,24 @@ impl TypeChecker {
         self.generic_placeholder_name(ty).is_some()
     }
 
-    /// Whether a concrete named type declares adoption of `trait_name`.
+    /// Whether a concrete named type declares adoption of `trait_name` (RFC 042: includes transitive supertraits).
     pub(crate) fn type_implements_trait(&self, type_name: &str, trait_name: &str) -> bool {
-        match self.lookup_type_info(type_name) {
-            Some(TypeInfo::Model(model)) => model.traits.iter().any(|name| name == trait_name),
-            Some(TypeInfo::Class(class)) => class.traits.iter().any(|name| name == trait_name),
-            _ => false,
+        let adopted = match self.lookup_type_info(type_name) {
+            Some(TypeInfo::Model(model)) => &model.traits,
+            Some(TypeInfo::Class(class)) => &class.traits,
+            _ => return false,
+        };
+        for t in adopted {
+            if t == trait_name {
+                return true;
+            }
+            if let Some(closure) = self.supertrait_closure.get(t) {
+                if closure.iter().any(|(n, _)| n == trait_name) {
+                    return true;
+                }
+            }
         }
+        false
     }
 
     /// Look up a variable binding by name (in any scope) and return its [`VariableInfo`].
@@ -499,6 +510,7 @@ impl TypeChecker {
 
         self.resolve_pending_trait_supertraits();
         self.finalize_supertrait_graph();
+        self.merge_supertrait_requires_into_traits();
 
         // Second pass: check consts first so their resolved types are available to later checks.
         for decl in &program.declarations {
@@ -639,6 +651,37 @@ impl TypeChecker {
             (ResolvedType::Generic(type_name, _), ResolvedType::Named(trait_name))
                 if self.lookup_trait_info(trait_name).is_some() =>
             {
+                self.type_implements_trait(type_name, trait_name)
+            }
+            // RFC 042: `Concrete[T]` assignable to generic trait annotation `Trait[T]` (and similar).
+            (ResolvedType::Generic(type_name, actual_args), ResolvedType::Generic(trait_name, expected_args))
+                if self.lookup_trait_info(trait_name).is_some()
+                    && self.lookup_trait_info(type_name).is_none()
+                    && self.lookup_type_info(type_name).is_some() =>
+            {
+                let Some(t_info) = self.lookup_trait_info(trait_name) else {
+                    return false;
+                };
+                if t_info.type_params.len() != actual_args.len() || t_info.type_params.len() != expected_args.len() {
+                    return false;
+                }
+                if !self.type_implements_trait(type_name, trait_name) {
+                    return false;
+                }
+                actual_args
+                    .iter()
+                    .zip(expected_args.iter())
+                    .all(|(a, e)| self.types_compatible(a, e))
+            }
+            (ResolvedType::Named(type_name), ResolvedType::Generic(trait_name, expected_args))
+                if self.lookup_trait_info(trait_name).is_some() =>
+            {
+                let Some(t_info) = self.lookup_trait_info(trait_name) else {
+                    return false;
+                };
+                if t_info.type_params.len() != expected_args.len() {
+                    return false;
+                }
                 self.type_implements_trait(type_name, trait_name)
             }
             // Allow bare surface generic types (e.g. `Json`) to match `Json[T]` when used without args.
