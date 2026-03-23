@@ -85,6 +85,8 @@ pub struct CheckedClassExport {
 pub struct CheckedTraitExport {
     pub name: String,
     pub type_params: Vec<CheckedTypeParam>,
+    /// Direct supertraits `(trait_name, type_arguments)` after typechecking (RFC 042).
+    pub supertraits: Vec<(String, Vec<ResolvedType>)>,
     pub requires: Vec<(String, ResolvedType)>,
     pub methods: Vec<CheckedMethod>,
 }
@@ -285,16 +287,26 @@ fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<Chec
 
 fn checked_trait_export(trait_decl: &TraitDecl, checker: &TypeChecker) -> Option<CheckedTraitExport> {
     let symbol = checker.lookup_symbol(trait_decl.name.as_str())?;
-    let SymbolKind::Trait(TraitInfo { requires, methods, .. }) = &symbol.kind else {
+    let SymbolKind::Trait(TraitInfo {
+        requires,
+        methods,
+        supertraits,
+        ..
+    }) = &symbol.kind
+    else {
         return None;
     };
 
     let mut sorted_requires = requires.clone();
     sorted_requires.sort_by(|(left, _), (right, _)| left.cmp(right));
 
+    let mut sorted_supertraits = supertraits.clone();
+    sorted_supertraits.sort_by(|(left, _), (right, _)| left.cmp(right));
+
     Some(CheckedTraitExport {
         name: trait_decl.name.clone(),
         type_params: checked_type_params(&trait_decl.type_params, checker),
+        supertraits: sorted_supertraits,
         requires: sorted_requires,
         methods: map_methods(methods),
     })

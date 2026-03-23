@@ -8,9 +8,78 @@ use super::super::super::{IrSpan, Mutability};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
+use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
+use crate::frontend::symbols::ResolvedType;
 use incan_core::lang::keywords::{self, KeywordId};
 
 impl AstLowering {
+    /// Infer the concrete trait arguments for `impl Trait<...> for Type<...>` from the adopter's leading type params.
+    ///
+    /// RFC 042 uses the same positional convention as the typechecker for concrete adopters of generic traits:
+    /// the adopted trait's type parameters map to the adopter's leading type parameters.
+    fn infer_trait_impl_resolved_args(&self, trait_name: &str, type_params: &[ast::TypeParam]) -> Vec<ResolvedType> {
+        let Some(arity) = self.trait_decls.get(trait_name).map(|decl| decl.type_params.len()) else {
+            return Vec::new();
+        };
+        type_params
+            .iter()
+            .take(arity)
+            .map(|tp| ResolvedType::TypeVar(tp.name.clone()))
+            .collect()
+    }
+
+    /// Collect the full set of Rust trait impl targets required by a trait hierarchy.
+    fn collect_trait_impl_targets_recursive(
+        &self,
+        trait_name: &str,
+        trait_args: &[ResolvedType],
+        seen: &mut Vec<(String, Vec<ResolvedType>)>,
+        out: &mut Vec<(String, Vec<IrType>)>,
+    ) {
+        let key = (trait_name.to_string(), trait_args.to_vec());
+        if seen.iter().any(|entry| entry == &key) {
+            return;
+        }
+        seen.push(key);
+        out.push((
+            trait_name.to_string(),
+            trait_args.iter().map(|arg| self.lower_resolved_type(arg)).collect(),
+        ));
+
+        let Some(type_info) = &self.type_info else {
+            return;
+        };
+        let Some(direct_supertraits) = type_info.trait_direct_supertraits.get(trait_name) else {
+            return;
+        };
+        let Some(trait_decl) = self.trait_decls.get(trait_name) else {
+            return;
+        };
+        let param_names: Vec<String> = trait_decl.type_params.iter().map(|tp| tp.name.clone()).collect();
+        let subst = type_param_subst_map(&param_names, trait_args);
+
+        for (supertrait_name, supertrait_args) in direct_supertraits {
+            let instantiated_args = supertrait_args
+                .iter()
+                .map(|arg| substitute_resolved_type(arg, &subst))
+                .collect::<Vec<_>>();
+            self.collect_trait_impl_targets_recursive(supertrait_name, &instantiated_args, seen, out);
+        }
+    }
+
+    /// Expand a direct adopted trait into the full set of Rust impl targets required by its supertrait chain.
+    pub(in crate::backend::ir::lower) fn trait_impl_targets_for_adopted_trait(
+        &self,
+        trait_name: &str,
+        type_params: &[ast::TypeParam],
+    ) -> Vec<(String, Vec<IrType>)> {
+        let direct_args = self.infer_trait_impl_resolved_args(trait_name, type_params);
+        let mut seen = Vec::new();
+        let mut out = Vec::new();
+        self.collect_trait_impl_targets_recursive(trait_name, &direct_args, &mut seen, &mut out);
+        out
+    }
+
     /// Lower model methods into an impl block.
     pub(in crate::backend::ir::lower) fn lower_model_methods(
         &mut self,
@@ -33,6 +102,7 @@ impl AstLowering {
             target_type: type_name.to_string(),
             type_params: Self::lower_type_params(type_params),
             trait_name: None,
+            trait_type_args: Vec::new(),
             methods: lowered_methods,
         })
     }
@@ -45,6 +115,7 @@ impl AstLowering {
         type_name: &str,
         type_params: &[ast::TypeParam],
         trait_name: &str,
+        trait_type_args: Vec<IrType>,
         impl_methods: &[Spanned<ast::MethodDecl>],
     ) -> Result<IrImpl, LoweringError> {
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
@@ -62,6 +133,7 @@ impl AstLowering {
                 target_type: type_name.to_string(),
                 type_params: Self::lower_type_params(type_params),
                 trait_name: Some(trait_name.to_string()),
+                trait_type_args,
                 methods,
             });
         };
@@ -103,6 +175,7 @@ impl AstLowering {
             target_type: type_name.to_string(),
             type_params: Self::lower_type_params(type_params),
             trait_name: Some(trait_name.to_string()),
+            trait_type_args,
             methods,
         })
     }
@@ -113,6 +186,8 @@ impl AstLowering {
         type_param_names: Option<&std::collections::HashSet<&str>>,
     ) -> Result<IrFunction, LoweringError> {
         self.scopes.push(HashMap::new());
+        let mut hidden_type_params = Vec::new();
+        let mut hidden_counter = 0usize;
 
         // Handle receiver (self) parameter
         let mut params = Vec::new();
@@ -134,7 +209,12 @@ impl AstLowering {
             .params
             .iter()
             .map(|p| {
-                let base_ty = self.lower_type_with_type_params(&p.node.ty.node, type_param_names);
+                let base_ty = self.lower_callable_param_type(
+                    &p.node.ty.node,
+                    type_param_names,
+                    &mut hidden_type_params,
+                    &mut hidden_counter,
+                );
                 FunctionParam {
                     name: p.node.name.clone(),
                     ty: base_ty,
@@ -153,7 +233,7 @@ impl AstLowering {
             .collect();
         params.extend(other_params);
 
-        let return_type = self.lower_type_with_type_params(&m.return_type.node, type_param_names);
+        let return_type = self.lower_callable_return_type(&m.return_type.node, type_param_names);
         let body = if let Some(ref body_stmts) = m.body {
             self.lower_statements(body_stmts)?
         } else {
@@ -163,6 +243,7 @@ impl AstLowering {
         // RFC 023: detect @rust.extern decorator to mark this method as externally-backed.
         let is_extern = Self::has_rust_extern_decorator(&m.decorators);
         let rust_attributes = self.extract_passthrough_attributes(&m.decorators);
+        let mut all_type_params = hidden_type_params;
 
         self.scopes.pop();
 
@@ -173,7 +254,7 @@ impl AstLowering {
             body,
             is_async: m.is_async(),
             visibility: Visibility::Private,
-            type_params: vec![],
+            type_params: std::mem::take(&mut all_type_params),
             is_extern,
             rust_attributes,
         })
@@ -201,6 +282,7 @@ impl AstLowering {
             target_type: type_name.to_string(),
             type_params: Self::lower_type_params(type_params),
             trait_name: None,
+            trait_type_args: Vec::new(),
             methods: lowered_methods,
         })
     }
@@ -211,6 +293,8 @@ impl AstLowering {
         type_param_names: Option<&std::collections::HashSet<&str>>,
     ) -> Result<IrFunction, LoweringError> {
         self.scopes.push(HashMap::new());
+        let mut hidden_type_params = Vec::new();
+        let mut hidden_counter = 0usize;
 
         let mut params: Vec<FunctionParam> = Vec::new();
 
@@ -239,7 +323,12 @@ impl AstLowering {
             .params
             .iter()
             .map(|p| {
-                let base_ty = self.lower_type_with_type_params(&p.node.ty.node, type_param_names);
+                let base_ty = self.lower_callable_param_type(
+                    &p.node.ty.node,
+                    type_param_names,
+                    &mut hidden_type_params,
+                    &mut hidden_counter,
+                );
                 // For mutable parameters, wrap in RefMut
                 let ty = if p.node.is_mut {
                     IrType::RefMut(Box::new(base_ty.clone()))
@@ -271,7 +360,7 @@ impl AstLowering {
             .collect();
         params.extend(other_params);
 
-        let return_type = self.lower_type_with_type_params(&m.return_type.node, type_param_names);
+        let return_type = self.lower_callable_return_type(&m.return_type.node, type_param_names);
         let body = if let Some(ref body_stmts) = m.body {
             self.lower_statements(body_stmts)?
         } else {
@@ -284,6 +373,7 @@ impl AstLowering {
         // `lower_impl_method_for_trait`, so inherent methods can be emitted as public here.
         let visibility = Visibility::Public;
         let is_extern = Self::has_rust_extern_decorator(&m.decorators);
+        let mut all_type_params = hidden_type_params;
 
         Ok(IrFunction {
             name: m.name.clone(),
@@ -292,7 +382,7 @@ impl AstLowering {
             body,
             is_async: m.is_async(),
             visibility,
-            type_params: vec![],
+            type_params: std::mem::take(&mut all_type_params),
             is_extern,
             rust_attributes: self.extract_passthrough_attributes(&m.decorators),
         })

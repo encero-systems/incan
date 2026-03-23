@@ -17,6 +17,7 @@ pub mod decorator_resolution;
 pub mod library_exports;
 pub mod library_manifest_index;
 pub mod module;
+pub(crate) mod resolved_type_subst;
 pub mod resolver;
 pub mod surface_semantics;
 pub mod symbols;

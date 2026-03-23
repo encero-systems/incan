@@ -1369,10 +1369,12 @@ trait Leaf with Mid:
     let ast = parser::parse(&tokens)?;
     let mut checker = TypeChecker::new();
     checker.check_program(&ast)?;
-    let leaf = checker
-        .supertrait_closure
-        .get("Leaf")
-        .expect("Leaf should have a supertrait closure");
+    let Some(leaf) = checker.supertrait_closure.get("Leaf") else {
+        return Err(vec![CompileError::type_error(
+            "Leaf should have a supertrait closure".to_string(),
+            Span::default(),
+        )]);
+    };
     assert!(
         leaf.iter().any(|(n, _)| n == "Mid"),
         "expected Mid in Leaf closure, got {:?}",
@@ -1501,6 +1503,62 @@ model Pair[A, B] with Boxed:
     assert!(
         !checker.types_compatible(&short_actual, &expected),
         "Concrete type must supply at least as many type arguments as the trait annotation"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_types_compatible_generic_supertrait_annotation() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Collection[T]:
+  def first(self) -> T: ...
+
+trait OrderedCollection[T] with Collection[T]:
+  def sorted(self) -> Self: ...
+
+model BoxedValue[T] with OrderedCollection:
+  value: T
+
+  def first(self) -> T:
+    return self.value
+
+  def sorted(self) -> Self:
+    return self
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let actual = ResolvedType::Generic("BoxedValue".to_string(), vec![ResolvedType::Int]);
+    let expected = ResolvedType::Generic("Collection".to_string(), vec![ResolvedType::Int]);
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "Generic adopters should satisfy transitive generic supertrait annotations with substituted args"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_types_compatible_named_concrete_rejects_mismatched_generic_trait_annotation() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Boxed[T]:
+  def get(self) -> T: ...
+
+model IntBox with Boxed:
+  value: int
+
+  def get(self) -> int:
+    return self.value
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let actual = ResolvedType::Named("IntBox".to_string());
+    let expected = ResolvedType::Generic("Boxed".to_string(), vec![ResolvedType::Str]);
+    assert!(
+        !checker.types_compatible(&actual, &expected),
+        "Non-generic adopters must not silently satisfy arbitrary generic trait instantiations"
     );
     Ok(())
 }

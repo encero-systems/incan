@@ -1,8 +1,9 @@
 //! Shared helpers: type parameter lowering, trait-bound mapping, and derive extraction.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::super::super::decl::{IrRustAttrArg, IrRustAttribute, IrTraitBound, IrTypeParam};
+use super::super::super::types::IrType;
 use super::super::AstLowering;
 use crate::frontend::ast::{self, Spanned};
 use crate::frontend::decorator_resolution;
@@ -32,6 +33,36 @@ impl AstLowering {
         }
     }
 
+    /// Lower a type that appears inside a generic trait bound.
+    ///
+    /// These positions only need surface-level lowering because they occur in generic declarations, not in
+    /// expression-bearing contexts.
+    fn lower_bound_type(ty: &ast::Type) -> IrType {
+        match ty {
+            ast::Type::Simple(name) => match name.as_str() {
+                "int" => IrType::Int,
+                "float" => IrType::Float,
+                "bool" => IrType::Bool,
+                "str" => IrType::String,
+                "None" | "Unit" => IrType::Unit,
+                other => IrType::Generic(other.to_string()),
+            },
+            ast::Type::Generic(base, args) => {
+                let lowered_args = args.iter().map(|arg| Self::lower_bound_type(&arg.node)).collect();
+                IrType::NamedGeneric(base.clone(), lowered_args)
+            }
+            ast::Type::Function(params, ret) => IrType::Function {
+                params: params.iter().map(|param| Self::lower_bound_type(&param.node)).collect(),
+                ret: Box::new(Self::lower_bound_type(&ret.node)),
+            },
+            ast::Type::Unit => IrType::Unit,
+            ast::Type::Tuple(items) => {
+                IrType::Tuple(items.iter().map(|item| Self::lower_bound_type(&item.node)).collect())
+            }
+            ast::Type::SelfType => IrType::SelfType,
+        }
+    }
+
     /// Map an Incan trait bound to the corresponding Rust trait bound.
     ///
     /// Uses the `incan_core::lang::trait_bounds` registry to resolve known Incan names to their Rust trait paths (e.g.,
@@ -40,8 +71,86 @@ impl AstLowering {
         let trait_path = trait_bounds::incan_to_rust(&bound.name)
             .map(str::to_string)
             .unwrap_or_else(|| bound.name.clone());
-        // TODO: handle type_args for bounds like `From[U]` once generic bound lowering is needed.
-        IrTraitBound::simple(trait_path)
+        let type_args = bound
+            .type_args
+            .iter()
+            .map(|arg| Self::lower_bound_type(&arg.node))
+            .collect();
+        IrTraitBound::with_type_args(trait_path, type_args)
+    }
+
+    /// Whether `name` resolves to a locally-known trait during lowering.
+    ///
+    /// This is used to preserve RFC 042 trait-typed signature annotations as compiler-managed abstract types instead of
+    /// lowering them as concrete Rust type names.
+    pub(in crate::backend::ir::lower) fn is_known_trait_name(&self, name: &str) -> bool {
+        self.trait_decls.contains_key(name)
+            || self
+                .type_info
+                .as_ref()
+                .is_some_and(|info| info.trait_direct_supertraits.contains_key(name))
+    }
+
+    /// Lower an annotation like `Collection[int]` to a Rust trait bound shape.
+    pub(in crate::backend::ir::lower) fn lower_trait_annotation_bound(
+        &self,
+        ty: &ast::Type,
+        type_param_names: Option<&HashSet<&str>>,
+    ) -> Option<IrTraitBound> {
+        match ty {
+            ast::Type::Simple(name)
+                if !type_param_names.is_some_and(|params| params.contains(name.as_str()))
+                    && self.is_known_trait_name(name) =>
+            {
+                let trait_path = trait_bounds::incan_to_rust(name)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| name.clone());
+                Some(IrTraitBound::simple(trait_path))
+            }
+            ast::Type::Generic(base, args) if self.is_known_trait_name(base) => {
+                let trait_path = trait_bounds::incan_to_rust(base)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| base.clone());
+                let type_args = args
+                    .iter()
+                    .map(|arg| self.lower_type_with_type_params(&arg.node, type_param_names))
+                    .collect();
+                Some(IrTraitBound::with_type_args(trait_path, type_args))
+            }
+            _ => None,
+        }
+    }
+
+    /// Lower a callable parameter type, synthesizing a hidden Rust generic when the source annotation names a trait.
+    pub(in crate::backend::ir::lower) fn lower_callable_param_type(
+        &self,
+        ty: &ast::Type,
+        type_param_names: Option<&HashSet<&str>>,
+        hidden_type_params: &mut Vec<IrTypeParam>,
+        hidden_counter: &mut usize,
+    ) -> IrType {
+        if let Some(bound) = self.lower_trait_annotation_bound(ty, type_param_names) {
+            let hidden_name = format!("__IncanTrait{}", *hidden_counter);
+            *hidden_counter += 1;
+            hidden_type_params.push(IrTypeParam {
+                name: hidden_name.clone(),
+                bounds: vec![bound],
+            });
+            return IrType::Generic(hidden_name);
+        }
+        self.lower_type_with_type_params(ty, type_param_names)
+    }
+
+    /// Lower a callable return type, preserving trait annotations as Rust `impl Trait` where needed.
+    pub(in crate::backend::ir::lower) fn lower_callable_return_type(
+        &self,
+        ty: &ast::Type,
+        type_param_names: Option<&HashSet<&str>>,
+    ) -> IrType {
+        if let Some(bound) = self.lower_trait_annotation_bound(ty, type_param_names) {
+            return IrType::ImplTrait(bound);
+        }
+        self.lower_type_with_type_params(ty, type_param_names)
     }
 
     /// Extract derives from decorators.

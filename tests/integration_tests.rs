@@ -1223,6 +1223,61 @@ class Service with Loggable, Serializable:
     }
 
     #[test]
+    fn test_trait_supertraits_compile_source() {
+        let source = r#"
+trait Collection[T]:
+  def first(self) -> T: ...
+
+trait OrderedCollection[T] with Collection[T]:
+  def sorted(self) -> Self: ...
+
+model BoxedValue[T] with OrderedCollection:
+  value: T
+
+  def first(self) -> T:
+    return self.value
+
+  def sorted(self) -> Self:
+    return self
+
+def take_first(values: Collection[int]) -> int:
+  return values.first()
+
+def take_sorted(values: OrderedCollection[int]) -> OrderedCollection[int]:
+  return values.sorted()
+"#;
+
+        let result = super::compile_source(source);
+        assert!(
+            result.is_ok(),
+            "expected trait hierarchy program to typecheck, got {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_trait_constructor_rejected_in_full_pipeline() {
+        let source = r#"
+trait Runnable:
+  def run(self) -> None: ...
+
+def main() -> None:
+  let _r = Runnable()
+"#;
+
+        let result = super::compile_source(source);
+        let Err(errs) = result else {
+            panic!("expected trait construction to fail");
+        };
+        assert!(
+            errs.iter()
+                .any(|message| message.contains("Cannot construct trait 'Runnable'")),
+            "unexpected errors: {:?}",
+            errs
+        );
+    }
+
+    #[test]
     fn test_method_with_mut_self() {
         let source = r#"
 class Counter:

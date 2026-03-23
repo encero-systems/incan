@@ -482,6 +482,20 @@ mod tests {
     }
 
     #[test]
+    fn test_format_source_trait_with_supertraits() -> Result<(), FormatError> {
+        let source = r#"trait OrderedCollection[T] with Collection[T], Serializable:
+  def sorted(self) -> OrderedCollection[T]: ...
+"#;
+        let formatted = format_source(source)?;
+        let expected = r#"trait OrderedCollection[T] with Collection[T], Serializable:
+    def sorted(self) -> OrderedCollection[T]: ...
+
+"#;
+        assert_eq!(formatted, expected);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_invalid_syntax() {
         let source = "def foo(";
         let result = format_source(source);

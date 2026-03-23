@@ -15,7 +15,7 @@ pub trait Eq {
     fn __eq__(&self, other: Self) -> bool;
     fn __ne__(&self, other: Self) -> bool;
 }
-pub trait Ord {
+pub trait Ord: PartialEq {
     fn __lt__(&self, other: Self) -> bool;
     fn __le__(&self, other: Self) -> bool;
     fn __gt__(&self, other: Self) -> bool;

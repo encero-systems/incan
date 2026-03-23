@@ -27,12 +27,19 @@ impl AstLowering {
 
         let type_param_names: std::collections::HashSet<&str> =
             f.type_params.iter().map(|tp| tp.name.as_str()).collect();
+        let mut hidden_type_params = Vec::new();
+        let mut hidden_counter = 0usize;
 
         let params: Vec<FunctionParam> = f
             .params
             .iter()
             .map(|p| {
-                let base_ty = self.lower_type_with_type_params(&p.node.ty.node, Some(&type_param_names));
+                let base_ty = self.lower_callable_param_type(
+                    &p.node.ty.node,
+                    Some(&type_param_names),
+                    &mut hidden_type_params,
+                    &mut hidden_counter,
+                );
                 // For mutable parameters, wrap in RefMut to track that it's a &mut reference
                 let ty = if p.node.is_mut {
                     IrType::RefMut(Box::new(base_ty.clone()))
@@ -63,13 +70,16 @@ impl AstLowering {
             })
             .collect();
 
-        let return_type = self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names));
+        let return_type = self.lower_callable_return_type(&f.return_type.node, Some(&type_param_names));
         let body = self.lower_statements(&f.body)?;
         self.scopes.pop();
 
         // RFC 023: detect @rust.extern decorator to mark this function as externally-backed.
         let is_extern = Self::has_rust_extern_decorator(&f.decorators);
         let rust_attributes = self.extract_passthrough_attributes(&f.decorators);
+
+        let mut all_type_params = Self::lower_type_params(&f.type_params);
+        all_type_params.extend(hidden_type_params);
 
         Ok(IrFunction {
             name: f.name.clone(),
@@ -78,7 +88,7 @@ impl AstLowering {
             body,
             is_async: f.is_async(),
             visibility: Self::map_visibility(f.visibility),
-            type_params: Self::lower_type_params(&f.type_params),
+            type_params: all_type_params,
             is_extern,
             rust_attributes,
         })

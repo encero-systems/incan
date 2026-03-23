@@ -174,9 +174,9 @@ impl<'a> IrEmitter<'a> {
                     })
                     .map(|m| self.emit_trait_method(m))
                     .collect::<Result<_, _>>()?;
-                let trait_ident = format_ident!("{}", trait_name);
+                let trait_tokens = self.emit_supertrait_bound_path(trait_name, &impl_block.trait_type_args);
                 quote! {
-                    impl #generics #trait_ident for #target_type #generics_bare {
+                    impl #generics #trait_tokens for #target_type #generics_bare {
                         #(#trait_methods)*
                     }
                 }
@@ -190,9 +190,9 @@ impl<'a> IrEmitter<'a> {
                 quote! {}
             }
         } else if let Some(trait_name) = &impl_block.trait_name {
-            let trait_ident = format_ident!("{}", trait_name);
+            let trait_tokens = self.emit_supertrait_bound_path(trait_name, &impl_block.trait_type_args);
             quote! {
-                impl #generics #trait_ident for #target_type #generics_bare {}
+                impl #generics #trait_tokens for #target_type #generics_bare {}
             }
         } else {
             quote! {}

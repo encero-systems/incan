@@ -21,7 +21,8 @@
 //! ## Limitations
 //!
 //! - Function signatures are extracted from top-level `def` declarations (not methods on classes/models).
-//! - Trait signatures are extracted from top-level `trait` declarations with their methods.
+//! - Trait signatures are extracted from top-level `trait` declarations with their methods and `with` supertraits (RFC
+//!   042), using the same lightweight `ast_type_to_resolved` mapping as method signatures.
 //! - Default parameter values are not captured (only the parameter name and type).
 //! - Complex types beyond the common set (`int`, `str`, `bool`, `Option[T]`, etc.) are treated as `Named`.
 //! - Parse failures are logged and the module is treated as unavailable for AST-derived signature lookup.
@@ -366,21 +367,47 @@ fn extract_const_signatures(program: &ast::Program) -> Vec<(String, VariableInfo
     consts
 }
 
+/// Map one `with` supertrait bound to `(trait_name, type_arguments)` for stdlib trait metadata (RFC 042).
+///
+/// Uses the declaring trait's type parameter names so bounds like `DataSet[T]` become generic supertrait entries with
+/// [`ResolvedType::TypeVar`] arguments. Bounds that do not resolve to a plain trait name or generic trait application
+/// are skipped (malformed stdlib sources are treated as having no edge for that bound).
+fn supertrait_entry_from_trait_bound(
+    bound: &ast::TraitBound,
+    declaring_trait_type_params: &[String],
+) -> Option<(String, Vec<ResolvedType>)> {
+    let ty = if bound.type_args.is_empty() {
+        ast::Type::Simple(bound.name.clone())
+    } else {
+        ast::Type::Generic(bound.name.clone(), bound.type_args.clone())
+    };
+    match ast_type_to_resolved(&ty, declaring_trait_type_params) {
+        ResolvedType::Named(n) => Some((n, Vec::new())),
+        ResolvedType::Generic(n, args) => Some((n, args)),
+        _ => None,
+    }
+}
+
 /// Extract trait signatures from a parsed stdlib `.incn` program.
 ///
-/// Top-level `trait` declarations are extracted with their method signatures. `@requires` decorators are not
-/// resolved (requires fields are left empty) since stdlib traits typically don't use them.
+/// Top-level `trait` declarations are extracted with their method signatures and `with` supertrait bounds. `@requires`
+/// decorators are not resolved (`requires` stays empty) since stdlib traits typically don't use them.
 fn extract_trait_signatures(program: &ast::Program) -> Vec<(String, TraitInfo)> {
     let mut traits = Vec::new();
     for decl in &program.declarations {
         if let ast::Declaration::Trait(tr) = &decl.node {
             let tp_names: Vec<String> = tr.type_params.iter().map(|tp| tp.name.clone()).collect();
             let methods = extract_method_signatures(&tr.methods, &tp_names);
+            let supertraits: Vec<(String, Vec<ResolvedType>)> = tr
+                .traits
+                .iter()
+                .filter_map(|b| supertrait_entry_from_trait_bound(&b.node, &tp_names))
+                .collect();
             traits.push((
                 tr.name.clone(),
                 TraitInfo {
                     type_params: tp_names,
-                    supertraits: Vec::new(),
+                    supertraits,
                     methods,
                     requires: Vec::new(),
                 },
@@ -813,6 +840,11 @@ mod tests {
         let ord_trait = module.traits.iter().find(|(name, _)| name == ord_name);
         assert!(ord_trait.is_some(), "should find Ord trait");
         let ord_info = &ord_trait.ok_or("Ord not found")?.1;
+        assert_eq!(
+            ord_info.supertraits,
+            vec![(eq_name.to_string(), Vec::new())],
+            "Ord should declare Eq as a supertrait (see stdlib/derives/comparison.incn)"
+        );
         assert_eq!(ord_info.methods.len(), 4);
         assert!(!ord_info.methods["__lt__"].has_body, "__lt__ is abstract (extern)");
         assert!(ord_info.methods["__le__"].has_body, "__le__ is a default method");
@@ -920,6 +952,12 @@ mod tests {
         let ord_name = derive_name(DeriveId::Ord);
         let ord_info = cache.lookup_trait(&path, ord_name);
         assert!(ord_info.is_some(), "should find Ord trait from cache");
+        let ord_info = ord_info.ok_or("Ord missing")?;
+        assert_eq!(
+            ord_info.supertraits,
+            vec![(derive_name(DeriveId::Eq).to_string(), Vec::new())],
+            "cached Ord metadata should include Eq supertrait"
+        );
 
         // Function lookup on a trait-only module returns None.
         let no_fn = cache.lookup_function(&path, eq_name);

@@ -254,6 +254,9 @@ pub struct ClassExport {
 pub struct TraitExport {
     pub name: String,
     pub type_params: Vec<TypeParamExport>,
+    /// Direct supertraits from the trait's `with` clause (RFC 042).
+    #[serde(default)]
+    pub supertraits: Vec<TypeBoundExport>,
     /// Required fields a conforming type must provide.
     pub requires: Vec<FieldRequirementExport>,
     pub methods: Vec<MethodExport>,
@@ -506,6 +509,14 @@ fn trait_export_from_checked(export: &CheckedTraitExport) -> TraitExport {
     TraitExport {
         name: export.name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
+        supertraits: export
+            .supertraits
+            .iter()
+            .map(|(trait_name, args)| TypeBoundExport {
+                name: trait_name.clone(),
+                type_args: args.iter().map(type_ref_from_resolved).collect(),
+            })
+            .collect(),
         requires: export
             .requires
             .iter()

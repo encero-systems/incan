@@ -1,0 +1,22 @@
+"""RFC 042: trait supertraits and generic trait annotations"""
+
+trait Collection[T]:
+    def first(self) -> T: ...
+
+trait OrderedCollection[T] with Collection[T]:
+    def sorted(self) -> Self: ...
+
+model BoxedValue[T] with OrderedCollection:
+    value: T
+
+    def first(self) -> T:
+        return self.value
+
+    def sorted(self) -> Self:
+        return self
+
+def take_first(values: Collection[int]) -> int:
+    return values.first()
+
+def take_sorted(values: OrderedCollection[int]) -> OrderedCollection[int]:
+    return values.sorted()

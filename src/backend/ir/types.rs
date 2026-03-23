@@ -4,6 +4,8 @@
 
 use std::fmt;
 
+use super::decl::IrTraitBound;
+
 /// Ownership semantics for a value
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Ownership {
@@ -67,6 +69,9 @@ pub enum IrType {
     /// - This is used for generic types that are not encoded as dedicated IR variants.
     /// - Codegen emits this as `Name<Arg0, Arg1, ...>`.
     NamedGeneric(String, Vec<IrType>),
+
+    /// Opaque trait return type emitted as Rust `impl Trait`, RFC 042.
+    ImplTrait(IrTraitBound),
 
     // Function type
     Function {
@@ -147,6 +152,14 @@ impl IrType {
                 let inner: Vec<_> = args.iter().map(|a| a.incan_name()).collect();
                 format!("{}[{}]", name, inner.join(", "))
             }
+            IrType::ImplTrait(bound) => {
+                if bound.type_args.is_empty() {
+                    bound.trait_path.clone()
+                } else {
+                    let inner: Vec<_> = bound.type_args.iter().map(|a| a.incan_name()).collect();
+                    format!("{}[{}]", bound.trait_path, inner.join(", "))
+                }
+            }
             IrType::Function { params, ret } => {
                 let params: Vec<_> = params.iter().map(|p| p.incan_name()).collect();
                 format!("({}) -> {}", params.join(", "), ret.incan_name())
@@ -185,6 +198,15 @@ impl IrType {
             IrType::NamedGeneric(name, args) => {
                 let inner: Vec<_> = args.iter().map(|a| a.rust_name()).collect();
                 format!("{}<{}>", name, inner.join(", "))
+            }
+            IrType::ImplTrait(bound) => {
+                let args = if bound.type_args.is_empty() {
+                    String::new()
+                } else {
+                    let inner: Vec<_> = bound.type_args.iter().map(|a| a.rust_name()).collect();
+                    format!("<{}>", inner.join(", "))
+                };
+                format!("impl {}{}", bound.trait_path, args)
             }
             IrType::Function { params, ret } => {
                 let params: Vec<_> = params.iter().map(|p| p.rust_name()).collect();

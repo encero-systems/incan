@@ -684,7 +684,20 @@ impl TypeChecker {
     fn trait_info_from_manifest(&self, export: &TraitExport) -> TraitInfo {
         TraitInfo {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
-            supertraits: Vec::new(),
+            supertraits: export
+                .supertraits
+                .iter()
+                .map(|bound| {
+                    (
+                        bound.name.clone(),
+                        bound
+                            .type_args
+                            .iter()
+                            .map(resolved_type_from_manifest_type_ref)
+                            .collect(),
+                    )
+                })
+                .collect(),
             methods: self.methods_from_manifest(&export.methods),
             requires: export
                 .requires

@@ -24,16 +24,6 @@ use incan_core::lang::{enum_helpers, surface::option_methods};
 use super::TypeChecker;
 
 impl TypeChecker {
-    /// Fetch a trait method signature for validation (cloned to avoid borrow conflicts).
-    fn trait_method_info(&self, trait_name: &str, method: &str) -> Option<MethodInfo> {
-        let tid = self.symbols.lookup(trait_name)?;
-        let tsym = self.symbols.get(tid)?;
-        match &tsym.kind {
-            SymbolKind::Trait(trait_info) => trait_info.methods.get(method).cloned(),
-            _ => None,
-        }
-    }
-
     /// Validate method call arguments against a method signature.
     fn validate_method_call_args(
         &mut self,
@@ -158,6 +148,7 @@ impl TypeChecker {
         method: &str,
         args: &[CallArg],
         arg_types: &[ResolvedType],
+        call_site_span: Span,
     ) -> Option<ResolvedType> {
         if let Some(method_info) = methods.get(method) {
             let params = method_info.params.clone();
@@ -167,7 +158,7 @@ impl TypeChecker {
         }
         if let Some(traits) = traits {
             for trait_name in traits {
-                if let Some(method_info) = self.trait_method_info(trait_name, method) {
+                if let Some(method_info) = self.trait_method_info_resolved(trait_name, method, call_site_span) {
                     let params = method_info.params.clone();
                     let return_type = method_info.return_type.clone();
                     self.validate_method_call_args(&params, args, arg_types);
@@ -668,20 +659,21 @@ impl TypeChecker {
             match type_info {
                 TypeInfo::Model(model) => {
                     if let Some(ret) =
-                        self.resolve_named_method(&model.methods, Some(&model.traits), method, args, &arg_types)
+                        self.resolve_named_method(&model.methods, Some(&model.traits), method, args, &arg_types, span)
                     {
                         return ret;
                     }
                 }
                 TypeInfo::Class(class) => {
                     if let Some(ret) =
-                        self.resolve_named_method(&class.methods, Some(&class.traits), method, args, &arg_types)
+                        self.resolve_named_method(&class.methods, Some(&class.traits), method, args, &arg_types, span)
                     {
                         return ret;
                     }
                 }
                 TypeInfo::Newtype(newtype) => {
-                    if let Some(ret) = self.resolve_named_method(&newtype.methods, None, method, args, &arg_types) {
+                    if let Some(ret) = self.resolve_named_method(&newtype.methods, None, method, args, &arg_types, span)
+                    {
                         return ret;
                     }
                 }
@@ -700,16 +692,26 @@ impl TypeChecker {
                 }
                 Some(type_info) => match type_info {
                     TypeInfo::Model(model) => {
-                        if let Some(ret) =
-                            self.resolve_named_method(&model.methods, Some(&model.traits), method, args, &arg_types)
-                        {
+                        if let Some(ret) = self.resolve_named_method(
+                            &model.methods,
+                            Some(&model.traits),
+                            method,
+                            args,
+                            &arg_types,
+                            span,
+                        ) {
                             return ret;
                         }
                     }
                     TypeInfo::Class(class) => {
-                        if let Some(ret) =
-                            self.resolve_named_method(&class.methods, Some(&class.traits), method, args, &arg_types)
-                        {
+                        if let Some(ret) = self.resolve_named_method(
+                            &class.methods,
+                            Some(&class.traits),
+                            method,
+                            args,
+                            &arg_types,
+                            span,
+                        ) {
                             return ret;
                         }
                     }
@@ -720,7 +722,8 @@ impl TypeChecker {
                         }
                     }
                     TypeInfo::Newtype(nt) => {
-                        if let Some(ret) = self.resolve_named_method(&nt.methods, None, method, args, &arg_types) {
+                        if let Some(ret) = self.resolve_named_method(&nt.methods, None, method, args, &arg_types, span)
+                        {
                             return ret;
                         }
                     }

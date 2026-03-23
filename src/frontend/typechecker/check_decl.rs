@@ -2,10 +2,10 @@
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
+use crate::frontend::resolved_type_subst::{substitute_method_info, type_param_subst_map};
 use crate::frontend::symbols::*;
 
 use super::TypeChecker;
-use super::collect::{substitute_method_info, type_param_subst_map};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods;
 use std::collections::{HashMap, HashSet};
@@ -20,7 +20,10 @@ fn method_infos_identical(a: &MethodInfo, b: &MethodInfo) -> bool {
 }
 
 impl TypeChecker {
-    // TODO: missing rustdoc
+    /// Union of method names declared on the given traits (direct declarations only; excludes supertrait methods).
+    ///
+    /// Used when validating field `@alias` metadata so aliases cannot collide with callable members surfaced through
+    /// trait adoption.
     fn collect_trait_method_names(&self, traits: &[Spanned<Ident>]) -> HashSet<String> {
         let mut names = HashSet::new();
         for trait_ref in traits {
@@ -31,7 +34,8 @@ impl TypeChecker {
         names
     }
 
-    // TODO: missing rustdoc
+    /// Validate per-field metadata (`@alias`, etc.) on a model-like type against canonical field names and trait method
+    /// names.
     fn validate_field_metadata(
         &mut self,
         type_name: &str,
@@ -165,7 +169,61 @@ impl TypeChecker {
         out
     }
 
-    // TODO: missing rustdoc
+    /// Resolve a trait method visible when a concrete type adopts `adopted_trait`, including methods from transitive
+    /// supertraits with type arguments substituted per the supertrait closure (RFC 042).
+    ///
+    /// Supertrait shadowing matches [`Self::grouped_trait_abstract_method_obligations`]: along a refinement chain, a
+    /// subtrait's declaration dominates its supertrait's same-named method for lookup purposes.
+    ///
+    /// When multiple origins remain after filtering (diamond shapes), signatures must be mutually compatible; otherwise
+    /// a [`errors::trait_conflict`] diagnostic is recorded and `None` is returned.
+    pub(in crate::frontend::typechecker) fn trait_method_info_resolved(
+        &mut self,
+        adopted_trait: &str,
+        method: &str,
+        ambiguity_span: Span,
+    ) -> Option<MethodInfo> {
+        let mut entries: Vec<(String, MethodInfo)> = Vec::new();
+        if let Some(root) = self.lookup_trait_info(adopted_trait)
+            && let Some(info) = root.methods.get(method)
+        {
+            entries.push((adopted_trait.to_string(), info.clone()));
+        }
+        if let Some(closure) = self.supertrait_closure.get(adopted_trait) {
+            for (sup_name, sup_args) in closure {
+                let Some(sup) = self.lookup_trait_info(sup_name) else {
+                    continue;
+                };
+                let Some(info) = sup.methods.get(method) else {
+                    continue;
+                };
+                let subst = type_param_subst_map(&sup.type_params, sup_args);
+                entries.push((sup_name.clone(), substitute_method_info(info, &subst)));
+            }
+        }
+        let filtered = self.filter_supertrait_dominated_entries(entries);
+        match filtered.as_slice() {
+            [] => None,
+            [(_, info)] => Some(info.clone()),
+            rest => {
+                let exp0 = &rest[0].1;
+                let all_mutually_compat = rest
+                    .iter()
+                    .all(|(_, e)| self.method_sigs_compatible(exp0, e) && self.method_sigs_compatible(e, exp0));
+                if !all_mutually_compat {
+                    self.errors
+                        .push(errors::trait_conflict(&rest[0].0, &rest[1].0, method, ambiguity_span));
+                    return None;
+                }
+                Some(exp0.clone())
+            }
+        }
+    }
+
+    /// Group abstract (`...`) methods required by `trait_name` and its transitive supertraits by method name.
+    ///
+    /// Each group lists `(declaring_trait, signature)` after supertrait shadowing so diamonds can be merged or rejected
+    /// consistently with [`Self::enforce_trait_abstract_methods`].
     fn grouped_trait_abstract_method_obligations(
         &self,
         trait_name: &str,
@@ -185,7 +243,10 @@ impl TypeChecker {
         out
     }
 
-    // TODO: missing rustdoc
+    /// Check that `methods` on a concrete type satisfy one abstract requirement from the trait graph.
+    ///
+    /// `via_trait` is the trait that originated the obligation (for diagnostics). Skips requirements that already have
+    /// a default body on the trait (`has_body`).
     fn check_impl_against_trait_method_requirement(
         &mut self,
         type_name: &str,

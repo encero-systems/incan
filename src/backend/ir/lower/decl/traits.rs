@@ -53,6 +53,8 @@ impl AstLowering {
             .iter()
             .map(|m| {
                 self.scopes.push(std::collections::HashMap::new());
+                let mut hidden_type_params = Vec::new();
+                let mut hidden_counter = 0usize;
 
                 // Handle receiver (self) parameter
                 let mut params = Vec::new();
@@ -75,7 +77,12 @@ impl AstLowering {
                     .params
                     .iter()
                     .map(|p| {
-                        let ty = self.lower_type_with_type_params(&p.node.ty.node, Some(&type_param_names));
+                        let ty = self.lower_callable_param_type(
+                            &p.node.ty.node,
+                            Some(&type_param_names),
+                            &mut hidden_type_params,
+                            &mut hidden_counter,
+                        );
                         FunctionParam {
                             name: p.node.name.clone(),
                             ty,
@@ -94,7 +101,7 @@ impl AstLowering {
                     .collect();
                 params.extend(other_params);
 
-                let return_type = self.lower_type_with_type_params(&m.node.return_type.node, Some(&type_param_names));
+                let return_type = self.lower_callable_return_type(&m.node.return_type.node, Some(&type_param_names));
                 // IMPORTANT: We intentionally do NOT emit trait method bodies into the Rust trait itself.
                 // Default methods are expanded into each adopting `impl Trait for Type` block during lowering, which
                 // allows bodies to assume adopter fields (RFC 000) without generating invalid Rust trait default
@@ -110,7 +117,7 @@ impl AstLowering {
                     body,
                     is_async: m.node.is_async(),
                     visibility: Visibility::Private,
-                    type_params: vec![],
+                    type_params: hidden_type_params,
                     is_extern: false,
                     rust_attributes: self.extract_passthrough_attributes(&m.node.decorators),
                 })

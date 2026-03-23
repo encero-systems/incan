@@ -8,6 +8,10 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 > Use `?` with `Result`-returning test functions, or propagate errors explicitly.
 > See [Error handling in tests](#error-handling-in-tests) for the correct pattern.
 
+> **CRITICAL — THE USER DECIDES WHAT IS RELEVANT.** Scope, PR boundaries, and which files “belong” on a branch are **the maintainer’s call**, not the agent’s. Never label work as “unrelated PR noise,” “cleanup,” or “hygiene” as a reason to remove or revert it. Always check with the user when in doubt.
+>
+> **FORBIDDEN without explicit user approval that quotes the exact paths or commands:** anything that overwrites or deletes uncommitted work — including `git checkout -- <path>`, `git restore <path>`, `git clean`, `git reset --hard`, `stash drop`, or equivalent. If you believe files should be split, reverted, or left out of a PR, **state that and ask**; do not run destructive git operations on your own initiative.
+
 ## Key References
 
 |         Document         |                                         Path                                         |
