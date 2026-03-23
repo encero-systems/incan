@@ -45,9 +45,13 @@ Use traits for reusable, domain-specific capabilities:
 - You define a contract once
 - Multiple types can opt into it via `with TraitName`
 - Traits can include default method bodies
+- Traits are always abstract, so the trait name itself can be used directly in annotations
+- Traits can build capability hierarchies with `trait Sub with Base:`
 
 Traits are not “the derive system.” Derives are a convenience for a small set of **built-in capabilities**; traits are a
 general language feature for authoring reusable behavior.
+
+That gives Incan a simple mental model: a trait is both a capability declaration and an abstract accepted type. If a function says it accepts `Collection[Order]`, that means “any concrete adopter of `Collection[Order]`”, not “rewrite this API as a hidden generic bound first”.
 
 Read more about [traits: domain capabilities](../tutorials/book/11_traits_and_derives.md).
 

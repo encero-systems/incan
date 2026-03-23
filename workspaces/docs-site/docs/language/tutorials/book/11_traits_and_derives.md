@@ -35,9 +35,31 @@ Traits let you define a shared contract. In a trait, a method can either:
 - Use `...` to mean “implementers must provide this” (required methds)
 - Provide a default implementation (Rust-like default methods)
 
+Traits are always abstract in Incan. That means two things:
+
+- You do not construct a trait directly with `TraitName(...)`.
+- You can use a trait directly in annotations to mean “any concrete adopter of this capability”.
+
 !!! tip "Coming from Python?"
     **Traits** are like a typed interface (represented in Python by a `Protocol` or `abc.ABC`): “anything that implements
     these methods can be treated as this capability”.
+
+### Trait hierarchies with `with`
+
+Traits can also refine other traits:
+
+```incan
+trait Collection[T]:
+    def first(self) -> T: ...
+
+trait OrderedCollection[T] with Collection[T]:
+    def sorted(self) -> Self: ...
+
+def first_item(values: Collection[int]) -> int:
+    return values.first()
+```
+
+Here, `OrderedCollection[T]` is also a `Collection[T]`, so any concrete adopter of `OrderedCollection[T]` can be passed to `first_item`.
 
 ### Default methods and adopter fields (`@requires`)
 

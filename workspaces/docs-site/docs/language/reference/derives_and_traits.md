@@ -165,7 +165,7 @@ Rust interop decorator (see [RFC 023]). This section covers the two method/trait
 
 See also: [Classes: Static methods](../explanation/models_and_classes/classes.md#static-methods-staticmethod)
 
-### `@requires(...)` (adopter contract)
+### `@requires(...)`
 
 Covered below in [Traits (authoring)](#requires-adopter-contract).
 
@@ -173,7 +173,9 @@ Covered below in [Traits (authoring)](#requires-adopter-contract).
 
 ## Traits (authoring)
 
-Traits define reusable capabilities. You opt in with `with TraitName`. Methods can be required (`...`) or have defaults.
+Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with `with TraitName`, and you may also use the trait name itself directly in annotations. Methods can be required (`...`) or have defaults.
+
+Traits may adopt other traits with the same `with` syntax to form capability hierarchies. That means a narrower trait can refine a broader one, and any concrete adopter of the narrower trait is also accepted where the broader trait is expected.
 
 ```incan
 trait Describable:
@@ -187,6 +189,23 @@ def main() -> None:
     p = Product(name="Laptop")
     println(p.describe())
 ```
+
+```incan
+trait Collection[T]:
+    def first(self) -> T: ...
+
+trait OrderedCollection[T] with Collection[T]:
+    def sorted(self) -> Self: ...
+
+def first_item(values: Collection[int]) -> int:
+    return values.first()
+```
+
+Rules to keep in mind:
+
+- Traits are abstract and must not be constructed directly with `TraitName(...)`.
+- A value annotated as `Collection[int]` may be any concrete adopter of that trait instantiation.
+- Supertrait relationships are transitive: if `OrderedCollection[T]` adopts `Collection[T]`, adopters of `OrderedCollection[T]` also satisfy `Collection[T]`.
 
 ### `@requires(...)` (adopter contract)
 
@@ -206,6 +225,7 @@ What the compiler enforces:
 - When a `class`/`model` adopts a trait (`with MyTrait`), it must provide **all required fields** with compatible types.
 - Trait default methods may access adopter fields like `self.field` **only if** that field is declared in `@requires(...)`.
 - Mutating adopter fields still requires `mut self` (same as normal methods).
+- Required fields propagate through trait hierarchies: if `Sub` adopts `Base`, adopters of `Sub` must also satisfy `Base`'s `@requires(...)` contract.
 
 Example:
 

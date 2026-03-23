@@ -48,10 +48,11 @@ trait Eq:
         return not self.__eq__(other)
 
 
-trait Ord:
+trait Ord with Eq:
     """
     Ord trait - Provides ordering comparison (`<`, `<=`, `>`, `>=`) and sorting
     Python equivalent: `__lt__`, `__le__`, `__gt__`, `__ge__`
+    Ord refines Eq: any type that adopts or derives Ord is also an Eq type.
     
     When derived, compares fields in declaration order.
     
