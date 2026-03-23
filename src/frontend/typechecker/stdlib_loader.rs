@@ -380,6 +380,7 @@ fn extract_trait_signatures(program: &ast::Program) -> Vec<(String, TraitInfo)> 
                 tr.name.clone(),
                 TraitInfo {
                     type_params: tp_names,
+                    supertraits: Vec::new(),
                     methods,
                     requires: Vec::new(),
                 },

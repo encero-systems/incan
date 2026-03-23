@@ -1328,6 +1328,87 @@ class Bad with Named:
     assert!(check_str(source).is_err());
 }
 
+// RFC 042: supertrait graph (symbol collection + transitive closure)
+
+#[test]
+fn test_supertrait_cycle_is_diagnosed() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait A with B:
+  def fa(self) -> int: ...
+
+trait B with A:
+  def fb(self) -> int: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    let Err(errs) = checker.check_program(&ast) else {
+        panic!("expected supertrait cycle to be rejected");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("Supertrait cycle")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn test_supertrait_transitive_closure() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Root:
+  def root_m(self) -> int: ...
+
+trait Mid with Root:
+  def mid_m(self) -> int: ...
+
+trait Leaf with Mid:
+  def leaf_m(self) -> int: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let leaf = checker
+        .supertrait_closure
+        .get("Leaf")
+        .expect("Leaf should have a supertrait closure");
+    assert!(
+        leaf.iter().any(|(n, _)| n == "Mid"),
+        "expected Mid in Leaf closure, got {:?}",
+        leaf
+    );
+    assert!(
+        leaf.iter().any(|(n, _)| n == "Root"),
+        "expected Root in Leaf closure, got {:?}",
+        leaf
+    );
+    Ok(())
+}
+
+#[test]
+fn test_supertrait_bound_rejects_non_trait_type() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+model M:
+  x: int
+
+trait T with M:
+  def f(self) -> int: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    let Err(errs) = checker.check_program(&ast) else {
+        panic!("expected errors for non-trait supertrait bound");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("is not a trait")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
 #[test]
 fn test_derive_validate_requires_validate_method() {
     let source = r#"

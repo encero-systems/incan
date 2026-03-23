@@ -220,6 +220,41 @@ pub fn non_exhaustive_match(missing: &[String], span: Span) -> CompileError {
 
 // -- Traits ------------------------------------------------------------------
 
+/// Emitted when a trait's `with` supertrait graph contains a directed cycle (RFC 042).
+pub fn supertrait_cycle(cycle: &[String], span: Span) -> CompileError {
+    let path = cycle.join(" → ");
+    let message = if cycle.len() == 1 {
+        format!(
+            "Supertrait cycle: trait '{}' declares itself in its `with` clause",
+            cycle[0]
+        )
+    } else if cycle.is_empty() {
+        "Supertrait cycle detected in trait hierarchy".to_string()
+    } else {
+        format!(
+            "Supertrait cycle: {} → {}",
+            path,
+            cycle.first().map(String::as_str).unwrap_or("?")
+        )
+    };
+    CompileError::type_error(message, span)
+        .with_note("Break the cycle by removing or rearranging `with` clauses on these traits.")
+}
+
+/// Emitted when a supertrait bound names a type that is not a trait (RFC 042).
+pub fn supertrait_bound_not_trait(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Supertrait bound '{}' is not a trait", name), span)
+        .with_hint("Only trait names may appear in a trait's `with` clause")
+}
+
+/// Emitted when a supertrait bound is not a simple trait name or generic trait instantiation.
+pub fn supertrait_bound_invalid(span: Span) -> CompileError {
+    CompileError::type_error(
+        "Supertrait bound must be a trait name or a generic trait instantiation (e.g. `DataSet[T]`)".to_string(),
+        span,
+    )
+}
+
 pub fn trait_conflict(trait_a: &str, trait_b: &str, method: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!(

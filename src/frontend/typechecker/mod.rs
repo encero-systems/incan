@@ -201,6 +201,16 @@ pub struct TypeChecker {
     pub(crate) import_aliases: HashMap<String, Vec<String>>,
     /// Unified import-driven activation and strategy context for soft-keyword/decorator semantics.
     pub(crate) surface_context: SurfaceContext,
+    /// RFC 042: transitive supertrait closure for each trait, keyed by trait name.
+    ///
+    /// Values list every reachable supertrait `(name, type_arguments)` after applying generic substitution along the
+    /// chain. Filled at the end of the collection pass (before the second typecheck pass runs).
+    pub(crate) supertrait_closure: HashMap<String, Vec<(String, Vec<ResolvedType>)>>,
+    /// Trait `with` bounds queued during collection and resolved once all declarations are registered (RFC 042).
+    ///
+    /// Ensures supertrait names are not mistaken for free type parameters when the supertrait is declared later in the
+    /// same module.
+    pub(crate) pending_trait_supertraits: Vec<(String, Vec<Spanned<TraitBound>>)>,
 }
 
 impl TypeChecker {
@@ -226,6 +236,8 @@ impl TypeChecker {
             testing_marker_import_bindings: HashSet::new(),
             import_aliases: HashMap::new(),
             surface_context: SurfaceContext::default(),
+            supertrait_closure: HashMap::new(),
+            pending_trait_supertraits: Vec::new(),
         }
     }
 
@@ -477,11 +489,16 @@ impl TypeChecker {
         self.testing_marker_import_bindings.clear();
         self.surface_context = SurfaceContext::from_program(program);
         self.import_aliases = self.surface_context.import_aliases().clone();
+        self.supertrait_closure.clear();
+        self.pending_trait_supertraits.clear();
 
         // First pass: collect type declarations
         for decl in &program.declarations {
             self.collect_declaration(decl);
         }
+
+        self.resolve_pending_trait_supertraits();
+        self.finalize_supertrait_graph();
 
         // Second pass: check consts first so their resolved types are available to later checks.
         for decl in &program.declarations {

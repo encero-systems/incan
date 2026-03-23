@@ -90,6 +90,7 @@ impl SymbolTable {
                     type_params: vec![],
                     methods: HashMap::new(),
                     requires: vec![],
+                    supertraits: vec![],
                 }),
                 span: Span::default(),
                 scope: 0,
@@ -232,6 +233,13 @@ impl SymbolTable {
     /// Get a mutable symbol by ID
     pub fn get_mut(&mut self, id: SymbolId) -> Option<&mut Symbol> {
         self.symbols.get_mut(id)
+    }
+
+    /// All symbols in definition order (builtins first, then user declarations).
+    ///
+    /// Used for whole-program analyses such as supertrait graphs.
+    pub(crate) fn all_symbols(&self) -> &[Symbol] {
+        &self.symbols
     }
 
     /// Get the current scope kind
@@ -413,6 +421,10 @@ pub struct EnumInfo {
 #[derive(Debug, Clone)]
 pub struct TraitInfo {
     pub type_params: Vec<String>,
+    /// Direct supertraits from `with Trait, Other[T]` (RFC 042), after resolving type arguments.
+    ///
+    /// Each entry is `(trait_name, type_arguments)`; use an empty `type_arguments` list for a non-generic supertrait.
+    pub supertraits: Vec<(String, Vec<ResolvedType>)>,
     pub methods: HashMap<String, MethodInfo>,
     pub requires: Vec<(String, ResolvedType)>, // Required fields
 }
