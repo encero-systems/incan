@@ -1667,9 +1667,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#requires-adopter-contract" class="md-nav__link">
+  <a href="#requires" class="md-nav__link">
     <span class="md-ellipsis">
-      @requires(...) (adopter contract)
+      @requires(...)
     </span>
   </a>
   
@@ -1691,7 +1691,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#requires-adopter-contract_1" class="md-nav__link">
+  <a href="#requires-adopter-contract" class="md-nav__link">
     <span class="md-ellipsis">
       @requires(...) (adopter contract)
     </span>
@@ -4288,9 +4288,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#requires-adopter-contract" class="md-nav__link">
+  <a href="#requires" class="md-nav__link">
     <span class="md-ellipsis">
-      @requires(...) (adopter contract)
+      @requires(...)
     </span>
   </a>
   
@@ -4312,7 +4312,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#requires-adopter-contract_1" class="md-nav__link">
+  <a href="#requires-adopter-contract" class="md-nav__link">
     <span class="md-ellipsis">
       @requires(...) (adopter contract)
     </span>
@@ -4725,11 +4725,12 @@ Rust interop decorator (see <a href="/dev/RFCs/closed/implemented/023_compilable
 <li><strong>Rust interop</strong>: <code>@rust.extern</code> on type methods requires <code>@staticmethod</code> (instance delegation is not supported).</li>
 </ul>
 <p>See also: <a href="../../explanation/models_and_classes/classes/#static-methods-staticmethod">Classes: Static methods</a></p>
-<h3 id="requires-adopter-contract"><code>@requires(...)</code> (adopter contract)<a class="headerlink" href="#requires-adopter-contract" title="Permanent link">&para;</a></h3>
+<h3 id="requires"><code>@requires(...)</code><a class="headerlink" href="#requires" title="Permanent link">&para;</a></h3>
 <p>Covered below in <a href="#requires-adopter-contract">Traits (authoring)</a>.</p>
 <hr />
 <h2 id="traits-authoring">Traits (authoring)<a class="headerlink" href="#traits-authoring" title="Permanent link">&para;</a></h2>
-<p>Traits define reusable capabilities. You opt in with <code>with TraitName</code>. Methods can be required (<code>...</code>) or have defaults.</p>
+<p>Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with <code>with TraitName</code>, and you may also use the trait name itself directly in annotations. Methods can be required (<code>...</code>) or have defaults.</p>
+<p>Traits may adopt other traits with the same <code>with</code> syntax to form capability hierarchies. That means a narrower trait can refine a broader one, and any concrete adopter of the narrower trait is also accepted where the broader trait is expected.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Describable</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
         <span class="k">return</span> <span class="s2">&quot;An object&quot;</span>
@@ -4741,7 +4742,22 @@ Rust interop decorator (see <a href="/dev/RFCs/closed/implemented/023_compilable
     <span class="n">p</span> <span class="o">=</span> <span class="nc">Product</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Laptop&quot;</span><span class="p">)</span>
     <span class="nb">println</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">describe</span><span class="p">())</span>
 </code></pre></div>
-<h3 id="requires-adopter-contract_1"><code>@requires(...)</code> (adopter contract)<a class="headerlink" href="#requires-adopter-contract_1" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Collection</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">first</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">trait</span> <span class="nc">OrderedCollection</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="k">with</span> <span class="nc">Collection</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">sorted</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">first_item</span><span class="p">(</span><span class="nb">values</span><span class="p">:</span> <span class="nc">Collection</span><span class="p">[</span><span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nb">values</span><span class="o">.</span><span class="n">first</span><span class="p">()</span>
+</code></pre></div>
+<p>Rules to keep in mind:</p>
+<ul>
+<li>Traits are abstract and must not be constructed directly with <code>TraitName(...)</code>.</li>
+<li>A value annotated as <code>Collection[int]</code> may be any concrete adopter of that trait instantiation.</li>
+<li>Supertrait relationships are transitive: if <code>OrderedCollection[T]</code> adopts <code>Collection[T]</code>, adopters of <code>OrderedCollection[T]</code> also satisfy <code>Collection[T]</code>.</li>
+</ul>
+<h3 id="requires-adopter-contract"><code>@requires(...)</code> (adopter contract)<a class="headerlink" href="#requires-adopter-contract" title="Permanent link">&para;</a></h3>
 <p><code>@requires(...)</code> is a decorator you can put on a <code>trait</code> to declare <strong>which adopter fields must exist</strong> (and what types
 they must have).</p>
 <p>Syntax:</p>
@@ -4754,6 +4770,7 @@ they must have).</p>
 <li>When a <code>class</code>/<code>model</code> adopts a trait (<code>with MyTrait</code>), it must provide <strong>all required fields</strong> with compatible types.</li>
 <li>Trait default methods may access adopter fields like <code>self.field</code> <strong>only if</strong> that field is declared in <code>@requires(...)</code>.</li>
 <li>Mutating adopter fields still requires <code>mut self</code> (same as normal methods).</li>
+<li>Required fields propagate through trait hierarchies: if <code>Sub</code> adopts <code>Base</code>, adopters of <code>Sub</code> must also satisfy <code>Base</code>'s <code>@requires(...)</code> contract.</li>
 </ul>
 <p>Example:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@requires</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span>

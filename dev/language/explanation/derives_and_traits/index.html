@@ -4144,9 +4144,12 @@ simple: “either it’s the default behavior, or it’s my behavior.”</p>
 <li>You define a contract once</li>
 <li>Multiple types can opt into it via <code>with TraitName</code></li>
 <li>Traits can include default method bodies</li>
+<li>Traits are always abstract, so the trait name itself can be used directly in annotations</li>
+<li>Traits can build capability hierarchies with <code>trait Sub with Base:</code></li>
 </ul>
 <p>Traits are not “the derive system.” Derives are a convenience for a small set of <strong>built-in capabilities</strong>; traits are a
 general language feature for authoring reusable behavior.</p>
+<p>That gives Incan a simple mental model: a trait is both a capability declaration and an abstract accepted type. If a function says it accepts <code>Collection[Order]</code>, that means “any concrete adopter of <code>Collection[Order]</code>”, not “rewrite this API as a hidden generic bound first”.</p>
 <p>Read more about <a href="../../tutorials/book/11_traits_and_derives/">traits: domain capabilities</a>.</p>
 <h2 id="debug-vs-display-two-string-representations">Debug vs Display: two string representations<a class="headerlink" href="#debug-vs-display-two-string-representations" title="Permanent link">&para;</a></h2>
 <p>Incan intentionally separates two kinds of “stringification”:</p>
