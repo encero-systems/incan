@@ -1,0 +1,39 @@
+"""
+Supertraits in Incan
+
+This example demonstrates:
+- Generic traits used directly in function annotations
+- Supertrait hierarchies declared with `with`
+- Concrete adopters satisfying both a refined trait and its transitive supertraits
+"""
+
+trait Carton[T]:
+    def size(self) -> int: ...
+
+
+trait OrderedCarton[T] with Carton[T]:
+    def label(self) -> str: ...
+
+
+model BoxedValue[T] with OrderedCarton:
+    values: list[T]
+
+    def size(self) -> int:
+        return len(self.values)
+
+    def label(self) -> str:
+        return f"count={self.size()}"
+
+
+def take_size(items: Carton[int]) -> int:
+    return items.size()
+
+
+def take_label(items: OrderedCarton[int]) -> str:
+    return items.label()
+
+
+def main() -> None:
+    values = BoxedValue(values=[10, 20, 30])
+    println(f"size={take_size(values)}")
+    println(f"label={take_label(values)}")

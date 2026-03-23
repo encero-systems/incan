@@ -10,7 +10,7 @@ Single-file programs demonstrating basic language features: hello world, fibonac
 
 ### `intermediate/`
 
-Programs that exercise more involved features: collections, comprehensions, decorators, enums with data, error handling, inheritance, traits, newtypes, public visibility, while loops.
+Programs that exercise more involved features: collections, comprehensions, decorators, enums with data, error handling, inheritance, traits, supertraits, newtypes, public visibility, while loops.
 
 ### `advanced/`
 
