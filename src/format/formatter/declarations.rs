@@ -352,6 +352,15 @@ impl Formatter {
         self.writer.write("trait ");
         self.writer.write(&tr.name);
         self.format_type_params(&tr.type_params);
+        if !tr.traits.is_empty() {
+            self.writer.write(" with ");
+            for (i, bound) in tr.traits.iter().enumerate() {
+                if i > 0 {
+                    self.writer.write(", ");
+                }
+                self.format_trait_bound(&bound.node);
+            }
+        }
         self.writer.writeln(":");
         self.writer.indent();
 

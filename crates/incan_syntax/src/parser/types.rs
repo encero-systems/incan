@@ -96,6 +96,23 @@ impl<'a> Parser<'a> {
         Ok(TraitBound { name, type_args })
     }
 
+    /// Parse one trait bound and attach a span covering the full bound (RFC 042: supertraits on `trait` decls).
+    fn trait_bound_spanned(&mut self) -> Result<Spanned<TraitBound>, CompileError> {
+        let start = self.current_span().start;
+        let bound = self.trait_bound()?;
+        let end = self.tokens[self.pos - 1].span.end;
+        Ok(Spanned::new(bound, Span::new(start, end)))
+    }
+
+    /// Comma-separated supertrait bounds after `with` on a trait declaration.
+    fn trait_supertrait_list_spanned(&mut self) -> Result<Vec<Spanned<TraitBound>>, CompileError> {
+        let mut bounds = vec![self.trait_bound_spanned()?];
+        while self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+            bounds.push(self.trait_bound_spanned()?);
+        }
+        Ok(bounds)
+    }
+
     fn type_expr(&mut self) -> Result<Spanned<Type>, CompileError> {
         let start = self.current_span().start;
 

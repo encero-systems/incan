@@ -486,6 +486,7 @@ mod tests {
             decorators: vec![],
             name: "Printable".to_string(),
             type_params: vec![],
+            traits: vec![],
             methods: vec![],
         };
         let program = Program {
@@ -644,6 +645,7 @@ mod tests {
             decorators: vec![],
             name: "Serializable".to_string(),
             type_params: vec![],
+            traits: vec![],
             methods: vec![],
         };
         let program = Program {

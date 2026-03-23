@@ -478,6 +478,54 @@ trait Debug:
     }
 
     #[test]
+    fn test_parse_trait_with_supertraits() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+trait DataSet[T]:
+    def len(self) -> int: ...
+
+trait BoundedDataSet[T] with DataSet[T]:
+    def sorted(self) -> Self: ...
+
+trait Combo with BoundedDataSet[int], DataSet[str]:
+    def go(self) -> None: ...
+"#;
+        let program = parse_str(source)?;
+        assert_eq!(program.declarations.len(), 3);
+
+        let ds = match &program.declarations[0].node {
+            Declaration::Trait(t) => t,
+            _ => panic!("Expected trait"),
+        };
+        assert_eq!(ds.name, "DataSet");
+        assert!(ds.traits.is_empty());
+
+        let bounded = match &program.declarations[1].node {
+            Declaration::Trait(t) => t,
+            _ => panic!("Expected trait"),
+        };
+        assert_eq!(bounded.name, "BoundedDataSet");
+        assert_eq!(bounded.traits.len(), 1);
+        assert_eq!(bounded.traits[0].node.name, "DataSet");
+        assert_eq!(bounded.traits[0].node.type_args.len(), 1);
+        match &bounded.traits[0].node.type_args[0].node {
+            Type::Simple(name) => assert_eq!(name, "T"),
+            _ => panic!("Expected simple type T"),
+        }
+
+        let combo = match &program.declarations[2].node {
+            Declaration::Trait(t) => t,
+            _ => panic!("Expected trait"),
+        };
+        assert_eq!(combo.name, "Combo");
+        assert_eq!(combo.traits.len(), 2);
+        assert_eq!(combo.traits[0].node.name, "BoundedDataSet");
+        assert_eq!(combo.traits[0].node.type_args.len(), 1);
+        assert_eq!(combo.traits[1].node.name, "DataSet");
+        assert_eq!(combo.traits[1].node.type_args.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_newtype_with_docstring() -> Result<(), Vec<CompileError>> {
         let source = r#"
 type UserId[T] = newtype int:

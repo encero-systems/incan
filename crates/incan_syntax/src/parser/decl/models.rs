@@ -98,7 +98,12 @@ impl<'a> Parser<'a> {
         self.expect_keyword(KeywordId::Trait, "Expected 'trait'")?;
         let name = self.identifier()?;
         let type_params = self.type_params()?;
-        self.expect_punct(PunctuationId::Colon, "Expected ':' after trait name")?;
+        let traits = if self.match_keyword(KeywordId::With) {
+            self.trait_supertrait_list_spanned()?
+        } else {
+            Vec::new()
+        };
+        self.expect_punct(PunctuationId::Colon, "Expected ':' after trait header")?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
         self.expect(&TokenKind::Indent, "Expected indented block")?;
 
@@ -132,6 +137,7 @@ impl<'a> Parser<'a> {
             decorators,
             name,
             type_params,
+            traits,
             methods,
         })
     }

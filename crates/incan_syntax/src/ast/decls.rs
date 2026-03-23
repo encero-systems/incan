@@ -68,6 +68,8 @@ pub struct TraitDecl {
     pub decorators: Vec<Spanned<Decorator>>,
     pub name: Ident,
     pub type_params: Vec<TypeParam>,
+    /// Supertraits adopted via `with TraitA, TraitB[T]` (RFC 042).
+    pub traits: Vec<Spanned<TraitBound>>,
     pub methods: Vec<Spanned<MethodDecl>>,
 }
 
