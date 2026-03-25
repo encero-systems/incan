@@ -15,14 +15,14 @@ def test_function_references() -> (int, int):
     return (doubled, squared)
 
 def map_list(items: list[int], transformer: Callable[int, int]) -> list[int]:
-    result: list[int] = []
+    mut result: list[int] = []
     for item in items:
         result.append(transformer(item))
     return result
 
 def test_callable_syntax() -> list[int]:
     nums = [1, 2, 3]
-    doubled_arrows = map_list(nums, double)
+    mut doubled_arrows = map_list(nums, double)
     doubled_callable = map_list(nums, double)
     # Concatenate lists using extend
     for item in doubled_callable:

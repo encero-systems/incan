@@ -96,6 +96,22 @@ You’ll learn the `Result` pattern in Chapter 6.
         println(greet("  Alice  "))
     ```
 
+## Functions as values
+
+Named functions are first-class values — you can pass them by name to other functions, store them in variables, or put them in collections:
+
+```incan
+def double(x: int) -> int:
+    return x * 2
+
+def apply(f: (int) -> int, x: int) -> int:
+    return f(x)
+
+result = apply(double, 5)   # → 10
+```
+
+You'll explore this more in the [Closures](../../explanation/closures.md) chapter.
+
 ## What to learn next
 
 - Function definitions and signatures: [Language reference (generated)](../../reference/language.md#builtin-functions)

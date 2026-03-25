@@ -42,8 +42,8 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Local AI agent instructions (may reference non-committed local research files)
-.github/copilot-instructions.md
+# Local AI agent instructions
+.claude/
 
 # MkDocs build output
 site/

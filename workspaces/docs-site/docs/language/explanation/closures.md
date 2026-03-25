@@ -18,12 +18,30 @@ add = (x, y) => x + y
 is_positive = (n) => n > 0
 ```
 
-## When to Use Closures
+## Named function references
+
+Named functions defined with `def` are also first-class values — you can pass them by name without wrapping in a closure:
+
+```incan
+def double(x: int) -> int:
+    return x * 2
+
+def apply(f: Callable[int, int], x: int) -> int:
+    return f(x)
+
+result = apply(double, 5)      # pass by name — no closure needed
+transform = double             # store in a variable
+ops = [double, (x) => x + 1]   # mix named functions and closures
+```
+
+Both forms are interchangeable wherever a function type is expected. Use a direct reference when the function already exists; use a closure for short inline logic.
+
+## When to use closures
 
 Closures are ideal for:
 
 - Short inline functions passed to higher-order functions
-- Callbacks  
+- Callbacks
 - Simple transformations in comprehensions or map/filter operations
 
 ```incan

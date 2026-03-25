@@ -2,7 +2,7 @@
 ///
 /// This chunk parses syntactic type expressions (annotations), including:
 /// - Simple names (`int`, `Foo`)
-/// - Generic applications (`List[int]`)
+/// - Generic applications (`List[int]`, `Callable[int, int]`)
 /// - Tuple types (`(int, str)`)
 /// - Function types (`(int, str) -> bool`)
 /// - Type parameters with trait bounds (`[T with (Eq, Debug)]`)
@@ -201,11 +201,46 @@ impl<'a> Parser<'a> {
                 "Expected ']' after type arguments",
             )?;
             let end = self.tokens[self.pos - 1].span.end;
+            if name == "Callable" {
+                return self.desugar_callable_type(args, start, end);
+            }
             Ok(Spanned::new(Type::Generic(name, args), Span::new(start, end)))
         } else {
             let end = self.tokens[self.pos - 1].span.end;
             Ok(Spanned::new(Type::Simple(name), Span::new(start, end)))
         }
+    }
+
+    /// RFC 035: desugar `Callable[Params, R]` into `Type::Function`.
+    ///
+    /// - `Callable[(), R]` => `() -> R`
+    /// - `Callable[A, R]` => `(A) -> R`
+    /// - `Callable[(A, B), R]` => `(A, B) -> R`
+    fn desugar_callable_type(
+        &mut self,
+        mut args: Vec<Spanned<Type>>,
+        start: usize,
+        end: usize,
+    ) -> Result<Spanned<Type>, CompileError> {
+        if args.len() != 2 {
+            return Err(CompileError::new(
+                "Callable[...] expects exactly 2 type arguments: Callable[Params, Return]".to_string(),
+                Span::new(start, end),
+            ));
+        }
+
+        let params_arg = args.remove(0);
+        let ret = Box::new(args.remove(0));
+        let params = match params_arg.node {
+            Type::Tuple(types) => types,
+            Type::Unit => Vec::new(),
+            other => vec![Spanned::new(other, params_arg.span)],
+        };
+
+        Ok(Spanned::new(
+            Type::Function(params, ret),
+            Span::new(start, end),
+        ))
     }
 
     fn type_list(&mut self) -> Result<Vec<Spanned<Type>>, CompileError> {

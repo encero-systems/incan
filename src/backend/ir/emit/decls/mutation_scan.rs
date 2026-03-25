@@ -122,10 +122,8 @@ impl<'a> IrEmitter<'a> {
     /// Scan an IR expression and record any writes that target a function parameter.
     fn scan_expr_for_param_writes(&self, expr: &IrExpr, param_names: &HashSet<String>, mutated: &mut HashSet<String>) {
         match &expr.kind {
-            IrExprKind::Var { name, access, .. } => {
-                if *access == VarAccess::BorrowMut && param_names.contains(name) {
-                    mutated.insert(name.clone());
-                }
+            IrExprKind::Var { name, access, .. } if *access == VarAccess::BorrowMut && param_names.contains(name) => {
+                mutated.insert(name.clone());
             }
             IrExprKind::BinOp { left, right, .. } => {
                 self.scan_expr_for_param_writes(left, param_names, mutated);

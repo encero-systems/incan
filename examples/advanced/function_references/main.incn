@@ -80,13 +80,11 @@ def test_zero_param() -> int:
 def main() -> None:
     # Test basic function references
     result1 = test_function_references()
-    assert_eq(result1[0], 10, "double(5) should be 10")
-    assert_eq(result1[1], 9, "square(3) should be 9")
+    assert_eq(result1, (10, 9), "double(5) and square(3) should match expected tuple")
 
     # Test multi-parameter functions
     result2 = test_multi_param()
-    assert_eq(result2[0], 7, "add(3, 4) should be 7")
-    assert_eq(result2[1], 12, "multiply(3, 4) should be 12")
+    assert_eq(result2, (7, 12), "add and multiply results should match expected tuple")
 
     # Test zero-parameter functions
     zero_param_result = test_zero_param()

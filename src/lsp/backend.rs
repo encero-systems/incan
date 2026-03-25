@@ -377,90 +377,73 @@ impl IncanLanguageServer {
 
     fn find_in_declaration(&self, decl: &Declaration, span: Span, offset: usize) -> Option<SymbolInfo> {
         match decl {
-            Declaration::Const(konst) => {
-                if span.start <= offset && offset < span.end {
-                    return Some(SymbolInfo {
-                        name: konst.name.clone(),
-                        kind: "const".to_string(),
-                        detail: if let Some(ty) = &konst.ty {
-                            format!("const {}: {}", konst.name, format_type(&ty.node))
-                        } else {
-                            format!("const {}", konst.name)
-                        },
-                        span,
-                    });
-                }
+            Declaration::Const(konst) if span.start <= offset && offset < span.end => {
+                return Some(SymbolInfo {
+                    name: konst.name.clone(),
+                    kind: "const".to_string(),
+                    detail: if let Some(ty) = &konst.ty {
+                        format!("const {}: {}", konst.name, format_type(&ty.node))
+                    } else {
+                        format!("const {}", konst.name)
+                    },
+                    span,
+                });
             }
-            Declaration::Function(func) => {
-                if span.start <= offset && offset < span.end {
-                    // Check if cursor is on function name. For now, return the function signature
-                    return Some(SymbolInfo {
-                        name: func.name.clone(),
-                        kind: "function".to_string(),
-                        detail: format_function_signature(func),
-                        span,
-                    });
-                }
+            Declaration::Function(func) if span.start <= offset && offset < span.end => {
+                return Some(SymbolInfo {
+                    name: func.name.clone(),
+                    kind: "function".to_string(),
+                    detail: format_function_signature(func),
+                    span,
+                });
             }
-            Declaration::Model(model) => {
-                if span.start <= offset && offset < span.end {
-                    return Some(SymbolInfo {
-                        name: model.name.clone(),
-                        kind: "model".to_string(),
-                        detail: format!("model {}", model.name),
-                        span,
-                    });
-                }
+            Declaration::Model(model) if span.start <= offset && offset < span.end => {
+                return Some(SymbolInfo {
+                    name: model.name.clone(),
+                    kind: "model".to_string(),
+                    detail: format!("model {}", model.name),
+                    span,
+                });
             }
-            Declaration::Class(class) => {
-                if span.start <= offset && offset < span.end {
-                    return Some(SymbolInfo {
-                        name: class.name.clone(),
-                        kind: "class".to_string(),
-                        detail: format!("class {}", class.name),
-                        span,
-                    });
-                }
+            Declaration::Class(class) if span.start <= offset && offset < span.end => {
+                return Some(SymbolInfo {
+                    name: class.name.clone(),
+                    kind: "class".to_string(),
+                    detail: format!("class {}", class.name),
+                    span,
+                });
             }
-            Declaration::Trait(tr) => {
-                if span.start <= offset && offset < span.end {
-                    return Some(SymbolInfo {
-                        name: tr.name.clone(),
-                        kind: "trait".to_string(),
-                        detail: format!("trait {}", tr.name),
-                        span,
-                    });
-                }
+            Declaration::Trait(tr) if span.start <= offset && offset < span.end => {
+                return Some(SymbolInfo {
+                    name: tr.name.clone(),
+                    kind: "trait".to_string(),
+                    detail: format!("trait {}", tr.name),
+                    span,
+                });
             }
-            Declaration::Enum(en) => {
-                if span.start <= offset && offset < span.end {
-                    return Some(SymbolInfo {
-                        name: en.name.clone(),
-                        kind: "enum".to_string(),
-                        detail: format!("enum {}", en.name),
-                        span,
-                    });
-                }
+            Declaration::Enum(en) if span.start <= offset && offset < span.end => {
+                return Some(SymbolInfo {
+                    name: en.name.clone(),
+                    kind: "enum".to_string(),
+                    detail: format!("enum {}", en.name),
+                    span,
+                });
             }
-            Declaration::TypeAlias(alias) => {
-                if span.start <= offset && offset < span.end {
-                    return Some(SymbolInfo {
-                        name: alias.name.clone(),
-                        kind: "type".to_string(),
-                        detail: format!("type {} = {}", alias.name, format_type(&alias.target.node)),
-                        span,
-                    });
-                }
+            Declaration::TypeAlias(alias) if span.start <= offset && offset < span.end => {
+                return Some(SymbolInfo {
+                    name: alias.name.clone(),
+                    kind: "type".to_string(),
+                    detail: format!("type {} = {}", alias.name, format_type(&alias.target.node)),
+                    span,
+                });
             }
-            Declaration::Newtype(nt) => {
-                if span.start <= offset && offset < span.end {
-                    return Some(SymbolInfo {
-                        name: nt.name.clone(),
-                        kind: "newtype".to_string(),
-                        detail: format!("newtype {} = {}", nt.name, format_type(&nt.underlying.node)),
-                        span,
-                    });
-                }
+            Declaration::Newtype(nt) if span.start <= offset && offset < span.end => {
+                return Some(SymbolInfo {
+                    name: nt.name.clone(),
+                    kind: "newtype".to_string(),
+                    detail: format!("newtype {} = {}", nt.name, format_type(&nt.underlying.node)),
+                    span,
+                });
             }
             _ => {}
         }

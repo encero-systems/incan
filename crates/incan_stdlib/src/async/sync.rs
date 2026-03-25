@@ -285,10 +285,7 @@ impl Semaphore {
 
     /// Report the number of currently available permits.
     pub fn available_permits(&self) -> i64 {
-        match i64::try_from(self.0.available_permits()) {
-            Ok(value) => value,
-            Err(_) => i64::MAX,
-        }
+        i64::try_from(self.0.available_permits()).unwrap_or(i64::MAX)
     }
 }
 
@@ -307,10 +304,7 @@ impl Barrier {
     pub async fn wait(&self) -> i64 {
         let arrival = self.0.arrivals.fetch_add(1, Ordering::SeqCst) % self.0.parties;
         self.0.barrier.wait().await;
-        match i64::try_from(arrival) {
-            Ok(value) => value,
-            Err(_) => i64::MAX,
-        }
+        i64::try_from(arrival).unwrap_or(i64::MAX)
     }
 }
 

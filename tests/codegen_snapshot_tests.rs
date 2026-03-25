@@ -533,6 +533,13 @@ fn test_basic_function_codegen() {
 }
 
 #[test]
+fn test_function_references_codegen() {
+    let source = load_test_file("function_references");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("function_references", rust_code);
+}
+
+#[test]
 fn test_dict_operations_codegen() {
     let source = load_test_file("dict_operations");
     let rust_code = generate_rust(&source);

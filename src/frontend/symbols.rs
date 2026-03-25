@@ -699,6 +699,7 @@ pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::{Span, Spanned, Type};
 
     #[test]
     fn test_scope_lookup() {
@@ -756,6 +757,47 @@ mod tests {
         assert_eq!(
             result_type.result_err_type(),
             Some(&ResolvedType::Named("AppError".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_function_type_resolution() {
+        let symbols = SymbolTable::new();
+
+        // The parser desugars Callable[(), int] → Type::Function([], int).
+        // Verify that resolve_type handles the desugared form correctly.
+
+        // () -> int (zero params)
+        let fn_zero = Type::Function(
+            vec![],
+            Box::new(Spanned::new(Type::Simple("int".to_string()), Span::default())),
+        );
+        let ty = resolve_type(&fn_zero, &symbols);
+        assert_eq!(ty, ResolvedType::Function(vec![], Box::new(ResolvedType::Int)));
+
+        // (int) -> int (single param)
+        let fn_single = Type::Function(
+            vec![Spanned::new(Type::Simple("int".to_string()), Span::default())],
+            Box::new(Spanned::new(Type::Simple("int".to_string()), Span::default())),
+        );
+        let ty = resolve_type(&fn_single, &symbols);
+        assert_eq!(
+            ty,
+            ResolvedType::Function(vec![ResolvedType::Int], Box::new(ResolvedType::Int))
+        );
+
+        // (int, str) -> bool (multi param)
+        let fn_multi = Type::Function(
+            vec![
+                Spanned::new(Type::Simple("int".to_string()), Span::default()),
+                Spanned::new(Type::Simple("str".to_string()), Span::default()),
+            ],
+            Box::new(Spanned::new(Type::Simple("bool".to_string()), Span::default())),
+        );
+        let ty = resolve_type(&fn_multi, &symbols);
+        assert_eq!(
+            ty,
+            ResolvedType::Function(vec![ResolvedType::Int, ResolvedType::Str], Box::new(ResolvedType::Bool))
         );
     }
 }

@@ -1652,6 +1652,94 @@ const ANSWER: int = 42
         assert_eq!(alias.type_params[0].name, "T");
     }
 
+    // ---- RFC 035: Callable[...] parser desugaring ----
+
+    #[test]
+    fn test_callable_single_param_desugars_to_function_type() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def apply(f: Callable[int, int], x: int) -> int:
+  return f(x)
+"#;
+        let program = parse_str(source)?;
+        let function = match &program.declarations[0].node {
+            Declaration::Function(function) => function,
+            _ => panic!("Expected function declaration"),
+        };
+        let first_param = &function.params[0].node;
+        match &first_param.ty.node {
+            Type::Function(params, ret) => {
+                assert_eq!(params.len(), 1, "Callable[int, int] should desugar to one-arg function type");
+                assert!(matches!(params[0].node, Type::Simple(ref name) if name == "int"));
+                assert!(matches!(ret.node, Type::Simple(ref name) if name == "int"));
+            }
+            other => panic!("Expected desugared function type, got: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_callable_zero_param_desugars_to_function_type() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def invoke(f: Callable[(), int]) -> int:
+  return f()
+"#;
+        let program = parse_str(source)?;
+        let function = match &program.declarations[0].node {
+            Declaration::Function(function) => function,
+            _ => panic!("Expected function declaration"),
+        };
+        let first_param = &function.params[0].node;
+        match &first_param.ty.node {
+            Type::Function(params, ret) => {
+                assert!(params.is_empty(), "Callable[(), int] should desugar to zero-arg function type");
+                assert!(matches!(ret.node, Type::Simple(ref name) if name == "int"));
+            }
+            other => panic!("Expected desugared function type, got: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_callable_multi_param_desugars_to_function_type() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def check(f: Callable[(int, str), bool]) -> None:
+  pass
+"#;
+        let program = parse_str(source)?;
+        let function = match &program.declarations[0].node {
+            Declaration::Function(function) => function,
+            _ => panic!("Expected function declaration"),
+        };
+        let first_param = &function.params[0].node;
+        match &first_param.ty.node {
+            Type::Function(params, ret) => {
+                assert_eq!(params.len(), 2, "Callable[(int, str), bool] should desugar to two-arg function type");
+                assert!(matches!(params[0].node, Type::Simple(ref name) if name == "int"));
+                assert!(matches!(params[1].node, Type::Simple(ref name) if name == "str"));
+                assert!(matches!(ret.node, Type::Simple(ref name) if name == "bool"));
+            }
+            other => panic!("Expected desugared function type, got: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_callable_invalid_arity_is_parse_error() {
+        let source = r#"
+def bad(f: Callable[int]) -> None:
+  pass
+"#;
+        let Err(errs) = parse_str(source) else {
+            panic!("Callable with invalid arity should fail to parse");
+        };
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Callable[...] expects exactly 2 type arguments")),
+            "Expected Callable arity error, got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn test_newtype_still_parses_with_newtype_keyword() {
         // `type Foo = newtype Bar` must still produce a Newtype.
