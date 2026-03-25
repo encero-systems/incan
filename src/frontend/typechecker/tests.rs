@@ -1274,7 +1274,9 @@ def add(mut xs: List[Mutex], value: Mutex) -> None:
         errs.iter().any(|e| {
             e.message.contains("List.append requires element type")
                 && e.message.contains("Mutex")
-                && e.message.contains("Clone")
+                && e.message.contains(incan_core::lang::traits::as_str(
+                    incan_core::lang::traits::TraitId::Clone,
+                ))
         }),
         "expected List.append / Clone diagnostic for Rust element type; got {errs:?}"
     );

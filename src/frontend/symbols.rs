@@ -682,17 +682,16 @@ pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
             match name.as_str() {
                 conventions::UNIT_TYPE_NAME | conventions::NONE_TYPE_NAME => ResolvedType::Unit,
                 _ => {
-                    if let Some(id) = symbols.lookup(name) {
-                        if let Some(sym) = symbols.get(id) {
-                            if let SymbolKind::RustItem(info) = &sym.kind {
-                                return match info.binding {
-                                    RustImportBindingKind::CrateRoot => ResolvedType::Unknown,
-                                    RustImportBindingKind::RootedPath | RustImportBindingKind::FromImport => {
-                                        ResolvedType::RustPath(info.path.clone())
-                                    }
-                                };
+                    if let Some(id) = symbols.lookup(name)
+                        && let Some(sym) = symbols.get(id)
+                        && let SymbolKind::RustItem(info) = &sym.kind
+                    {
+                        return match info.binding {
+                            RustImportBindingKind::CrateRoot => ResolvedType::Unknown,
+                            RustImportBindingKind::RootedPath | RustImportBindingKind::FromImport => {
+                                ResolvedType::RustPath(info.path.clone())
                             }
-                        }
+                        };
                     }
                     // Check if it's a known type
                     if symbols.lookup(name).is_some() {

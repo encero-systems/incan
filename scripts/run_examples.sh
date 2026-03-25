@@ -65,6 +65,16 @@ should_skip_run() {
   return 1
 }
 
+should_skip_check() {
+  local file="$1"
+  # RFC 041 rusttype example currently relies on rust-metadata/static rebinding behavior
+  # that is validated separately in feature-gated tests.
+  if [[ "$file" == examples/rust_interop_rusttype/main.incn ]]; then
+    return 0
+  fi
+  return 1
+}
+
 prebuild_example_libraries() {
   local manifest
   while IFS= read -r manifest; do
@@ -122,6 +132,12 @@ while IFS= read -r f; do
       echo "FAILED: run $f (exit $rc)"
       failed=$((failed + 1))
     fi
+    continue
+  fi
+
+  if should_skip_check "$f"; then
+    echo "==> skip:  $f (excluded: requires rust-metadata interop checks)"
+    skipped=$((skipped + 1))
     continue
   fi
 

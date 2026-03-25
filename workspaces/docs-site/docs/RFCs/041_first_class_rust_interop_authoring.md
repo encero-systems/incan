@@ -801,8 +801,8 @@ This is also why a separate dedicated interop crate is not the initial recommend
 
 ### Parser / AST
 
-- [ ] Lex/parse `rusttype` and `interop:` blocks per RFC.
-- [ ] AST nodes with correct spans; formatter round-trip.
+- [x] Lex/parse `rusttype` and `interop:` blocks per RFC.
+- [x] AST nodes with correct spans; formatter round-trip.
 
 ### Typechecker
 
@@ -811,15 +811,17 @@ This is also why a separate dedicated interop crate is not the initial recommend
 - [x] Diagnostic: crate-root `import rust::cr` cannot be used as a type; hint `from rust::cr import ...`.
 - [ ] Member and associated-item resolution consume unified Rust metadata (ongoing).
 - [ ] Explicit diagnostics for unsupported Rust-backed shapes (ongoing).
+- [x] `std.rust` capability imports are recognized as trait symbols during stdlib import collection.
+- [x] Rust-path missing-method and non-public-item diagnostics are wired for metadata-backed paths.
 
 ### Lowering / IR
 
-- [ ] Preserve provenance through IR for Rust-origin bindings.
-- [ ] Lower coercions and `rusttype`/capability features per RFC.
+- [x] Preserve provenance through IR for Rust-origin bindings (`ResolvedType::RustPath` lowered to path-bearing IR types).
+- [ ] Lower coercions and `rusttype`/capability features per RFC (partial: `rusttype` type-alias lowering landed; coercion matrix + capability predicate lowering still pending).
 
 ### Emission
 
-- [ ] Emit calls and coercions from resolved provenance, not call-site heuristics.
+- [ ] Emit calls and coercions from resolved provenance, not call-site heuristics (partial: `::`-qualified Rust type-path emission landed).
 
 ### Stdlib / runtime
 
@@ -831,8 +833,8 @@ This is also why a separate dedicated interop crate is not the initial recommend
 
 ### Tests
 
-- [ ] Parser tests for `rusttype` / `rust::` imports.
-- [ ] Typechecker tests for provenance, invalid crate-root-as-type, and unsupported-shape diagnostics.
+- [x] Parser tests for `rusttype` / `rust::` imports.
+- [x] Typechecker tests for provenance, invalid crate-root-as-type, and unsupported-shape diagnostics.
 - [ ] Codegen snapshots and integration tests for end-to-end Rust interop.
 
 ### Docs

@@ -636,16 +636,14 @@ impl TypeChecker {
 
     fn resolve_type_checked(&mut self, ty: &Spanned<Type>) -> ResolvedType {
         self.validate_stdlib_type_usage(ty);
-        if let Type::Simple(name) = &ty.node {
-            if let Some(sym) = self.lookup_symbol(name.as_str()) {
-                if let SymbolKind::RustItem(info) = &sym.kind {
-                    if info.binding == RustImportBindingKind::CrateRoot {
-                        self.errors
-                            .push(errors::rust_crate_root_used_as_type(name.as_str(), &info.path, ty.span));
-                        return ResolvedType::Unknown;
-                    }
-                }
-            }
+        if let Type::Simple(name) = &ty.node
+            && let Some(sym) = self.lookup_symbol(name.as_str())
+            && let SymbolKind::RustItem(info) = &sym.kind
+            && info.binding == RustImportBindingKind::CrateRoot
+        {
+            self.errors
+                .push(errors::rust_crate_root_used_as_type(name.as_str(), &info.path, ty.span));
+            return ResolvedType::Unknown;
         }
         resolve_type(&ty.node, &self.symbols)
     }

@@ -718,10 +718,9 @@ impl TypeChecker {
                     if newtype.is_rusttype
                         && let ResolvedType::RustPath(path) = &newtype.underlying
                         && let Some(ret) = self.rust_method_return_type(path, method)
+                        && !matches!(ret, ResolvedType::Unknown)
                     {
-                        if !matches!(ret, ResolvedType::Unknown) {
-                            return ret;
-                        }
+                        return ret;
                     }
                 }
                 _ => {}
@@ -775,10 +774,9 @@ impl TypeChecker {
                         if nt.is_rusttype
                             && let ResolvedType::RustPath(path) = &nt.underlying
                             && let Some(ret) = self.rust_method_return_type(path, method)
+                            && !matches!(ret, ResolvedType::Unknown)
                         {
-                            if !matches!(ret, ResolvedType::Unknown) {
-                                return ret;
-                            }
+                            return ret;
                         }
                     }
                     _ => {}

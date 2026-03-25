@@ -47,3 +47,9 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 - **Extern diagnostics need CLI-level wrapping**: typechecker catches declaration-shape issues, but signature/path mismatches fail in Cargo. Map rustc stderr back to `@rust.extern` spans for actionable diagnostics.
 - **Centralize shared typechecker heuristics immediately**: if a naming rule or predicate is used in more than one checker module, extract it to a shared helper to avoid silent drift.
 - **Manifest-backed type conversion must have one source of truth**: keep `TypeRef` ↔ `ResolvedType` mapping in a shared helper/module and reuse it across typechecker/LSP/codegen consumers. Duplicated conversion logic drifts and causes hard-to-debug manifest import regressions.
+
+## RFC 041 (first-class Rust interop) implementation notes
+
+- **Guardrail tests reject hardcoded builtin trait literals in compiler layers**: even in tests, avoid exact string literals like `"Clone"` in assertions; use `incan_core::lang::traits::as_str(TraitId::Clone)` (or equivalent canonical vocabulary helpers).
+- **Examples runner can pick a stale repo-local release binary when `CARGO_TARGET_DIR` is redirected**: in Cursor/CI-like environments, Cargo may build to a non-default target dir while `scripts/run_examples.sh` prefers `./target/release/incan`. If this mismatch appears, pass `INCAN_BIN="$CARGO_TARGET_DIR/release/incan"` or make the script fallback aware.
+- **`rusttype` example checks should be feature-aware**: `examples/rust_interop_rusttype/main.incn` can fail default smoke checks when relying on metadata-backed/static rebinding behavior that is only validated under `rust-metadata` feature paths. Keep a clear skip reason in `scripts/run_examples.sh` until that path is fully on by default.

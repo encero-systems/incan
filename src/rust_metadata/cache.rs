@@ -22,18 +22,10 @@ pub struct RustMetadataCache {
     inner: Mutex<CacheInner>,
 }
 
+#[derive(Default)]
 struct CacheInner {
     workspaces: HashMap<PathBuf, RustWorkspace>,
     items: HashMap<(PathBuf, String), Arc<RustItemMetadata>>,
-}
-
-impl Default for CacheInner {
-    fn default() -> Self {
-        Self {
-            workspaces: HashMap::new(),
-            items: HashMap::new(),
-        }
-    }
 }
 
 impl RustMetadataCache {
@@ -72,5 +64,11 @@ impl RustMetadataCache {
         let arc = Arc::new(meta);
         inner.items.insert(key_item, Arc::clone(&arc));
         Ok(arc)
+    }
+}
+
+impl Default for RustMetadataCache {
+    fn default() -> Self {
+        Self::new()
     }
 }
