@@ -786,6 +786,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#functions-as-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      Functions as values
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-to-learn-next" class="md-nav__link">
     <span class="md-ellipsis">
       What to learn next
@@ -4073,6 +4082,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#functions-as-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      Functions as values
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-to-learn-next" class="md-nav__link">
     <span class="md-ellipsis">
       What to learn next
@@ -4184,6 +4202,17 @@ and keep other files as imported helper modules.</p>
     <span class="nb">println</span><span class="p">(</span><span class="n">greet</span><span class="p">(</span><span class="s2">&quot;  Alice  &quot;</span><span class="p">))</span>
 </code></pre></div>
 </details>
+<h2 id="functions-as-values">Functions as values<a class="headerlink" href="#functions-as-values" title="Permanent link">&para;</a></h2>
+<p>Named functions are first-class values — you can pass them by name to other functions, store them in variables, or put them in collections:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">double</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">x</span> <span class="o">*</span> <span class="mi">2</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">apply</span><span class="p">(</span><span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">f</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+<span class="kt">result</span> <span class="o">=</span> <span class="n">apply</span><span class="p">(</span><span class="n">double</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>   <span class="c1"># → 10</span>
+</code></pre></div>
+<p>You'll explore this more in the <a href="../../../explanation/closures/">Closures</a> chapter.</p>
 <h2 id="what-to-learn-next">What to learn next<a class="headerlink" href="#what-to-learn-next" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Function definitions and signatures: <a href="../../../reference/language/#builtin-functions">Language reference (generated)</a></li>

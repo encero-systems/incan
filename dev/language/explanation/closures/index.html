@@ -2152,9 +2152,18 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#named-function-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      Named function references
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#when-to-use-closures" class="md-nav__link">
     <span class="md-ellipsis">
-      When to Use Closures
+      When to use closures
     </span>
   </a>
   
@@ -3969,9 +3978,18 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#named-function-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      Named function references
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#when-to-use-closures" class="md-nav__link">
     <span class="md-ellipsis">
-      When to Use Closures
+      When to use closures
     </span>
   </a>
   
@@ -4019,11 +4037,24 @@
 <span class="c1"># With expressions</span>
 <span class="n">is_positive</span> <span class="o">=</span> <span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">n</span> <span class="o">&gt;</span> <span class="mi">0</span>
 </code></pre></div>
-<h2 id="when-to-use-closures">When to Use Closures<a class="headerlink" href="#when-to-use-closures" title="Permanent link">&para;</a></h2>
+<h2 id="named-function-references">Named function references<a class="headerlink" href="#named-function-references" title="Permanent link">&para;</a></h2>
+<p>Named functions defined with <code>def</code> are also first-class values — you can pass them by name without wrapping in a closure:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">double</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">x</span> <span class="o">*</span> <span class="mi">2</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">apply</span><span class="p">(</span><span class="n">f</span><span class="p">:</span> <span class="nc">Callable</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">f</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+<span class="kt">result</span> <span class="o">=</span> <span class="n">apply</span><span class="p">(</span><span class="n">double</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>      <span class="c1"># pass by name — no closure needed</span>
+<span class="n">transform</span> <span class="o">=</span> <span class="n">double</span>             <span class="c1"># store in a variable</span>
+<span class="n">ops</span> <span class="o">=</span> <span class="p">[</span><span class="n">double</span><span class="p">,</span> <span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">x</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>   <span class="c1"># mix named functions and closures</span>
+</code></pre></div>
+<p>Both forms are interchangeable wherever a function type is expected. Use a direct reference when the function already exists; use a closure for short inline logic.</p>
+<h2 id="when-to-use-closures">When to use closures<a class="headerlink" href="#when-to-use-closures" title="Permanent link">&para;</a></h2>
 <p>Closures are ideal for:</p>
 <ul>
 <li>Short inline functions passed to higher-order functions</li>
-<li>Callbacks  </li>
+<li>Callbacks</li>
 <li>Simple transformations in comprehensions or map/filter operations</li>
 </ul>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Good use of closure</span>

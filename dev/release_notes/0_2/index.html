@@ -4353,6 +4353,7 @@ They are not intended as runtime function calls.</p>
   by <code>SurfaceFeatureKey</code>; downstream stages dispatch on that key rather than per-keyword AST variants. Adding a new soft
   keyword requires no parser, AST, or IR changes — only a keyword descriptor and a semantics-pack handler (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Compiler</strong>: <code>incan-vocab</code> establishes a standalone, registry-driven keyword/manifest/desugaring contract for future library vocabulary extensions, and core tooling consumers now read keyword surface data through that shared registry path (<a href="/dev/RFCs/closed/implemented/027_incan_vocab_crate">RFC 027</a>, #161).</li>
+<li><strong>Compiler</strong>: First-class named function references — named <code>def</code> functions can now be passed as values, stored in variables, and placed in collections without wrapping in a closure. <code>Callable[Params, R]</code> is accepted as syntactic sugar for <code>(Params) -&gt; R</code> and desugared at parse time. Generic function references are explicitly rejected with a clear diagnostic (<a href="/dev/RFCs/closed/implemented/035_first_class_function_references">RFC 035</a>, #169).</li>
 <li><strong>Compiler</strong>: Traits are now always abstract, trait names and generic trait instantiations are valid annotation types, and traits may adopt supertraits with <code>with</code>, enabling transitive capability hierarchies like <code>DataSet[T]</code> / <code>BoundedDataSet[T]</code> (<a href="/dev/RFCs/closed/implemented/042_traits_are_always_abstract">RFC 042</a>, #179).</li>
 <li><strong>Compiler</strong>: Namespaced decorator resolution — decorators resolved by module path
   (e.g., <code>from std.web.routing import route</code> enables <code>@route(...)</code>) with alias support (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>).</li>
@@ -4422,6 +4423,7 @@ They are not intended as runtime function calls.</p>
 </ul>
 <h2 id="rfcs-implemented">RFCs implemented<a class="headerlink" href="#rfcs-implemented" title="Permanent link">&para;</a></h2>
 <ul>
+<li>First-class named function references and <code>Callable</code> sugar: <a href="/dev/RFCs/closed/implemented/035_first_class_function_references">RFC 035</a></li>
 <li>Namespaced stdlib modules and compiler-to-stdlib handoff: <a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a></li>
 <li>Compilable stdlib and Rust module binding (web-free compiler): <a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a></li>
 <li>Library vocabularies, registry-driven keyword activation, and vocab desugaring: <a href="/dev/RFCs/closed/implemented/027_incan_vocab_crate">RFC 027</a></li>
