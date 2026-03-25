@@ -212,6 +212,12 @@ impl AstLowering {
                     IrType::List(e) => (**e).clone(),
                     IrType::Dict(_, v) => (**v).clone(),
                     IrType::String => IrType::String,
+                    IrType::Tuple(_) => {
+                        // For tuple indexing, we need to evaluate the index at emit time
+                        // (e.g., result[0] -> result.0). We can't determine the element type at lowering time without
+                        // a literal index.
+                        IrType::Unknown
+                    }
                     _ => IrType::Unknown,
                 };
                 (

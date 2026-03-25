@@ -200,12 +200,51 @@ impl<'a> Parser<'a> {
                 &TokenKind::Punctuation(PunctuationId::RBracket),
                 "Expected ']' after type arguments",
             )?;
+
             let end = self.tokens[self.pos - 1].span.end;
-            Ok(Spanned::new(Type::Generic(name, args), Span::new(start, end)))
+
+            // RFC 035: Callable[Params, R] desugars to arrow form (params) -> ret
+            if name == "Callable" {
+                Ok(self.desugar_callable(args, start, end)?)
+            } else {
+                let end = self.tokens[self.pos - 1].span.end;
+                Ok(Spanned::new(Type::Generic(name, args), Span::new(start, end)))
+            }
         } else {
             let end = self.tokens[self.pos - 1].span.end;
             Ok(Spanned::new(Type::Simple(name), Span::new(start, end)))
         }
+    }
+
+    /// RFC 035: Desugar Callable[Params, R] to arrow form (params) -> ret.
+    ///
+    /// Callable always has exactly two type arguments:
+    /// - Callable[(), R] → () -> R
+    /// - Callable[A, R] → (A) -> R
+    /// - Callable[(A, B), R] → (A, B) -> R
+    fn desugar_callable(
+        &self,
+        args: Vec<Spanned<Type>>,
+        start: usize,
+        end: usize,
+    ) -> Result<Spanned<Type>, CompileError> {
+        if args.len() != 2 {
+            return Err(crate::diagnostics::errors::callable_invalid_arg_count(args.len(), Span::new(start, end)));
+        }
+
+        let params_type = &args[0];
+        let return_type = &args[1];
+
+        // Determine if params is a tuple or single type
+        let param_types = match &params_type.node {
+            Type::Tuple(types) => types.clone(),
+            Type::Unit => vec![],  // () -> R means zero parameters
+            _ => vec![params_type.clone()],  // A -> R means one parameter
+        };
+
+        // Build the function type: (param_types...) -> return_type
+        let func_type = Type::Function(param_types, Box::new(return_type.clone()));
+        Ok(Spanned::new(func_type, Span::new(start, end)))
     }
 
     fn type_list(&mut self) -> Result<Vec<Spanned<Type>>, CompileError> {

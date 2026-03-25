@@ -3270,3 +3270,113 @@ def main() -> float:
         errs.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }
+
+// ========================================================================
+// RFC 035: First-class named function references
+// ========================================================================
+
+#[test]
+fn test_function_reference_as_argument() {
+    // Passing a named function reference as an argument to a parameter expecting a function type
+    let source = r#"
+def double(x: int) -> int:
+  return x * 2
+
+def apply(func: (int) -> int, value: int) -> int:
+  return func(value)
+
+def main() -> int:
+  return apply(double, 5)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_function_reference_via_parameter_passing() {
+    // Function reference passed through multiple layers of function parameters
+    let source = r#"
+def double(x: int) -> int:
+  return x * 2
+
+def apply_to_first(func: (int) -> int, items: list[int]) -> int:
+  return func(items[0])
+
+def main() -> int:
+  return apply_to_first(double, [5, 10, 15])
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_function_reference_type_inference() {
+    // Function reference where type is inferred from parameter
+    let source = r#"
+def negate(x: bool) -> bool:
+  return not x
+
+def apply_not(func: (bool) -> bool, value: bool) -> bool:
+  return func(value)
+
+def main() -> bool:
+  return apply_not(negate, True)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_callable_type_syntax_in_parameter() {
+    // Using Callable[Params, R] syntax which desugars to arrow form
+    let source = r#"
+def increment(x: int) -> int:
+  return x + 1
+
+def map_list(items: list[int], transformer: Callable[int, int]) -> list[int]:
+  result: list[int] = []
+  for item in items:
+    result.append(transformer(item))
+  return result
+
+def main() -> list[int]:
+  return map_list([1, 2, 3], increment)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_function_reference_type_mismatch_in_call() {
+    // Function reference with wrong signature should error when used in call
+    let source = r#"
+def takes_int(x: int) -> str:
+  return str(x)
+
+def expects_bool_func(f: (bool) -> bool, b: bool) -> int:
+  return 0
+
+def main() -> int:
+  return expects_bool_func(takes_int, True)
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type mismatch error");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("Type mismatch")),
+        "Expected type mismatch error; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_function_reference_with_multiple_params() {
+    // Function reference with multi-parameter function type
+    let source = r#"
+def add(x: int, y: int) -> int:
+  return x + y
+
+def apply_binary(func: (int, int) -> int, a: int, b: int) -> int:
+  return func(a, b)
+
+def main() -> int:
+  return apply_binary(add, 3, 4)
+"#;
+    assert_check_ok(source);
+}

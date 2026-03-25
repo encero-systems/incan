@@ -1937,4 +1937,141 @@ const ANSWER: int = 42
         assert_eq!(context_block.keyword, "middleware");
         Ok(())
     }
+
+    // ========================================================================
+    // RFC 035: Callable type syntax tests
+    // ========================================================================
+
+    #[test]
+    fn test_callable_single_param_desugars() -> Result<(), Vec<CompileError>> {
+        let source = "def f(x: Callable[int, int]) -> Callable[int, int]:\n    pass\n";
+        let program = parse_str(source)?;
+        // Should parse as Function([int], int), not Generic("Callable", ...)
+        match &program.declarations[0].node {
+            Declaration::Function(func) => {
+                assert_eq!(func.params.len(), 1);
+                let param_type = &func.params[0].node.ty.node;
+                // Check it's a Function type, not Generic
+                assert!(matches!(param_type, Type::Function(_, _)), "Expected Function type for Callable[int, int], got {:?}", param_type);
+            }
+            _ => panic!("Expected function"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_callable_no_params_desugars() -> Result<(), Vec<CompileError>> {
+        let source = "def f(x: Callable[(), bool]) -> bool:\n    pass\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Function(func) => {
+                assert_eq!(func.params.len(), 1);
+                let param_type = &func.params[0].node.ty.node;
+                if let Type::Function(params, ret) = param_type {
+                    assert!(params.is_empty()); // empty tuple -> no params
+                    assert!(matches!(ret.as_ref().node, Type::Simple(ref n) if n == "bool"));
+                } else {
+                    panic!("Expected Function type");
+                }
+            }
+            _ => panic!("Expected function"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_callable_multi_param_desugars() -> Result<(), Vec<CompileError>> {
+        let source = "def f(x: Callable[(int, str), bool]) -> bool:\n    pass\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Function(func) => {
+                assert_eq!(func.params.len(), 1);
+                let param_type = &func.params[0].node.ty.node;
+                if let Type::Function(params, ret) = param_type {
+                    assert_eq!(params.len(), 2); // tuple of int, str
+                    assert!(matches!(ret.as_ref().node, Type::Simple(ref n) if n == "bool"));
+                } else {
+                    panic!("Expected Function type");
+                }
+            }
+            _ => panic!("Expected function"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_callable_invalid_arg_count_too_few() {
+        let source = "def f(x: Callable[int]) -> int:\n    pass\n";
+        let Err(err) = parse_str(source) else {
+            panic!("Callable with 1 arg should error");
+        };
+        assert!(
+            err[0].message.contains("exactly 2 type arguments"),
+            "Expected arg count error; got: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
+    fn test_callable_invalid_arg_count_too_many() {
+        let source = "def f(x: Callable[int, str, bool]) -> int:\n    pass\n";
+        let Err(err) = parse_str(source) else {
+            panic!("Callable with 3 args should error");
+        };
+        assert!(
+            err[0].message.contains("exactly 2 type arguments"),
+            "Expected arg count error; got: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
+    fn test_callable_in_const_declaration() -> Result<(), Vec<CompileError>> {
+        let source = "const TRANSFORM: Callable[int, int] = 42\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Const(c) => {
+                assert!(matches!(&c.ty.as_ref().unwrap().node, Type::Function(_, _)));
+            }
+            _ => panic!("Expected const"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_callable_arrow_form_equivalence() -> Result<(), Vec<CompileError>> {
+        // Callable[(int, str), bool] should be equivalent to (int, str) -> bool
+        let source1 = "def f(x: Callable[(int, str), bool]) -> bool:\n    pass\n";
+        let source2 = "def f(x: (int, str) -> bool) -> bool:\n    pass\n";
+
+        let prog1 = parse_str(source1)?;
+        let prog2 = parse_str(source2)?;
+
+        match (&prog1.declarations[0].node, &prog2.declarations[0].node) {
+            (Declaration::Function(f1), Declaration::Function(f2)) => {
+                // Both should have Function type for param
+                if let (Type::Function(p1, _), Type::Function(p2, _)) = (&f1.params[0].node.ty.node, &f2.params[0].node.ty.node) {
+                    assert_eq!(p1.len(), p2.len());
+                } else {
+                    panic!("Expected Function types");
+                }
+            }
+            _ => panic!("Expected functions"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_callable_in_model_field() -> Result<(), Vec<CompileError>> {
+        let source = "model Handler:\n  callback: Callable[int, str]\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Model(m) => {
+                assert_eq!(m.fields.len(), 1);
+                assert!(matches!(&m.fields[0].node.ty.node, Type::Function(_, _)));
+            }
+            _ => panic!("Expected model"),
+        }
+        Ok(())
+    }
 }
