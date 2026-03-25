@@ -166,6 +166,27 @@ def add(a: int, b: int) -> int:
 }
 
 #[test]
+fn test_generic_function_reference_rejected_in_value_position() {
+    let source = r#"
+def id[T](x: T) -> T:
+  return x
+
+def accept(f: (int) -> int) -> int:
+  return f(42)
+
+def main() -> None:
+  _ = accept(id)
+"#;
+    let err = check_str(source).expect_err("generic function name in value position should fail");
+    assert!(
+        err.iter()
+            .any(|e| e.message.contains("generic function") && e.message.contains("'id'")),
+        "unexpected errors: {:?}",
+        err.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_type_mismatch() {
     let source = r#"
 def foo() -> int:

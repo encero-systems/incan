@@ -375,6 +375,7 @@ impl IncanLanguageServer {
         None
     }
 
+    // ---- Cursor inside a top-level declaration: surface symbol info for outline/hover wiring ----
     fn find_in_declaration(&self, decl: &Declaration, span: Span, offset: usize) -> Option<SymbolInfo> {
         match decl {
             Declaration::Const(konst) if span.start <= offset && offset < span.end => {
