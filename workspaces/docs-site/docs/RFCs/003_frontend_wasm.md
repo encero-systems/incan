@@ -1,86 +1,177 @@
-# RFC 003: Frontend & WebAssembly Support
+# RFC 003: Web & Product Surfaces (Interactive Browser UI; Optional WASM-Heavy Client)
 
-**Status:** Blocked
-**Category**: Major Feature
+- **Status:** Blocked
+- **Created:** 2025-12-16
+- **Author(s):** Danny Meijer (@dannymeijer)
+- **Related:**
+    - RFC 020 (offline locked reproducible builds)
+    - RFC 031 (library system phase 1)
+    - RFC 037 (native web and HTTP stdlib redesign)
+- **Issue:** —
+- **RFC PR:** —
+- **Written against:** v0.1
+- **Shipped in:** —
+
+> **Note:** This RFC was previously titled *Frontend & WebAssembly Support*. The **primary deliverable** is **interactive browser UI** on top of **server-authoritative** HTTP, mutations, and packaging—not a server-only milestone. **WASM-first** client bundles, native `html()`/`jsx()` in the compiler, and client-heavy 3D remain an **optional Phase 2** track in the reference appendix, not required to ship Phase 1.
 
 ## Summary
 
-Enable Incan to compile to WebAssembly (WASM) and provide first-class support for building frontend applications,
-including reactive UI components and 3D graphics.
-This positions Incan as a full-stack alternative to JavaScript frameworks like React and Three.js.
+This RFC defines how Incan delivers **web product surfaces** in **two tiers**: **Phase 1** is a **single mandatory phase** that combines what was previously split as “server first” and “browser UI”—authors ship **real interactive UI in the browser** (components or equivalent), **explicit server vs client boundaries**, typed HTTP handlers, state-changing operations, packaging, and a documented **first browser emission target**. The server remains authoritative for policy and default mutations unless authors opt into client execution. **Phase 2 (optional)** is WASM-first client compilation, optional `html()`/`jsx()`-style syntax, routing/tooling, and advanced graphics as detailed in the reference appendix; it does **not** gate Phase 1. Normative outcomes, dependency on RFC 037’s web/HTTP stdlib, and unblock gates apply primarily to Phase 1. Appendix crate choices and CLI flags are **not** normative for Phase 1 unless explicitly promoted from the appendix into Phase 1 text.
 
 ## Motivation
 
-### The Python Full-Stack Problem
+### Beyond “client-only WASM”
 
-Python developers building full-stack applications face a common frustration:
-**Python for backend, JavaScript for frontend**. The typical stack looks like:
+Developers still face **split stacks**: one language or framework on the server, another in the browser, duplicated types, and ad hoc integration. Incan’s opportunity is **single-language authoring** with **predictable lowering**. The browser remains a **JavaScript host** for most interactive UI; not every product should pay for large **WASM-first** client bundles when server-rendered, API-first, or progressively enhanced shapes are cheaper to operate.
 
-```bash
-Backend: Python (FastAPI, Django, Flask)
-    ↕ API calls ↕
-Frontend: JavaScript/TypeScript (React, Vue, Angular)
-```
+A credible path includes:
 
-This requires:
+- **Server-primary execution** for auth-aware mutations, business rules, typed HTTP APIs, and page assembly where security and latency demand it.
+- **Browser-oriented output** for typical interactivity (hydration boundaries, component trees, progressive enhancement as appropriate).
+- **Selective WASM** only where **client-side** performance or portability clearly wins—WASM is an **emission option**, not the platform posture.
 
-- Learning a second language (JavaScript/TypeScript)
-- Context-switching between paradigms
-- Maintaining two codebases with different tooling
-- Duplicating types/models between backend and frontend
+That preserves the core promise: **one type system, one compiler, fewer hand-glued stacks**—without pretending the browser is always the right place for app logic.
 
-### Existing Python → Frontend Solutions
+### Product-shaped delivery, not only SPAs
 
-| Solution      | Approach            | Limitations                              |
-| ------------- | ------------------- | ---------------------------------------- |
-| **Streamlit** | Python → widgets    | Limited UI, data apps only               |
-| **Gradio**    | Python → components | Specialized for ML demos                 |
-| **PyScript**  | CPython in WASM     | Slow startup, ~10MB bundle, GC overhead  |
-| **Reflex**    | Python → React      | Generates JavaScript, server-round-trips |
-| **NiceGUI**   | Python → Vue        | Server-side rendering, network latency   |
-| **Anvil**     | Full Python web     | Proprietary, hosted platform             |
+Organizations need **apps, dashboards, operator consoles, and external APIs** that stay consistent with typed domain logic and policy—not only offline SPAs. This RFC leaves room for **one application graph** (routes, components, handlers, deployment metadata) as the long-term shape, even when the exact **authoring surface** for that graph matures after the first shippable **web app with browser UI** (Phase 1).
 
-None of these provide:
+## Goals
 
-- **Native WASM performance** (no Python interpreter overhead)
-- **True compile-time type safety** (not runtime checks)
-- **Rust's memory guarantees** (no garbage collector)
-- **Offline-capable  Single Page Applications (SPAs)** (not server-dependent)
+**Phase 1** must make the following **true** for at least one documented golden path (aligned with tutorials and RFC 037’s intended handler model):
 
-### Why Not Rust Directly?
+- Authors can define **multiple HTTP routes** on one process (JSON and/or HTML-style responses) with **types** carried through handler signatures and framework-owned conversion where the stdlib provides it.
+- Authors can perform **state-changing server operations** (forms or RPC-shaped handlers) with **stable error mapping** to HTTP (status + body shape documented, not ad hoc per sample).
+- The toolchain produces a **named deployable unit**: declared entrypoint(s), declared static asset roots or manifests, and **machine-readable metadata** for at least one environment dimension (e.g. dev vs prod flags or equivalent), without requiring authors to hand-assemble Cargo-only layouts for every app.
+- **Session, identity, and authorization** compose via **documented extension points** (middleware, context, or decorator-shaped hooks—exact spelling follows RFC 037 and stdlib), not by copying unrelated logic into each handler.
+- Authors ship **interactive browser UI** as part of the same golden path: a **component or page runtime** with a **documented first browser target** (framework-shaped output, minimal runtime, or hybrid—see [Unresolved questions](#unresolved-questions)), **explicit server-only vs client-capable regions** so secrets and policy do not leak by default, and **data loading and forms** wired to Phase 1 handlers. Business rules and default mutations remain **server-authoritative** unless authors opt into client execution explicitly.
 
-Rust + WebAssembly solves the performance and safety issues, but presents barriers for Python developers:
+**Phase 2** remains **optional**: WASM-first bundles, compiler-native `html()`/`jsx()`, client-side routing as in the appendix, dev-server/HMR focused on WASM, WebGPU-style 3D, and related tooling—**spikes** until promoted by a future status change or a narrowed RFC or supplement.
 
-- **Ownership model** — conceptually foreign to GC-language developers
-- **Borrow checker** — rejects code that "looks correct"
-- **Lifetime annotations** — complex syntax for memory management
-- **Verbose syntax** — more ceremony than Python
+## Non-goals
 
-TypeScript developers have a smaller gap to Rust (similar syntax, static types).
-But Python developers face a steeper learning curve.
+- **WASM everywhere** or “all logic in the browser bundle” as a design constraint.
+- Redefining **Incan core** semantics here (traits, modules, general syntax). HTTP and handler ergonomics are owned by RFC 037 and the stdlib; this RFC **depends on** that direction rather than duplicating it.
+- A **second semantic or orchestration engine** inside the UI layer—surfaces must **call into** typed domain and platform capabilities instead of re-embedding them.
+- Committing to every **Phase 2** appendix detail (specific crates, `--target wasm`, native `jsx()` parsing) as part of Phase 1; Phase 1 requires **a** browser UI story, not necessarily the appendix implementation.
 
-### Incan's Opportunity
+## Guide-level explanation
 
-**Full-stack Python without JavaScript** — one language for backend APIs, frontend UIs, and 3D graphics,
-all compiling to native performance:
+Authors think in **three layers**: (1) **domain and policy**—ordinary Incan types and functions; (2) **HTTP surface**—routes, handlers, and serialization shaped by the stdlib web platform (see RFC 037); (3) **delivery and UI**—how the server binary and **browser assets** are built, which code runs where, and how interactive UI calls back into the server. **Phase 1** delivers (2)+(3) together: **shippable web apps with UI**, not “API-only until later.” **Phase 2** adds **optional** WASM-heavy and appendix-style client stacks. Stable Phase 1 **must** include whatever surface is chosen for the **first browser target**; advanced appendix features remain optional until promoted.
 
-```bash
-Incan (Python-like syntax)
-    ↓ compiles to
-Rust (backend) + Rust/WASM (frontend)
-    ↓ produces
-Native binary (server) + WebAssembly (browser)
-```
+## Normative contracts by phase
 
-Benefits:
+**Phase 1 — must**
 
-- **Familiar syntax** — Python developers feel at home
-- **Native performance** — no interpreter, no GC pauses
-- **True full-stack** — same language, same types, everywhere
-- **Rust's safety** — memory safety without learning ownership
-- **Modern tooling** — single build system, unified debugging
+- The compiler and project metadata **must** support building a **single deployable server binary** (or equivalent documented entry) from Incan sources and **shipping browser-oriented artifacts** required by the chosen first browser target (bundles, islands, or framework output—exact shape documented in the golden path), **without** requiring Phase 2-only features such as `--target wasm` unless the project explicitly opts into them.
+- Handler and routing behavior **must** remain consistent with **RFC 037** as that RFC matures; this RFC **must not** specify competing handler semantics—only product-surface packaging, UI boundaries, and phasing around it.
+- Error and response contracts for handlers **must** be **documented** for the golden path (what callers receive on success and on typed failures).
+- Any browser-emitted code **must** declare **which** code runs only on server, only on client, or both, so secrets and policy do not leak by default.
 
-## Design
+**Phase 1 — should**
+
+- Static assets **should** be referenced in a way reproducible builds (RFC 020) and library layout (RFC 031) can validate or copy.
+- Examples **should** share one **composition pattern** for auth/session, not divergent one-off globals.
+
+**Phase 2 — may**
+
+- The appendix **may** inform spikes; nothing in the appendix **must** hold for Phase 1 compliance.
+
+## Layering
+
+- **Incan** — syntax, types, modules, lowering to Rust, shared stdlib patterns.
+- **Product-surface compilation (this RFC)** — binding routes to pages/handlers, server vs client emission, app packaging and manifests, web-oriented tooling hooks—without absorbing unrelated platform concerns.
+- **Managed hosting and org-scale operation** — orthogonal: preview envs, rollout, centralized observability, tenancy are **additive** around the open model, not prerequisites for authoring.
+
+## Delivery strategy
+
+- Prefer **server-side Incan or generated Rust** for mutations, typed HTTP APIs, SSR or server-assembled pages, and policy-sensitive logic.
+- Emit **browser-oriented assets** for ordinary UI; treat hydration, cookies, CSRF, and CORS as **platform-level** concerns where possible.
+- Treat **WASM client compilation** (`--target wasm`, `wasm-bindgen`, etc.) as a **targeted** option in the emission matrix—not the default product shape.
+- Allow multiple **delivery modes** over time: server-rendered apps, API-first products, progressively enhanced tools, hybrid UI + API surfaces, and richer client-heavy experiences where justified.
+
+## Phased roadmap
+
+### Phase 1 — Web product surfaces with browser UI (north star)
+
+Single mandatory phase: **server-authoritative** HTTP and mutations **plus** **interactive UI in the browser** on one documented golden path—no separate “server milestone” before UI.
+
+- Typed HTTP handlers and external API surfaces. Until RFC 037 stabilizes, **hand-wired** routing is acceptable only if the **golden path** in docs uses one **documented** router integration; the RFC **must** be updated when the stable shape is chosen.
+- Server-side **mutations or actions** (exact surface follows RFC 037 / stdlib) with **predictable errors** and **hooks** for auth and policy. Tutorials today may map to a concrete Rust web stack; that mapping is **illustrative**, not the permanent ABI.
+- **App packaging**: entrypoints, static asset pointers, environment/preview **metadata**—a deployable **unit**, not only a loose crate.
+- **Session, identity, and access** described as **composition** targets shared across pages, handlers, and APIs—not reimplemented per sample.
+- **Browser UI**: component or page **rendering** story, **first browser target** locked for the golden path (see [Unresolved questions](#unresolved-questions)), **server vs client** boundaries enforced by convention or language/tooling, and **data loading + forms** integrated with the handlers above.
+
+#### Default Phase 1 vertical slice (proposal — refine before unblock) {#default-phase-1-vertical-slice}
+
+This slice is the **minimum** that should count as “product with UI, not toy API or static HTML only”:
+
+1. One runnable server **binary** built from Incan (plus generated Rust as today).
+2. At least **three routes**: one `GET` returning HTML or template-backed content, one `GET` returning JSON (or typed serializable body), one `POST` (or mutation-shaped handler) accepting a body and returning success or typed error mapped to HTTP.
+3. **Static assets** (e.g. CSS, client JS, or framework bundles) referenced from the app manifest or metadata such that a deploy step can gather them without manual path lists per route.
+4. One **cross-cutting** concern (session or auth stub) applied through the **same** mechanism across all three routes in the golden-path example.
+5. At least one **interactive browser-driven** flow (e.g. in-page interactivity, client navigation, or hydrated island) implemented with the **chosen Phase 1 browser target**, with documentation of **what executes on the server vs in the browser**.
+
+*Phase 1 success:* the golden-path app above is **usable as a real small web app with UI**, satisfies the [Phase 1 checklist](#checklist) and the [vertical slice](#default-phase-1-vertical-slice) (or successor), and **does not** depend on Phase 2 (`--target wasm`, appendix-native `html()`/`jsx()`, or WebGPU) unless the golden path explicitly adopts them.
+
+### Phase 2 (optional) — WASM-first client, advanced templates, and graphics
+
+The **Reference design** below (WASM target, signals, string or `jsx()` templates, client-centric routing, dev server, WebGPU-style 3D) belongs here. It supports **selective** high-performance or ergonomics-driven client work; it **does not** gate Phase 1.
+
+## Alternatives considered
+
+- **WASM-first as the only UI story** — Rejected as the **default** for Phase 1 because it couples UI delivery to the heaviest client stack; WASM-first remains **Phase 2** for teams that need it.
+- **SPA-only** (no first-class server HTML or authoritative mutations) — Rejected because it conflicts with server-authoritative policy and excludes API-first backends and operator tools.
+- **Deferring packaging to Cargo-only** — Rejected for Phase 1 **success**: authors need a **named app unit** and asset story to deploy confidently; raw crates alone are insufficient as the long-term contract.
+
+## Drawbacks
+
+- **Phasing adds coordination cost**: RFC 037, this RFC, and tooling must move together so handler semantics and packaging do not diverge.
+- **Two audiences**: teams shipping only Phase 1 may ignore the Phase 2 appendix entirely; maintainers must keep the **normative** sections short and the **exploratory** appendix clearly labeled.
+- **Blocking status** delays **Phase 2** appendix work; Phase 1 still requires **a** browser UI target and golden path before thrashing compiler and stdlib work.
+
+## Unresolved questions {#unresolved-questions}
+
+**Blocking (must answer to unblock this RFC or move to Planned/In Progress)**
+
+- Final **Phase 1 golden path** alignment with RFC 037: single router story, decorator shapes, and error mapping once RFC 037 advances.
+- **HTTP API (endpoint)** vs **browser/form mutation (action)**: distinct constructs indefinitely, or two **policy profiles** over one handler model?
+- **First browser target** for Phase 1 (defines how interactive UI ships): framework-shaped output, minimal custom runtime, or hybrid?
+
+**Non-blocking (may track in RFC 037 or follow-up RFCs)**
+
+- How much **page-level data loading** is first-class syntax vs idiomatic Incan + libraries.
+- Which **preview, rollback, and dependency-inspection** behaviors live in open tooling vs optional hosted layers.
+
+## Relationship to other RFCs and the roadmap
+
+- RFC 037 ([Native Web and HTTP Stdlib Redesign](037_native_web_stdlib_redesign.md)) — complementary; Phase 1 handler semantics and stdlib shape **must** evolve together with this RFC.
+- RFC 020 ([Offline Locked Reproducible Builds](020_offline_locked_reproducible_builds.md)) and RFC 031 ([Library System Phase 1](closed/implemented/031_library_system_phase1.md)) — multi-target and reproducible builds **must** stay coherent as server and optional client emission land.
+- [Roadmap — deferred / later](../roadmap.md) — SSR/SSG emphasis, desktop/mobile wgpu, CRDT/collab remain explicitly **later**; Phase 1 subsume items previously listed only under WASM for **shippable UI**.
+
+## Layers affected
+
+- **Parser** — Phase 2 (appendix) for native `html()`/`jsx()` and related syntax; Phase 1 may introduce route or manifest syntax as needed; boundary annotations may require new surface forms.
+- **Typechecker** — handler typing; server/client boundary annotations for Phase 1 UI.
+- **Lowering / emission** — server binary layout, **first browser target** emission, optional Phase 2 second target for WASM; packaging metadata emission.
+- **Stdlib / runtime** — HTTP, sessions, serialization (per RFC 037); **client UI runtime** for Phase 1; Phase 2 extras as needed.
+- **Tooling** — build, dev server, asset and bundle pipeline; LSP may need route and boundary awareness.
+
+## Why this RFC is blocked
+
+Blocked until **Phase 1** is defined end-to-end: **HTTP + mutations + packaging + browser UI** on one golden path, with **first browser target** chosen at a **product-engineering** level (not only a compiler spike). Concrete gates:
+
+1. A **minimal web product surface with UI** matching the [**Default Phase 1 vertical slice**](#default-phase-1-vertical-slice) (or an explicitly amended successor) is agreed and reflected in docs for implementers.
+2. **Browser emission** for that golden path is chosen and documented (framework, minimal runtime, or hybrid).
+3. RFC 020 / generated-project contracts and RFC 031 remain satisfied for multi-target builds.
+
+Unblocking can proceed **incrementally**: Phase 1 may ship **without** Phase 2 (`--target wasm`, appendix-native `jsx()`, WebGPU).
+
+---
+
+## Reference design: Phase 2 (exploratory — WASM-heavy client compilation)
+
+The following sections preserve the **earlier** RFC 003 sketch: WASM as a compilation target, reactive UI (`html()`, `jsx()`), routing, build tooling, and optional WebGPU-style 3D. Use it for **spikes** and Phase 2 planning; Phase 1 **may** adopt pieces of it, but the appendix is **not** the sole definition of Incan’s web UI.
 
 ### Part 1: WASM Compilation Target
 
@@ -125,7 +216,7 @@ target/wasm/my_app/
 
 ---
 
-### Part 2: UI Framework (React Alternative)
+### Part 2: UI Framework (React Alternative — exploratory)
 
 A reactive component model for building web UIs.
 
@@ -320,7 +411,7 @@ This approach:
 | `html("""...""")` | String template | Limited     | Simple            |
 | `jsx(...)`        | Native JSX      | Full        | Moderate (scoped) |
 
-Both compile to the same output — choose based on preference.
+Both compile to the same UI intermediate representation — choose based on preference.
 
 #### JSX Syntax in Incan
 
@@ -495,7 +586,7 @@ def list_items() -> Element:
 #### Parser Implementation Notes
 
 Incan supports two wrapper modes: `html()` and `jsx()`.
-Both compile to the same output (Leptos view nodes), but they parse differently:
+Both compile to the same UI intermediate representation, but they parse differently:
 `html()` takes a string, while `jsx()` is native syntax the IDE can understand.
 
 - `html()` takes a string:
@@ -539,7 +630,7 @@ When the parser encounters `jsx(`, it switches to JSX mode:
 
 ---
 
-### Part 3: 3D Graphics (Three.js Alternative)
+### Part 3: 3D Graphics (Three.js Alternative — exploratory)
 
 A scene-graph API for 3D graphics, built on WebGPU via wgpu.
 
@@ -810,39 +901,6 @@ Auto-added dependencies (examples):
 
 ---
 
-## Implementation Strategy
-
-### Foundation Layer
-
-1. WASM codegen target
-2. wasm-bindgen integration
-3. Basic JS interop
-
-### UI Layer (builds on Foundation)
-
-1. Signal/reactive primitives
-2. HTML template parser
-3. Component model
-4. Event handling
-5. Routing
-
-### Graphics Layer (builds on Foundation)
-
-1. wgpu bindings
-2. Scene graph
-3. Geometries and materials
-4. Asset loading
-5. Animation system
-
-### Tooling Layer (parallel)
-
-1. Dev server with HMR
-2. Production bundler
-3. Source maps
-4. Error overlay
-
----
-
 ## Rust Crate Dependencies
 
 | Feature       | Crate                     | Purpose             |
@@ -859,23 +917,29 @@ Auto-added dependencies (examples):
 
 ## Success Criteria
 
-1. **"Hello World" WASM app** compiles and runs in browser
-2. **Counter component** demonstrates reactive state
-3. **TodoMVC** proves component model completeness  
-4. **Rotating cube** demonstrates basic 3D
-5. **Animated character** demonstrates asset loading + animation
-6. **Full demo app** combines UI + 3D (e.g., 3D product viewer)
+### Phase 1
+
+1. The **documented golden-path app** satisfies the [**Default Phase 1 vertical slice**](#default-phase-1-vertical-slice) (or a successor recorded in this RFC or docs): server-authoritative handlers, **interactive UI** in the browser, deployable **without** depending on Phase 2-only features unless explicitly chosen.
+2. **Typed HTTP/API surface** with predictable errors and documented integration with auth/policy hooks.
+3. **Packaging story**: deployable unit with entrypoints, browser artifacts required by the first target, and environment/preview metadata.
+4. **Explicit server vs client boundaries**; representative flows (data loading, forms) work end-to-end.
+5. **First browser target** chosen and documented for the golden path.
+
+### Phase 2 (Reference design — optional)
+
+1. **"Hello World" WASM app** compiles and runs in browser.
+2. **Counter component** demonstrates reactive state.
+3. **TodoMVC** proves component model completeness.
+4. **Rotating cube** demonstrates basic 3D.
+5. **Animated character** demonstrates asset loading + animation.
+6. **Full demo app** combines UI + 3D (e.g., 3D product viewer).
 
 ---
 
 ## Future Extensions
 
-- Server-side rendering (SSR) with hydration
-- Static site generation (SSG)
-- Native desktop via wgpu (non-WASM)
-- Mobile via wgpu + platform bindings
+- **Later / roadmap-aligned:** server-side rendering (SSR) with hydration; static site generation (SSG); native desktop via wgpu (non-WASM); mobile via wgpu + platform bindings; collaborative editing (CRDTs). See [Roadmap — deferred / later](../roadmap.md).
 - VR/AR support via WebXR
-- Collaborative editing (CRDTs)
 
 ---
 
@@ -890,7 +954,19 @@ Auto-added dependencies (examples):
 
 ---
 
-## Checklist
+## Checklist {#checklist}
+
+### Phase 1
+
+- [ ] **Golden path** matches the [**Default Phase 1 vertical slice**](#default-phase-1-vertical-slice) (or an explicitly documented successor)
+- [ ] Typed HTTP handlers / external API surface (as required by that slice)
+- [ ] Server-side mutations or actions with predictable errors and auth/policy hooks
+- [ ] App packaging: entrypoints, static assets, environment/preview metadata
+- [ ] Session/identity/access composition targets documented and usable across samples
+- [ ] Component or page **rendering** runtime with explicit server vs client boundaries
+- [ ] First browser target decision + representative data-loading, forms, and **interactive UI** flows
+
+### Phase 2 (Reference design — optional)
 
 - [ ] CLI: `incan build --target wasm` plumbing
 - [ ] Codegen: wasm-bindgen output for `wasm32-unknown-unknown`
@@ -904,3 +980,5 @@ Auto-added dependencies (examples):
 - [ ] Prod build: wasm-opt/minify/tree-shake/assets
 - [ ] 3D: wgpu bindings + scene graph + loaders
 - [ ] Examples: counter, TodoMVC, rotating cube, 3D demo
+
+<!-- Rename "Unresolved questions" to "Design Decisions" once all blocking questions have accepted answers and this RFC moves toward Planned or In Progress. An RFC should not unblock while blocking items remain open. -->
