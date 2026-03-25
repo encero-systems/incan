@@ -1,15 +1,16 @@
 # RFC 035: First-Class Named Function References
 
-- **Status:** Planned
+- **Status:** Draft
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** 
     - [RFC 036] (User-defined decorators — depends on this RFC)
     - [RFC 005] (Rust interop — `@rust.extern` functions already passable via this mechanism)
-- **Issue:** #180
+- **Issue:** —
 - **RFC PR:** —
-- **Written against:** v0.1
-- **Shipped in:** —
+- **Target version:** TBD
+
+<!-- TODO: add the RFC links snippet here -->
 
 ## Summary
 
@@ -214,123 +215,19 @@ Minimal. The change is small and well-scoped. The main implementation risk is in
 - **Typechecker** (`src/frontend/typechecker/`) — already returns `IdentKind::Value` for function symbols; verify that a function identifier in argument position type-checks correctly against a `(params) -> ret` parameter type.
 - **IR Emission** (`src/backend/ir/emit/`) — `IrExprKind::Ident` with `IrType::Function` must emit as a plain Rust identifier; verify no special-casing incorrectly wraps or calls it.
 
-## Design Decisions
+## Unresolved questions
 
-1. Generic function references
-    **Question:** `map(my_generic_func, items)` — when `my_generic_func` is generic, which monomorphisation is chosen?
-    **Decision:** **Deferred to a future RFC.** Generic function references require type inference improvements and are out of scope for Phase 1. In Phase 1, only monomorphic (non-generic) functions can be referenced as values.
-    **Rationale:** This is a complex problem that requires careful design around type inference and monomorphisation. It's better to ship Phase 1 with this limitation and address generics in a follow-up RFC.
+1. **Generic function references**: `map(my_generic_func, items)` — when `my_generic_func` is generic, which monomorphisation is chosen? Deferred; requires type inference improvements.
 
-2. Async function references
-    **Question:** Should `async def foo()` referenced as a value have type `() -> T` or `() -> Future[T]` in Incan's surface type system?
-    **Decision:** For Phase 1, treat async function references as having type `() -> T` (the `async` modifier is an implementation detail, not a surface type difference).
-    **Rationale:** This keeps the type system simple and matches Python's behavior where async functions are callable values. The async semantics are handled at the call site, not in the function reference type. This can be revisited when async traits or async function pointers are needed.
+2. **Async function references**: Should `async def foo()` referenced as a value have type `() -> T` or `() -> Future[T]` in Incan's surface type system? For Phase 1, treat as `() -> T` (the `async` is an implementation detail). Revisit when async traits / async function pointers are needed.
 
-3. Trait bounds on `Callable` type parameters
-    **Question:** How should trait bounds inside `Callable` type parameters be handled?
-    **Decision:** Two distinct cases with different complexity:
-        - **Bound on the outer function's type parameter (works today):** When `T` is declared on the enclosing function with `with Loggable`, using it in `Callable[T, str]` works naturally — `T` is already a known, bounded type variable. This is the idiomatic pattern and requires no new design.
-        ```incan
-        def apply_all[T with Loggable](items: List[T], f: Callable[T, str]) -> List[str]:
-            return items.map(f)
-        ```
-        - **Inline bound inside `Callable` itself (`Callable[T with Loggable, str]`):** Here `T` is not declared elsewhere — the `Callable` type would be introducing a universally quantified bound type variable inline. This is equivalent to Rust's higher-rank trait bounds (`for<T: Loggable> fn(T) -> str`). It raises unresolved questions about quantification (universal vs existential), call-site type inference, and monomorphisation. This is **explicitly deferred** and should be addressed in a separate RFC on higher-rank polymorphism or generic callable types.
+3. **Trait bounds on `Callable` type parameters.** There are two distinct cases with very different complexity:
 
-    **Rationale:** The first case is already supported and is the idiomatic pattern. The second case is significantly more complex and should be addressed in a separate RFC focused on higher-rank trait bounds.
+   - **Bound on the outer function's type parameter (works today):** When `T` is declared on the enclosing function with `with Loggable`, using it in `Callable[T, str]` works naturally — `T` is already a known, bounded type variable. This is the idiomatic pattern and requires no new design:
 
-## Implementation Plan
+     ```incan
+     def apply_all[T with Loggable](items: List[T], f: Callable[T, str]) -> List[str]:
+         return items.map(f)
+     ```
 
-### Phase 1: Parser + Type Annotation Support
-
-- [ ] Verify `Callable[Params, R]` syntax is parsed and desugared to arrow form `(Params) -> R`
-- [ ] Ensure function type annotations `(params) -> ret` are accepted in all type annotation positions
-- [ ] Add parser tests for `Callable` syntax and arrow form in various contexts
-
-### Phase 2: Typechecker Validation
-
-- [ ] Verify function identifiers in value position resolve to `ResolvedType::Function`
-- [ ] Ensure function identifiers in argument position type-check against `(params) -> ret` parameters
-- [ ] Add typechecker tests for function references in various contexts (arguments, assignments, collections)
-- [ ] Verify async function references have correct type (surface type, not Future)
-
-### Phase 3: IR Lowering
-
-- [ ] Modify lowering to handle `Expr::Ident` where resolved type is `ResolvedType::Function`
-- [ ] Emit `IrExprKind::Ident(name)` with `IrType::Function { params, ret }` for function references
-- [ ] Ensure function references are distinguished from function calls (`f` vs `f(args)`)
-- [ ] Add lowering tests for function references
-
-### Phase 4: Code Generation
-
-- [ ] Verify `IrExprKind::Ident` with `IrType::Function` emits as plain Rust identifier
-- [ ] Ensure no special-casing incorrectly wraps or calls the identifier
-- [ ] Verify generated Rust code compiles and runs correctly
-- [ ] Add codegen snapshot tests for function references
-
-### Phase 5: Integration Tests + Examples
-
-- [ ] Add integration tests demonstrating function references in practice
-- [ ] Create example project showing function references with `map`, `apply`, etc.
-- [ ] Test async function references
-- [ ] Test function references in collections and assignments
-- [ ] Verify no regressions in existing code
-
-### Phase 6: Documentation
-
-- [ ] Update language docs to document function references
-- [ ] Add examples to docs-site
-- [ ] Update release notes for v0.2
-- [ ] Document `Callable` type sugar syntax
-
-## Progress Checklist
-
-### Parser / AST
-
-- [ ] `Callable[Params, R]` syntax parses and desugars to arrow form
-- [ ] Function type annotations accepted in all positions
-- [ ] Parser tests for function types
-
-### Typechecker
-
-- [ ] Function identifiers resolve to `ResolvedType::Function`
-- [ ] Type-checking against function parameters works
-- [ ] Async function references have correct surface type
-- [ ] Typechecker tests for function references
-
-### Lowering / IR
-
-- [ ] Function references emit `IrExprKind::Ident` with `IrType::Function`
-- [ ] Distinguish `f` (reference) from `f(args)` (call)
-- [ ] Lowering tests for function references
-
-### Emission
-
-- [ ] Function references emit as plain Rust identifiers
-- [ ] No incorrect wrapping or calling
-- [ ] Codegen snapshot tests
-- [ ] Integration tests pass
-
-### Stdlib / Runtime
-
-- [ ] No stdlib changes required (pure language feature)
-- [ ] Async function references work correctly
-
-### Tests
-
-- [ ] Parser unit tests for `Callable` syntax
-- [ ] Parser unit tests for arrow form
-- [ ] Typechecker unit tests: function references as arguments
-- [ ] Typechecker unit tests: function references in assignments
-- [ ] Typechecker unit tests: function references in collections
-- [ ] Typechecker unit tests: async function references
-- [ ] Typechecker unit tests: error cases (generic functions)
-- [ ] Codegen snapshot tests for function references
-- [ ] Integration tests: function references in practice
-- [ ] Integration tests: async function references
-- [ ] Integration tests: no regressions
-
-### Docs
-
-- [ ] Update language docs
-- [ ] Add examples to docs-site
-- [ ] Release notes entry for v0.2
+   - **Inline bound inside `Callable` itself (`Callable[T with Loggable, str]`):** Here `T` is not declared elsewhere — the `Callable` type would be introducing a universally quantified bound type variable inline. This is equivalent to Rust's higher-rank trait bounds (`for<T: Loggable> fn(T) -> str`). It raises unresolved questions about quantification (universal vs existential), call-site type inference, and monomorphisation. This is **explicitly deferred** and should be addressed in a separate RFC on higher-rank polymorphism or generic callable types.

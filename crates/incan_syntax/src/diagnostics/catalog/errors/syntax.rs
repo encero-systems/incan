@@ -304,12 +304,3 @@ pub fn inconsistent_indentation(expected: usize, found: usize, span: Span) -> Co
         span,
     )
 }
-
-// -- Callable type syntax (RFC 035) ------------------------------------------
-
-pub fn callable_invalid_arg_count(count: usize, span: Span) -> CompileError {
-    CompileError::syntax(
-        format!("Callable requires exactly 2 type arguments (got {})", count),
-        span,
-    )
-}

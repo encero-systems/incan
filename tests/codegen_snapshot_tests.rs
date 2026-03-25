@@ -1103,16 +1103,6 @@ fn test_trait_bound_inference_more_codegen() {
     insta::assert_snapshot!("trait_bound_inference_more", rust_code);
 }
 
-/// RFC 035: First-class named function references
-///
-/// Verifies that named functions can be passed as values without closure wrappers.
-#[test]
-fn test_function_references_codegen() {
-    let source = load_test_file("function_references");
-    let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("function_references", rust_code);
-}
-
 // Glob-based test that auto-discovers all .incn files
 // To enable: uncomment the test below and run `cargo test --test codegen_snapshot_tests`
 //

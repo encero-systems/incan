@@ -59,30 +59,6 @@ impl<'a> IrEmitter<'a> {
                     Ok(quote! { incan_stdlib::collections::list_get(&#o, #idx_i64).clone() })
                 }
             }
-            IrType::Tuple(elems) => {
-                // Tuple indexing: emit field access syntax. The index should be an integer literal.
-                let idx_tokens = self.emit_expr(index)?;
-                match &index.kind {
-                    IrExprKind::Int(n) => {
-                        // Static integer literal: emit as field access (.0, .1, etc.)
-                        let idx_usize = *n as usize;
-                        if idx_usize < elems.len() {
-                            let syn_idx = syn::Index::from(idx_usize);
-                            Ok(quote! { #o.#syn_idx })
-                        } else {
-                            // Out of bounds - use a placeholder that will fail at runtime
-                            let syn_idx = syn::Index::from(elems.len().saturating_sub(1).max(0));
-                            Ok(quote! { #o.#syn_idx })
-                        }
-                    }
-                    _ => {
-                        // Dynamic index - this shouldn't happen for valid tuple indexing (typechecker
-                        // requires integer literals), but handle it gracefully with bracket syntax.
-                        let idx_usize = quote! { (#idx_tokens) as usize };
-                        Ok(quote! { #o.#idx_usize })
-                    }
-                }
-            }
             // Fallback for unknown/unsupported index targets.
             //
             // We keep this path total so codegen can continue even when the IR type is not a known container.
