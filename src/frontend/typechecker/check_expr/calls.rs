@@ -8,6 +8,7 @@ use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::*;
 use crate::frontend::typechecker::helpers::{collection_type_id, dict_ty, list_ty, option_ty, result_ty, set_ty};
+use incan_core::interop::{RustFunctionSig, admitted_builtin_coercion, is_rust_capability_bound};
 use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::surface::constructors::{self, ConstructorId};
@@ -20,6 +21,69 @@ use incan_core::lang::types::collections::CollectionTypeId;
 use super::TypeChecker;
 
 impl TypeChecker {
+    fn rust_arg_matches_boundary(&self, arg_ty: &ResolvedType, rust_param_ty: &str) -> bool {
+        let normalized = rust_param_ty.replace(' ', "");
+        if self.types_compatible(arg_ty, &self.resolved_type_from_rust_display(normalized.as_str())) {
+            return true;
+        }
+
+        let incan_name = match arg_ty {
+            ResolvedType::Int => "int",
+            ResolvedType::Float => "float",
+            ResolvedType::Bool => "bool",
+            ResolvedType::Str => "str",
+            ResolvedType::FrozenStr => "frozenstr",
+            ResolvedType::Bytes => "bytes",
+            ResolvedType::FrozenBytes => "frozenbytes",
+            ResolvedType::Unit => "unit",
+            _ => "",
+        };
+        if !incan_name.is_empty() && admitted_builtin_coercion(incan_name, normalized.as_str()).is_some() {
+            return true;
+        }
+
+        match arg_ty {
+            ResolvedType::Int => normalized == "i64",
+            ResolvedType::Float => normalized == "f64" || normalized == "f32",
+            ResolvedType::Bool => normalized == "bool",
+            ResolvedType::Str | ResolvedType::FrozenStr => {
+                normalized == "String" || normalized == "std::string::String" || normalized == "&str"
+            }
+            ResolvedType::Bytes | ResolvedType::FrozenBytes => {
+                normalized == "Vec<u8>" || normalized == "std::vec::Vec<u8>" || normalized == "&[u8]"
+            }
+            ResolvedType::Unit => normalized == "()",
+            _ => false,
+        }
+    }
+
+    fn validate_rust_function_call(
+        &mut self,
+        path: &str,
+        sig: &RustFunctionSig,
+        args: &[CallArg],
+        span: Span,
+    ) -> ResolvedType {
+        let arg_types = self.check_call_arg_types(args);
+        if !sig.params.is_empty() && arg_types.len() != sig.params.len() {
+            self.errors
+                .push(errors::builtin_arity(path, sig.params.len(), arg_types.len(), span));
+            return self.resolved_type_from_rust_display(sig.return_type.as_str());
+        }
+
+        for (arg_ty, param) in arg_types.iter().zip(sig.params.iter()) {
+            if !self.rust_arg_matches_boundary(arg_ty, param.type_display.as_str()) {
+                self.errors.push(errors::type_mismatch(
+                    param.type_display.as_str(),
+                    &arg_ty.to_string(),
+                    span,
+                ));
+            }
+        }
+
+        self.resolved_type_from_rust_display(sig.return_type.as_str())
+    }
+
     fn check_model_or_class_constructor_call(
         &mut self,
         type_name: &str,
@@ -325,9 +389,12 @@ impl TypeChecker {
 
     /// Best-effort check whether a concrete type satisfies an explicit generic bound.
     fn type_satisfies_explicit_bound(&self, ty: &ResolvedType, bound: &str) -> bool {
+        if is_rust_capability_bound(bound) {
+            return true;
+        }
         match ty {
             // Unknown / still-generic types are kept permissive to avoid cascading errors.
-            ResolvedType::Unknown | ResolvedType::TypeVar(_) => true,
+            ResolvedType::Unknown | ResolvedType::TypeVar(_) | ResolvedType::RustPath(_) => true,
             ResolvedType::Int
             | ResolvedType::Float
             | ResolvedType::Bool
@@ -1074,6 +1141,16 @@ impl TypeChecker {
                 _ => None,
             }) {
                 return self.validate_function_call(name, &func_info, args, span);
+            }
+
+            if let Some(rust_sig) = self.lookup_symbol(name).and_then(|sym| match &sym.kind {
+                SymbolKind::RustItem(info) => info.metadata.as_ref().and_then(|meta| match &meta.kind {
+                    incan_core::interop::RustItemKind::Function(sig) => Some((info.path.clone(), sig.clone())),
+                    _ => None,
+                }),
+                _ => None,
+            }) {
+                return self.validate_rust_function_call(rust_sig.0.as_str(), &rust_sig.1, args, span);
             }
 
             // RFC 042: traits are abstract — reject `TraitName(...)` constructor syntax.

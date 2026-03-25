@@ -100,9 +100,45 @@ pub struct NewtypeDecl {
     pub decorators: Vec<Spanned<Decorator>>,
     pub name: Ident,
     pub type_params: Vec<TypeParam>,
+    /// `true` when declared as `type X = rusttype Y`, RFC 041.
+    pub is_rusttype: bool,
     pub underlying: Spanned<Type>,
     pub docstring: Option<String>,
+    /// Alias-style member rebinding entries inside a newtype/rusttype body.
+    pub rebindings: Vec<Spanned<RebindingDecl>>,
+    /// Optional `interop:` conversion edges (RFC 041).
+    pub interop_edges: Vec<Spanned<InteropEdgeDecl>>,
     pub methods: Vec<Spanned<MethodDecl>>,
+}
+
+/// A short or qualified member rebinding declaration in a newtype/rusttype body.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RebindingDecl {
+    pub name: Ident,
+    pub target: Spanned<Expr>,
+}
+
+/// Direction of a `interop:` edge declaration (RFC 041).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InteropDirection {
+    From,
+    Into,
+}
+
+/// Adapter mode for an interop edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InteropAdapterKind {
+    Via,
+    Try,
+}
+
+/// A single line in a `interop:` block.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InteropEdgeDecl {
+    pub direction: InteropDirection,
+    pub ty: Spanned<Type>,
+    pub adapter_kind: InteropAdapterKind,
+    pub adapter: Spanned<Expr>,
 }
 
 // ============================================================================

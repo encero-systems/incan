@@ -56,6 +56,8 @@ pub use const_eval::ConstValue;
 mod tests;
 
 use std::collections::{HashMap, HashSet};
+#[cfg(feature = "rust-metadata")]
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::frontend::ast::*;
@@ -64,7 +66,10 @@ use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{ExportedSymbol, exported_symbols};
 use crate::frontend::surface_semantics::SurfaceContext;
 use crate::frontend::symbols::*;
+#[cfg(feature = "rust-metadata")]
+use crate::rust_metadata::RustMetadataCache;
 use helpers::{collection_type_id, stringlike_type_id};
+use incan_core::interop::{RustItemKind, RustItemMetadata};
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::SurfaceTypeKind;
 use incan_core::lang::types::collections::CollectionTypeId;
@@ -221,6 +226,12 @@ pub struct TypeChecker {
     /// Ensures supertrait names are not mistaken for free type parameters when the supertrait is declared later in the
     /// same module.
     pub(crate) pending_trait_supertraits: Vec<(String, Vec<Spanned<TraitBound>>)>,
+    /// Feature-gated cache for Rust semantic metadata extraction (RFC 041).
+    #[cfg(feature = "rust-metadata")]
+    pub(crate) rust_metadata_cache: RustMetadataCache,
+    /// Manifest/workspace root used for rust-analyzer metadata extraction.
+    #[cfg(feature = "rust-metadata")]
+    pub(crate) rust_metadata_manifest_dir: Option<PathBuf>,
 }
 
 impl TypeChecker {
@@ -248,6 +259,82 @@ impl TypeChecker {
             surface_context: SurfaceContext::default(),
             supertrait_closure: HashMap::new(),
             pending_trait_supertraits: Vec::new(),
+            #[cfg(feature = "rust-metadata")]
+            rust_metadata_cache: RustMetadataCache::new(),
+            #[cfg(feature = "rust-metadata")]
+            rust_metadata_manifest_dir: std::env::current_dir().ok(),
+        }
+    }
+
+    #[cfg(feature = "rust-metadata")]
+    pub fn set_rust_metadata_manifest_dir(&mut self, dir: PathBuf) {
+        self.rust_metadata_manifest_dir = Some(dir);
+    }
+
+    #[cfg(feature = "rust-metadata")]
+    pub(crate) fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        let dir = self.rust_metadata_manifest_dir.as_ref()?;
+        match self.rust_metadata_cache.get_or_extract(dir, canonical_path, &|_| ()) {
+            Ok(meta) => Some((*meta).clone()),
+            Err(_) => None,
+        }
+    }
+
+    #[cfg(not(feature = "rust-metadata"))]
+    pub(crate) fn rust_item_metadata_for_path(&self, _canonical_path: &str) -> Option<RustItemMetadata> {
+        None
+    }
+
+    /// Resolve a Rust-origin method return type from cached metadata.
+    pub(crate) fn rust_method_return_type(&self, rust_path: &str, method: &str) -> Option<ResolvedType> {
+        let metadata = self.rust_item_metadata_for_path(rust_path)?;
+        if let RustItemKind::Type(info) = metadata.kind {
+            if let Some(m) = info.methods.iter().find(|m| m.name == method) {
+                return Some(self.resolved_type_from_rust_display(m.signature.return_type.as_str()));
+            }
+            return None;
+        }
+        None
+    }
+
+    /// Convert a Rust display type string into a conservative [`ResolvedType`].
+    ///
+    /// RFC 041: this is intentionally best-effort; unknown Rust shapes remain `RustPath`/`Unknown`.
+    pub(crate) fn resolved_type_from_rust_display(&self, rust_ty: &str) -> ResolvedType {
+        let trimmed = rust_ty.trim();
+        let no_lifetimes = trimmed
+            .replace("'static ", "")
+            .replace("'_", "")
+            .replace("&mut ", "&")
+            .replace(' ', "");
+        match no_lifetimes.as_str() {
+            "bool" => ResolvedType::Bool,
+            "f32" | "f64" => ResolvedType::Float,
+            "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => {
+                ResolvedType::Int
+            }
+            "str" | "&str" | "String" | "std::string::String" => ResolvedType::Str,
+            "Vec<u8>" | "std::vec::Vec<u8>" | "&[u8]" => ResolvedType::Bytes,
+            "()" => ResolvedType::Unit,
+            _ if no_lifetimes.starts_with("Option<") && no_lifetimes.ends_with('>') => {
+                let inner = no_lifetimes.trim_start_matches("Option<").trim_end_matches('>');
+                ResolvedType::Generic("Option".to_string(), vec![self.resolved_type_from_rust_display(inner)])
+            }
+            _ if no_lifetimes.starts_with("Result<") && no_lifetimes.ends_with('>') => {
+                let inner = no_lifetimes.trim_start_matches("Result<").trim_end_matches('>');
+                let mut parts = inner.splitn(2, ',');
+                let ok_ty = parts
+                    .next()
+                    .map(|p| self.resolved_type_from_rust_display(p))
+                    .unwrap_or(ResolvedType::Unknown);
+                let err_ty = parts
+                    .next()
+                    .map(|p| self.resolved_type_from_rust_display(p))
+                    .unwrap_or(ResolvedType::Unknown);
+                ResolvedType::Generic("Result".to_string(), vec![ok_ty, err_ty])
+            }
+            _ if !no_lifetimes.is_empty() => ResolvedType::RustPath(no_lifetimes),
+            _ => ResolvedType::Unknown,
         }
     }
 
@@ -549,6 +636,17 @@ impl TypeChecker {
 
     fn resolve_type_checked(&mut self, ty: &Spanned<Type>) -> ResolvedType {
         self.validate_stdlib_type_usage(ty);
+        if let Type::Simple(name) = &ty.node {
+            if let Some(sym) = self.lookup_symbol(name.as_str()) {
+                if let SymbolKind::RustItem(info) = &sym.kind {
+                    if info.binding == RustImportBindingKind::CrateRoot {
+                        self.errors
+                            .push(errors::rust_crate_root_used_as_type(name.as_str(), &info.path, ty.span));
+                        return ResolvedType::Unknown;
+                    }
+                }
+            }
+        }
         resolve_type(&ty.node, &self.symbols)
     }
 
@@ -898,6 +996,8 @@ impl TypeChecker {
             (ResolvedType::Tuple(e1), ResolvedType::Tuple(e2)) => {
                 e1.len() == e2.len() && e1.iter().zip(e2.iter()).all(|(t1, t2)| self.types_compatible(t1, t2))
             }
+            (ResolvedType::RustPath(a), ResolvedType::RustPath(b)) => a == b,
+            (ResolvedType::RustPath(_), _) | (_, ResolvedType::RustPath(_)) => true,
             _ => false,
         }
     }

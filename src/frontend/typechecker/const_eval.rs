@@ -179,7 +179,7 @@ impl TypeChecker {
                 // Any actual type mismatch is caught by Rust's compiler.
                 if let Some(sym) = self.lookup_symbol(name)
                     && match &sym.kind {
-                        SymbolKind::RustModule { .. } => true,
+                        SymbolKind::RustItem(_) => true,
                         SymbolKind::Module(info) => info.path.first().is_some_and(|seg| seg == "rust"),
                         _ => false,
                     }

@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 
 use crate::frontend::ast::{Receiver, Span, Type};
+use incan_core::interop::RustItemMetadata;
 use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_core::lang::conventions;
 use incan_core::lang::surface::constructors;
@@ -330,6 +331,32 @@ pub struct Symbol {
     pub scope: usize,
 }
 
+/// How a `rust::...` import binding relates to Rust’s module/type namespace (RFC 041).
+///
+/// Incan does not run the Rust type checker here; this classification is derived from import syntax only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RustImportBindingKind {
+    /// `import rust::crate_name` — binds the crate root as a namespace (not a concrete type).
+    CrateRoot,
+    /// `import rust::crate_name::a::b::...` with at least one path segment after the crate name.
+    RootedPath,
+    /// `from rust::... import item` — binds a single imported Rust item.
+    FromImport,
+}
+
+/// Provenance for a symbol that refers into a Rust dependency via `rust::` (RFC 041).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RustItemInfo {
+    /// Crate name (first segment after `rust::` in the import source).
+    pub crate_name: String,
+    /// Canonical path used for diagnostics and future lowering: `crate::module::Item` (same string the import
+    /// collector already built, joined with `::`).
+    pub path: String,
+    pub binding: RustImportBindingKind,
+    /// Optional extracted Rust semantic metadata (RFC 041).
+    pub metadata: Option<RustItemMetadata>,
+}
+
 /// Kind of symbol
 #[derive(Debug, Clone)]
 pub enum SymbolKind {
@@ -347,8 +374,8 @@ pub enum SymbolKind {
     Variant(VariantInfo),
     /// Field
     Field(FieldInfo),
-    /// Rust crate import (import rust::...)
-    RustModule { crate_name: String, path: String },
+    /// Rust dependency import (`import rust::...` / `from rust::... import ...`, RFC 005 / RFC 041).
+    RustItem(RustItemInfo),
 }
 
 /// Variable information
@@ -406,6 +433,8 @@ pub struct ModelInfo {
 #[derive(Debug, Clone)]
 pub struct NewtypeInfo {
     pub type_params: Vec<String>,
+    pub is_rusttype: bool,
+    pub has_interop: bool,
     pub underlying: ResolvedType,
     pub methods: HashMap<String, MethodInfo>,
 }
@@ -496,6 +525,11 @@ pub enum ResolvedType {
     /// - This is currently compiler-internal (not a user-spellable surface type).
     /// - It exists to model Rust interop semantics like `HashMap::get` returning `Option<&V>`.
     Ref(Box<ResolvedType>),
+    /// Rust import with a known canonical path (`crate::...` string), RFC 041.
+    ///
+    /// Lowers to backend `IrType::Unknown` until dedicated IR typing exists; provenance also lives on
+    /// [`SymbolKind::RustItem`].
+    RustPath(String),
     /// Unknown/error type
     Unknown,
 }
@@ -602,6 +636,7 @@ impl std::fmt::Display for ResolvedType {
             ResolvedType::TypeVar(name) => write!(f, "{}", name),
             ResolvedType::SelfType => write!(f, "Self"),
             ResolvedType::Ref(inner) => write!(f, "&{}", inner),
+            ResolvedType::RustPath(path) => write!(f, "rust::{}", path),
             ResolvedType::Unknown => write!(f, "?"),
         }
     }
@@ -647,6 +682,18 @@ pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
             match name.as_str() {
                 conventions::UNIT_TYPE_NAME | conventions::NONE_TYPE_NAME => ResolvedType::Unit,
                 _ => {
+                    if let Some(id) = symbols.lookup(name) {
+                        if let Some(sym) = symbols.get(id) {
+                            if let SymbolKind::RustItem(info) = &sym.kind {
+                                return match info.binding {
+                                    RustImportBindingKind::CrateRoot => ResolvedType::Unknown,
+                                    RustImportBindingKind::RootedPath | RustImportBindingKind::FromImport => {
+                                        ResolvedType::RustPath(info.path.clone())
+                                    }
+                                };
+                            }
+                        }
+                    }
                     // Check if it's a known type
                     if symbols.lookup(name).is_some() {
                         ResolvedType::Named(name.clone())

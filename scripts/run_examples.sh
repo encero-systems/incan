@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Requires Bash. Do not run with `sh` (POSIX sh does not support process substitution `done < <(...)` used below).
+#Use: `bash scripts/run_examples.sh` or `make examples`.
+
 # Smoke-test examples:
 # - Pre-build nested example library projects (`incan.toml` + `src/lib.incn`)
 # - Typecheck every example file under examples/ (recursively)

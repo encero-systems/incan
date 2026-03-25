@@ -16,6 +16,7 @@ use crate::library_manifest::{
     ClassExport, ConstExport, EnumExport, FieldExport, FunctionExport, LibraryManifest, MethodExport, ModelExport,
     NewtypeExport, ParamExport, ReceiverExport, TraitExport, TypeParamExport, resolved_type_from_manifest_type_ref,
 };
+use incan_core::interop::is_rust_capability_bound;
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::types as surface_types;
 use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
@@ -119,6 +120,23 @@ impl TypeChecker {
                 // For each item in `from module import item1, item2, ...`
                 // create a symbol as if it were `import module::item`
                 for item in items {
+                    if module_path_str == "std.rust" && is_rust_capability_bound(item.name.as_str()) {
+                        let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
+                        self.validate_root_namespace(&local_name, span);
+                        self.symbols.define(Symbol {
+                            name: local_name,
+                            kind: SymbolKind::Trait(TraitInfo {
+                                type_params: vec![],
+                                methods: HashMap::new(),
+                                requires: vec![],
+                                supertraits: vec![],
+                            }),
+                            span,
+                            scope: 0,
+                        });
+                        continue;
+                    }
+
                     // Stdlib-scoped surface types: define them as builtin types only when imported from their owning
                     // module.
                     if let Some(id) = surface_types::from_str(item.name.as_str())
@@ -263,7 +281,19 @@ impl TypeChecker {
                     .clone()
                     .unwrap_or_else(|| path.last().cloned().unwrap_or_else(|| crate_name.clone()));
                 let full_path = self.rust_import_full_path(crate_name, path, None);
-                self.define_rust_import_binding(name, crate_name, full_path, span);
+                let binding = if path.is_empty() {
+                    RustImportBindingKind::CrateRoot
+                } else {
+                    RustImportBindingKind::RootedPath
+                };
+                let canonical_path = full_path.join("::");
+                let info = RustItemInfo {
+                    crate_name: crate_name.clone(),
+                    path: canonical_path.clone(),
+                    binding,
+                    metadata: self.rust_item_metadata_for_path(&canonical_path),
+                };
+                self.define_rust_import_binding(name, info, span);
             }
             ImportKind::RustFrom {
                 crate_name,
@@ -279,7 +309,14 @@ impl TypeChecker {
                 for item in items {
                     let name = item.alias.clone().unwrap_or_else(|| item.name.clone());
                     let full_path = self.rust_import_full_path(crate_name, path, Some(&item.name));
-                    self.define_rust_import_binding(name, crate_name, full_path, span);
+                    let canonical_path = full_path.join("::");
+                    let info = RustItemInfo {
+                        crate_name: crate_name.clone(),
+                        path: canonical_path.clone(),
+                        binding: RustImportBindingKind::FromImport,
+                        metadata: self.rust_item_metadata_for_path(&canonical_path),
+                    };
+                    self.define_rust_import_binding(name, info, span);
                 }
             }
         }
@@ -484,7 +521,7 @@ impl TypeChecker {
             SymbolKind::Module(_) => "imported module",
             SymbolKind::Variant(_) => "enum variant",
             SymbolKind::Field(_) => "field",
-            SymbolKind::RustModule { .. } => "rust import",
+            SymbolKind::RustItem(_) => "rust import",
         };
         Some(kind)
     }
@@ -599,7 +636,7 @@ impl TypeChecker {
                     Self::remap_resolved_type_with_import_aliases(ty, imported_type_aliases);
                 }
             }
-            SymbolKind::Module(_) | SymbolKind::Variant(_) | SymbolKind::Field(_) | SymbolKind::RustModule { .. } => {}
+            SymbolKind::Module(_) | SymbolKind::Variant(_) | SymbolKind::Field(_) | SymbolKind::RustItem(_) => {}
         }
     }
 
@@ -646,6 +683,7 @@ impl TypeChecker {
             | ResolvedType::Unit
             | ResolvedType::TypeVar(_)
             | ResolvedType::SelfType
+            | ResolvedType::RustPath(_)
             | ResolvedType::Unknown => {}
         }
     }
@@ -722,6 +760,8 @@ impl TypeChecker {
     fn newtype_info_from_manifest(&self, export: &NewtypeExport) -> NewtypeInfo {
         NewtypeInfo {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
+            is_rusttype: false,
+            has_interop: false,
             underlying: resolved_type_from_manifest_type_ref(&export.underlying),
             methods: self.methods_from_manifest(&export.methods),
         }
@@ -855,23 +895,20 @@ impl TypeChecker {
         full_path
     }
 
-    /// Validate and register a Rust import placeholder symbol for codegen.
-    fn define_rust_import_binding(&mut self, name: Ident, crate_name: &str, full_path: Vec<Ident>, span: Span) {
+    /// Validate and register a Rust import symbol for codegen and RFC 041 provenance.
+    fn define_rust_import_binding(&mut self, name: Ident, info: RustItemInfo, span: Span) {
         self.validate_root_namespace(&name, span);
-        self.define_rust_import_symbol(name, crate_name.to_string(), full_path, span);
+        self.define_rust_import_symbol(name, info, span);
     }
 
     /// Define a symbol for a Rust crate import, skipping if a real definition exists.
-    fn define_rust_import_symbol(&mut self, name: Ident, crate_name: String, path: Vec<Ident>, span: Span) {
+    fn define_rust_import_symbol(&mut self, name: Ident, info: RustItemInfo, span: Span) {
         if self.has_real_definition(&name) {
             return;
         }
         self.symbols.define(Symbol {
             name,
-            kind: SymbolKind::RustModule {
-                crate_name,
-                path: path.join("::"),
-            },
+            kind: SymbolKind::RustItem(info),
             span,
             scope: 0, // Will be set by define()
         });

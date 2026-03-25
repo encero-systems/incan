@@ -320,6 +320,123 @@ import std.web as rust
     assert!(result.is_err());
 }
 
+/// RFC 041: `import rust::crate` binds the crate root; it is not a concrete Rust type.
+#[test]
+fn test_rust_crate_root_import_rejected_in_type_position() {
+    let source = r#"
+import rust::serde_json
+
+def f(x: serde_json) -> None:
+  pass
+"#;
+    let Ok(tokens) = lexer::lex(source) else {
+        panic!("lex failed");
+    };
+    let Ok(ast) = parser::parse(&tokens) else {
+        panic!("parse failed");
+    };
+    let mut checker = TypeChecker::new();
+    let result = checker.check_program(&ast);
+    let Err(errs) = result else {
+        panic!("expected type error for crate-root import used as type");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("cannot be used as a type")),
+        "expected crate-root-as-type diagnostic, got {errs:?}"
+    );
+}
+
+/// RFC 041: `from rust::... import Item` carries canonical path in [`ResolvedType::RustPath`].
+#[test]
+fn test_rust_from_import_records_rust_path_on_ident_use() {
+    let source = r#"
+from rust::std::time import Instant
+
+def f() -> None:
+  _ = Instant
+"#;
+    let Ok(tokens) = lexer::lex(source) else {
+        panic!("lex failed");
+    };
+    let Ok(ast) = parser::parse(&tokens) else {
+        panic!("parse failed");
+    };
+    let mut checker = TypeChecker::new();
+    let Ok(()) = checker.check_program(&ast) else {
+        panic!("check_program failed");
+    };
+    let info = checker.type_info();
+    assert!(
+        info.expr_types.values().any(|t| {
+            matches!(
+                t,
+                ResolvedType::RustPath(p) if p == "std::time::Instant"
+            )
+        }),
+        "expected RustPath(std::time::Instant) in expr types, got {:?}",
+        info.expr_types
+    );
+}
+
+#[test]
+fn test_rusttype_requires_rust_import_backing() {
+    let source = r#"
+type Email = rusttype str
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected rusttype backing diagnostic");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("declared as `rusttype`")),
+        "expected rusttype backing diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_interop_block_rejected_on_non_rusttype() {
+    let source = r#"
+type Email = newtype str:
+  interop:
+    from str try Email.parse
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected interop block diagnostic");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("`interop:` is only valid")),
+        "expected interop-on-newtype diagnostic, got {errs:?}"
+    );
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_rust_metadata_reports_missing_method() {
+    let source = r#"
+from rust::regex import Regex
+
+def f() -> None:
+  _ = Regex.no_such_method("x")
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected missing rust method diagnostic");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("no method")),
+        "expected rust missing-method diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_std_rust_capability_import_binds_trait_symbols() {
+    let source = r#"
+from std.rust import Send, Sync
+
+def run[T with Send, Sync](task: T) -> None:
+  pass
+"#;
+    assert_check_ok(source);
+}
+
 #[test]
 fn test_rust_extern_accepted_in_user_code() {
     // @rust.extern is allowed 'everywhere' per RFC 023.
@@ -1133,8 +1250,12 @@ def add(mut xs: List[Mutex], value: Mutex) -> None:
         panic!("expected type errors");
     };
     assert!(
-        errs.iter()
-            .any(|e| e.message.contains("List.append requires element type 'Mutex'"))
+        errs.iter().any(|e| {
+            e.message.contains("List.append requires element type")
+                && e.message.contains("Mutex")
+                && e.message.contains("Clone")
+        }),
+        "expected List.append / Clone diagnostic for Rust element type; got {errs:?}"
     );
 }
 

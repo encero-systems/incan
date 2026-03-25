@@ -13,6 +13,27 @@ use super::IrEmitter;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
 
 impl<'a> IrEmitter<'a> {
+    fn emit_path_ident(path: &str) -> TokenStream {
+        if path.contains("::") {
+            let segments: Vec<TokenStream> = path
+                .split("::")
+                .filter(|s| !s.is_empty())
+                .map(|seg| {
+                    let ident = Self::rust_ident(seg);
+                    quote! { #ident }
+                })
+                .collect();
+            let mut iter = segments.into_iter();
+            let Some(first) = iter.next() else {
+                return quote! { _ };
+            };
+            iter.fold(first, |acc, seg| quote! { #acc :: #seg })
+        } else {
+            let ident = Self::rust_ident(path);
+            quote! { #ident }
+        }
+    }
+
     /// Emit a type as Rust tokens.
     #[allow(clippy::only_used_in_recursion)]
     pub(super) fn emit_type(&self, ty: &IrType) -> TokenStream {
@@ -57,11 +78,10 @@ impl<'a> IrEmitter<'a> {
                 if name == surface_types::as_str(SurfaceTypeId::FieldInfo) {
                     return quote! { incan_stdlib::reflection::FieldInfo };
                 }
-                let n = Self::rust_ident(name);
-                quote! { #n }
+                Self::emit_path_ident(name)
             }
             IrType::NamedGeneric(name, args) => {
-                let n = Self::rust_ident(name);
+                let n = Self::emit_path_ident(name);
                 let ts: Vec<_> = args.iter().map(|t| self.emit_type(t)).collect();
                 quote! { #n < #(#ts),* > }
             }
@@ -147,6 +167,10 @@ impl<'a> IrEmitter<'a> {
     ///
     /// Handles simple bounds like `PartialEq` and bounds with associated types like `std::ops::Add<Output = T>`.
     fn emit_trait_bound(&self, bound: &super::super::decl::IrTraitBound) -> TokenStream {
+        if bound.trait_path == "Static" {
+            return quote! { 'static };
+        }
+
         // Parse the trait path into segments.
         let segments: Vec<_> = bound.trait_path.split("::").collect();
         let path_tokens: Vec<TokenStream> = segments

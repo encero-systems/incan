@@ -101,6 +101,14 @@ impl AstLowering {
                 ty: self.lower_type(&a.target.node),
             },
             ast::Declaration::Newtype(n) => {
+                if n.is_rusttype {
+                    return Ok(IrDecl::new(IrDeclKind::TypeAlias {
+                        visibility: Self::map_visibility(n.visibility),
+                        name: n.name.clone(),
+                        type_params: Self::lower_type_params(&n.type_params),
+                        ty: self.lower_type(&n.underlying.node),
+                    }));
+                }
                 // Note: newtype checked construction hook selection is done in `lower_program` when we see the full
                 // newtype declaration.
                 let struct_ir = self.lower_newtype(n)?;

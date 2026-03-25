@@ -1,6 +1,6 @@
 # RFC 041: First-Class Rust Interop Authoring
 
-- **Status:** Planned
+- **Status:** In Progress
 - **Created:** 2026-03-09
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -764,6 +764,81 @@ This is also why a separate dedicated interop crate is not the initial recommend
 - **Stdlib / Runtime (`incan_stdlib`)**: migration of `std.async` and similar modules away from handwritten Rust adapter layers where those layers existed solely for symbol exposure.
 - **Formatter**: stable formatting for `rusttype` declarations, `interop:` blocks, and wrapper rebinding syntax.
 - **LSP / Tooling**: completions and docs for imported Rust members and associated items; improved diagnostics that surface the canonical Rust path in error messages.
+
+## Implementation Plan
+
+### Phase 1: Parser + AST
+
+- Add `rusttype` declaration syntax, optional `interop:` blocks, and rebinding forms described in this RFC.
+- Extend the AST and formatter so the new surface round-trips stably.
+
+### Phase 2: Typechecker + symbol resolution
+
+- Model every resolved `rust::...` binding with explicit Rust provenance and import shape (crate root, rooted path, or `from`-imported leaf).
+- Thread provenance through identifier and type resolution; replace opaque `Unknown` placeholders where a canonical Rust path is known.
+- Resolve members and associated items against one shared Rust semantic model; emit span-precise diagnostics for unsupported shapes and for invalid uses (for example crate-root imports in type position).
+- Validate the built-in interop coercion matrix, `interop:` edges, and Rust-lowered capability bounds in `with` clauses as the surfaces land.
+
+### Phase 3: Lowering + emission
+
+- Lower Rust-origin symbols using frontend-carried provenance instead of rediscovering paths at emit time.
+- Insert coercions at explicit Rust boundaries per the compiler-owned matrix; lower `rusttype` wrap/unwrap and capability predicates.
+
+### Phase 4: Stdlib + runtime
+
+- Migrate modules such as `std.async` off Rust adapter layers that exist only to re-expose imported Rust items.
+
+### Phase 5: LSP, tests, and docs
+
+- Improve completions and diagnostics using the same provenance as the typechecker.
+- Add parser, typechecker, snapshot, and integration tests per phase; update docs-site and release notes when behavior is user-visible.
+
+## Progress Checklist
+
+### Spec / design
+
+- [ ] Capture any normative edge cases discovered during implementation in **Design Decisions**.
+
+### Parser / AST
+
+- [ ] Lex/parse `rusttype` and `interop:` blocks per RFC.
+- [ ] AST nodes with correct spans; formatter round-trip.
+
+### Typechecker
+
+- [x] Rust import symbols carry `RustItem` provenance and binding kind (crate root / rooted path / from-import leaf).
+- [x] Expression and type resolution use `ResolvedType::RustPath` where a canonical path is known (not `Unknown`).
+- [x] Diagnostic: crate-root `import rust::cr` cannot be used as a type; hint `from rust::cr import ...`.
+- [ ] Member and associated-item resolution consume unified Rust metadata (ongoing).
+- [ ] Explicit diagnostics for unsupported Rust-backed shapes (ongoing).
+
+### Lowering / IR
+
+- [ ] Preserve provenance through IR for Rust-origin bindings.
+- [ ] Lower coercions and `rusttype`/capability features per RFC.
+
+### Emission
+
+- [ ] Emit calls and coercions from resolved provenance, not call-site heuristics.
+
+### Stdlib / runtime
+
+- [ ] Remove redundant Rust shims from `incan_stdlib` where RFC 041 covers the surface.
+
+### LSP / tooling
+
+- [ ] Completions and errors show canonical Rust paths where helpful.
+
+### Tests
+
+- [ ] Parser tests for `rusttype` / `rust::` imports.
+- [ ] Typechecker tests for provenance, invalid crate-root-as-type, and unsupported-shape diagnostics.
+- [ ] Codegen snapshots and integration tests for end-to-end Rust interop.
+
+### Docs
+
+- [ ] Docs-site updates for `rusttype` and authoring guidance.
+- [ ] Release notes when the feature ships.
 
 ## Design Decisions
 

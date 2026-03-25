@@ -55,14 +55,14 @@ jobs:
         run: cargo nextest run --all --profile ci
 
   msrv:
-    name: MSRV Build/Test (1.89.0)
+    name: MSRV Build/Test (1.91.0)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust 1.89.0
+      - name: Install Rust 1.91.0
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.89.0
+          toolchain: 1.91.0
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest

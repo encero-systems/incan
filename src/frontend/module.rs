@@ -462,8 +462,11 @@ mod tests {
             decorators: vec![],
             name: "UserId".to_string(),
             type_params: vec![],
+            is_rusttype: false,
             underlying: make_spanned(Type::Simple("i64".to_string())),
             docstring: None,
+            rebindings: vec![],
+            interop_edges: vec![],
             methods: vec![],
         };
         let program = Program {

@@ -21,6 +21,8 @@ pub const STDLIB_THIS: &str = "this";
 
 /// `std.async` module name.
 pub const STDLIB_ASYNC: &str = "async";
+/// `std.rust` module name for capability bounds (RFC 041).
+pub const STDLIB_RUST: &str = "rust";
 
 /// Check if a module path starts with `std.<module>`.
 pub fn is_stdlib_module(path: &[String], module: &str) -> bool {
@@ -141,6 +143,12 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         }],
         submodules: &[],
     },
+    StdlibNamespace {
+        name: "rust",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+    },
 ];
 
 /// Look up a top-level stdlib namespace by name.
@@ -249,6 +257,7 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "async", "time"])));
         assert!(is_known_stdlib_module(&segs(&["std", "serde", "json"])));
         assert!(is_known_stdlib_module(&segs(&["std", "reflection"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "rust"])));
     }
 
     #[test]
@@ -285,6 +294,7 @@ mod tests {
         assert!(hint.contains(&"std.derives".to_string()));
         assert!(hint.contains(&"std.web.app".to_string()));
         assert!(hint.contains(&"std.async.prelude".to_string()));
+        assert!(hint.contains(&"std.rust".to_string()));
     }
 
     #[test]

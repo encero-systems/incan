@@ -45,10 +45,37 @@ impl TypeChecker {
                 }
             }
             SymbolKind::Trait(_) => (IdentKind::Trait, ResolvedType::Named(name.to_string())),
-            SymbolKind::RustModule { .. } => {
-                // Rust imports are intentionally opaque in the frontend: lowering/codegen only needs to know that they
-                // are external Rust names. Concrete Rust types are checked later by Rust itself.
-                (IdentKind::RustImport, ResolvedType::Unknown)
+            SymbolKind::RustItem(info) => {
+                if let Some(meta) = &info.metadata
+                    && meta.visibility == incan_core::interop::RustVisibility::Restricted
+                {
+                    self.errors
+                        .push(errors::rust_item_not_public(name, meta.canonical_path.as_str(), span));
+                    self.type_info
+                        .ident_kinds
+                        .insert((span.start, span.end), IdentKind::RustImport);
+                    return ResolvedType::Unknown;
+                }
+                // RFC 041: carry canonical Rust path and (when available) extracted Rust metadata.
+                let resolved = match &info.metadata {
+                    Some(meta) => match &meta.kind {
+                        incan_core::interop::RustItemKind::Function(sig) => {
+                            let params = sig
+                                .params
+                                .iter()
+                                .map(|p| self.resolved_type_from_rust_display(p.type_display.as_str()))
+                                .collect();
+                            let ret = self.resolved_type_from_rust_display(sig.return_type.as_str());
+                            ResolvedType::Function(params, Box::new(ret))
+                        }
+                        incan_core::interop::RustItemKind::Constant { type_display } => {
+                            self.resolved_type_from_rust_display(type_display.as_str())
+                        }
+                        _ => ResolvedType::RustPath(info.path.clone()),
+                    },
+                    None => ResolvedType::RustPath(info.path.clone()),
+                };
+                (IdentKind::RustImport, resolved)
             }
         };
 

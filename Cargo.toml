@@ -17,7 +17,7 @@ resolver = "2"
 version = "0.2.0-dev.3"
 description = "The Incan programming language compiler"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.91"
 license = "Apache-2.0"
 authors = ["Danny Meijer <dannys.code.corner@gmail.com>"]
 repository = "https://github.com/dannys-code-corner/incan-programming-language"
@@ -47,6 +47,15 @@ lsp = ["dep:tower-lsp", "dep:tokio"]
 std_testing = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_testing"]
 std_async = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_async"]
 std_decorators = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_decorators"]
+# Rust dependency metadata via rust-analyzer (`ra_ap_*`). Optional to keep default builds lighter.
+rust-metadata = [
+    "dep:anyhow",
+    "dep:ra_ap_hir",
+    "dep:ra_ap_ide_db",
+    "dep:ra_ap_load-cargo",
+    "dep:ra_ap_project_model",
+    "dep:ra_ap_vfs",
+]
 
 [dependencies]
 # Shared language/semantic helpers (canonical vocab)
@@ -92,6 +101,14 @@ semver = "1.0.27"
 # WASM runtime for desugarer packaging
 wasmtime = { version = "40", default-features = false, features = ["cranelift", "runtime", "std"] }
 wasmtime-wasi = { version = "40", default-features = false, features = ["p1"] }
+
+# Optional: rust-analyzer library stack for `rust::` metadata (RFC 041). Pin versions together.
+anyhow = { version = "1.0.98", optional = true }
+ra_ap_hir = { version = "0.0.325", optional = true }
+ra_ap_ide_db = { version = "0.0.325", optional = true }
+ra_ap_load-cargo = { version = "0.0.325", optional = true }
+ra_ap_project_model = { version = "0.0.325", optional = true }
+ra_ap_vfs = { version = "0.0.325", optional = true }
 
 [dev-dependencies]
 # Snapshot testing for codegen

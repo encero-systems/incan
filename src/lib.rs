@@ -33,6 +33,8 @@ pub mod lsp;
 pub mod manifest;
 pub mod numeric;
 pub mod numeric_adapters;
+#[cfg(feature = "rust-metadata")]
+pub mod rust_metadata;
 pub(crate) mod semantics_registry;
 pub mod version;
 

@@ -441,10 +441,17 @@ impl Formatter {
         self.writer.write("type ");
         self.writer.write(&nt.name);
         self.format_type_params(&nt.type_params);
-        self.writer.write(" = newtype ");
+        if nt.is_rusttype {
+            self.writer.write(" = rusttype ");
+        } else {
+            self.writer.write(" = newtype ");
+        }
         self.format_type(&nt.underlying.node);
 
-        let has_body = nt.docstring.is_some() || !nt.methods.is_empty();
+        let has_body = nt.docstring.is_some()
+            || !nt.rebindings.is_empty()
+            || !nt.interop_edges.is_empty()
+            || !nt.methods.is_empty();
         if !has_body {
             self.writer.newline();
             return;
@@ -455,6 +462,39 @@ impl Formatter {
 
         if let Some(docstring) = &nt.docstring {
             self.format_docstring(docstring);
+            if !nt.rebindings.is_empty() || !nt.interop_edges.is_empty() || !nt.methods.is_empty() {
+                self.writer.newline();
+            }
+        }
+
+        for rebinding in &nt.rebindings {
+            self.writer.write(&rebinding.node.name);
+            self.writer.write(" = ");
+            self.format_expr(&rebinding.node.target.node);
+            self.writer.newline();
+        }
+        if !nt.rebindings.is_empty() && (!nt.interop_edges.is_empty() || !nt.methods.is_empty()) {
+            self.writer.newline();
+        }
+
+        if !nt.interop_edges.is_empty() {
+            self.writer.writeln("interop:");
+            self.writer.indent();
+            for edge in &nt.interop_edges {
+                match edge.node.direction {
+                    InteropDirection::From => self.writer.write("from "),
+                    InteropDirection::Into => self.writer.write("into "),
+                }
+                self.format_type(&edge.node.ty.node);
+                self.writer.write(" ");
+                match edge.node.adapter_kind {
+                    InteropAdapterKind::Via => self.writer.write("via "),
+                    InteropAdapterKind::Try => self.writer.write("try "),
+                }
+                self.format_expr(&edge.node.adapter.node);
+                self.writer.newline();
+            }
+            self.writer.dedent();
             if !nt.methods.is_empty() {
                 self.writer.newline();
             }

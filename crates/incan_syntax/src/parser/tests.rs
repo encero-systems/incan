@@ -554,6 +554,47 @@ type UserId[T] = newtype int:
         assert_eq!(nt.docstring.as_deref(), Some("Opaque identifier wrapper."));
         assert_eq!(nt.methods.len(), 1);
         assert_eq!(nt.methods[0].node.name, "raw");
+        assert!(!nt.is_rusttype);
+        assert!(nt.rebindings.is_empty());
+        assert!(nt.interop_edges.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_rusttype_with_rebinding_and_interop() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+type Sender[T] = rusttype RustSender[T]:
+    send_now = try_send
+
+    interop:
+        from str try Sender.parse
+        into bytes via Sender.encode
+"#;
+        let program = parse_str(source)?;
+        let nt = match &program.declarations[0].node {
+            Declaration::Newtype(nt) => nt,
+            _ => panic!("Expected rusttype/newtype declaration"),
+        };
+        assert!(nt.is_rusttype);
+        assert_eq!(nt.rebindings.len(), 1);
+        assert_eq!(nt.rebindings[0].node.name, "send_now");
+        assert_eq!(nt.interop_edges.len(), 2);
+        assert!(matches!(
+            nt.interop_edges[0].node.direction,
+            InteropDirection::From
+        ));
+        assert!(matches!(
+            nt.interop_edges[0].node.adapter_kind,
+            InteropAdapterKind::Try
+        ));
+        assert!(matches!(
+            nt.interop_edges[1].node.direction,
+            InteropDirection::Into
+        ));
+        assert!(matches!(
+            nt.interop_edges[1].node.adapter_kind,
+            InteropAdapterKind::Via
+        ));
         Ok(())
     }
 

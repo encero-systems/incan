@@ -97,6 +97,21 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Return `true` when the current token is an identifier with exact text `value`.
+    fn peek_ident_text(&self, value: &str) -> bool {
+        matches!(&self.peek().kind, TokenKind::Ident(name) if name == value)
+    }
+
+    /// Consume the current token when it is an identifier with exact text `value`.
+    fn match_ident_text(&mut self, value: &str) -> bool {
+        if self.peek_ident_text(value) {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
     /// Parse a list of identifiers and return them as spanned tokens.
     fn identifier_list_spanned(&mut self) -> Result<Vec<Spanned<Ident>>, CompileError> {
         let mut idents = vec![self.identifier_spanned()?];

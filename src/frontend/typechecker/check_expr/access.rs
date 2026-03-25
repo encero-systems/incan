@@ -136,6 +136,8 @@ impl TypeChecker {
             }
             ResolvedType::Ref(_) | ResolvedType::Function(_, _) | ResolvedType::SelfType => true,
             ResolvedType::TypeVar(_) => false,
+            // RFC 041: provenance is known, but Incan does not yet query Rust for `Copy`/`Clone`; do not assume.
+            ResolvedType::RustPath(_) => false,
             ResolvedType::Unknown => true,
         }
     }
@@ -333,6 +335,31 @@ impl TypeChecker {
         if matches!(base_ty, ResolvedType::Unknown) {
             return ResolvedType::Unknown;
         }
+        if let ResolvedType::RustPath(path) = &base_ty {
+            let Some(meta) = self.rust_item_metadata_for_path(path) else {
+                // Metadata backend disabled/unavailable: preserve permissive RFC 005 behavior.
+                return ResolvedType::Unknown;
+            };
+            if let incan_core::interop::RustItemKind::Module(module) = meta.kind
+                && let Some(child) = module.children.iter().find(|c| c.name == field)
+            {
+                return match child.kind_hint {
+                    incan_core::interop::RustModuleChildKind::Module
+                    | incan_core::interop::RustModuleChildKind::Type
+                    | incan_core::interop::RustModuleChildKind::Trait
+                    | incan_core::interop::RustModuleChildKind::Other => {
+                        ResolvedType::RustPath(format!("{path}::{field}"))
+                    }
+                    incan_core::interop::RustModuleChildKind::Function => {
+                        ResolvedType::Function(Vec::new(), Box::new(ResolvedType::Unknown))
+                    }
+                    incan_core::interop::RustModuleChildKind::Constant => ResolvedType::Unknown,
+                };
+            }
+            self.errors
+                .push(errors::missing_field(format!("rust::{path}").as_str(), field, span));
+            return ResolvedType::Unknown;
+        }
 
         let resolve_on = |checker: &mut Self, ty: &ResolvedType| -> ResolvedType {
             match ty {
@@ -432,6 +459,22 @@ impl TypeChecker {
 
         // If the receiver type is Unknown, be permissive and do not error on methods.
         if matches!(base_ty, ResolvedType::Unknown) {
+            return ResolvedType::Unknown;
+        }
+        if let ResolvedType::RustPath(path) = &base_ty {
+            let Some(ret) = self.rust_method_return_type(path, method) else {
+                // With rust-metadata enabled, unresolved Rust methods should surface as diagnostics.
+                if cfg!(feature = "rust-metadata") {
+                    self.errors
+                        .push(errors::missing_method(format!("rust::{path}").as_str(), method, span));
+                }
+                return ResolvedType::Unknown;
+            };
+            if !matches!(ret, ResolvedType::Unknown) {
+                return ret;
+            }
+            self.errors
+                .push(errors::missing_method(format!("rust::{path}").as_str(), method, span));
             return ResolvedType::Unknown;
         }
         // Trait default methods typecheck against `Self`, so be permissive here too.
@@ -676,13 +719,21 @@ impl TypeChecker {
                     {
                         return ret;
                     }
+                    if newtype.is_rusttype
+                        && let ResolvedType::RustPath(path) = &newtype.underlying
+                        && let Some(ret) = self.rust_method_return_type(path, method)
+                    {
+                        if !matches!(ret, ResolvedType::Unknown) {
+                            return ret;
+                        }
+                    }
                 }
                 _ => {}
             }
         }
 
         // Named types: look up methods from the type definition.
-        // If the symbol doesn't exist or isn't a type (e.g., Module/RustModule placeholder), treat it as external and
+        // If the symbol doesn't exist or isn't a type (e.g., Module/RustItem placeholder), treat it as external and
         // be permissive.
         if let ResolvedType::Named(type_name) = &base_ty {
             match self.lookup_type_info(type_name).cloned() {
@@ -725,6 +776,14 @@ impl TypeChecker {
                         if let Some(ret) = self.resolve_named_method(&nt.methods, None, method, args, &arg_types, span)
                         {
                             return ret;
+                        }
+                        if nt.is_rusttype
+                            && let ResolvedType::RustPath(path) = &nt.underlying
+                            && let Some(ret) = self.rust_method_return_type(path, method)
+                        {
+                            if !matches!(ret, ResolvedType::Unknown) {
+                                return ret;
+                            }
                         }
                     }
                     _ => {}

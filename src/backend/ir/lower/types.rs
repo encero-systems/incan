@@ -211,6 +211,7 @@ impl AstLowering {
             ResolvedType::Tuple(items) => IrType::Tuple(items.iter().map(|t| self.lower_resolved_type(t)).collect()),
             ResolvedType::TypeVar(name) => IrType::Generic(name.clone()),
             ResolvedType::SelfType => IrType::SelfType,
+            ResolvedType::RustPath(path) => IrType::Struct(path.clone()),
             ResolvedType::Unknown => IrType::Unknown,
         }
     }

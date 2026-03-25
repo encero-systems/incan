@@ -398,6 +398,8 @@ impl TypeChecker {
             name: nt.name.clone(),
             kind: SymbolKind::Type(TypeInfo::Newtype(NewtypeInfo {
                 type_params: nt.type_params.iter().map(|tp| tp.name.clone()).collect(),
+                is_rusttype: nt.is_rusttype,
+                has_interop: !nt.interop_edges.is_empty(),
                 underlying: underlying.clone(),
                 methods: HashMap::new(), // Empty for now
             })),

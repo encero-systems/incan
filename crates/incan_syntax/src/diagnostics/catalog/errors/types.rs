@@ -567,6 +567,24 @@ pub fn missing_method(type_name: &str, method: &str, span: Span) -> CompileError
         .with_hint("If this is your type, implement the method on the class/model/newtype")
 }
 
+/// `type X = rusttype Y` requires `Y` to resolve to a Rust-origin imported item.
+pub fn rusttype_requires_rust_backing(type_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("`{type_name}` is declared as `rusttype`, but its backing type is not a resolved `rust::...` import"),
+        span,
+    )
+    .with_hint("Import a concrete Rust item, e.g. `from rust::crate import TypeName`")
+}
+
+/// `interop:` blocks are only valid on `rusttype` declarations.
+pub fn interop_block_requires_rusttype(type_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("`interop:` is only valid on `rusttype` declarations (found on `{type_name}`)"),
+        span,
+    )
+    .with_hint("Use `type X = rusttype Y` when declaring host interop edges")
+}
+
 pub fn duplicate_alias(type_name: &str, alias: &str, first_span: Span, second_span: Span) -> CompileError {
     CompileError::type_error(
         format!("Duplicate alias '{}' on type '{}'", alias, type_name),

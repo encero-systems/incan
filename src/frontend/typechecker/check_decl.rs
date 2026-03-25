@@ -766,6 +766,24 @@ impl TypeChecker {
             ));
         }
 
+        if nt.is_rusttype && !matches!(underlying, ResolvedType::RustPath(_)) {
+            self.errors
+                .push(errors::rusttype_requires_rust_backing(&nt.name, nt.underlying.span));
+        }
+        if !nt.is_rusttype && !nt.interop_edges.is_empty() {
+            self.errors
+                .push(errors::interop_block_requires_rusttype(&nt.name, nt.underlying.span));
+        }
+
+        for rebinding in &nt.rebindings {
+            let _ = self.check_expr(&rebinding.node.target);
+        }
+
+        for edge in &nt.interop_edges {
+            let _ = self.resolve_type_checked(&edge.node.ty);
+            let _ = self.check_expr(&edge.node.adapter);
+        }
+
         // Check methods (reuse the standard method-checking logic so parameters are in scope).
         for method in &nt.methods {
             if method.node.body.is_some() {

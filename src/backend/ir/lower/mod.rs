@@ -388,6 +388,9 @@ impl AstLowering {
                 self.trait_decls.insert(t.name.clone(), t.clone());
             }
             if let ast::Declaration::Newtype(ref n) = decl.node {
+                if n.is_rusttype {
+                    continue;
+                }
                 // Track validation hook selection for checked construction lowering.
                 if let Some(ctor) = Self::select_newtype_checked_ctor(n) {
                     self.newtype_checked_ctor.insert(n.name.clone(), ctor);

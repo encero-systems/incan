@@ -1,0 +1,95 @@
+//! Load Cargo workspaces with rust-analyzer and extract [`incan_core::interop::RustItemMetadata`].
+//!
+//! This module is behind the `rust-metadata` feature so default builds avoid the heavy `ra_ap_*` dependency stack (RFC
+//! 041).
+
+mod cache;
+mod error;
+mod extractor;
+mod loader;
+
+pub use cache::RustMetadataCache;
+pub use error::RustMetadataError;
+pub use extractor::extract_rust_item;
+pub use loader::RustWorkspace;
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use super::*;
+
+    fn write_probe_crate(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "ra_metadata_probe"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+regex = "1"
+hashbrown = "0.15"
+"#,
+        )?;
+        fs::write(root.join("src/lib.rs"), "// probe crate for rust metadata tests\n")?;
+        Ok(())
+    }
+
+    fn method_names(meta: &incan_core::interop::RustItemMetadata) -> Vec<String> {
+        match &meta.kind {
+            incan_core::interop::RustItemKind::Type(info) => info.methods.iter().map(|m| m.name.clone()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn hashmap_has_expected_public_methods() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        write_probe_crate(tmp.path())?;
+        let ws = RustWorkspace::load(tmp.path(), &|_| ())?;
+        // Sysroot `std` is not always registered under the display name `std` in minimal workspaces;
+        // `hashbrown::HashMap` is a normal dependency with the same public map surface we care about.
+        let meta = extract_rust_item(ws.db(), "hashbrown::HashMap")?;
+        let names = method_names(&meta);
+        for required in ["insert", "get", "len", "contains_key"] {
+            assert!(
+                names.iter().any(|n| n == required),
+                "expected inherent method `{required}` on HashMap, have {:?}",
+                names
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn regex_type_exposes_core_methods() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        write_probe_crate(tmp.path())?;
+        let ws = RustWorkspace::load(tmp.path(), &|_| ())?;
+        let meta = extract_rust_item(ws.db(), "regex::Regex")?;
+        let names = method_names(&meta);
+        for required in ["new", "is_match", "find"] {
+            assert!(
+                names.iter().any(|n| n == required),
+                "expected method `{required}` on regex::Regex, have {:?}",
+                names
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cache_returns_same_arc_without_second_load() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        write_probe_crate(tmp.path())?;
+        let cache = RustMetadataCache::new();
+        let a = cache.get_or_extract(tmp.path(), "regex::Regex", &|_| ())?;
+        let b = cache.get_or_extract(tmp.path(), "regex::Regex", &|_| ())?;
+        assert!(Arc::ptr_eq(&a, &b));
+        Ok(())
+    }
+}
