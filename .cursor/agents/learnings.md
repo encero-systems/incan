@@ -8,8 +8,13 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 - **New AST variants need full pipeline wiring**: adding a `Statement`/`Expr` variant is never parser-only; you must update formatter, feature scanners, typechecker, lowering, and any AST bridge layers in the same change or compilation/tests will break in scattered places (RFC 027 Phase 6).
 - **Typechecker passing does not mean lowering works.** A feature that typechecks correctly can still generate invalid Rust if the lowering stage doesn't handle the transformation. Always verify both stages independently. (Learned from RFC 021: field aliases typechecked but lowering didn't translate them, producing broken Rust.)
 - **Reject out-of-scope features at the typechecker**, not silently. When an RFC says "X is not supported", add an explicit diagnostic in the typechecker. Don't leave partial support that passes typechecking but fails in lowering or emission.
+- **Parser should own type-sugar desugaring**: If a surface spelling must never reach lowering/emission (e.g. function-type sugar vs. a dedicated AST node), desugar in the parser to the canonical `Type::*` shape instead of duplicating normalization in `resolve_type`/symbols—two sites drift, and the resolver-only path can lag so the sugar leaks into generated Rust.
 - **`Program` struct stability**: adding fields to `Program` breaks all literal construction sites. Use `#[derive(Default)]` + `..Default::default()` in tests — never explicit field lists in test helpers.
 - **Use `IrType::incan_name()` for user-facing type strings**, not `IrType::to_string()` (which returns Rust types like `String` instead of `str`).
+
+## Rust: `unwrap` / `expect` ban vs. `unwrap_or`
+
+- **`unwrap_or` is not banned like `unwrap`**: AGENTS forbids `.unwrap()` and `.expect()` because they panic on absent/error values; it does **not** forbid `.unwrap_or(...)`, `.unwrap_or_else`, or similar fallbacks. Converting `try_into().unwrap_or(saturate)` into a `match` to “avoid unwrap” is misguided and can fail `clippy::manual_unwrap_or` with `-D warnings`.
 
 ## Testing strategy
 

@@ -144,6 +144,24 @@ pub fn derive_wrong_kind(name: &str, kind: &str, span: Span) -> CompileError {
 
 // -- Functions & error handling ----------------------------------------------
 
+/// Type error for using a **generic** function name in **value** position.
+///
+/// RFC 035 only supports monomorphically usable function references; passing `def id[T](...)` by name requires
+/// inference/monomorphisation that is intentionally deferred. Users can wrap the call in a closure
+/// (e.g. `(x) => id(x)`) at the use site.
+pub fn generic_function_reference(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Cannot use generic function '{}' as a value — \
+             generic function references are not yet supported",
+            name
+        ),
+        span,
+    )
+    .with_hint("Wrap in a closure that supplies explicit type arguments: (x) => my_func(x)")
+    .with_note("Only monomorphic (non-generic) functions can be passed by name (RFC 035)")
+}
+
 pub fn missing_return_type(span: Span) -> CompileError {
     CompileError::type_error("Function is missing a return type".to_string(), span)
         .with_hint("Add a return type annotation: def name(...) -> Type:")

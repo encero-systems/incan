@@ -77,16 +77,14 @@ fn collect_rust_extern_contexts(modules: &[ParsedModule]) -> Vec<RustExternDeclC
         };
         for decl in &module.ast.declarations {
             match &decl.node {
-                Declaration::Function(func) => {
-                    if has_rust_extern_decorator(&func.decorators) {
-                        contexts.push(RustExternDeclContext {
-                            file_path: module.file_path.clone(),
-                            source: module.source.clone(),
-                            item_name: func.name.clone(),
-                            rust_module_path: rust_module.clone(),
-                            span: decl.span,
-                        });
-                    }
+                Declaration::Function(func) if has_rust_extern_decorator(&func.decorators) => {
+                    contexts.push(RustExternDeclContext {
+                        file_path: module.file_path.clone(),
+                        source: module.source.clone(),
+                        item_name: func.name.clone(),
+                        rust_module_path: rust_module.clone(),
+                        span: decl.span,
+                    });
                 }
                 Declaration::Trait(tr) => {
                     for method in &tr.methods {

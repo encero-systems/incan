@@ -401,15 +401,11 @@ impl TypeChecker {
                                     return info.ty.clone();
                                 }
                             }
-                            TypeInfo::Enum(enum_info) => {
-                                if enum_info.variants.contains(&field.to_string()) {
-                                    return ResolvedType::Named(type_name.clone());
-                                }
+                            TypeInfo::Enum(enum_info) if enum_info.variants.contains(&field.to_string()) => {
+                                return ResolvedType::Named(type_name.clone());
                             }
-                            TypeInfo::Newtype(nt) => {
-                                if field == conventions::NEWTYPE_TUPLE_FIELD {
-                                    return nt.underlying.clone();
-                                }
+                            TypeInfo::Newtype(nt) if field == conventions::NEWTYPE_TUPLE_FIELD => {
+                                return nt.underlying.clone();
                             }
                             _ => {}
                         }
@@ -766,11 +762,10 @@ impl TypeChecker {
                             return ret;
                         }
                     }
-                    TypeInfo::Enum(_enum_info) => {
-                        // Be permissive for common error/display helpers on enums
-                        if enum_helpers::from_str(method) == Some(enum_helpers::EnumHelperId::Message) {
-                            return ResolvedType::Str;
-                        }
+                    TypeInfo::Enum(_enum_info)
+                        if enum_helpers::from_str(method) == Some(enum_helpers::EnumHelperId::Message) =>
+                    {
+                        return ResolvedType::Str;
                     }
                     TypeInfo::Newtype(nt) => {
                         if let Some(ret) = self.resolve_named_method(&nt.methods, None, method, args, &arg_types, span)

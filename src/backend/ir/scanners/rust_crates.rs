@@ -10,16 +10,12 @@ pub fn collect_rust_crates(program: &Program) -> HashSet<String> {
     let mut crates = HashSet::new();
     for decl in &program.declarations {
         if let Declaration::Import(import) = &decl.node {
+            // `RustCrate` / `RustFrom` both name a crate; skip the synthetic std root entry.
             match &import.kind {
-                ImportKind::RustCrate { crate_name, .. } => {
-                    if crate_name != stdlib::STDLIB_ROOT {
-                        crates.insert(crate_name.clone());
-                    }
-                }
-                ImportKind::RustFrom { crate_name, .. } => {
-                    if crate_name != stdlib::STDLIB_ROOT {
-                        crates.insert(crate_name.clone());
-                    }
+                ImportKind::RustCrate { crate_name, .. } | ImportKind::RustFrom { crate_name, .. }
+                    if crate_name != stdlib::STDLIB_ROOT =>
+                {
+                    crates.insert(crate_name.clone());
                 }
                 _ => {}
             }

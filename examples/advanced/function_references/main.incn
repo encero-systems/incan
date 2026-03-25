@@ -1,0 +1,97 @@
+# RFC 035: First-class named function references
+# This example demonstrates passing named functions as values
+
+from std.testing import assert_eq
+
+# A simple transformation function
+def double(x: int) -> int:
+    return x * 2
+
+# Another transformation function
+def square(x: int) -> int:
+    return x * x
+
+# A higher-order function that accepts a function reference
+def apply_transform(func: (int) -> int, value: int) -> int:
+    return func(value)
+
+# Using function references with different functions
+def test_function_references() -> (int, int):
+    # Pass `double` as a function reference
+    doubled = apply_transform(double, 5)
+
+    # Pass `square` as a function reference
+    squared = apply_transform(square, 3)
+
+    return (doubled, squared)
+
+# Using Callable syntax (equivalent to arrow form)
+def map_list(items: list[int], transformer: Callable[int, int]) -> list[int]:
+    """Map a function over a list using Callable syntax."""
+    mut result: list[int] = []
+    for item in items:
+        result.append(transformer(item))
+    return result
+
+def test_callable_syntax() -> list[int]:
+    # Both forms are equivalent after desugaring
+    nums = [1, 2, 3]
+
+    # Using arrow form
+    doubled_arrows = map_list(nums, double)
+
+    # Using Callable syntax - should produce same result
+    doubled_callable = map_list(nums, double)
+
+    # Create a new list combining both results
+    mut combined: list[int] = []
+    for item in doubled_arrows:
+        combined.append(item)
+    for item in doubled_callable:
+        combined.append(item)
+    return combined
+
+# Multi-parameter function type
+def apply_binary(func: (int, int) -> int, a: int, b: int) -> int:
+    return func(a, b)
+
+def add(x: int, y: int) -> int:
+    return x + y
+
+def multiply(x: int, y: int) -> int:
+    return x * y
+
+def test_multi_param() -> (int, int):
+    sum_result = apply_binary(add, 3, 4)
+    product_result = apply_binary(multiply, 3, 4)
+    return (sum_result, product_result)
+
+# Test zero-parameter function type
+def constant() -> int:
+    return 42
+
+def invoke_zero_param(func: () -> int) -> int:
+    return func()
+
+def test_zero_param() -> int:
+    return invoke_zero_param(constant)
+
+# Main test runner
+def main() -> None:
+    # Test basic function references
+    result1 = test_function_references()
+    assert_eq(result1, (10, 9), "double(5) and square(3) should match expected tuple")
+
+    # Test multi-parameter functions
+    result2 = test_multi_param()
+    assert_eq(result2, (7, 12), "add and multiply results should match expected tuple")
+
+    # Test zero-parameter functions
+    zero_param_result = test_zero_param()
+    assert_eq(zero_param_result, 42, "constant() should be 42")
+
+    # Test Callable syntax
+    callable_result = test_callable_syntax()
+    assert_eq(callable_result, [2, 4, 6, 2, 4, 6], "Callable syntax should work")
+
+    print("All function reference tests passed!")

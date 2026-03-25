@@ -1,0 +1,59 @@
+# RFC 035: First-class named function references
+
+def double(x: int) -> int:
+    return x * 2
+
+def square(x: int) -> int:
+    return x * x
+
+def apply_transform(func: (int) -> int, value: int) -> int:
+    return func(value)
+
+def test_function_references() -> (int, int):
+    doubled = apply_transform(double, 5)
+    squared = apply_transform(square, 3)
+    return (doubled, squared)
+
+def map_list(items: list[int], transformer: Callable[int, int]) -> list[int]:
+    mut result: list[int] = []
+    for item in items:
+        result.append(transformer(item))
+    return result
+
+def test_callable_syntax() -> list[int]:
+    nums = [1, 2, 3]
+    mut doubled_arrows = map_list(nums, double)
+    doubled_callable = map_list(nums, double)
+    # Concatenate lists using extend
+    for item in doubled_callable:
+        doubled_arrows.append(item)
+    return doubled_arrows
+
+def apply_binary(func: (int, int) -> int, a: int, b: int) -> int:
+    return func(a, b)
+
+def add(x: int, y: int) -> int:
+    return x + y
+
+def multiply(x: int, y: int) -> int:
+    return x * y
+
+def test_multi_param() -> (int, int):
+    sum_result = apply_binary(add, 3, 4)
+    product_result = apply_binary(multiply, 3, 4)
+    return (sum_result, product_result)
+
+def constant() -> int:
+    return 42
+
+def invoke_zero_param(func: () -> int) -> int:
+    return func()
+
+def test_zero_param() -> int:
+    return invoke_zero_param(constant)
+
+def main() -> None:
+    result1 = test_function_references()
+    result2 = test_multi_param()
+    zero_param_result = test_zero_param()
+    callable_result = test_callable_syntax()

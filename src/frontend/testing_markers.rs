@@ -304,12 +304,10 @@ fn parse_testing_metadata_dict(
                 };
                 kind = Some(parsed_kind);
             }
-            TESTING_MARKER_RUNNER_ONLY_KEY => {
-                if expr_as_bool_literal(value_expr).is_none() {
-                    return Err(TestingMarkerLoadError::new(
-                        "malformed runner_only metadata value (expected bool)",
-                    ));
-                }
+            TESTING_MARKER_RUNNER_ONLY_KEY if expr_as_bool_literal(value_expr).is_none() => {
+                return Err(TestingMarkerLoadError::new(
+                    "malformed runner_only metadata value (expected bool)",
+                ));
             }
             TESTING_FIXTURE_SCOPE_ARG_KEY => {
                 let Some(value) = expr_as_string_literal(value_expr) else {

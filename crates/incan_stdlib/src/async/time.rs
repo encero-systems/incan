@@ -47,10 +47,7 @@ fn clamp_millis(milliseconds: i64) -> std::time::Duration {
     let millis = if milliseconds.is_negative() {
         0
     } else {
-        match u64::try_from(milliseconds) {
-            Ok(value) => value,
-            Err(_) => u64::MAX,
-        }
+        u64::try_from(milliseconds).unwrap_or(u64::MAX)
     };
 
     std::time::Duration::from_millis(millis)

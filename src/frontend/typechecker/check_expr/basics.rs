@@ -24,13 +24,19 @@ impl TypeChecker {
 
         let (kind, ty) = match &sym.kind {
             SymbolKind::Variable(info) => (IdentKind::Value, info.ty.clone()),
-            SymbolKind::Function(info) => (
-                IdentKind::Value,
-                ResolvedType::Function(
-                    info.params.iter().map(|(_, ty)| ty.clone()).collect(),
-                    Box::new(info.return_type.clone()),
-                ),
-            ),
+            SymbolKind::Function(info) => {
+                if !info.type_params.is_empty() {
+                    self.errors.push(errors::generic_function_reference(name, span));
+                    return ResolvedType::Unknown;
+                }
+                (
+                    IdentKind::Value,
+                    ResolvedType::Function(
+                        info.params.iter().map(|(_, ty)| ty.clone()).collect(),
+                        Box::new(info.return_type.clone()),
+                    ),
+                )
+            }
             SymbolKind::Type(_) => (IdentKind::TypeName, ResolvedType::Named(name.to_string())),
             SymbolKind::Variant(info) => (IdentKind::Variant, ResolvedType::Named(info.enum_name.clone())),
             SymbolKind::Field(info) => (IdentKind::Value, info.ty.clone()),

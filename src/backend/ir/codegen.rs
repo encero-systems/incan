@@ -422,12 +422,12 @@ impl<'a> IrCodegen<'a> {
                         }
                     }
                     // Legacy: from rust::crate import items (parsed as From with rust:: module)
-                    ImportKind::From { module, items } => {
-                        if !module.segments.is_empty() && module.segments.first() == Some(&"rust".to_string()) {
-                            for item in items {
-                                let func_name = item.alias.as_ref().unwrap_or(&item.name);
-                                self.external_rust_functions.insert(func_name.clone());
-                            }
+                    ImportKind::From { module, items }
+                        if !module.segments.is_empty() && module.segments.first() == Some(&"rust".to_string()) =>
+                    {
+                        for item in items {
+                            let func_name = item.alias.as_ref().unwrap_or(&item.name);
+                            self.external_rust_functions.insert(func_name.clone());
                         }
                     }
                     _ => {}

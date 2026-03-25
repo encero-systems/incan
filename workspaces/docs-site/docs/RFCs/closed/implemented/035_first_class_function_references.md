@@ -1,24 +1,23 @@
 # RFC 035: First-Class Named Function References
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
-- **Related:** 
+- **Related:**
     - [RFC 036] (User-defined decorators — depends on this RFC)
     - [RFC 005] (Rust interop — `@rust.extern` functions already passable via this mechanism)
-- **Issue:** —
+- **Issue:** #169
 - **RFC PR:** —
-- **Target version:** TBD
-
-<!-- TODO: add the RFC links snippet here -->
+- **Target version:** 0.2
+- **Shipped in:** v0.2
 
 ## Summary
 
-Incan closures (`(x) => expr`) are first-class values today. Named functions defined with `def` are not — a function name in a non-call position is currently not a valid expression. This RFC makes named functions passable as values, matching Python's behaviour: `sorted(items, key=my_func)` works without wrapping in a closure.
+Incan closures (`(x) => expr`) are first-class values. This RFC made named functions defined with `def` first-class as well: a function name in value position is a valid expression, matching Python’s ergonomics (`sorted(items, key=my_func)` without an unnecessary closure wrapper).
 
 ## Motivation
 
-### The workaround is unnecessary ceremony
+### The workaround was unnecessary ceremony
 
 In Python, functions are values. You pass them by name, store them in variables, and put them in lists without any wrapper:
 
@@ -29,7 +28,7 @@ def double(x):
 result = list(map(double, items))   # direct reference
 ```
 
-In Incan today, you must wrap in a closure even though the closure adds nothing:
+Before this RFC, Incan required a closure even when it added no logic:
 
 ```incan
 def double(x: int) -> int:
@@ -38,15 +37,15 @@ def double(x: int) -> int:
 result = items.map((x) => double(x))   # unnecessary indirection
 ```
 
-This is pure ceremony. The closure carries no additional logic — it only exists because `double` cannot appear in value position directly.
+Named function references remove that ceremony.
 
 ### It is a prerequisite for user-defined decorators
 
-RFC 036 (User-defined decorators) desugars `@D def f(): ...` into `f = D(f)`. For this to work, `f` must be passable as a value to `D`. Without named function references, decorator desugaring cannot be expressed.
+RFC 036 (User-defined decorators) desugars `@D def f(): ...` into `f = D(f)`. For this to work, `f` must be passable as a value to `D`. Named function references make that expression valid.
 
-### It is already half-implemented
+### The type system already wanted this shape
 
-The typechecker already resolves a named function identifier to `ResolvedType::Function(params, ret)` with `IdentKind::Value` — meaning the type system already understands that a function name is a value. The gap is in the lowering and emission stages, which do not yet handle a function-typed identifier in a non-call position.
+The typechecker already resolved a named function identifier to `ResolvedType::Function(params, ret)` with `IdentKind::Value`. The implementation work closed the pipeline: parser-time `Callable` desugaring, lowering, emission, and explicit rejection of out-of-scope generic function references.
 
 ## Guide-level explanation (how users think about it)
 
@@ -130,9 +129,9 @@ def foo(x: int, y: str) -> bool   →   type of `foo` as value: (int, str) -> bo
                                                           or: Callable[(int, str), bool]
 ```
 
-Both spellings are the same type. The typechecker normalises `Callable[Params, R]` to the arrow form during type resolution — they are never distinct in the symbol table or IR.
+Both spellings are the same type. The parser desugars `Callable[Params, R]` to `Type::Function` immediately, so the AST and IR only see the arrow-shaped function type.
 
-Type parameters are not yet supported on function references (a generic function reference `foo[T]` requires a separate RFC). In this RFC, all referenced functions must be monomorphic at the reference site.
+Type parameters are not supported on function references in this RFC (a generic function reference requires a separate design). Generic functions are rejected in value position with a dedicated typechecker diagnostic; passing by name remains available for monomorphic functions and for wrapping generic callables in closures at the call site.
 
 ### Closures and named references are interchangeable
 
@@ -167,7 +166,7 @@ In Rust, a named function in value position is a valid function pointer expressi
 
 ### Type annotation syntax
 
-The function type `(int, str) -> bool` is already in the parser and typechecker. For struct fields and `const` bindings, the parser must accept this form in type annotation position — which it does today via `Type::Function`.
+The function type `(int, str) -> bool` is already in the parser and typechecker. For struct fields and `const` bindings, the parser accepts this form in type annotation position via `Type::Function`.
 
 ### `Callable[Params, R]` sugar
 
@@ -182,7 +181,7 @@ The function type `(int, str) -> bool` is already in the parser and typechecker.
 
 The parenthesized tuple form `(A, B)` is required when there are zero or two-or-more parameters; a bare type `A` is shorthand for a single-parameter callable. Passing a non-tuple, non-type first argument is a parse error.
 
-The parser performs the desugaring immediately — `Callable[...]` never appears in the AST. The typechecker, lowerer, emitter, formatter, and LSP require no changes beyond what the arrow form already requires. `Callable` is registered as a known generic type alias in the type resolver, not as a separate AST node type.
+The parser performs the desugaring immediately — `Callable[...]` never appears in the AST. Downstream stages (typechecker, lowerer, emitter, formatter, LSP) operate on `Type::Function` like any other function type annotation.
 
 ### Interaction with existing features
 
@@ -196,7 +195,7 @@ The parser performs the desugaring immediately — `Callable[...]` never appears
 
 ### Compatibility / migration
 
-Fully additive. Code that currently works is unaffected. Code that previously required a closure wrapper can now use a direct reference — but the wrapper form remains valid.
+Fully additive. Code that previously required a closure wrapper can use a direct reference; the wrapper form remains valid.
 
 ## Alternatives considered
 
@@ -206,28 +205,84 @@ Fully additive. Code that currently works is unaffected. Code that previously re
 
 ## Drawbacks
 
-Minimal. The change is small and well-scoped. The main implementation risk is in call site detection: the lowerer must correctly distinguish `f(args)` (call) from `f` (reference) in all contexts. This is a syntactic distinction so the parser handles it naturally.
+Minimal. The change is small and well-scoped. The main implementation risk was call site detection: the lowerer must correctly distinguish `f(args)` (call) from `f` (reference) in all contexts. This is a syntactic distinction so the parser handles it naturally.
 
 ## Layers affected
 
 - **Parser** (`crates/incan_syntax/`) — desugar `Callable[T1, ..., R]` to `(T1, ...) -> R` during type parsing; `Callable` never reaches the AST as a distinct node.
-- **IR Lowering** (`src/backend/ir/lower/`) — when lowering `Expr::Ident` where the resolved type is `ResolvedType::Function(...)`, emit `IrExprKind::Ident(name)` with the corresponding `IrType::Function`. Currently this path may fall through to an error or produce an incorrect IR node.
-- **Typechecker** (`src/frontend/typechecker/`) — already returns `IdentKind::Value` for function symbols; verify that a function identifier in argument position type-checks correctly against a `(params) -> ret` parameter type.
-- **IR Emission** (`src/backend/ir/emit/`) — `IrExprKind::Ident` with `IrType::Function` must emit as a plain Rust identifier; verify no special-casing incorrectly wraps or calls it.
+- **IR Lowering** (`src/backend/ir/lower/`) — when lowering `Expr::Ident` where the resolved type is `ResolvedType::Function(...)`, emit `IrExprKind::Ident(name)` with the corresponding `IrType::Function`.
+- **Typechecker** (`src/frontend/typechecker/`) — function symbols resolve to `IdentKind::Value` and `ResolvedType::Function`; generic functions in value position emit `generic_function_reference` and do not typecheck as references.
+- **IR Emission** (`src/backend/ir/emit/`) — `IrExprKind::Ident` with `IrType::Function` emits as a plain Rust identifier.
 
-## Unresolved questions
+## Implementation Plan
 
-1. **Generic function references**: `map(my_generic_func, items)` — when `my_generic_func` is generic, which monomorphisation is chosen? Deferred; requires type inference improvements.
+### Phase 1: Parser + AST
 
-2. **Async function references**: Should `async def foo()` referenced as a value have type `() -> T` or `() -> Future[T]` in Incan's surface type system? For Phase 1, treat as `() -> T` (the `async` is an implementation detail). Revisit when async traits / async function pointers are needed.
+- Desugar `Callable[Params, R]` to `Type::Function` during type expression parsing.
+- Parser tests for desugaring and invalid `Callable` arity.
 
-3. **Trait bounds on `Callable` type parameters.** There are two distinct cases with very different complexity:
+### Phase 2: Typechecker
 
-   - **Bound on the outer function's type parameter (works today):** When `T` is declared on the enclosing function with `with Loggable`, using it in `Callable[T, str]` works naturally — `T` is already a known, bounded type variable. This is the idiomatic pattern and requires no new design:
+- Value-position resolution for monomorphic `def` symbols.
+- Explicit diagnostic for generic function references (out of scope for this RFC).
+
+### Phase 3: Lowering + Emission
+
+- Lower function-typed identifiers to `IrExprKind::Ident` with function IR type.
+- Emit plain Rust identifiers for function values; codegen snapshot coverage.
+
+### Phase 4: Examples + Docs
+
+- Advanced example and docs-site updates (closures, callable reference, book chapter, release notes).
+
+## Implementation log
+
+### Spec / design
+
+- [x] Deferred items recorded under **Design Decisions** (generic refs, async surface typing, inline `Callable` bounds).
+
+### Parser / AST
+
+- [x] Parser: desugar `Callable[...]` to `Type::Function`.
+- [x] Parser unit tests: zero/one/multi-param sugar and arity error.
+
+### Typechecker
+
+- [x] Function identifier in value positions typechecks against `(params) -> ret`.
+- [x] Error: `generic_function_reference` for generic `def` in value position.
+
+### Lowering / IR
+
+- [x] Lower `Expr::Ident` with `ResolvedType::Function` to `IrExprKind::Ident` with `IrType::Function`.
+
+### Emission
+
+- [x] Emit correct Rust for function-valued identifiers (fn item / pointer coercion).
+
+### Tests
+
+- [x] Codegen snapshot: `function_references.incn`.
+- [x] Example: `examples/advanced/function_references`.
+
+### Docs
+
+- [x] Docs-site: closures, `callable.md`, book ch. 3, RFC 035 text, v0.2 release notes.
+
+## Design Decisions
+
+1. **Generic function references** (`map(my_generic_func, items)` when `my_generic_func` is generic): **Deferred** to a follow-up RFC on inference/monomorphisation. **Shipped behaviour (v0.2):** using a generic function name in value position is a type error with hint to wrap in a closure (e.g. `(x) => id(x)`).
+
+2. **Async function references** — surface type for `async def foo()` used as a value: **Decision for Phase 1 / v0.2:** keep the Incan signature shape aligned with sync functions (`() -> T` at the Incan type level); treat async as calling-convention detail. **Follow-up:** revisit when async traits or async fn pointers need explicit `Future` in the surface type system.
+
+3. **Trait bounds on `Callable` type parameters** — two cases:
+
+   - **Bound on the outer function's type parameter:** **Supported.** When `T` is declared on the enclosing function with `with Loggable`, using it in `Callable[T, str]` is the idiomatic pattern:
 
      ```incan
      def apply_all[T with Loggable](items: List[T], f: Callable[T, str]) -> List[str]:
          return items.map(f)
      ```
 
-   - **Inline bound inside `Callable` itself (`Callable[T with Loggable, str]`):** Here `T` is not declared elsewhere — the `Callable` type would be introducing a universally quantified bound type variable inline. This is equivalent to Rust's higher-rank trait bounds (`for<T: Loggable> fn(T) -> str`). It raises unresolved questions about quantification (universal vs existential), call-site type inference, and monomorphisation. This is **explicitly deferred** and should be addressed in a separate RFC on higher-rank polymorphism or generic callable types.
+   - **Inline bound inside `Callable` (`Callable[T with Loggable, str]`):** **Deferred** to a separate RFC on higher-rank polymorphism / generic callable types (quantification, inference, monomorphisation).
+
+--8<-- "_snippets/rfcs_refs.md"

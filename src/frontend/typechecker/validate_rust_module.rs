@@ -122,18 +122,16 @@ impl TypeChecker {
     fn collect_rust_extern_items(&mut self, declarations: &[Spanned<Declaration>], items: &mut Vec<RustExternItem>) {
         for decl in declarations {
             match &decl.node {
-                Declaration::Function(func) => {
-                    if self.has_rust_extern_decorator(&func.decorators) {
-                        items.push(RustExternItem {
-                            name: func.name.clone(),
-                            span: decl.span,
-                        });
+                Declaration::Function(func) if self.has_rust_extern_decorator(&func.decorators) => {
+                    items.push(RustExternItem {
+                        name: func.name.clone(),
+                        span: decl.span,
+                    });
 
-                        // ---- Rule 2: non-trivial body ----
-                        if !is_trivial_body(&func.body) {
-                            self.errors
-                                .push(errors::rust_extern_non_trivial_body(&func.name, decl.span));
-                        }
+                    // ---- Rule 2: non-trivial body ----
+                    if !is_trivial_body(&func.body) {
+                        self.errors
+                            .push(errors::rust_extern_non_trivial_body(&func.name, decl.span));
                     }
                 }
                 Declaration::Trait(tr) => {
