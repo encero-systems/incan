@@ -17,7 +17,7 @@ use crate::library_manifest::{
     NewtypeExport, ParamExport, ReceiverExport, TraitExport, TypeParamExport, resolved_type_from_manifest_type_ref,
 };
 use incan_core::interop::is_rust_capability_bound;
-use incan_core::lang::stdlib;
+use incan_core::lang::stdlib::{self, is_typechecker_only_stdlib};
 use incan_core::lang::surface::types as surface_types;
 use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
 
@@ -120,7 +120,7 @@ impl TypeChecker {
                 // For each item in `from module import item1, item2, ...`
                 // create a symbol as if it were `import module::item`
                 for item in items {
-                    if module_path_str == "std.rust" && is_rust_capability_bound(item.name.as_str()) {
+                    if is_typechecker_only_stdlib(&module.segments) && is_rust_capability_bound(item.name.as_str()) {
                         let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
                         self.validate_root_namespace(&local_name, span);
                         self.symbols.define(Symbol {
@@ -763,6 +763,7 @@ impl TypeChecker {
             is_rusttype: false,
             has_interop: false,
             underlying: resolved_type_from_manifest_type_ref(&export.underlying),
+            method_rebindings: std::collections::HashMap::new(),
             methods: self.methods_from_manifest(&export.methods),
         }
     }

@@ -1,0 +1,16 @@
+from std.rust import Send, Sync, Static, Fn, FnMut, FnOnce
+
+def run_all[T with Send, Sync, Static](_value: T) -> None:
+    pass
+
+def run_fn[F with Fn[int], Send](_f: F) -> None:
+    pass
+
+def run_fn_mut[F with FnMut[int], Sync](_f: F) -> None:
+    pass
+
+def run_fn_once[F with FnOnce[int], Static](_f: F) -> None:
+    pass
+
+def main() -> None:
+    pass

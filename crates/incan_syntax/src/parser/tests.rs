@@ -39,6 +39,16 @@ mod tests {
         }
     }
 
+    fn require_newtype_decl(decl: &Spanned<Declaration>) -> Result<&NewtypeDecl, Vec<CompileError>> {
+        match &decl.node {
+            Declaration::Newtype(nt) => Ok(nt),
+            _ => Err(vec![CompileError::new(
+                "parser test internal error: expected newtype/rusttype declaration".to_string(),
+                decl.span,
+            )]),
+        }
+    }
+
     #[test]
     fn test_unexpected_indent_at_toplevel_is_single_clear_error() {
         // We intentionally allow the lexer to emit INDENT/DEDENT tokens at the top-level.
@@ -545,10 +555,7 @@ type UserId[T] = newtype int:
         return 1
 "#;
         let program = parse_str(source)?;
-        let nt = match &program.declarations[0].node {
-            Declaration::Newtype(nt) => nt,
-            _ => panic!("Expected newtype declaration"),
-        };
+        let nt = require_newtype_decl(&program.declarations[0])?;
         assert_eq!(nt.name, "UserId");
         assert_eq!(nt.type_params.len(), 1);
         assert_eq!(nt.docstring.as_deref(), Some("Opaque identifier wrapper."));
@@ -571,10 +578,7 @@ type Sender[T] = rusttype RustSender[T]:
         into bytes via Sender.encode
 "#;
         let program = parse_str(source)?;
-        let nt = match &program.declarations[0].node {
-            Declaration::Newtype(nt) => nt,
-            _ => panic!("Expected rusttype/newtype declaration"),
-        };
+        let nt = require_newtype_decl(&program.declarations[0])?;
         assert!(nt.is_rusttype);
         assert_eq!(nt.rebindings.len(), 1);
         assert_eq!(nt.rebindings[0].node.name, "send_now");
@@ -596,6 +600,88 @@ type Sender[T] = rusttype RustSender[T]:
             InteropAdapterKind::Via
         ));
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_rusttype_minimal() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+type Email = rusttype RustEmailAddress
+"#;
+        let program = parse_str(source)?;
+        let nt = require_newtype_decl(&program.declarations[0])?;
+        assert!(nt.is_rusttype);
+        assert!(nt.methods.is_empty());
+        assert!(nt.rebindings.is_empty());
+        assert!(nt.interop_edges.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_into_try_interop_edge() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+type Email = rusttype RustEmailAddress:
+    def try_into_str(self) -> Result[str, str]:
+        ...
+
+    interop:
+        into str try Email.try_into_str
+"#;
+        let program = parse_str(source)?;
+        let nt = require_newtype_decl(&program.declarations[0])?;
+        assert_eq!(nt.interop_edges.len(), 1);
+        assert!(matches!(
+            nt.interop_edges[0].node.direction,
+            InteropDirection::Into
+        ));
+        assert!(matches!(
+            nt.interop_edges[0].node.adapter_kind,
+            InteropAdapterKind::Try
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_interop_edge_missing_via_or_try_is_error() {
+        let source = r#"
+type Email = rusttype RustEmailAddress:
+    interop:
+        from str Email.parse
+"#;
+        let result = parse_str(source);
+        assert!(
+            result.is_err(),
+            "expected parser error for missing `via`/`try` in interop edge"
+        );
+        let errs = match result {
+            Err(errs) => errs,
+            Ok(_) => Vec::new(),
+        };
+        assert!(
+            errs.iter().any(|e| e.message.contains("Expected `via` or `try` in interop edge")),
+            "expected missing-adapter-kind parser error, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_interop_edge_missing_from_or_into_is_error() {
+        let source = r#"
+type Email = rusttype RustEmailAddress:
+    interop:
+        str via Email.parse
+"#;
+        let result = parse_str(source);
+        assert!(
+            result.is_err(),
+            "expected parser error for missing `from`/`into` in interop edge"
+        );
+        let errs = match result {
+            Err(errs) => errs,
+            Ok(_) => Vec::new(),
+        };
+        assert!(
+            errs.iter().any(|e| e.message.contains("Expected `from` or `into` in interop edge")),
+            "expected missing-direction parser error, got: {errs:?}"
+        );
     }
 
     #[test]

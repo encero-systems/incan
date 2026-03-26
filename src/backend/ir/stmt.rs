@@ -26,6 +26,7 @@ impl IrStmt {
 
 /// Statement kinds
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum IrStmtKind {
     /// Expression statement (expr;)
     Expr(IrExpr),

@@ -108,6 +108,12 @@ pub struct AstLowering {
     pub(super) import_aliases: HashMap<String, Vec<String>>,
     /// Cached stdlib metadata used to resolve rust.module-backed decorators/derives.
     pub(super) stdlib_cache: StdlibAstCache,
+    /// `rusttype` underlying Rust type lookup by alias name.
+    pub(super) rusttype_underlying: HashMap<String, IrType>,
+    /// Raw `interop:` edge declarations keyed by rusttype alias name.
+    pub(super) rusttype_interop_edges: HashMap<String, Vec<ast::InteropEdgeDecl>>,
+    /// Method rebinding aliases keyed by type alias/newtype name (`alias -> target_method`).
+    pub(super) type_method_rebindings: HashMap<String, HashMap<String, String>>,
 }
 
 impl AstLowering {
@@ -202,6 +208,9 @@ impl AstLowering {
             non_linear_context_depth: 0,
             import_aliases: HashMap::new(),
             stdlib_cache: StdlibAstCache::new(),
+            rusttype_underlying: HashMap::new(),
+            rusttype_interop_edges: HashMap::new(),
+            type_method_rebindings: HashMap::new(),
         }
     }
 
@@ -303,6 +312,31 @@ impl AstLowering {
             .unwrap_or_else(|| field_name.to_string())
     }
 
+    /// Extract a method name from a rebinding target expression.
+    ///
+    /// Supports:
+    /// - `alias = method_name`
+    /// - `alias = TypeOrValue.method_name`
+    fn rebinding_target_method_name(target: &ast::Expr) -> Option<String> {
+        match target {
+            ast::Expr::Ident(name) => Some(name.clone()),
+            ast::Expr::Field(_, member) => Some(member.clone()),
+            _ => None,
+        }
+    }
+
+    /// Resolve a method name through per-type rebinding aliases.
+    pub(super) fn resolve_method_rebinding(&self, receiver_ty: &IrType, method_name: &str) -> String {
+        let IrType::Struct(type_name) = receiver_ty else {
+            return method_name.to_string();
+        };
+        self.type_method_rebindings
+            .get(type_name)
+            .and_then(|aliases| aliases.get(method_name))
+            .cloned()
+            .unwrap_or_else(|| method_name.to_string())
+    }
+
     /// RFC 021: Register field aliases for a struct/model/class.
     ///
     /// Called during model/class lowering to populate `struct_field_aliases`.
@@ -388,6 +422,25 @@ impl AstLowering {
                 self.trait_decls.insert(t.name.clone(), t.clone());
             }
             if let ast::Declaration::Newtype(ref n) = decl.node {
+                let rebindings: HashMap<String, String> = n
+                    .rebindings
+                    .iter()
+                    .filter_map(|rebinding| {
+                        Self::rebinding_target_method_name(&rebinding.node.target.node)
+                            .map(|target| (rebinding.node.name.clone(), target))
+                    })
+                    .collect();
+                if !rebindings.is_empty() {
+                    self.type_method_rebindings.insert(n.name.clone(), rebindings);
+                }
+                if n.is_rusttype {
+                    self.rusttype_underlying
+                        .insert(n.name.clone(), self.lower_type(&n.underlying.node));
+                    self.rusttype_interop_edges.insert(
+                        n.name.clone(),
+                        n.interop_edges.iter().map(|edge| edge.node.clone()).collect(),
+                    );
+                }
                 if n.is_rusttype {
                     continue;
                 }
@@ -546,6 +599,15 @@ impl AstLowering {
                     }
                 }
                 ast::Declaration::Newtype(n) => {
+                    if n.is_rusttype {
+                        match self.lower_declaration(&ast::Declaration::Newtype(n.clone())) {
+                            Ok(ir_decl) => {
+                                ir_program.declarations.push(ir_decl);
+                            }
+                            Err(e) => errors.push(e),
+                        }
+                        continue;
+                    }
                     // Generate struct
                     match self.lower_newtype(n) {
                         Ok(struct_ir) => {

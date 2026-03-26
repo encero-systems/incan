@@ -54,6 +54,8 @@ impl AstLowering {
                 };
             }
         }
+        // Apply any rusttype method return coercion recorded by the typechecker (e.g. &str → String).
+        lowered = self.wrap_with_rust_return_coercion(lowered, expr.span)?;
         Ok(lowered)
     }
 
@@ -179,10 +181,17 @@ impl AstLowering {
             // ---- Method calls ----
             ast::Expr::MethodCall(o, m, args) => {
                 let receiver = self.lower_expr_spanned(o)?;
-                let args_ir = self.lower_call_args(args)?;
+                let mut args_ir = self.lower_call_args(args)?;
+                for (arg_ir, arg_ast) in args_ir.iter_mut().zip(args.iter()) {
+                    let arg_span = match arg_ast {
+                        ast::CallArg::Positional(expr) | ast::CallArg::Named(_, expr) => expr.span,
+                    };
+                    arg_ir.expr = self.wrap_with_rust_arg_coercion(arg_ir.expr.clone(), arg_span)?;
+                }
+                let method_name = self.resolve_method_rebinding(&receiver.ty, m);
 
                 // Check for known methods (enum-based dispatch)
-                if let Some(kind) = MethodKind::from_name(m) {
+                if let Some(kind) = MethodKind::from_name(&method_name) {
                     (
                         IrExprKind::KnownMethodCall {
                             receiver: Box::new(receiver),
@@ -196,7 +205,7 @@ impl AstLowering {
                     (
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),
-                            method: m.clone(),
+                            method: method_name,
                             args: args_ir,
                         },
                         IrType::Unknown,

@@ -1,0 +1,31 @@
+"""
+Demonstrate async wrappers that rely on RFC 041 Rust interop bounds.
+
+This example exercises:
+- `spawn_blocking(...)`
+- `timeout(...)`
+"""
+
+from std.async.task import spawn_blocking
+from std.async.time import sleep, timeout
+
+
+async def quick_value() -> int:
+    await sleep(0.01)
+    return 7
+
+
+def blocking_value() -> int:
+    return 42
+
+
+async def main() -> None:
+    # ---- blocking wrapper ----
+    match await spawn_blocking(blocking_value):
+        Ok(value) => println(f"blocking value: {value}")
+        Err(err) => println(f"blocking error: {err.message()}")
+
+    # ---- timeout wrapper ----
+    match await timeout(0.25, quick_value()):
+        Ok(value) => println(f"timeout value: {value}")
+        Err(err) => println(f"timeout error: {err.message()}")

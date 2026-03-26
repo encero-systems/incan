@@ -146,6 +146,85 @@ hint: Add a version annotation: `import rust::my_crate @ "1.0"` or add it to inc
 
 **Fix**: add an inline version annotation, or add the crate to your `incan.toml`.
 
+## Rust-backed types with `rusttype`
+
+Use `rusttype` when you want an Incan type that is directly backed by a Rust type:
+
+```incan
+from rust::std::string import String as RustString
+
+type Name = rusttype RustString:
+    def parse(raw: str) -> Result[Name, str]:
+        ...
+
+    def as_str(self) -> str:
+        ...
+```
+
+This keeps Rust provenance explicit (`rust::...` import) while giving you an Incan-facing type name (`Name`) for docs, APIs, and rebinding.
+
+### Declaring conversion edges with `interop:`
+
+Inside a `rusttype` body, `interop:` declares explicit adapters across the Incan/Rust boundary:
+
+```incan
+from rust::std::string import String as RustString
+
+type Name = rusttype RustString:
+    def parse(raw: str) -> Result[Name, str]:
+        ...
+
+    def as_str(self) -> str:
+        ...
+
+    interop:
+        from str try Name.parse
+        into str via Name.as_str
+```
+
+Use:
+
+- `from S via adapter` for infallible inbound adaptation (`S -> ThisType`)
+- `from S try adapter` for fallible inbound adaptation (`S -> Result[ThisType, E]` or `S -> Option[ThisType]`)
+- `into T via adapter` for outbound adaptation (`ThisType -> T`)
+
+## Capability bounds with `std.rust`
+
+Import Rust capability markers from `std.rust` and use them in generic `with` clauses:
+
+```incan
+from std.rust import Send, Sync
+
+def run[T with Send, Sync](_value: T) -> None:
+    pass
+```
+
+These are Incan-syntax bounds that lower to Rust-native predicates in generated code.
+
+## Coercions at explicit Rust boundaries
+
+When calling Rust functions or methods, the compiler can apply a bounded, compiler-managed coercion model for built-in types:
+
+| Incan built-in | Canonical Rust lowering | Admitted Rust boundary targets |
+| -------------- | ----------------------- | ------------------------------ |
+| `int`          | `i64`                   | `i64`                          |
+| `float`        | `f64`                   | `f64`, `f32`                   |
+| `bool`         | `bool`                  | `bool`                         |
+| `str`          | `String`                | `String`, `&str`               |
+| `bytes`        | `Vec<u8>`               | `Vec<u8>`, `&[u8]`             |
+| `None` / unit  | `()`                    | `()`                           |
+
+Example (`float -> f32` boundary adaptation):
+
+```incan
+from rust::std::time import Duration
+
+def main() -> None:
+    # `from_secs_f32` expects f32; Incan `float` can be adapted at this Rust boundary.
+    d = Duration.from_secs_f32(1.5)
+    println(d.as_secs_f32())
+```
+
 ## Examples
 
 ### Working with JSON (serde_json)
@@ -236,19 +315,21 @@ def main() -> None:
 
 ## Type Mapping
 
-Incan types map to Rust types:
+Incan types map to canonical Rust types:
 
 | Incan          | Rust            |
 | -------------- | --------------- |
 | `int`          | `i64`           |
 | `float`        | `f64`           |
 | `str`          | `String`        |
+| `bytes`        | `Vec<u8>`       |
 | `bool`         | `bool`          |
 | `List[T]`      | `Vec<T>`        |
 | `Dict[K, V]`   | `HashMap<K, V>` |
 | `Set[T]`       | `HashSet<T>`    |
 | `Option[T]`    | `Option<T>`     |
 | `Result[T, E]` | `Result<T, E>`  |
+| `None` / unit  | `()`            |
 
 ### String arguments and borrowing
 
@@ -281,8 +362,7 @@ Incan types map to Rust types:
 1. **Lifetime annotations**: Rust's borrow checker and lifetime annotations are not exposed in Incan.
     Types that require explicit lifetime management may not work directly.
 
-2. **Generic bounds**: Complex trait bounds on generic types are simplified.
-    Some advanced generic patterns may need wrapper functions.
+2. **Generic bounds**: Capability bounds from `std.rust` (`Send`, `Sync`, `Static`, `Fn`, `FnMut`, `FnOnce`) are supported via `with` clauses. Custom trait bounds and more complex generic patterns may need wrapper functions.
 
 3. **Unsafe code**: Incan cannot call unsafe Rust functions directly.
     If you need unsafe operations, create a safe wrapper in Rust first.
@@ -328,9 +408,12 @@ Incan types map to Rust types:
 
 - [Managing dependencies](../../tooling/how-to/dependencies.md) - Adding crates, locking, CI
 - [Project configuration reference](../../tooling/reference/project_configuration.md) - Full `incan.toml` format
+- [RFC 041] - `rusttype`, `interop`, capability bounds
 - [Error Handling](../explanation/error_handling.md) - Working with `Result` types
 - [Derives & Traits](../reference/derives_and_traits.md) - Drop trait for custom cleanup
 - [File I/O](file_io.md) - Reading, writing, and path handling
 - [Async Programming](async_programming.md) - Async/await with Tokio
 - [Imports & Modules](imports_and_modules.md) - Module system, imports, and built-in functions
 - [Web Framework](../tutorials/web_framework.md) - Building web apps with Axum
+
+--8<-- "_snippets/rfcs_refs.md"

@@ -10,6 +10,10 @@ use crate::library_manifest::{
     ConstExport, EnumExport, EnumVariantExport, FunctionExport, LibraryExports, LibraryManifest, ModelExport,
     ParamExport, TraitExport, TypeParamExport, TypeRef,
 };
+#[cfg(feature = "rust-metadata")]
+use incan_core::interop::{
+    RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTypeInfo, RustVisibility,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -343,49 +347,42 @@ import std.web as rust
 
 /// RFC 041: `import rust::crate` binds the crate root; it is not a concrete Rust type.
 #[test]
-fn test_rust_crate_root_import_rejected_in_type_position() {
+fn test_rust_crate_root_import_rejected_in_type_position() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 import rust::serde_json
 
 def f(x: serde_json) -> None:
   pass
 "#;
-    let Ok(tokens) = lexer::lex(source) else {
-        panic!("lex failed");
-    };
-    let Ok(ast) = parser::parse(&tokens) else {
-        panic!("parse failed");
-    };
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
     let mut checker = TypeChecker::new();
-    let result = checker.check_program(&ast);
-    let Err(errs) = result else {
-        panic!("expected type error for crate-root import used as type");
-    };
+    let errs = checker
+        .check_program(&ast)
+        .err()
+        .ok_or_else(|| std::io::Error::other("expected type error for crate-root import used as type"))?;
     assert!(
         errs.iter().any(|e| e.message.contains("cannot be used as a type")),
         "expected crate-root-as-type diagnostic, got {errs:?}"
     );
+    Ok(())
 }
 
 /// RFC 041: `from rust::... import Item` carries canonical path in [`ResolvedType::RustPath`].
 #[test]
-fn test_rust_from_import_records_rust_path_on_ident_use() {
+fn test_rust_from_import_records_rust_path_on_ident_use() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 from rust::std::time import Instant
 
 def f() -> None:
   _ = Instant
 "#;
-    let Ok(tokens) = lexer::lex(source) else {
-        panic!("lex failed");
-    };
-    let Ok(ast) = parser::parse(&tokens) else {
-        panic!("parse failed");
-    };
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
     let mut checker = TypeChecker::new();
-    let Ok(()) = checker.check_program(&ast) else {
-        panic!("check_program failed");
-    };
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
     let info = checker.type_info();
     assert!(
         info.expr_types.values().any(|t| {
@@ -397,6 +394,7 @@ def f() -> None:
         "expected RustPath(std::time::Instant) in expr types, got {:?}",
         info.expr_types
     );
+    Ok(())
 }
 
 #[test]
@@ -429,22 +427,287 @@ type Email = newtype str:
     );
 }
 
+#[test]
+fn test_interop_try_adapter_requires_result_or_option() {
+    let source = r#"
+from rust::mail import EmailAddress as RustEmailAddress
+
+type Email = rusttype RustEmailAddress:
+  def parse(raw: str) -> Email:
+    ...
+
+  interop:
+    from str try Email.parse
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected invalid try-adapter diagnostic");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("`try` interop adapter")),
+        "expected try-adapter return diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_interop_via_adapter_rejects_fallible_return() {
+    let source = r#"
+from rust::mail import EmailAddress as RustEmailAddress
+
+type Email = rusttype RustEmailAddress:
+  def parse(raw: str) -> Result[Email, str]:
+    ...
+
+  interop:
+    from str via Email.parse
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected invalid via-adapter diagnostic");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("`via` interop adapter")),
+        "expected via-adapter infallible diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_interop_from_adapter_input_type_mismatch() {
+    let source = r#"
+from rust::mail import EmailAddress as RustEmailAddress
+
+type Email = rusttype RustEmailAddress:
+  def parse(raw: int) -> Result[Email, str]:
+    ...
+
+  interop:
+    from str try Email.parse
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected interop input-type mismatch diagnostic");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("incompatible input type")),
+        "expected interop adapter input mismatch diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_interop_into_receiver_method_allowed() {
+    let source = r#"
+from rust::mail import EmailAddress as RustEmailAddress
+
+type Email = rusttype RustEmailAddress:
+  def as_str(self) -> str:
+    ...
+
+  interop:
+    into str via Email.as_str
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_interop_from_via_positive_path() {
+    let source = r#"
+from rust::mail import EmailAddress as RustEmailAddress
+
+type Email = rusttype RustEmailAddress:
+  def parse(raw: str) -> Email:
+    ...
+
+  interop:
+    from str via Email.parse
+"#;
+    assert_check_ok(source);
+}
+
 #[cfg(feature = "rust-metadata")]
 #[test]
-fn test_rust_metadata_reports_missing_method() {
+fn test_ambiguous_short_form_adapter_rejected() {
+    let source = r#"
+from rust::regex import Regex as RustRegex
+
+type WrappedRegex = rusttype RustRegex:
+  def new(pattern: str) -> WrappedRegex:
+    ...
+
+  interop:
+    from str via new
+"#;
+    let result = check_str(source);
+    if let Err(errs) = result {
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("Ambiguous short-form interop adapter")),
+            "expected ambiguous short-form adapter diagnostic, got {errs:?}"
+        );
+    }
+}
+
+#[test]
+fn test_rusttype_rebinding_resolves_to_target_method() {
+    let source = r#"
+from rust::mail import Sender as RustSender
+
+type Sender = rusttype RustSender:
+  send_now = try_send
+
+  def try_send(self, value: int) -> Result[None, str]:
+    ...
+
+def push(sender: Sender, value: int) -> Result[None, str]:
+  return sender.send_now(value)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_duplicate_interop_edges_rejected() {
+    let source = r#"
+from rust::mail import EmailAddress as RustEmailAddress
+
+type Email = rusttype RustEmailAddress:
+  def parse(raw: str) -> Result[Email, str]:
+    ...
+
+  interop:
+    from str try Email.parse
+    from str try Email.parse
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected duplicate interop edge diagnostic");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("Duplicate interop edge")),
+        "expected duplicate interop edge diagnostic, got {errs:?}"
+    );
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_rust_metadata_unavailable_stays_permissive_for_method_calls() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 from rust::regex import Regex
 
 def f() -> None:
   _ = Regex.no_such_method("x")
 "#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker.set_rust_metadata_manifest_dir(PathBuf::from("/__incan_nonexistent_metadata_root__"));
+    let result = checker.check_program(&ast);
+    assert!(
+        result.is_ok(),
+        "expected permissive fallback when metadata is unavailable, got {result:?}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_rust_metadata_resolves_type_associated_function_field_access() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::std::collections import HashMap
+
+def f() -> None:
+  make = HashMap.new
+  _ = make
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!(
+            "expected associated function field access to typecheck: {errs:?}"
+        ))
+    })?;
+    let info = checker.type_info();
+    assert!(
+        info.expr_types
+            .values()
+            .any(|t| matches!(t, ResolvedType::Function(params, _) if params.is_empty())),
+        "expected associated function field access to resolve to a callable type, got {:?}",
+        info.expr_types
+    );
+    Ok(())
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_rust_metadata_validates_associated_function_arguments() {
+    let source = r#"
+from rust::std::string import String
+
+def f() -> None:
+  _ = String.new("x")
+"#;
     let Err(errs) = check_str(source) else {
-        panic!("expected missing rust method diagnostic");
+        panic!("expected arity error for String.new with an argument");
     };
     assert!(
-        errs.iter().any(|e| e.message.contains("no method")),
-        "expected rust missing-method diagnostic, got {errs:?}"
+        errs.iter()
+            .any(|e| e.message.contains("String.new() expects 0 argument") && e.message.contains("got 1")),
+        "expected associated-function arity diagnostic, got {errs:?}"
     );
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_rust_metadata_reports_unsupported_rust_item_shape() {
+    let source = r#"
+from rust::std::option::Option import Some
+
+def f() -> None:
+  _ = Some
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected unsupported Rust item shape diagnostic");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("unsupported shape") && e.message.contains("enum variant")),
+        "expected unsupported-shape diagnostic, got {errs:?}"
+    );
+}
+
+/// Field access on a Rust type that isn't a known inherent associated function should be permissive
+/// (metadata only covers inherent methods, not consts, type aliases, or trait-provided items).
+#[test]
+fn test_rust_path_field_access_permissive_when_not_module() {
+    let source = r#"
+from rust::std::time import Instant
+
+def f() -> None:
+  _ = Instant.SOME_UNKNOWN_CONST
+"#;
+    assert_check_ok(source);
+}
+
+/// Method calls on Rust types where the specific method isn't in inherent metadata
+/// should be permissive (trait-provided or extension methods aren't extracted yet).
+#[test]
+fn test_rust_path_method_call_permissive_for_unextracted_methods() {
+    let source = r#"
+from rust::std::time import Instant
+
+def f() -> None:
+  t = Instant.now()
+  _ = t.some_trait_method()
+"#;
+    assert_check_ok(source);
+}
+
+/// Default builds omit `rust-metadata`; Rust receivers stay permissive (no method index).
+#[cfg(not(feature = "rust-metadata"))]
+#[test]
+fn test_without_rust_metadata_missing_rust_method_is_not_an_error() {
+    let source = r#"
+from rust::regex import Regex
+
+def f() -> None:
+  _ = Regex.no_such_method("x")
+"#;
+    assert_check_ok(source);
 }
 
 #[test]
@@ -456,6 +719,149 @@ def run[T with Send, Sync](task: T) -> None:
   pass
 "#;
     assert_check_ok(source);
+}
+
+#[test]
+fn test_std_rust_static_capability_bound_typechecks() {
+    let source = r#"
+from std.rust import Static
+
+def run[T with Static](_value: T) -> None:
+  pass
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_rust_fn_capability_bounds_typecheck() {
+    let source = r#"
+from std.rust import Fn, FnMut, FnOnce
+
+def run_fn[F with Fn[int]](_f: F) -> None:
+  pass
+
+def run_fn_mut[F with FnMut[int]](_f: F) -> None:
+  pass
+
+def run_fn_once[F with FnOnce[int]](_f: F) -> None:
+  pass
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_structural_coercion_option_int_to_option_i64() {
+    let checker = TypeChecker::new();
+    let arg_ty = crate::frontend::symbols::ResolvedType::Generic(
+        "Option".to_string(),
+        vec![crate::frontend::symbols::ResolvedType::Int],
+    );
+    assert!(
+        checker.rust_arg_matches_boundary(&arg_ty, "Option<i64>"),
+        "expected Option[int] to be admitted at Option<i64> Rust boundary"
+    );
+}
+
+#[test]
+fn test_structural_coercion_list_str_to_vec_string() {
+    let checker = TypeChecker::new();
+    let arg_ty = crate::frontend::symbols::ResolvedType::Generic(
+        "List".to_string(),
+        vec![crate::frontend::symbols::ResolvedType::Str],
+    );
+    assert!(
+        checker.rust_arg_matches_boundary(&arg_ty, "Vec<String>"),
+        "expected List[str] to be admitted at Vec<String> Rust boundary"
+    );
+}
+
+/// `maybe_record_rusttype_return_coercion` is metadata-driven; without the `rust-metadata`
+/// feature the cache is empty and the helper is a no-op.  The test below exercises the
+/// *non-metadata* path to assert that the coercion map stays empty (no false positives).
+#[test]
+fn test_rusttype_return_coercion_no_false_positive_without_metadata() {
+    // Declare a rusttype whose underlying path has no metadata loaded.
+    let source = r#"
+from rust::acme import Widget as RustWidget
+
+type Widget = rusttype RustWidget:
+    def label(self) -> str:
+        ...
+
+def use_widget(w: Widget) -> str:
+    return w.label()
+"#;
+    // Should typecheck cleanly; no spurious errors from return coercion path.
+    assert_check_ok(source);
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_rusttype_return_coercion_recorded_for_generic_newtype_method_call() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::std::string import String as RustString
+
+type Label[T] = rusttype RustString:
+    def as_str(self) -> str:
+        ...
+
+def render[T](value: Label[T]) -> str:
+    return value.as_str()
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let manifest_dir = std::env::current_dir()?;
+    checker.set_rust_metadata_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_metadata_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "std::string::String".to_string(),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![RustMethodSig {
+                        name: "as_str".to_string(),
+                        signature: RustFunctionSig {
+                            params: vec![RustParam {
+                                name: Some("self".to_string()),
+                                type_display: "&self".to_string(),
+                            }],
+                            return_type: "&str".to_string(),
+                            is_async: false,
+                            is_unsafe: false,
+                        },
+                    }],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust metadata: {e}")))?;
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!("expected generic rusttype method call to typecheck: {errs:?}"))
+    })?;
+    let info = checker.type_info();
+    assert!(
+        info.rust_return_coercions
+            .values()
+            .any(|c| c.rust_target_type == "String" && matches!(c.target_type, ResolvedType::Str)),
+        "expected rust return coercion (&str -> String) for generic rusttype method call, got {:?}",
+        info.rust_return_coercions
+    );
+    Ok(())
+}
+
+#[test]
+fn test_structural_coercion_mismatch_is_rejected() {
+    let checker = TypeChecker::new();
+    let arg_ty = crate::frontend::symbols::ResolvedType::Generic(
+        "List".to_string(),
+        vec![crate::frontend::symbols::ResolvedType::Str],
+    );
+    assert!(
+        !checker.rust_arg_matches_boundary(&arg_ty, "Vec<i64>"),
+        "expected List[str] -> Vec<i64> structural coercion mismatch to be rejected"
+    );
 }
 
 #[test]

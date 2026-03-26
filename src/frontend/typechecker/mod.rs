@@ -69,7 +69,7 @@ use crate::frontend::symbols::*;
 #[cfg(feature = "rust-metadata")]
 use crate::rust_metadata::RustMetadataCache;
 use helpers::{collection_type_id, stringlike_type_id};
-use incan_core::interop::{RustItemKind, RustItemMetadata};
+use incan_core::interop::{CoercionPolicy, RustFunctionSig, RustItemKind, RustItemMetadata, RustParam};
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::SurfaceTypeKind;
 use incan_core::lang::types::collections::CollectionTypeId;
@@ -121,6 +121,13 @@ pub struct TypeCheckInfo {
     pub const_kinds: HashMap<String, const_eval::ConstKind>,
     /// Computed const values (when available), keyed by const name.
     pub const_values: HashMap<String, ConstValue>,
+    /// Rust-boundary coercion decisions keyed by argument expression span.
+    pub rust_arg_coercions: HashMap<(usize, usize), RustArgCoercionInfo>,
+    /// Rust-boundary coercion decisions for method return values, keyed by the call expression span.
+    ///
+    /// Populated when metadata shows a `rusttype` method's actual Rust return type requires coercion to the
+    /// Incan-declared type (e.g. `&str` → `String` for a method declared `-> str`).
+    pub rust_return_coercions: HashMap<(usize, usize), RustArgCoercionInfo>,
 }
 
 /// How an identifier expression resolved in the symbol table.
@@ -140,6 +147,28 @@ pub enum IdentKind {
     Trait,
 }
 
+/// Coercion category selected by the typechecker for a Rust-boundary call argument.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RustArgCoercionKind {
+    /// Builtin scalar matrix coercion (`float -> f32`, `str -> &str`, ...).
+    Builtin(CoercionPolicy),
+    /// Rusttype alias can flow to its backing Rust type without an explicit adapter call.
+    RustTypeUnwrap,
+    /// Rusttype alias uses a declared `interop:` adapter edge.
+    RustTypeInterop,
+}
+
+/// Lowering metadata for one Rust-boundary call argument.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RustArgCoercionInfo {
+    /// Normalized Rust parameter type display from metadata (e.g. `f32`, `&str`).
+    pub rust_target_type: String,
+    /// Resolved target type for lowering IR typing.
+    pub target_type: ResolvedType,
+    /// Coercion strategy to apply.
+    pub kind: RustArgCoercionKind,
+}
+
 impl TypeCheckInfo {
     pub fn expr_type(&self, span: Span) -> Option<&ResolvedType> {
         self.expr_types.get(&(span.start, span.end))
@@ -151,6 +180,15 @@ impl TypeCheckInfo {
 
     pub fn const_value(&self, name: &str) -> Option<&ConstValue> {
         self.const_values.get(name)
+    }
+
+    pub fn rust_arg_coercion(&self, span: Span) -> Option<&RustArgCoercionInfo> {
+        self.rust_arg_coercions.get(&(span.start, span.end))
+    }
+
+    /// Return the recorded return coercion for the call expression at `span`, if any.
+    pub fn rust_return_coercion(&self, span: Span) -> Option<&RustArgCoercionInfo> {
+        self.rust_return_coercions.get(&(span.start, span.end))
     }
 }
 
@@ -285,21 +323,70 @@ impl TypeChecker {
         None
     }
 
-    /// Resolve a Rust-origin method return type from cached metadata.
-    pub(crate) fn rust_method_return_type(&self, rust_path: &str, method: &str) -> Option<ResolvedType> {
+    /// Whether a Rust signature parameter is the implicit receiver (`self`/`&self`/`&mut self`).
+    pub(crate) fn rust_param_is_receiver(param: &RustParam) -> bool {
+        if param.name.as_deref() == Some("self") {
+            return true;
+        }
+        let normalized = param.type_display.replace(' ', "");
+        matches!(
+            normalized.as_str(),
+            "self" | "&self" | "&mutself" | "Self" | "&Self" | "&mutSelf"
+        )
+    }
+
+    /// Whether a Rust function signature starts with an implicit receiver parameter.
+    pub(crate) fn rust_signature_has_receiver(sig: &RustFunctionSig) -> bool {
+        sig.params.first().is_some_and(Self::rust_param_is_receiver)
+    }
+
+    /// Build a conservative function type from Rust metadata.
+    ///
+    /// When `drop_receiver` is true and the Rust signature starts with `self`, that first parameter is omitted because
+    /// method-call syntax already supplies the receiver expression.
+    pub(crate) fn resolved_function_type_from_rust_sig(
+        &self,
+        sig: &RustFunctionSig,
+        drop_receiver: bool,
+    ) -> ResolvedType {
+        let skip = usize::from(drop_receiver && Self::rust_signature_has_receiver(sig));
+        let params = sig
+            .params
+            .iter()
+            .skip(skip)
+            .map(|p| self.resolved_type_from_rust_display(p.type_display.as_str()))
+            .collect();
+        let ret = self.resolved_type_from_rust_display(sig.return_type.as_str());
+        ResolvedType::Function(params, Box::new(ret))
+    }
+
+    /// Resolve a Rust-origin method signature from cached metadata.
+    pub(crate) fn rust_method_signature(&self, rust_path: &str, method: &str) -> Option<RustFunctionSig> {
         let metadata = self.rust_item_metadata_for_path(rust_path)?;
-        if let RustItemKind::Type(info) = metadata.kind {
-            if let Some(m) = info.methods.iter().find(|m| m.name == method) {
-                return Some(self.resolved_type_from_rust_display(m.signature.return_type.as_str()));
-            }
-            return None;
+        if let RustItemKind::Type(info) = &metadata.kind {
+            return info
+                .methods
+                .iter()
+                .find(|m| m.name == method)
+                .map(|m| m.signature.clone());
         }
         None
     }
 
+    /// Resolve a Rust-origin associated function signature (must not take `self`) from cached metadata.
+    pub(crate) fn rust_associated_function_signature(&self, rust_path: &str, method: &str) -> Option<RustFunctionSig> {
+        let sig = self.rust_method_signature(rust_path, method)?;
+        if Self::rust_signature_has_receiver(&sig) {
+            return None;
+        }
+        Some(sig)
+    }
+
     /// Convert a Rust display type string into a conservative [`ResolvedType`].
     ///
-    /// RFC 041: this is intentionally best-effort; unknown Rust shapes remain `RustPath`/`Unknown`.
+    /// RFC 041: intentionally best-effort — only common std-ish spellings and simple `Option`/`Result` wrappers are
+    /// recognized. Nested generics, lifetimes, and crate paths otherwise become [`ResolvedType::RustPath`] (or
+    /// [`ResolvedType::Unknown`] when empty); lowering relies on rustc for fidelity.
     pub(crate) fn resolved_type_from_rust_display(&self, rust_ty: &str) -> ResolvedType {
         let trimmed = rust_ty.trim();
         let no_lifetimes = trimmed
@@ -327,13 +414,20 @@ impl TypeChecker {
                     .next()
                     .map(|p| self.resolved_type_from_rust_display(p))
                     .unwrap_or(ResolvedType::Unknown);
+                // Malformed `Result<…>` display from metadata: keep going with `Unknown` error arm.
                 let err_ty = parts
                     .next()
                     .map(|p| self.resolved_type_from_rust_display(p))
                     .unwrap_or(ResolvedType::Unknown);
                 ResolvedType::Generic("Result".to_string(), vec![ok_ty, err_ty])
             }
-            _ if !no_lifetimes.is_empty() => ResolvedType::RustPath(no_lifetimes),
+            _ if !no_lifetimes.is_empty() => {
+                if self.lookup_type_info(no_lifetimes.as_str()).is_some() {
+                    ResolvedType::Named(no_lifetimes)
+                } else {
+                    ResolvedType::RustPath(no_lifetimes)
+                }
+            }
             _ => ResolvedType::Unknown,
         }
     }
@@ -995,6 +1089,8 @@ impl TypeChecker {
                 e1.len() == e2.len() && e1.iter().zip(e2.iter()).all(|(t1, t2)| self.types_compatible(t1, t2))
             }
             (ResolvedType::RustPath(a), ResolvedType::RustPath(b)) => a == b,
+            // Without full Rust type knowledge, treat any `RustPath` as compatible with non-Rust surfaces so mixed
+            // Incan/Rust-typed expressions stay checkable (RFC 005/041 permissive model).
             (ResolvedType::RustPath(_), _) | (_, ResolvedType::RustPath(_)) => true,
             _ => false,
         }

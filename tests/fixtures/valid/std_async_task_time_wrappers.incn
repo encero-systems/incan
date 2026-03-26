@@ -1,0 +1,30 @@
+"""Valid fixture: std.async task/time wrapper APIs typecheck"""
+
+import std.async
+from std.async.task import spawn, spawn_blocking, JoinHandle
+from std.async.time import sleep, timeout, timeout_ms, TimeoutError
+
+
+async def quick() -> int:
+    await sleep(0.01)
+    return 1
+
+
+def blocking() -> int:
+    return 2
+
+
+def launch() -> JoinHandle[int]:
+    return spawn(quick())
+
+
+async def exercise() -> Result[int, TimeoutError]:
+    _ = await spawn_blocking(blocking)
+
+    match await timeout(0.25, quick()):
+        Ok(value) => return Ok(value)
+        Err(err) => return Err(err)
+
+
+async def exercise_ms() -> Result[int, TimeoutError]:
+    return await timeout_ms(250, quick())

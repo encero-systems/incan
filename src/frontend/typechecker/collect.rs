@@ -392,6 +392,14 @@ impl TypeChecker {
     /// Register a newtype declaration with its underlying type and methods.
     fn collect_newtype(&mut self, nt: &NewtypeDecl, span: Span) {
         let underlying = self.resolve_type_checked(&nt.underlying);
+        let method_rebindings = nt
+            .rebindings
+            .iter()
+            .filter_map(|rebinding| {
+                Self::rebinding_target_method_name(&rebinding.node.target.node)
+                    .map(|target| (rebinding.node.name.clone(), target))
+            })
+            .collect();
 
         // Define a placeholder symbol FIRST so methods can reference the newtype name
         self.symbols.define(Symbol {
@@ -401,6 +409,7 @@ impl TypeChecker {
                 is_rusttype: nt.is_rusttype,
                 has_interop: !nt.interop_edges.is_empty(),
                 underlying: underlying.clone(),
+                method_rebindings,
                 methods: HashMap::new(), // Empty for now
             })),
             span,
@@ -416,6 +425,19 @@ impl TypeChecker {
             && let SymbolKind::Type(TypeInfo::Newtype(info)) = &mut sym.kind
         {
             info.methods = methods;
+        }
+    }
+
+    /// Extract the effective target method name for a `alias = target` rebinding declaration.
+    ///
+    /// We accept both:
+    /// - `alias = method_name`
+    /// - `alias = TypeOrValue.method_name` (last segment is the target method)
+    fn rebinding_target_method_name(target: &Expr) -> Option<String> {
+        match target {
+            Expr::Ident(name) => Some(name.clone()),
+            Expr::Field(_, member) => Some(member.clone()),
+            _ => None,
         }
     }
 

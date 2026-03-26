@@ -38,8 +38,6 @@ This diagram shows the compilation pipeline of the Incan compiler in high level.
 
 ### Glossary
 
-<!-- markdownlint-disable MD013 MD060 -->
-
 |       Term       |                                                                     Meaning                                                                      |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Frontend         | Parses `.incn` and typechecks it, producing a typed AST (or diagnostics).                                                                        |
@@ -63,8 +61,6 @@ This diagram shows the compilation pipeline of the Incan compiler in high level.
 | CLI              | Command-line entrypoint for compile/build/run/fmt/test workflows.                                                                                |
 | LSP              | IDE server running frontend stages; returns diagnostics/hover/definition via the Language Server Protocol.                                       |
 | Runtime crates   | `incan_stdlib` / `incan_derive` crates used by generated programs (not the compiler).                                                            |
-
-<!-- markdownlint-enable MD013 MD060 -->
 
 ## Walkthrough: `incan build`
 
@@ -201,6 +197,7 @@ dependency-light crate suitable for reuse across compiler and tooling.
 | `resolver.rs`          | Multi-file module resolution                                                        |
 | `surface_semantics.rs` | Import-driven activation + feature-key routing for soft keywords/decorators         |
 | `typechecker/`         | Two-pass collection + type checking                                                 |
+| `rust_metadata/`       | Rust item metadata loading/cache/extraction for Rust interop typechecking           |
 | `symbols.rs`           | Symbol table and scope management                                                   |
 | `diagnostics`          | Syntax/parse diagnostics (re-exported from `crates/incan_syntax`)                   |
 
@@ -241,8 +238,6 @@ flowchart LR
 Packs don't execute compiler logic directly (that would create circular dependencies). Instead, they return small
 **action descriptor** enums that tell the compiler *what to do*:
 
-<!-- markdownlint-disable MD013 -->
-
 |            Enum             |   Variants (current)   |   Used by   |                     Purpose                     |
 | --------------------------- | ---------------------- | ----------- | ----------------------------------------------- |
 | `SurfaceStmtLoweringAction` | `AssertCall`           | Lowering    | Describes how to lower a surface statement      |
@@ -250,8 +245,6 @@ Packs don't execute compiler logic directly (that would create circular dependen
 | `SurfaceStmtTypeCheck`      | `AssertCheck`          | Typechecker | Describes how to typecheck a surface statement  |
 | `SurfaceExprTypeCheck`      | `AwaitCheck`           | Typechecker | Describes how to typecheck a surface expression |
 | `RuntimeRequirement`        | `None`, `AsyncRuntime` | Scanning    | Runtime implied by a modifier or import         |
-
-<!-- markdownlint-enable MD013 -->
 
 Multiple keywords can share the same action descriptor (e.g., a hypothetical `ensure` keyword could reuse
 `AssertCall`). Adding a keyword that fits an existing action pattern is a **pack-only change** — zero touches to the
@@ -324,6 +317,18 @@ descriptors represent compiler behavior patterns, not individual keywords.
 | `ir/stmt.rs`        | IR statements (`IrStmt`)                        |
 | `ir/decl.rs`        | IR declarations (`IrDecl`)                      |
 | `project.rs`        | Cargo project scaffolding and generation        |
+
+### Rust metadata subsystem (`src/rust_metadata/`)
+
+`rust_metadata/` powers RFC 041 interop checks that need Rust-side signatures and item shapes.
+
+| Module         | Purpose                                                               |
+| -------------- | --------------------------------------------------------------------- |
+| `mod.rs`       | Public entry points and orchestration of metadata retrieval           |
+| `cache.rs`     | Workspace-scoped in-memory cache for extracted Rust item metadata     |
+| `loader.rs`    | Rust workspace loading and crate graph setup for metadata extraction  |
+| `extractor.rs` | rust-analyzer-backed extraction of item signatures and method shapes  |
+| `error.rs`     | Typed metadata load/extract error surface                             |
 
 #### Expression Emission (`src/backend/ir/emit/expressions/`)
 

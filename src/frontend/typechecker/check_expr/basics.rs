@@ -77,6 +77,14 @@ impl TypeChecker {
                         incan_core::interop::RustItemKind::Constant { type_display } => {
                             self.resolved_type_from_rust_display(type_display.as_str())
                         }
+                        incan_core::interop::RustItemKind::Unsupported { description } => {
+                            self.errors.push(errors::rust_item_shape_not_supported(
+                                info.path.as_str(),
+                                description.as_str(),
+                                span,
+                            ));
+                            ResolvedType::Unknown
+                        }
                         _ => ResolvedType::RustPath(info.path.clone()),
                     },
                     None => ResolvedType::RustPath(info.path.clone()),

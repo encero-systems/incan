@@ -65,6 +65,23 @@ impl RustMetadataCache {
         inner.items.insert(key_item, Arc::clone(&arc));
         Ok(arc)
     }
+
+    /// Seed metadata directly for tests without invoking rust-analyzer extraction.
+    #[cfg(test)]
+    pub(crate) fn insert_test_item(
+        &self,
+        manifest_dir: &Path,
+        metadata: RustItemMetadata,
+    ) -> Result<(), RustMetadataError> {
+        let root = manifest_dir.canonicalize()?;
+        let key_item = (root, metadata.canonical_path.clone());
+        let mut inner = self.inner.lock().map_err(|e| RustMetadataError::LoadWorkspace {
+            path: manifest_dir.to_path_buf(),
+            message: format!("metadata cache lock poisoned: {e}"),
+        })?;
+        inner.items.insert(key_item, Arc::new(metadata));
+        Ok(())
+    }
 }
 
 impl Default for RustMetadataCache {

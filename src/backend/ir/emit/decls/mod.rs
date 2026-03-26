@@ -57,6 +57,8 @@ impl<'a> IrEmitter<'a> {
                 name,
                 type_params,
                 ty,
+                is_rusttype: _,
+                interop_edges: _,
             } => {
                 let vis = self.emit_visibility(visibility);
                 let name_ident = format_ident!("{}", name);
@@ -179,6 +181,12 @@ impl<'a> IrEmitter<'a> {
             if is_serde_trait && is_serde_import_path {
                 return Ok(quote! {});
             }
+        }
+
+        // Typechecker-only namespaces (e.g. `std.rust`) have no corresponding Rust module.
+        // Capability bounds are folded into generic type parameter bounds by the lowering layer.
+        if stdlib::is_typechecker_only_stdlib(path) {
+            return Ok(quote! {});
         }
 
         // RFC 023: map all Incan `std.*` imports to emitted `crate::__incan_std::*` modules.

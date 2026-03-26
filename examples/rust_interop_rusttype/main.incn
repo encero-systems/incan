@@ -1,10 +1,11 @@
 from rust::std::string import String as RustString
 
 type Email = rusttype RustString:
-  parse = RustString.from
+  def parse(raw: str) -> Email:
+    ...
 
   interop:
-    from str via RustString.from
+    from str via Email.parse
 
 def make_email(raw: str) -> Email:
   return Email.parse(raw)

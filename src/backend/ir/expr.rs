@@ -13,7 +13,9 @@
 //!
 //! Unknown methods (e.g., Rust interop) remain string-based via `MethodCall`.
 
+use super::decl::IrInteropAdapterKind;
 use super::{IrSpan, IrType, Ownership};
+use incan_core::interop::CoercionPolicy;
 use incan_core::lang::builtins::{self as core_builtins, BuiltinFnId};
 use incan_core::lang::surface::{dict_methods, list_methods, set_methods, string_methods};
 
@@ -236,6 +238,14 @@ pub enum IrExprKind {
         to_type: IrType,
     },
 
+    /// RFC 041: Explicit interop coercion inserted by lowering for Rust-boundary calls.
+    InteropCoerce {
+        expr: Box<IrExpr>,
+        from_ty: IrType,
+        to_ty: IrType,
+        kind: IrInteropCoercionKind,
+    },
+
     // Format string (f-string)
     Format {
         parts: Vec<FormatPart>,
@@ -254,6 +264,23 @@ pub enum IrExprKind {
     SerdeFromJson(String),
 }
 
+/// Coercion strategy at a Rust interop boundary.
+#[derive(Debug, Clone)]
+pub enum IrInteropCoercionKind {
+    /// Coercion admitted by the scalar matrix (`int -> i64`, `str -> &str`, `float -> f32`, ...).
+    Builtin {
+        policy: CoercionPolicy,
+        rust_target: String,
+    },
+    /// Adapter call from a `rusttype` `interop:` edge.
+    AdapterCall {
+        adapter: Box<IrExpr>,
+        adapter_kind: IrInteropAdapterKind,
+    },
+    /// Rusttype wrapper unwrap (`.0`) when lowering a wrapper-backed edge.
+    RustTypeUnwrap,
+}
+
 /// Literal values for generated code
 #[derive(Debug, Clone)]
 pub enum Literal {
@@ -263,6 +290,7 @@ pub enum Literal {
 
 /// Part of a format string
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum FormatPart {
     /// Literal text
     Literal(String),
@@ -355,6 +383,7 @@ pub struct MatchArm {
 
 /// Pattern for match expressions
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum Pattern {
     Wildcard,
     Var(String),

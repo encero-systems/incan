@@ -1,24 +1,33 @@
 # Examples
 
-Runnable Incan programs organized by complexity. These serve as both documentation and smoke tests (`make examples` runs them all).
+Runnable Incan programs organized by complexity. The examples serve as both documentation and smoke tests (`make examples` runs them all).
 
 ## Structure
 
 ### `simple/`
 
-Single-file programs demonstrating basic language features: hello world, fibonacci, factorials, string operations, model declarations.
+Single-file programs that showcase core language features: hello world, fibonacci, factorials, string operations, and model declarations.
 
 ### `intermediate/`
 
-Programs that exercise more involved features: collections, comprehensions, decorators, enums with data, error handling, inheritance, traits, supertraits, newtypes, public visibility, while loops.
+Programs that exercise richer language surfaces: collections, comprehensions, decorators, data-carrying enums, error handling, inheritance, traits, supertraits, newtypes, public visibility, and while loops.
 
 ### `advanced/`
 
-Programs that combine multiple features or use advanced capabilities: async/await, channels, synchronization primitives, file I/O, bytes, JSON serialization, custom traits, iterators, Rust crate interop, multi-file projects, and nested projects.
+Programs that combine multiple features or rely on advanced capabilities: async/await, channels, synchronization primitives, file I/O, bytes, JSON serialization, custom traits, iterators, Rust crate interop, multi-file projects, and nested projects.
+
+Notable advanced Rust interop examples:
+
+- `advanced/using_rust_crates.incn` - broad Rust crate integration patterns.
 
 ### `pro/`
 
-Projects for library and tooling builders: companion crates, vocab/desugaring flows, and other integrations that exercise the compiler's authoring surface rather than just end-user language features.
+Projects aimed at library and tooling authors: companion crates, vocab/desugaring flows, and integrations that exercise the compiler's authoring surface, and not only end-user language features.
+
+Notable pro Rust interop example:
+
+- `pro/rust_interop_pro.incn` - RFC 041 authoring surface (`rusttype`, `interop`, `std.rust` bounds, async wrappers).
+  Includes a "new to Rust" mental model that explains `rusttype`, `...` method declarations, and `interop:` edges.
 
 ### `web/`
 

@@ -183,6 +183,7 @@ impl ImportTracker {
                     self.scan_expr(e);
                 }
             }
+            IrExprKind::InteropCoerce { expr, .. } => self.scan_expr(expr),
             _ => {}
         }
     }

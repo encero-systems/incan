@@ -1,5 +1,5 @@
 """
-Async time primitives backed by explicit runtime adapters.
+Async time primitives backed by direct Rust interop.
 
 This module is the user-facing timing surface for `std.async`. It exposes:
 
@@ -7,10 +7,6 @@ This module is the user-facing timing surface for `std.async`. It exposes:
 - `sleep_ms(milliseconds)` for integer millisecond delays
 - `timeout(seconds, task)` for deadline-bound async work
 - `timeout_ms(milliseconds, task)` for integer millisecond deadlines
-
-The public contract lives in this `.incn` file. The executor-facing leaves live in `incan_stdlib::async::time`.
-For now, `timeout()` and `timeout_ms()` remain direct runtime-backed imports because their Rust-side generic `Future`
-bounds are not yet expressible cleanly in local Incan wrappers.
 
 Examples:
     await sleep(0.25)
@@ -26,15 +22,16 @@ Examples:
 """
 
 import std.async
+from std.traits.error import Error
+from rust::incan_stdlib::async::task import RuntimeFuture
 from rust::incan_stdlib::async::time import (
-    TimeoutError as RawTimeoutError,
-    sleep as runtime_sleep,
-    sleep_ms as runtime_sleep_ms,
-    timeout,
-    timeout_ms,
+    sleep as rust_sleep,
+    sleep_ms as rust_sleep_ms,
+    timeout as rust_timeout,
+    timeout_ms as rust_timeout_ms,
 )
 
-pub type TimeoutError = newtype RawTimeoutError:
+pub model TimeoutError with Error:
     """
     Error returned when a timeout expires before the awaited task completes.
 
@@ -45,10 +42,10 @@ pub type TimeoutError = newtype RawTimeoutError:
     """
 
     def message(self) -> str:
-        return self.0.message()
+        return "operation timed out"
 
     def source(self) -> Option[str]:
-        return self.0.source()
+        return None
 
 
 pub model Duration:
@@ -91,7 +88,7 @@ pub async def sleep(seconds: float) -> None:
     Example:
         await sleep(0.1)
     """
-    await runtime_sleep(seconds)
+    await rust_sleep(seconds)
 
 
 pub async def sleep_ms(milliseconds: int) -> None:
@@ -101,4 +98,22 @@ pub async def sleep_ms(milliseconds: int) -> None:
     Example:
         await sleep_ms(100)
     """
-    await runtime_sleep_ms(milliseconds)
+    await rust_sleep_ms(milliseconds)
+
+
+pub async def timeout[T with (Send, Static), TaskFuture with RuntimeFuture[T]](seconds: float, task: TaskFuture) -> Result[T, TimeoutError]:
+    """
+    Await `task` with a floating-point second timeout.
+    """
+    match await rust_timeout(seconds, task):
+        Ok(value) => return Ok(value)
+        Err(_err) => return Err(TimeoutError())
+
+
+pub async def timeout_ms[T with (Send, Static), TaskFuture with RuntimeFuture[T]](milliseconds: int, task: TaskFuture) -> Result[T, TimeoutError]:
+    """
+    Await `task` with an integer millisecond timeout.
+    """
+    match await rust_timeout_ms(milliseconds, task):
+        Ok(value) => return Ok(value)
+        Err(_err) => return Err(TimeoutError())

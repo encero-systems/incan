@@ -1,6 +1,7 @@
 //! IR declaration definitions
 
 use super::{IrSpan, IrStmt, IrType, Mutability};
+use incan_core::interop::is_rust_capability_bound;
 
 /// An IR declaration
 #[derive(Debug, Clone)]
@@ -25,6 +26,7 @@ impl IrDecl {
 
 /// Declaration kinds
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum IrDeclKind {
     /// Function definition
     Function(IrFunction),
@@ -44,6 +46,10 @@ pub enum IrDeclKind {
         name: String,
         type_params: Vec<IrTypeParam>,
         ty: IrType,
+        /// `true` when this alias came from `type X = rusttype Y`.
+        is_rusttype: bool,
+        /// Optional interop conversion edges declared in a `rusttype` block (`interop:`).
+        interop_edges: Vec<IrInteropEdge>,
     },
 
     /// Constant
@@ -66,6 +72,33 @@ pub enum IrDeclKind {
 
     /// Impl block for methods on structs/enums
     Impl(IrImpl),
+}
+
+/// Direction of a lowered `interop:` edge (RFC 041).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrInteropDirection {
+    /// `from S ...` edge (source into the rusttype surface).
+    From,
+    /// `into T ...` edge (rusttype surface into target).
+    Into,
+}
+
+/// Adapter mode for a lowered `interop:` edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrInteropAdapterKind {
+    /// Infallible adapter (`via`).
+    Via,
+    /// Fallible adapter (`try`).
+    Try,
+}
+
+/// A lowered interop edge attached to a `rusttype` alias.
+#[derive(Debug, Clone)]
+pub struct IrInteropEdge {
+    pub direction: IrInteropDirection,
+    pub ty: IrType,
+    pub adapter_kind: IrInteropAdapterKind,
+    pub adapter: super::IrExpr,
 }
 
 /// Semantic origin of an import.
@@ -266,6 +299,17 @@ pub struct IrTraitBound {
     pub type_args: Vec<IrType>,
     /// Optional associated type constraints (e.g., `Output = T` for `Add<Output = T>`).
     pub assoc_types: Vec<(String, IrType)>,
+    /// Distinguishes compiler-managed Rust capability markers (`Send`, `Sync`, `Static`) from regular trait paths.
+    pub origin: IrTraitBoundOrigin,
+}
+
+/// Origin classification for an IR trait bound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrTraitBoundOrigin {
+    /// Standard trait bound (Incan-mapped or user-defined trait path).
+    Standard,
+    /// Rust-native capability marker from `std.rust`.
+    RustCapability,
 }
 
 impl IrTraitBound {
@@ -275,6 +319,7 @@ impl IrTraitBound {
             trait_path: trait_path.into(),
             type_args: Vec::new(),
             assoc_types: Vec::new(),
+            origin: IrTraitBoundOrigin::Standard,
         }
     }
 
@@ -284,6 +329,7 @@ impl IrTraitBound {
             trait_path: trait_path.into(),
             type_args,
             assoc_types: Vec::new(),
+            origin: IrTraitBoundOrigin::Standard,
         }
     }
 
@@ -293,6 +339,23 @@ impl IrTraitBound {
             trait_path: trait_path.into(),
             type_args: Vec::new(),
             assoc_types: vec![("Output".to_string(), output_type)],
+            origin: IrTraitBoundOrigin::Standard,
+        }
+    }
+
+    /// Create a bound and classify Rust capability markers.
+    pub fn with_type_args_classified(trait_path: impl Into<String>, type_args: Vec<IrType>) -> Self {
+        let trait_path = trait_path.into();
+        let origin = if is_rust_capability_bound(trait_path.as_str()) {
+            IrTraitBoundOrigin::RustCapability
+        } else {
+            IrTraitBoundOrigin::Standard
+        };
+        Self {
+            trait_path,
+            type_args,
+            assoc_types: Vec::new(),
+            origin,
         }
     }
 }

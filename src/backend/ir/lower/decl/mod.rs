@@ -16,7 +16,7 @@ mod newtypes;
 mod traits;
 
 use super::super::IrSpan;
-use super::super::decl::{IrDecl, IrDeclKind, Visibility};
+use super::super::decl::{IrDecl, IrDeclKind, IrInteropAdapterKind, IrInteropDirection, IrInteropEdge, Visibility};
 use super::super::types::IrType;
 use super::AstLowering;
 use super::errors::LoweringError;
@@ -99,14 +99,19 @@ impl AstLowering {
                 name: a.name.clone(),
                 type_params: Self::lower_type_params(&a.type_params),
                 ty: self.lower_type(&a.target.node),
+                is_rusttype: false,
+                interop_edges: Vec::new(),
             },
             ast::Declaration::Newtype(n) => {
                 if n.is_rusttype {
+                    let interop_edges = self.lower_interop_edges(&n.interop_edges)?;
                     return Ok(IrDecl::new(IrDeclKind::TypeAlias {
                         visibility: Self::map_visibility(n.visibility),
                         name: n.name.clone(),
                         type_params: Self::lower_type_params(&n.type_params),
                         ty: self.lower_type(&n.underlying.node),
+                        is_rusttype: true,
+                        interop_edges,
                     }));
                 }
                 // Note: newtype checked construction hook selection is done in `lower_program` when we see the full
@@ -128,6 +133,31 @@ impl AstLowering {
             }
         };
         Ok(IrDecl::new(kind))
+    }
+
+    fn lower_interop_edges(
+        &mut self,
+        edges: &[ast::Spanned<ast::InteropEdgeDecl>],
+    ) -> Result<Vec<IrInteropEdge>, LoweringError> {
+        edges
+            .iter()
+            .map(|edge| {
+                let direction = match edge.node.direction {
+                    ast::InteropDirection::From => IrInteropDirection::From,
+                    ast::InteropDirection::Into => IrInteropDirection::Into,
+                };
+                let adapter_kind = match edge.node.adapter_kind {
+                    ast::InteropAdapterKind::Via => IrInteropAdapterKind::Via,
+                    ast::InteropAdapterKind::Try => IrInteropAdapterKind::Try,
+                };
+                Ok(IrInteropEdge {
+                    direction,
+                    ty: self.lower_type(&edge.node.ty.node),
+                    adapter_kind,
+                    adapter: self.lower_expr_spanned(&edge.node.adapter)?,
+                })
+            })
+            .collect()
     }
 
     /// RFC 023: Check if a decorator list contains `@rust.extern`.

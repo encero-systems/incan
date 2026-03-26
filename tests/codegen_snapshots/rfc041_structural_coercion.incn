@@ -1,0 +1,16 @@
+def accept_option(value: Option[int]) -> Option[int]:
+    return value
+
+def accept_names(values: List[str]) -> List[str]:
+    return values
+
+def accept_scores(values: Dict[str, float]) -> Dict[str, float]:
+    return values
+
+def main() -> None:
+    maybe_count: Option[int] = Some(42)
+    names: List[str] = ["alice", "bob"]
+    scores: Dict[str, float] = {"latency": 1.5}
+    accept_option(maybe_count)
+    accept_names(names)
+    accept_scores(scores)

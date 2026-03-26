@@ -73,8 +73,8 @@ fn is_allowed_file(root: &Path, path: &Path) -> bool {
     if !rel.ends_with(".rs") {
         return true;
     }
-    // Registries define the spellings; allow them.
-    if rel.starts_with("crates/incan_core/src/lang/") {
+    // Registries and interop policy define canonical spellings; allow them.
+    if rel.starts_with("crates/incan_core/src/lang/") || rel.starts_with("crates/incan_core/src/interop/") {
         return true;
     }
     // Docgen inevitably contains spellings for headings, etc.

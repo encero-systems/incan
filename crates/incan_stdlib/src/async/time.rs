@@ -84,3 +84,38 @@ where
         Err(_) => Err(TimeoutError),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{TimeoutError, timeout, timeout_ms};
+
+    #[tokio::test]
+    async fn timeout_returns_ok_when_task_completes_before_deadline() {
+        let result = timeout(0.1, async { 42 }).await;
+        assert!(matches!(result, Ok(42)));
+    }
+
+    #[tokio::test]
+    async fn timeout_returns_err_when_deadline_expires() {
+        let result: Result<(), TimeoutError> = timeout(0.001, async {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        })
+        .await;
+        assert!(result.is_err(), "expected timeout to return TimeoutError");
+    }
+
+    #[tokio::test]
+    async fn timeout_ms_returns_ok_when_task_completes_before_deadline() {
+        let result = timeout_ms(100, async { 7 }).await;
+        assert!(matches!(result, Ok(7)));
+    }
+
+    #[tokio::test]
+    async fn timeout_ms_returns_err_when_deadline_expires() {
+        let result: Result<(), TimeoutError> = timeout_ms(1, async {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        })
+        .await;
+        assert!(result.is_err(), "expected timeout_ms to return TimeoutError");
+    }
+}

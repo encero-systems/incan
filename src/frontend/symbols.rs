@@ -434,8 +434,13 @@ pub struct ModelInfo {
 pub struct NewtypeInfo {
     pub type_params: Vec<String>,
     pub is_rusttype: bool,
+    /// Set when this `rusttype` declares at least one `interop:` edge (used by later pipeline stages).
     pub has_interop: bool,
     pub underlying: ResolvedType,
+    /// Alias-to-target method rebinding map declared inside the type body (`alias = target`).
+    ///
+    /// Example: `send_now = try_send` is stored as `"send_now" -> "try_send"`.
+    pub method_rebindings: HashMap<String, String>,
     pub methods: HashMap<String, MethodInfo>,
 }
 

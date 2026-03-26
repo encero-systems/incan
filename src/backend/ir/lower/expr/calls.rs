@@ -2,13 +2,152 @@
 //! calls.
 
 use super::super::super::TypedExpr;
-use super::super::super::expr::{BuiltinFn, IrCallArg, IrExprKind, VarAccess, VarRefKind};
+use super::super::super::expr::{BuiltinFn, IrCallArg, IrExprKind, IrInteropCoercionKind, VarAccess, VarRefKind};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast;
+use crate::frontend::typechecker::RustArgCoercionKind;
 
 impl AstLowering {
+    fn call_arg_expr(arg: &ast::CallArg) -> &ast::Spanned<ast::Expr> {
+        match arg {
+            ast::CallArg::Positional(e) | ast::CallArg::Named(_, e) => e,
+        }
+    }
+
+    fn lower_adapter_kind(adapter_kind: ast::InteropAdapterKind) -> super::super::super::decl::IrInteropAdapterKind {
+        match adapter_kind {
+            ast::InteropAdapterKind::Via => super::super::super::decl::IrInteropAdapterKind::Via,
+            ast::InteropAdapterKind::Try => super::super::super::decl::IrInteropAdapterKind::Try,
+        }
+    }
+
+    fn lower_rusttype_interop_adapter(
+        &mut self,
+        arg_ty: &IrType,
+        target_ty: &IrType,
+    ) -> Result<Option<(TypedExpr, super::super::super::decl::IrInteropAdapterKind)>, LoweringError> {
+        if let IrType::Struct(type_name) = arg_ty
+            && let Some(edges) = self.rusttype_interop_edges.get(type_name).cloned()
+        {
+            for edge in edges {
+                if !matches!(edge.direction, ast::InteropDirection::Into) {
+                    continue;
+                }
+                let edge_ty = self.lower_type(&edge.ty.node);
+                if edge_ty != *target_ty {
+                    continue;
+                }
+                let adapter_expr = self.lower_expr_spanned(&edge.adapter)?;
+                return Ok(Some((adapter_expr, Self::lower_adapter_kind(edge.adapter_kind))));
+            }
+        }
+
+        if let IrType::Struct(type_name) = target_ty
+            && let Some(edges) = self.rusttype_interop_edges.get(type_name).cloned()
+        {
+            for edge in edges {
+                if !matches!(edge.direction, ast::InteropDirection::From) {
+                    continue;
+                }
+                let edge_ty = self.lower_type(&edge.ty.node);
+                if edge_ty != *arg_ty {
+                    continue;
+                }
+                let adapter_expr = self.lower_expr_spanned(&edge.adapter)?;
+                return Ok(Some((adapter_expr, Self::lower_adapter_kind(edge.adapter_kind))));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Wrap the result of a method call in an `InteropCoerce` node when the typechecker recorded a return coercion for
+    /// the call expression span.
+    ///
+    /// This handles the case where a `rusttype` method is declared in Incan with return type `str` but the actual Rust
+    /// method returns `&str`. The metadata-driven coercion detection records the mismatch; this function inserts
+    /// `.to_string()` (or equivalent) in the IR so the generated Rust code compiles without type errors.
+    pub(in crate::backend::ir::lower) fn wrap_with_rust_return_coercion(
+        &mut self,
+        expr: TypedExpr,
+        span: ast::Span,
+    ) -> Result<TypedExpr, LoweringError> {
+        let coercion = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.rust_return_coercion(span).cloned());
+        let Some(coercion) = coercion else {
+            return Ok(expr);
+        };
+        // Return coercions are always Builtin; RustTypeUnwrap / RustTypeInterop do not apply here.
+        let RustArgCoercionKind::Builtin(policy) = coercion.kind else {
+            return Ok(expr);
+        };
+        let target_ty = self.lower_resolved_type(&coercion.target_type);
+        let from_ty = expr.ty.clone();
+        Ok(TypedExpr::new(
+            IrExprKind::InteropCoerce {
+                expr: Box::new(expr),
+                from_ty,
+                to_ty: target_ty.clone(),
+                kind: IrInteropCoercionKind::Builtin {
+                    policy,
+                    rust_target: coercion.rust_target_type,
+                },
+            },
+            target_ty,
+        ))
+    }
+
+    /// Wrap one call argument in `InteropCoerce` when typechecking recorded a Rust boundary coercion.
+    ///
+    /// For `RustTypeInterop`, lowering first attempts to resolve a declared `interop:` adapter. If no
+    /// adapter edge matches, lowering falls back to `RustTypeUnwrap` so the generated Rust call still
+    /// receives the underlying Rust value.
+    pub(in crate::backend::ir::lower) fn wrap_with_rust_arg_coercion(
+        &mut self,
+        arg_expr: TypedExpr,
+        span: ast::Span,
+    ) -> Result<TypedExpr, LoweringError> {
+        let coercion = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.rust_arg_coercion(span).cloned());
+        let Some(coercion) = coercion else {
+            return Ok(arg_expr);
+        };
+        let target_ty = self.lower_resolved_type(&coercion.target_type);
+        let from_ty = arg_expr.ty.clone();
+        let kind = match coercion.kind {
+            RustArgCoercionKind::Builtin(policy) => IrInteropCoercionKind::Builtin {
+                policy,
+                rust_target: coercion.rust_target_type,
+            },
+            RustArgCoercionKind::RustTypeUnwrap => IrInteropCoercionKind::RustTypeUnwrap,
+            RustArgCoercionKind::RustTypeInterop => {
+                if let Some((adapter, adapter_kind)) = self.lower_rusttype_interop_adapter(&from_ty, &target_ty)? {
+                    IrInteropCoercionKind::AdapterCall {
+                        adapter: Box::new(adapter),
+                        adapter_kind,
+                    }
+                } else {
+                    IrInteropCoercionKind::RustTypeUnwrap
+                }
+            }
+        };
+        Ok(TypedExpr::new(
+            IrExprKind::InteropCoerce {
+                expr: Box::new(arg_expr),
+                from_ty,
+                to_ty: target_ty.clone(),
+                kind,
+            },
+            target_ty,
+        ))
+    }
+
     /// Lower a function/constructor call expression.
     ///
     /// Handles struct constructors, builtin functions, newtype checked construction, and regular function calls.
@@ -44,7 +183,11 @@ impl AstLowering {
 
         // Regular function call (user-defined or unknown)
         let func = self.lower_expr_spanned(f)?;
-        let args_ir = self.lower_call_args(args)?;
+        let mut args_ir = self.lower_call_args(args)?;
+        for (arg_ir, arg_ast) in args_ir.iter_mut().zip(args.iter()) {
+            let arg_span = Self::call_arg_expr(arg_ast).span;
+            arg_ir.expr = self.wrap_with_rust_arg_coercion(arg_ir.expr.clone(), arg_span)?;
+        }
         let ret_ty = if let IrType::Function { ret, .. } = &func.ty {
             (**ret).clone()
         } else {
@@ -173,5 +316,116 @@ impl AstLowering {
                 }),
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AstLowering;
+    use crate::backend::ir::expr::IrExprKind;
+    use crate::backend::ir::types::IrType;
+    use crate::frontend::ast::{
+        CallArg, Expr, InteropAdapterKind, InteropDirection, InteropEdgeDecl, Literal, Span, Spanned, Type,
+    };
+    use crate::frontend::symbols::ResolvedType;
+    use crate::frontend::typechecker::{RustArgCoercionInfo, RustArgCoercionKind, TypeCheckInfo};
+    use incan_core::interop::CoercionPolicy;
+
+    fn mk_edge(
+        direction: InteropDirection,
+        ty: Type,
+        adapter_kind: InteropAdapterKind,
+        adapter_name: &str,
+    ) -> InteropEdgeDecl {
+        InteropEdgeDecl {
+            direction,
+            ty: Spanned::new(ty, Span::new(0, 0)),
+            adapter_kind,
+            adapter: Spanned::new(Expr::Ident(adapter_name.to_string()), Span::new(0, 0)),
+        }
+    }
+
+    #[test]
+    fn lower_rusttype_interop_adapter_uses_into_edge_for_rusttype_argument() -> Result<(), String> {
+        let mut lowering = AstLowering::new();
+        lowering.rusttype_interop_edges.insert(
+            "Email".to_string(),
+            vec![mk_edge(
+                InteropDirection::Into,
+                Type::Simple("str".to_string()),
+                InteropAdapterKind::Via,
+                "email_into_str",
+            )],
+        );
+
+        let adapter = lowering
+            .lower_rusttype_interop_adapter(&IrType::Struct("Email".to_string()), &IrType::String)
+            .map_err(|err| format!("expected successful adapter lowering, got {err:?}"))?;
+
+        assert!(adapter.is_some(), "expected into edge adapter to resolve");
+        Ok(())
+    }
+
+    #[test]
+    fn lower_rusttype_interop_adapter_uses_from_edge_for_rusttype_target() -> Result<(), String> {
+        let mut lowering = AstLowering::new();
+        lowering.rusttype_interop_edges.insert(
+            "Email".to_string(),
+            vec![mk_edge(
+                InteropDirection::From,
+                Type::Simple("str".to_string()),
+                InteropAdapterKind::Try,
+                "email_parse",
+            )],
+        );
+
+        let adapter = lowering
+            .lower_rusttype_interop_adapter(&IrType::String, &IrType::Struct("Email".to_string()))
+            .map_err(|err| format!("expected successful adapter lowering, got {err:?}"))?;
+
+        assert!(adapter.is_some(), "expected from edge adapter to resolve");
+        Ok(())
+    }
+
+    #[test]
+    fn lower_method_call_wraps_args_with_rust_arg_coercion() -> Result<(), String> {
+        let arg_span = Span::new(10, 20);
+        let mut type_info = TypeCheckInfo::default();
+        type_info.rust_arg_coercions.insert(
+            (arg_span.start, arg_span.end),
+            RustArgCoercionInfo {
+                rust_target_type: "&str".to_string(),
+                target_type: ResolvedType::Str,
+                kind: RustArgCoercionKind::Builtin(CoercionPolicy::Borrow),
+            },
+        );
+
+        let mut lowering = AstLowering::new_with_type_info(type_info);
+        let expr = Expr::MethodCall(
+            Box::new(Spanned::new(Expr::Ident("value".to_string()), Span::new(0, 5))),
+            "coerce_me".to_string(),
+            vec![CallArg::Positional(Spanned::new(
+                Expr::Literal(Literal::String("hello".to_string())),
+                arg_span,
+            ))],
+        );
+
+        let lowered = lowering
+            .lower_expr(&expr)
+            .map_err(|err| format!("expected successful lowering, got {err:?}"))?;
+
+        match lowered.kind {
+            IrExprKind::MethodCall { args, .. } => {
+                assert!(
+                    matches!(
+                        args.first().map(|arg| &arg.expr.kind),
+                        Some(IrExprKind::InteropCoerce { .. })
+                    ),
+                    "expected first method arg to be wrapped in InteropCoerce, got {args:?}"
+                );
+            }
+            other => return Err(format!("expected MethodCall lowering, got {other:?}")),
+        }
+        Ok(())
     }
 }

@@ -908,6 +908,76 @@ fn test_rust_interop_field_access_codegen() {
 }
 
 #[test]
+fn test_rfc041_std_rust_capability_bounds_codegen() {
+    let source = load_test_file("rfc041_std_rust_capability_bounds");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rfc041_std_rust_capability_bounds", rust_code);
+}
+
+#[test]
+fn test_rfc041_rusttype_interop_codegen() {
+    let source = load_test_file("rfc041_rusttype_interop");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rfc041_rusttype_interop", rust_code);
+}
+
+#[test]
+fn test_rfc041_rusttype_rebinding_codegen() {
+    let source = load_test_file("rfc041_rusttype_rebinding");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rfc041_rusttype_rebinding", rust_code);
+}
+
+#[test]
+fn test_rfc041_interop_from_try_codegen() {
+    let source = load_test_file("rfc041_interop_from_try");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rfc041_interop_from_try", rust_code);
+}
+
+#[test]
+fn test_rfc041_interop_into_via_codegen() {
+    let source = load_test_file("rfc041_interop_into_via");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rfc041_interop_into_via", rust_code);
+}
+
+#[test]
+fn test_rfc041_capability_bounds_full_codegen() {
+    let source = load_test_file("rfc041_capability_bounds_full");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rfc041_capability_bounds_full", rust_code);
+}
+
+#[test]
+fn test_rfc041_structural_coercion_codegen() {
+    let source = load_test_file("rfc041_structural_coercion");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rfc041_structural_coercion", rust_code);
+}
+
+#[test]
+fn test_rfc041_rust_coercions_codegen() {
+    let source = load_test_file("rfc041_rust_coercions");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rfc041_rust_coercions", rust_code);
+}
+
+#[test]
+fn test_rfc041_emit_rust_path_type_codegen() {
+    let source = load_test_file("rfc041_emit_rust_path_type");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rfc041_emit_rust_path_type", rust_code);
+}
+
+#[test]
+fn test_rfc041_emit_static_bound_codegen() {
+    let source = load_test_file("rfc041_emit_static_bound");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rfc041_emit_static_bound", rust_code);
+}
+
+#[test]
 fn test_titlecase_var_not_type_codegen() {
     let source = load_test_file("titlecase_var_not_type");
     let rust_code = generate_rust(&source);
@@ -1003,6 +1073,39 @@ fn test_std_testing_compiled_codegen() {
     };
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("std_testing_compiled", rust_code);
+}
+
+/// RFC 041 / Phase E: compile `std.async.task` from `.incn` source.
+#[test]
+fn test_std_async_task_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/async/task.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_async_task_compiled", rust_code);
+}
+
+/// RFC 041 / Phase E: compile `std.async.time` from `.incn` source.
+#[test]
+fn test_std_async_time_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/async/time.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_async_time_compiled", rust_code);
+}
+
+/// Compile `std.async.select` from `.incn` source.
+#[test]
+fn test_std_async_select_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/async/select.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_async_select_compiled", rust_code);
 }
 
 // ============================================================================

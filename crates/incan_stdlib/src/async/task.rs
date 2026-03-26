@@ -5,6 +5,21 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+/// Runtime bridge trait for async tasks that produce `T`.
+///
+/// This trait encodes the `Future<Output = T> + Send + 'static` contract in a shape that Incan generic bounds can
+/// reference directly (`TaskFuture with RuntimeFuture[T]`).
+pub trait RuntimeFuture<T>: Future<Output = T> + Send + 'static {}
+
+impl<T, TaskFuture> RuntimeFuture<T> for TaskFuture where TaskFuture: Future<Output = T> + Send + 'static {}
+
+/// Runtime bridge trait for blocking callables that produce `T`.
+///
+/// This trait encodes `FnOnce() -> T + Send + 'static` for Incan generic bounds (`TaskFn with RuntimeFnOnce[T]`).
+pub trait RuntimeFnOnce<T>: FnOnce() -> T + Send + 'static {}
+
+impl<T, TaskFn> RuntimeFnOnce<T> for TaskFn where TaskFn: FnOnce() -> T + Send + 'static {}
+
 /// Error returned when a spawned task does not complete successfully.
 #[must_use]
 #[derive(Clone)]

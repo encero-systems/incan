@@ -1,14 +1,22 @@
 //! Check calls, constructors, and builtins.
 //!
-//! This module handles the main call-expression logic (`foo(...)`), including special-cased
-//! builtins like `Ok(...)`/`Err(...)` and runtime helpers like `sleep(...)`. It also provides
-//! small utilities to type-check call argument lists consistently.
+//! This module handles the main call-expression logic (`foo(...)`), including special-cased builtins like
+//! `Ok(...)`/`Err(...)` and runtime helpers like `sleep(...)`. It also provides small utilities to type-check call
+//! argument lists consistently.
+
+// FIXME(maintainability): this module is too large (god module risk).
+// TODO: split into focused submodules without behavior changes:
+// - `rust_boundary.rs` (Rust call boundary matching + coercion recording)
+// - `builtins.rs` (builtin/surface function dispatch)
+// - `constructors.rs` (constructor and field-arg validation)
+// - `generic_bounds.rs` (explicit bound satisfaction + inference helpers)
+// Keep `check_call` as a thin coordinator over those helpers.
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::*;
 use crate::frontend::typechecker::helpers::{collection_type_id, dict_ty, list_ty, option_ty, result_ty, set_ty};
-use incan_core::interop::{RustFunctionSig, admitted_builtin_coercion, is_rust_capability_bound};
+use incan_core::interop::{CoercionPolicy, RustFunctionSig, admitted_builtin_coercion, is_rust_capability_bound};
 use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::surface::constructors::{self, ConstructorId};
@@ -19,44 +27,270 @@ use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
 
 use super::TypeChecker;
+use crate::frontend::typechecker::{RustArgCoercionInfo, RustArgCoercionKind};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RustArgBoundaryMatch {
+    /// Argument already matches the Rust parameter shape; no lowering-time adapter is required.
+    Exact,
+    /// Argument is admissible if lowering inserts a boundary coercion/adapter.
+    Coercion(RustArgCoercionKind),
+    /// Argument cannot satisfy the Rust parameter shape.
+    NoMatch,
+}
 
 impl TypeChecker {
-    fn rust_arg_matches_boundary(&self, arg_ty: &ResolvedType, rust_param_ty: &str) -> bool {
-        let normalized = rust_param_ty.replace(' ', "");
-        if self.types_compatible(arg_ty, &self.resolved_type_from_rust_display(normalized.as_str())) {
-            return true;
+    // ---- Rust boundary matching and coercion recording ----
+
+    /// Determine whether `arg_ty` can flow into `target_ty` via `rusttype` boundary rules.
+    ///
+    /// Returns:
+    /// - `RustTypeUnwrap` when the `rusttype` backing matches directly.
+    /// - `RustTypeInterop` when a declared `interop:` edge may adapt the value.
+    fn rusttype_boundary_match(&self, arg_ty: &ResolvedType, target_ty: &ResolvedType) -> Option<RustArgCoercionKind> {
+        if let ResolvedType::Named(type_name) = arg_ty
+            && let Some(TypeInfo::Newtype(newtype)) = self.lookup_type_info(type_name)
+            && newtype.is_rusttype
+        {
+            if self.types_compatible(&newtype.underlying, target_ty) {
+                return Some(RustArgCoercionKind::RustTypeUnwrap);
+            }
+            if newtype.has_interop {
+                return Some(RustArgCoercionKind::RustTypeInterop);
+            }
         }
 
-        let incan_name = match arg_ty {
-            ResolvedType::Int => "int",
-            ResolvedType::Float => "float",
-            ResolvedType::Bool => "bool",
-            ResolvedType::Str => "str",
-            ResolvedType::FrozenStr => "frozenstr",
-            ResolvedType::Bytes => "bytes",
-            ResolvedType::FrozenBytes => "frozenbytes",
-            ResolvedType::Unit => "unit",
-            _ => "",
-        };
-        if !incan_name.is_empty() && admitted_builtin_coercion(incan_name, normalized.as_str()).is_some() {
-            return true;
+        // RFC 041 (`from S ...`) edges convert non-rusttype arguments into a rusttype surface. Type checking marks
+        // these as interop-capable when the target is a rusttype with declared interop, and lowering picks the concrete
+        // adapter edge.
+        if let ResolvedType::Named(type_name) = target_ty
+            && let Some(TypeInfo::Newtype(newtype)) = self.lookup_type_info(type_name)
+            && newtype.is_rusttype
+            && newtype.has_interop
+        {
+            return Some(RustArgCoercionKind::RustTypeInterop);
         }
 
+        None
+    }
+
+    /// Render an Incan type into the canonical boundary vocabulary used by interop coercion policy lookup.
+    ///
+    /// Returns `None` for shapes not covered by the builtin boundary coercion matrix.
+    fn incan_boundary_type_display(arg_ty: &ResolvedType) -> Option<String> {
         match arg_ty {
-            ResolvedType::Int => normalized == "i64",
-            ResolvedType::Float => normalized == "f64" || normalized == "f32",
-            ResolvedType::Bool => normalized == "bool",
-            ResolvedType::Str | ResolvedType::FrozenStr => {
-                normalized == "String" || normalized == "std::string::String" || normalized == "&str"
+            ResolvedType::Int => Some("int".to_string()),
+            ResolvedType::Float => Some("float".to_string()),
+            ResolvedType::Bool => Some("bool".to_string()),
+            ResolvedType::Str => Some("str".to_string()),
+            ResolvedType::FrozenStr => Some("FrozenStr".to_string()),
+            ResolvedType::Bytes => Some("bytes".to_string()),
+            ResolvedType::FrozenBytes => Some("FrozenBytes".to_string()),
+            ResolvedType::Unit => Some("unit".to_string()),
+            ResolvedType::FrozenList(elem) => {
+                let elem_display = Self::incan_boundary_type_display(elem)?;
+                Some(format!("FrozenList[{elem_display}]"))
             }
-            ResolvedType::Bytes | ResolvedType::FrozenBytes => {
-                normalized == "Vec<u8>" || normalized == "std::vec::Vec<u8>" || normalized == "&[u8]"
+            ResolvedType::FrozenDict(key, value) => {
+                let key_display = Self::incan_boundary_type_display(key)?;
+                let value_display = Self::incan_boundary_type_display(value)?;
+                Some(format!("FrozenDict[{key_display}, {value_display}]"))
             }
-            ResolvedType::Unit => normalized == "()",
-            _ => false,
+            ResolvedType::FrozenSet(elem) => {
+                let elem_display = Self::incan_boundary_type_display(elem)?;
+                Some(format!("FrozenSet[{elem_display}]"))
+            }
+            ResolvedType::Generic(name, args)
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Option) && args.len() == 1 =>
+            {
+                let inner = Self::incan_boundary_type_display(&args[0])?;
+                Some(format!("Option[{inner}]"))
+            }
+            ResolvedType::Generic(name, args)
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && args.len() == 2 =>
+            {
+                let ok = Self::incan_boundary_type_display(&args[0])?;
+                let err = Self::incan_boundary_type_display(&args[1])?;
+                Some(format!("Result[{ok}, {err}]"))
+            }
+            ResolvedType::Generic(name, args)
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::List) && args.len() == 1 =>
+            {
+                let inner = Self::incan_boundary_type_display(&args[0])?;
+                Some(format!("List[{inner}]"))
+            }
+            ResolvedType::Generic(name, args)
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Dict) && args.len() == 2 =>
+            {
+                let key = Self::incan_boundary_type_display(&args[0])?;
+                let value = Self::incan_boundary_type_display(&args[1])?;
+                Some(format!("Dict[{key}, {value}]"))
+            }
+            ResolvedType::Generic(name, args)
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Set) && args.len() == 1 =>
+            {
+                let inner = Self::incan_boundary_type_display(&args[0])?;
+                Some(format!("Set[{inner}]"))
+            }
+            ResolvedType::Tuple(elems) => {
+                let mut rendered = Vec::with_capacity(elems.len());
+                for elem in elems {
+                    rendered.push(Self::incan_boundary_type_display(elem)?);
+                }
+                Some(format!("Tuple[{}]", rendered.join(", ")))
+            }
+            ResolvedType::Ref(inner) => Self::incan_boundary_type_display(inner),
+            _ => None,
         }
     }
 
+    /// Whether a Rust type display string belongs to the builtin boundary coercion matrix.
+    ///
+    /// This intentionally includes fully-qualified std/core/alloc spellings that rust-analyzer may emit.
+    fn is_builtin_rust_boundary_display(rust_ty: &str) -> bool {
+        matches!(
+            rust_ty,
+            "bool"
+                | "f32"
+                | "f64"
+                | "i8"
+                | "i16"
+                | "i32"
+                | "i64"
+                | "i128"
+                | "isize"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "u128"
+                | "usize"
+                | "String"
+                | "std::string::String"
+                | "&str"
+                | "Vec<u8>"
+                | "std::vec::Vec<u8>"
+                | "&[u8]"
+                | "()"
+        ) || rust_ty.starts_with("Option<")
+            || rust_ty.starts_with("std::option::Option<")
+            || rust_ty.starts_with("core::option::Option<")
+            || rust_ty.starts_with("Result<")
+            || rust_ty.starts_with("std::result::Result<")
+            || rust_ty.starts_with("core::result::Result<")
+            || rust_ty.starts_with("Vec<")
+            || rust_ty.starts_with("std::vec::Vec<")
+            || rust_ty.starts_with("alloc::vec::Vec<")
+            || rust_ty.starts_with("HashMap<")
+            || rust_ty.starts_with("std::collections::HashMap<")
+            || rust_ty.starts_with("std::collections::hash_map::HashMap<")
+            || rust_ty.starts_with("HashSet<")
+            || rust_ty.starts_with("std::collections::HashSet<")
+            || rust_ty.starts_with("std::collections::hash_set::HashSet<")
+            || (rust_ty.starts_with('(') && rust_ty.ends_with(')'))
+    }
+
+    /// Classify whether an Incan argument type can satisfy a Rust parameter boundary.
+    ///
+    /// This first tries builtin coercion-matrix matches, then resolved-type compatibility, then rusttype-specific
+    /// boundary adapters.
+    fn rust_arg_boundary_match(&self, arg_ty: &ResolvedType, rust_param_ty: &str) -> RustArgBoundaryMatch {
+        let normalized = rust_param_ty.replace(' ', "");
+        if let Some(incan_display) = Self::incan_boundary_type_display(arg_ty)
+            && Self::is_builtin_rust_boundary_display(normalized.as_str())
+        {
+            return match admitted_builtin_coercion(incan_display.as_str(), normalized.as_str()) {
+                Some(CoercionPolicy::Exact) => RustArgBoundaryMatch::Exact,
+                Some(policy) => RustArgBoundaryMatch::Coercion(RustArgCoercionKind::Builtin(policy)),
+                None => RustArgBoundaryMatch::NoMatch,
+            };
+        }
+        let target_ty = self.resolved_type_from_rust_display(normalized.as_str());
+        if self.types_compatible(arg_ty, &target_ty) {
+            return RustArgBoundaryMatch::Exact;
+        }
+        if let Some(kind) = self.rusttype_boundary_match(arg_ty, &target_ty) {
+            return RustArgBoundaryMatch::Coercion(kind);
+        }
+        if let Some(incan_name) = Self::incan_boundary_type_display(arg_ty)
+            && let Some(policy) = admitted_builtin_coercion(incan_name.as_str(), normalized.as_str())
+        {
+            return RustArgBoundaryMatch::Coercion(RustArgCoercionKind::Builtin(policy));
+        }
+        RustArgBoundaryMatch::NoMatch
+    }
+
+    #[cfg(test)]
+    pub(in crate::frontend::typechecker) fn rust_arg_matches_boundary(
+        &self,
+        arg_ty: &ResolvedType,
+        rust_param_ty: &str,
+    ) -> bool {
+        !matches!(
+            self.rust_arg_boundary_match(arg_ty, rust_param_ty),
+            RustArgBoundaryMatch::NoMatch
+        )
+    }
+
+    /// Validate a Rust method call (`receiver.method(...)`) against metadata and record required arg coercions.
+    ///
+    /// The receiver is already validated by access resolution; this function validates only post-receiver parameters.
+    pub(in crate::frontend::typechecker) fn validate_rust_method_call(
+        &mut self,
+        rust_path: &str,
+        method: &str,
+        sig: &RustFunctionSig,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) -> ResolvedType {
+        let params = if Self::rust_signature_has_receiver(sig) {
+            &sig.params[1..]
+        } else {
+            &sig.params
+        };
+
+        let callable_display = format!("rust::{rust_path}.{method}");
+        if arg_types.len() != params.len() {
+            self.errors.push(errors::builtin_arity(
+                callable_display.as_str(),
+                params.len(),
+                arg_types.len(),
+                span,
+            ));
+            return self.resolved_type_from_rust_display(sig.return_type.as_str());
+        }
+
+        for ((arg, arg_ty), param) in args.iter().zip(arg_types.iter()).zip(params.iter()) {
+            let arg_expr = Self::call_arg_expr(arg);
+            let normalized = param.type_display.replace(' ', "");
+            let target_ty = self.resolved_type_from_rust_display(normalized.as_str());
+            match self.rust_arg_boundary_match(arg_ty, param.type_display.as_str()) {
+                RustArgBoundaryMatch::Exact => {}
+                RustArgBoundaryMatch::Coercion(kind) => {
+                    self.type_info.rust_arg_coercions.insert(
+                        (arg_expr.span.start, arg_expr.span.end),
+                        RustArgCoercionInfo {
+                            rust_target_type: normalized,
+                            target_type: target_ty,
+                            kind,
+                        },
+                    );
+                }
+                RustArgBoundaryMatch::NoMatch => {
+                    self.errors.push(errors::type_mismatch(
+                        param.type_display.as_str(),
+                        &arg_ty.to_string(),
+                        arg_expr.span,
+                    ));
+                }
+            }
+        }
+
+        self.resolved_type_from_rust_display(sig.return_type.as_str())
+    }
+
+    /// Validate a direct Rust function call (`rust::path::item(...)`) and record boundary coercions.
     fn validate_rust_function_call(
         &mut self,
         path: &str,
@@ -65,25 +299,44 @@ impl TypeChecker {
         span: Span,
     ) -> ResolvedType {
         let arg_types = self.check_call_arg_types(args);
-        if !sig.params.is_empty() && arg_types.len() != sig.params.len() {
+        if arg_types.len() != sig.params.len() {
             self.errors
                 .push(errors::builtin_arity(path, sig.params.len(), arg_types.len(), span));
             return self.resolved_type_from_rust_display(sig.return_type.as_str());
         }
 
-        for (arg_ty, param) in arg_types.iter().zip(sig.params.iter()) {
-            if !self.rust_arg_matches_boundary(arg_ty, param.type_display.as_str()) {
-                self.errors.push(errors::type_mismatch(
-                    param.type_display.as_str(),
-                    &arg_ty.to_string(),
-                    span,
-                ));
+        for ((arg, arg_ty), param) in args.iter().zip(arg_types.iter()).zip(sig.params.iter()) {
+            let arg_expr = Self::call_arg_expr(arg);
+            let normalized = param.type_display.replace(' ', "");
+            let target_ty = self.resolved_type_from_rust_display(normalized.as_str());
+            match self.rust_arg_boundary_match(arg_ty, param.type_display.as_str()) {
+                RustArgBoundaryMatch::Exact => {}
+                RustArgBoundaryMatch::Coercion(kind) => {
+                    self.type_info.rust_arg_coercions.insert(
+                        (arg_expr.span.start, arg_expr.span.end),
+                        RustArgCoercionInfo {
+                            rust_target_type: normalized,
+                            target_type: target_ty,
+                            kind,
+                        },
+                    );
+                }
+                RustArgBoundaryMatch::NoMatch => {
+                    self.errors.push(errors::type_mismatch(
+                        param.type_display.as_str(),
+                        &arg_ty.to_string(),
+                        arg_expr.span,
+                    ));
+                }
             }
         }
 
         self.resolved_type_from_rust_display(sig.return_type.as_str())
     }
 
+    /// Validate named-argument constructor calls for model/class types.
+    ///
+    /// This enforces field existence, duplicate-key rejection, and required-field coverage.
     fn check_model_or_class_constructor_call(
         &mut self,
         type_name: &str,
@@ -224,6 +477,10 @@ impl TypeChecker {
             .collect()
     }
 
+    /// Compute the constructor result surface type for a known type symbol.
+    ///
+    /// Generic constructors return a placeholder `Generic(Name, Unknown...)` so call sites can continue
+    /// typechecking while inference refines arguments.
     fn constructor_result_type(&self, name: &str) -> ResolvedType {
         match self.lookup_type_info(name) {
             Some(TypeInfo::Model(model)) if !model.type_params.is_empty() => {
@@ -389,6 +646,7 @@ impl TypeChecker {
 
     /// Best-effort check whether a concrete type satisfies an explicit generic bound.
     fn type_satisfies_explicit_bound(&self, ty: &ResolvedType, bound: &str) -> bool {
+        // `std.rust` markers (`Send`, `Sync`, …) are enforced when lowering to Rust, not here.
         if is_rust_capability_bound(bound) {
             return true;
         }
@@ -1260,5 +1518,311 @@ impl TypeChecker {
                 ResolvedType::Unknown
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod validate_rust_function_call_tests {
+    use super::TypeChecker;
+    use crate::frontend::ast::{CallArg, Expr, Literal, Span, Spanned};
+    use crate::frontend::symbols::{NewtypeInfo, ResolvedType, Symbol, SymbolKind, TypeInfo};
+    use incan_core::interop::{RustFunctionSig, RustParam};
+    use std::collections::HashMap;
+
+    #[test]
+    fn zero_parameter_rust_sig_rejects_extra_arguments() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(0, 1);
+        let arg_expr = Spanned::new(Expr::Literal(Literal::Int(1)), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let sig = RustFunctionSig {
+            params: Vec::new(),
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_function_call("rust::crate::nop", &sig, &args, span);
+
+        assert!(
+            checker.errors.iter().any(|e| {
+                e.message.contains("rust::crate::nop()")
+                    && e.message.contains("expects 0 argument")
+                    && e.message.contains("got 1")
+            }),
+            "expected builtin_arity for 0-param Rust call with 1 arg, errors={:?}",
+            checker.errors
+        );
+    }
+
+    #[test]
+    fn zero_parameter_rust_sig_allows_no_arguments() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(0, 1);
+        let sig = RustFunctionSig {
+            params: Vec::new(),
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_function_call("rust::crate::nop", &sig, &[], span);
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected no errors for arity match, got {:?}",
+            checker.errors
+        );
+    }
+
+    #[test]
+    fn too_few_arguments_reports_arity_before_param_zip() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(0, 1);
+        let arg_expr = Spanned::new(Expr::Literal(Literal::Int(1)), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let sig = RustFunctionSig {
+            params: vec![
+                RustParam {
+                    name: Some("a".to_string()),
+                    type_display: "i64".to_string(),
+                },
+                RustParam {
+                    name: Some("b".to_string()),
+                    type_display: "i64".to_string(),
+                },
+            ],
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_function_call("rust::crate::f", &sig, &args, span);
+
+        assert!(
+            checker
+                .errors
+                .iter()
+                .any(|e| e.message.contains("expects 2 argument") && e.message.contains("got 1")),
+            "expected arity error when call has fewer args than Rust params, errors={:?}",
+            checker.errors
+        );
+    }
+
+    #[test]
+    fn rust_arg_boundary_accepts_structural_list_to_vec() {
+        let checker = TypeChecker::new();
+        let arg_ty = ResolvedType::Generic("List".to_string(), vec![ResolvedType::Str]);
+        assert!(checker.rust_arg_matches_boundary(&arg_ty, "Vec<String>"));
+    }
+
+    #[test]
+    fn rust_arg_boundary_accepts_structural_option_int_to_option_i64() {
+        let checker = TypeChecker::new();
+        let arg_ty = ResolvedType::Generic("Option".to_string(), vec![ResolvedType::Int]);
+        assert!(checker.rust_arg_matches_boundary(&arg_ty, "Option<i64>"));
+    }
+
+    #[test]
+    fn rust_arg_boundary_accepts_structural_frozen_dict_to_hash_map() {
+        let checker = TypeChecker::new();
+        let arg_ty = ResolvedType::FrozenDict(Box::new(ResolvedType::Str), Box::new(ResolvedType::Float));
+        assert!(checker.rust_arg_matches_boundary(&arg_ty, "std::collections::HashMap<&str, f32>"));
+    }
+
+    #[test]
+    fn rust_arg_boundary_rejects_structural_list_str_to_vec_i64() {
+        let checker = TypeChecker::new();
+        let arg_ty = ResolvedType::Generic("List".to_string(), vec![ResolvedType::Str]);
+        assert!(!checker.rust_arg_matches_boundary(&arg_ty, "Vec<i64>"));
+    }
+
+    #[test]
+    fn rust_method_call_rejects_missing_required_arguments_after_receiver() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(0, 1);
+        let sig = RustFunctionSig {
+            params: vec![
+                RustParam {
+                    name: Some("self".to_string()),
+                    type_display: "&Self".to_string(),
+                },
+                RustParam {
+                    name: Some("pattern".to_string()),
+                    type_display: "&str".to_string(),
+                },
+            ],
+            return_type: "bool".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_method_call("regex::Regex", "is_match", &sig, &[], &[], span);
+
+        assert!(
+            checker.errors.iter().any(
+                |e| e.message.contains("rust::regex::Regex.is_match()") && e.message.contains("expects 1 argument")
+            ),
+            "expected arity diagnostic for missing method arg, errors={:?}",
+            checker.errors
+        );
+    }
+
+    #[test]
+    fn rust_method_call_rejects_type_mismatch_after_receiver() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(0, 1);
+        let sig = RustFunctionSig {
+            params: vec![
+                RustParam {
+                    name: Some("self".to_string()),
+                    type_display: "&Self".to_string(),
+                },
+                RustParam {
+                    name: Some("pattern".to_string()),
+                    type_display: "&str".to_string(),
+                },
+            ],
+            return_type: "bool".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+        let arg_expr = Spanned::new(Expr::Literal(Literal::Int(123)), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let arg_types = [ResolvedType::Int];
+
+        let _ = checker.validate_rust_method_call("regex::Regex", "is_match", &sig, &args, &arg_types, span);
+
+        assert!(
+            checker
+                .errors
+                .iter()
+                .any(|e| e.message.contains("&str") && e.message.contains("int")),
+            "expected type mismatch diagnostic for method arg, errors={:?}",
+            checker.errors
+        );
+    }
+
+    #[test]
+    fn rust_arg_boundary_accepts_rusttype_from_interop_target() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(0, 1);
+        checker.symbols.define(Symbol {
+            name: "Email".to_string(),
+            kind: SymbolKind::Type(TypeInfo::Newtype(NewtypeInfo {
+                type_params: Vec::new(),
+                is_rusttype: true,
+                has_interop: true,
+                underlying: ResolvedType::Named("RustString".to_string()),
+                method_rebindings: HashMap::new(),
+                methods: HashMap::new(),
+            })),
+            span,
+            scope: 0,
+        });
+
+        assert!(
+            checker.rust_arg_matches_boundary(&ResolvedType::Str, "Email"),
+            "expected `str` to be admitted for rusttype target boundary via `from` interop edge hint"
+        );
+    }
+
+    #[test]
+    fn validate_rust_function_call_records_interop_coercion_for_rusttype_target() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(10, 20);
+        checker.symbols.define(Symbol {
+            name: "Email".to_string(),
+            kind: SymbolKind::Type(TypeInfo::Newtype(NewtypeInfo {
+                type_params: Vec::new(),
+                is_rusttype: true,
+                has_interop: true,
+                underlying: ResolvedType::Named("RustString".to_string()),
+                method_rebindings: HashMap::new(),
+                methods: HashMap::new(),
+            })),
+            span,
+            scope: 0,
+        });
+
+        let arg_expr = Spanned::new(Expr::Literal(Literal::String("alice@example.com".to_string())), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let sig = RustFunctionSig {
+            params: vec![RustParam {
+                name: Some("value".to_string()),
+                type_display: "Email".to_string(),
+            }],
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_function_call("rust::demo::takes_email", &sig, &args, span);
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected rusttype interop boundary to avoid type mismatch, errors={:?}",
+            checker.errors
+        );
+        assert!(
+            checker
+                .type_info
+                .rust_arg_coercions
+                .contains_key(&(span.start, span.end)),
+            "expected rust arg coercion metadata for rusttype target boundary"
+        );
+    }
+
+    #[test]
+    fn validate_rust_method_call_records_interop_coercion_for_rusttype_target() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(30, 40);
+        checker.symbols.define(Symbol {
+            name: "Email".to_string(),
+            kind: SymbolKind::Type(TypeInfo::Newtype(NewtypeInfo {
+                type_params: Vec::new(),
+                is_rusttype: true,
+                has_interop: true,
+                underlying: ResolvedType::Named("RustString".to_string()),
+                method_rebindings: HashMap::new(),
+                methods: HashMap::new(),
+            })),
+            span,
+            scope: 0,
+        });
+
+        let arg_expr = Spanned::new(Expr::Literal(Literal::String("alice@example.com".to_string())), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let arg_types = [ResolvedType::Str];
+        let sig = RustFunctionSig {
+            params: vec![
+                RustParam {
+                    name: Some("self".to_string()),
+                    type_display: "&Self".to_string(),
+                },
+                RustParam {
+                    name: Some("value".to_string()),
+                    type_display: "Email".to_string(),
+                },
+            ],
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_method_call("demo::EmailService", "set_email", &sig, &args, &arg_types, span);
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected rusttype interop boundary to avoid type mismatch, errors={:?}",
+            checker.errors
+        );
+        assert!(
+            checker
+                .type_info
+                .rust_arg_coercions
+                .contains_key(&(span.start, span.end)),
+            "expected rust arg coercion metadata for rust method boundary"
+        );
     }
 }

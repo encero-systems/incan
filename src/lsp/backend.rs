@@ -11,11 +11,13 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 use crate::frontend::ast::{Declaration, Program, Span, Type};
+use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::resolve_import_path;
 use crate::frontend::{lexer, parser, typechecker, vocab_desugar_pass};
 use crate::lsp::diagnostics::{compile_error_to_diagnostic, position_to_offset, span_to_range};
 use crate::manifest::ProjectManifest;
+use incan_core::interop::{RustItemKind, RustModuleChildKind, RustTraitAssoc};
 use incan_core::lang::decorators;
 use incan_core::lang::keywords;
 use incan_core::lang::stdlib;
@@ -33,6 +35,17 @@ pub struct DocumentState {
     /// This is used to make hover text reflect the actual type of a const binding, even if the user annotated
     /// `str`/`List[T]` and the compiler froze it to `FrozenStr`/`FrozenList[T]`.
     pub const_types: HashMap<String, String>,
+    /// Local symbols that originate from `rust::...` imports with canonical Rust path provenance.
+    rust_origin_symbols: Vec<RustOriginSymbol>,
+    /// For `rusttype` newtypes: maps the Incan type name to the canonical Rust path of the underlying type (e.g. `"Name"` -> `"std::string::String"`).  Populated from the typechecker's resolved `NewtypeInfo.underlying`.
+    rusttype_info: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+struct RustOriginSymbol {
+    local_name: String,
+    span: Span,
+    info: crate::frontend::symbols::RustItemInfo,
 }
 
 /// Incan Language Server
@@ -143,19 +156,33 @@ impl IncanLanguageServer {
             .await;
         let dep_refs: Vec<(&str, &Program)> = deps.iter().map(|(name, program)| (name.as_str(), program)).collect();
 
-        if let Err(errors) = checker.check_with_imports(&ast, &dep_refs) {
+        let check_result = checker.check_with_imports(&ast, &dep_refs);
+        let rust_origin_symbols = collect_rust_origin_symbols(&checker);
+
+        if let Err(errors) = check_result {
             for error in &errors {
-                diagnostics.push(compile_error_to_diagnostic(error, source, uri));
+                diagnostics.push(compile_error_to_diagnostic_with_rust_context(
+                    error,
+                    source,
+                    uri,
+                    &rust_origin_symbols,
+                ));
             }
         }
         // Always include non-fatal diagnostics (warnings/lints) in LSP output.
         for warn in checker.warnings() {
-            diagnostics.push(compile_error_to_diagnostic(warn, source, uri));
+            diagnostics.push(compile_error_to_diagnostic_with_rust_context(
+                warn,
+                source,
+                uri,
+                &rust_origin_symbols,
+            ));
         }
         diagnostics.append(&mut dep_summary_diags);
 
         // Collect resolved const types for hover display (post-const-freezing).
         let mut const_types: HashMap<String, String> = HashMap::new();
+        let mut rusttype_info: HashMap<String, String> = HashMap::new();
         for decl in &ast.declarations {
             if let Declaration::Const(konst) = &decl.node
                 && let Some(id) = checker.symbols.lookup(&konst.name)
@@ -163,6 +190,16 @@ impl IncanLanguageServer {
                 && let crate::frontend::symbols::SymbolKind::Variable(var) = &sym.kind
             {
                 const_types.insert(konst.name.clone(), var.ty.to_string());
+            }
+            if let Declaration::Newtype(nt) = &decl.node
+                && nt.is_rusttype
+                && let Some(id) = checker.symbols.lookup(&nt.name)
+                && let Some(sym) = checker.symbols.get(id)
+                && let crate::frontend::symbols::SymbolKind::Type(crate::frontend::symbols::TypeInfo::Newtype(info)) =
+                    &sym.kind
+                && let crate::frontend::symbols::ResolvedType::RustPath(path) = &info.underlying
+            {
+                rusttype_info.insert(nt.name.clone(), path.clone());
             }
         }
 
@@ -176,6 +213,8 @@ impl IncanLanguageServer {
                     ast: Some(ast),
                     version,
                     const_types,
+                    rust_origin_symbols,
+                    rusttype_info,
                 },
             );
         }
@@ -445,10 +484,11 @@ impl IncanLanguageServer {
                 });
             }
             Declaration::Newtype(nt) if span.start <= offset && offset < span.end => {
+                let kind = if nt.is_rusttype { "rusttype" } else { "newtype" };
                 return Some(SymbolInfo {
                     name: nt.name.clone(),
-                    kind: "newtype".to_string(),
-                    detail: format!("newtype {} = {}", nt.name, format_type(&nt.underlying.node)),
+                    kind: kind.to_string(),
+                    detail: format!("{} {} = {}", kind, nt.name, format_type(&nt.underlying.node)),
                     span,
                 });
             }
@@ -683,6 +723,231 @@ fn push_completion(
     }
 }
 
+fn collect_rust_origin_symbols(checker: &typechecker::TypeChecker) -> Vec<RustOriginSymbol> {
+    checker
+        .symbols
+        .all_symbols()
+        .iter()
+        .filter_map(|sym| match &sym.kind {
+            crate::frontend::symbols::SymbolKind::RustItem(info) => Some(RustOriginSymbol {
+                local_name: sym.name.clone(),
+                span: sym.span,
+                info: info.clone(),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn rust_symbol_at_offset(symbols: &[RustOriginSymbol], offset: usize) -> Option<&RustOriginSymbol> {
+    symbols
+        .iter()
+        .find(|sym| sym.span.start <= offset && offset < sym.span.end)
+}
+
+fn rust_symbol_for_span(symbols: &[RustOriginSymbol], span: Span) -> Option<&RustOriginSymbol> {
+    symbols.iter().find(|sym| {
+        let overlaps_start = sym.span.start <= span.start && span.start < sym.span.end;
+        let overlaps_reverse = span.start <= sym.span.start && sym.span.start < span.end;
+        overlaps_start || overlaps_reverse
+    })
+}
+
+fn compile_error_to_diagnostic_with_rust_context(
+    error: &CompileError,
+    source: &str,
+    uri: &Url,
+    rust_symbols: &[RustOriginSymbol],
+) -> Diagnostic {
+    let mut enriched = error.clone();
+    if let Some(sym) = rust_symbol_for_span(rust_symbols, error.span) {
+        let note = format!(
+            "Rust origin: `{}` resolves to `rust::{}`",
+            sym.local_name, sym.info.path
+        );
+        if !enriched.notes.iter().any(|n| n == &note) {
+            enriched.notes.push(note);
+        }
+    }
+    compile_error_to_diagnostic(&enriched, source, uri)
+}
+
+fn rust_item_kind_label(kind: &RustItemKind) -> &'static str {
+    match kind {
+        RustItemKind::Module(_) => "module",
+        RustItemKind::Type(_) => "type",
+        RustItemKind::Function(_) => "function",
+        RustItemKind::Constant { .. } => "constant",
+        RustItemKind::Trait(_) => "trait",
+        RustItemKind::Unsupported { .. } => "unsupported item",
+    }
+}
+
+fn rust_binding_kind_label(binding: crate::frontend::symbols::RustImportBindingKind) -> &'static str {
+    match binding {
+        crate::frontend::symbols::RustImportBindingKind::CrateRoot => "crate root import",
+        crate::frontend::symbols::RustImportBindingKind::RootedPath => "path import",
+        crate::frontend::symbols::RustImportBindingKind::FromImport => "from-import binding",
+    }
+}
+
+fn completion_kind_for_module_child(kind: RustModuleChildKind) -> CompletionItemKind {
+    match kind {
+        RustModuleChildKind::Module => CompletionItemKind::MODULE,
+        RustModuleChildKind::Type => CompletionItemKind::CLASS,
+        RustModuleChildKind::Function => CompletionItemKind::FUNCTION,
+        RustModuleChildKind::Constant => CompletionItemKind::CONSTANT,
+        RustModuleChildKind::Trait => CompletionItemKind::INTERFACE,
+        RustModuleChildKind::Other => CompletionItemKind::REFERENCE,
+    }
+}
+
+fn rust_member_completion_context(line_prefix: &str) -> Option<(&str, &str)> {
+    let trimmed = line_prefix.trim_end();
+    let dot_idx = trimmed.rfind('.')?;
+    let (base_part, partial_part) = trimmed.split_at(dot_idx);
+    let partial = &partial_part[1..];
+    if !partial.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    let base = base_part
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .next_back()?;
+    if base.is_empty() {
+        return None;
+    }
+    Some((base, partial))
+}
+
+fn rust_member_completions(line_prefix: &str, symbols: &[RustOriginSymbol]) -> Option<Vec<CompletionItem>> {
+    let (base, partial) = rust_member_completion_context(line_prefix)?;
+    let rust_symbol = symbols.iter().find(|sym| sym.local_name == base)?;
+    let metadata = rust_symbol.info.metadata.as_ref()?;
+    let mut items = Vec::new();
+    let mut seen = HashSet::new();
+
+    match &metadata.kind {
+        RustItemKind::Module(module) => {
+            for child in &module.children {
+                if !child.name.starts_with(partial) {
+                    continue;
+                }
+                push_completion(
+                    &mut items,
+                    &mut seen,
+                    &child.name,
+                    completion_kind_for_module_child(child.kind_hint),
+                    Some(format!(
+                        "rust::{}::{} ({})",
+                        rust_symbol.info.path, child.name, rust_symbol.local_name
+                    )),
+                    Some(format!("0_{}", child.name)),
+                );
+            }
+        }
+        RustItemKind::Type(type_info) => {
+            for method in &type_info.methods {
+                if !method.name.starts_with(partial) {
+                    continue;
+                }
+                if typechecker::TypeChecker::rust_signature_has_receiver(&method.signature) {
+                    continue;
+                }
+                push_completion(
+                    &mut items,
+                    &mut seen,
+                    &method.name,
+                    CompletionItemKind::FUNCTION,
+                    Some(format!(
+                        "rust::{}::{} (associated function)",
+                        rust_symbol.info.path, method.name
+                    )),
+                    Some(format!("0_{}", method.name)),
+                );
+            }
+        }
+        RustItemKind::Trait(trait_info) => {
+            for item in &trait_info.items {
+                let (name, kind, detail) = match item {
+                    RustTraitAssoc::Function { name, .. } => (
+                        name.as_str(),
+                        CompletionItemKind::FUNCTION,
+                        format!("rust::{}::{} (trait function)", rust_symbol.info.path, name),
+                    ),
+                    RustTraitAssoc::TypeAlias { name } => (
+                        name.as_str(),
+                        CompletionItemKind::TYPE_PARAMETER,
+                        format!("rust::{}::{} (trait type alias)", rust_symbol.info.path, name),
+                    ),
+                    RustTraitAssoc::Constant { name, .. } => (
+                        name.as_str(),
+                        CompletionItemKind::CONSTANT,
+                        format!("rust::{}::{} (trait constant)", rust_symbol.info.path, name),
+                    ),
+                };
+                if !name.starts_with(partial) {
+                    continue;
+                }
+                push_completion(
+                    &mut items,
+                    &mut seen,
+                    name,
+                    kind,
+                    Some(detail),
+                    Some(format!("0_{}", name)),
+                );
+            }
+        }
+        _ => {}
+    }
+
+    if items.is_empty() { None } else { Some(items) }
+}
+
+fn lsp_symbol_kind_for_decl(decl: &Declaration) -> Option<SymbolKind> {
+    match decl {
+        Declaration::Const(_) => Some(SymbolKind::CONSTANT),
+        Declaration::Function(_) => Some(SymbolKind::FUNCTION),
+        Declaration::Model(_) => Some(SymbolKind::STRUCT),
+        Declaration::Class(_) => Some(SymbolKind::CLASS),
+        Declaration::Trait(_) => Some(SymbolKind::INTERFACE),
+        Declaration::Enum(_) => Some(SymbolKind::ENUM),
+        Declaration::TypeAlias(_) => Some(SymbolKind::TYPE_PARAMETER),
+        Declaration::Newtype(_) => Some(SymbolKind::STRUCT),
+        _ => None,
+    }
+}
+
+fn lsp_document_symbol_name_and_detail(decl: &Declaration) -> Option<(String, String)> {
+    match decl {
+        Declaration::Const(konst) => Some((
+            konst.name.clone(),
+            if let Some(ty) = &konst.ty {
+                format!("const {}: {}", konst.name, format_type(&ty.node))
+            } else {
+                format!("const {}", konst.name)
+            },
+        )),
+        Declaration::Function(func) => Some((func.name.clone(), format_function_signature(func))),
+        Declaration::Model(model) => Some((model.name.clone(), format!("model {}", model.name))),
+        Declaration::Class(class) => Some((class.name.clone(), format!("class {}", class.name))),
+        Declaration::Trait(tr) => Some((tr.name.clone(), format!("trait {}", tr.name))),
+        Declaration::Enum(en) => Some((en.name.clone(), format!("enum {}", en.name))),
+        Declaration::TypeAlias(alias) => Some((
+            alias.name.clone(),
+            format!("type {} = {}", alias.name, format_type(&alias.target.node)),
+        )),
+        Declaration::Newtype(nt) => {
+            let kind = if nt.is_rusttype { "rusttype" } else { "newtype" };
+            Some((
+                nt.name.clone(),
+                format!("{} {} = {}", kind, nt.name, format_type(&nt.underlying.node)),
+            ))
+        }
+        _ => None,
+    }
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for IncanLanguageServer {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
@@ -694,6 +959,8 @@ impl LanguageServer for IncanLanguageServer {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 // Go-to-definition
                 definition_provider: Some(OneOf::Left(true)),
+                // Document symbols (outline)
+                document_symbol_provider: Some(OneOf::Left(true)),
                 // Completions (basic)
                 completion_provider: Some(CompletionOptions {
                     trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
@@ -802,12 +1069,33 @@ impl LanguageServer for IncanLanguageServer {
                     range: None,
                 }));
             }
+
+            if let Some(rust_symbol) = rust_symbol_at_offset(&doc.rust_origin_symbols, offset) {
+                let mut markdown = format!(
+                    "```incan\n{}\n```\n\n*rust import* (`{}`)\n\n`rust::{}`",
+                    rust_symbol.local_name,
+                    rust_binding_kind_label(rust_symbol.info.binding),
+                    rust_symbol.info.path
+                );
+                if let Some(metadata) = &rust_symbol.info.metadata {
+                    markdown.push_str(&format!(
+                        "\n\nresolved kind: `{}`",
+                        rust_item_kind_label(&metadata.kind)
+                    ));
+                }
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: markdown,
+                    }),
+                    range: Some(span_to_range(&doc.source, rust_symbol.span.start, rust_symbol.span.end)),
+                }));
+            }
         }
 
         if let Some(info) = self.find_symbol_at_position(ast, &doc.source, position) {
             let detail = if info.kind == "const" {
                 if let Some(resolved) = doc.const_types.get(&info.name) {
-                    // Prefer resolved typechecker type, since `const` may freeze annotations.
                     format!("const {}: {}", info.name, resolved)
                 } else {
                     info.detail.clone()
@@ -816,7 +1104,13 @@ impl LanguageServer for IncanLanguageServer {
                 info.detail.clone()
             };
 
-            let markdown = format!("```incan\n{}\n```\n\n*{}*", detail, info.kind);
+            let mut markdown = format!("```incan\n{}\n```\n\n*{}*", detail, info.kind);
+
+            if info.kind == "rusttype"
+                && let Some(rust_path) = doc.rusttype_info.get(&info.name)
+            {
+                markdown.push_str(&format!("\n\nunderlying Rust type: `rust::{}`", rust_path));
+            }
 
             return Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
@@ -828,6 +1122,44 @@ impl LanguageServer for IncanLanguageServer {
         }
 
         Ok(None)
+    }
+
+    async fn document_symbol(&self, params: DocumentSymbolParams) -> Result<Option<DocumentSymbolResponse>> {
+        let uri = &params.text_document.uri;
+        let docs = self.documents.read().await;
+        let doc = match docs.get(uri) {
+            Some(doc) => doc,
+            None => return Ok(None),
+        };
+        let ast = match &doc.ast {
+            Some(ast) => ast,
+            None => return Ok(None),
+        };
+
+        let mut symbols = Vec::new();
+        for decl in &ast.declarations {
+            let Some(kind) = lsp_symbol_kind_for_decl(&decl.node) else {
+                continue;
+            };
+            let Some((name, detail)) = lsp_document_symbol_name_and_detail(&decl.node) else {
+                continue;
+            };
+            let range = span_to_range(&doc.source, decl.span.start, decl.span.end);
+            #[allow(deprecated)]
+            let symbol = DocumentSymbol {
+                name,
+                detail: Some(detail),
+                kind,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range: range,
+                children: None,
+            };
+            symbols.push(symbol);
+        }
+
+        Ok(Some(DocumentSymbolResponse::Nested(symbols)))
     }
 
     async fn goto_definition(&self, params: GotoDefinitionParams) -> Result<Option<GotoDefinitionResponse>> {
@@ -901,6 +1233,11 @@ impl LanguageServer for IncanLanguageServer {
         // ---- Context: decorator completions (`@` at line start) ----
         if let Some(decorator_items) = decorator_completions(&line_prefix) {
             return Ok(Some(CompletionResponse::Array(decorator_items)));
+        }
+
+        // ---- Context: Rust-origin member completions (`Alias.<member>`) ----
+        if let Some(rust_member_items) = rust_member_completions(&line_prefix, &doc.rust_origin_symbols) {
+            return Ok(Some(CompletionResponse::Array(rust_member_items)));
         }
 
         // ---- General completions (not in a specific context) ----
@@ -1073,9 +1410,61 @@ impl LanguageServer for IncanLanguageServer {
                             None,
                         );
                     }
+                    Declaration::TypeAlias(alias) => {
+                        push_completion(
+                            &mut items,
+                            &mut seen,
+                            &alias.name,
+                            CompletionItemKind::TYPE_PARAMETER,
+                            Some(format!("type {} = {}", alias.name, format_type(&alias.target.node))),
+                            None,
+                        );
+                    }
+                    Declaration::Newtype(nt) => {
+                        let kind = if nt.is_rusttype { "rusttype" } else { "newtype" };
+                        push_completion(
+                            &mut items,
+                            &mut seen,
+                            &nt.name,
+                            CompletionItemKind::STRUCT,
+                            Some(format!("{} {} = {}", kind, nt.name, format_type(&nt.underlying.node))),
+                            None,
+                        );
+                    }
                     _ => {}
                 }
             }
+        }
+
+        // Add local rust-import bindings with canonical-path details.
+        for rust_symbol in &doc.rust_origin_symbols {
+            let (kind, detail) = if let Some(metadata) = &rust_symbol.info.metadata {
+                let item_kind = rust_item_kind_label(&metadata.kind);
+                (
+                    match &metadata.kind {
+                        RustItemKind::Module(_) => CompletionItemKind::MODULE,
+                        RustItemKind::Type(_) => CompletionItemKind::CLASS,
+                        RustItemKind::Function(_) => CompletionItemKind::FUNCTION,
+                        RustItemKind::Constant { .. } => CompletionItemKind::CONSTANT,
+                        RustItemKind::Trait(_) => CompletionItemKind::INTERFACE,
+                        RustItemKind::Unsupported { .. } => CompletionItemKind::REFERENCE,
+                    },
+                    format!("rust::{} ({item_kind})", rust_symbol.info.path),
+                )
+            } else {
+                (
+                    CompletionItemKind::REFERENCE,
+                    format!("rust::{} (metadata unavailable)", rust_symbol.info.path),
+                )
+            };
+            push_completion(
+                &mut items,
+                &mut seen,
+                &rust_symbol.local_name,
+                kind,
+                Some(detail),
+                Some(format!("0_{}", rust_symbol.local_name)),
+            );
         }
 
         // Add `std` as a module name so import completions can start from it.

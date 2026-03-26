@@ -36,9 +36,14 @@ help: build-quiet  ## Display this help message
 # Build
 # =============================================================================
 
-.PHONY: build  ## build - Debug build (fast compile)
+.PHONY: build  ## build - Debug build (compiler + incan-lsp for editor parity)
 build:
 	@echo "\033[1mBuilding (debug)...\033[0m"
+	@cargo build --features lsp
+
+.PHONY: build-fast  ## build - Debug build (compiler only, fastest local loop)
+build-fast:
+	@echo "\033[1mBuilding compiler only (debug)...\033[0m"
 	@cargo build
 
 .PHONY: build-quiet
@@ -168,6 +173,12 @@ test:
 	@echo "\033[1mRunning tests...\033[0m"
 	@$(TEST_CMD)
 
+.PHONY: test-rust-metadata  ## test - Run focused rust-metadata regression tests
+test-rust-metadata:
+	@echo "\033[1mRunning rust-metadata focused tests...\033[0m"
+	@cargo test --lib --features rust-metadata frontend::typechecker::tests::test_rust_metadata_unavailable_stays_permissive_for_method_calls
+	@cargo test --lib --features rust-metadata frontend::typechecker::tests::test_rusttype_return_coercion_recorded_for_generic_newtype_method_call
+
 .PHONY: examples  ## test - Smoke test examples (check all, run entrypoints with timeout)
 examples: release
 	@echo "\033[1mRunning examples...\033[0m"
@@ -191,6 +202,7 @@ benchmarks-incan: release
 .PHONY: smoke-test-core
 smoke-test-core:
 	@$(MAKE) release
+	@$(MAKE) test-rust-metadata
 	@echo "\033[1mRunning Incan assertion canary...\033[0m"
 	@INCAN_NO_BANNER=1 ./target/release/incan test tests/fixtures/test_assert_canary.incn
 	@echo "\033[32m✓ Incan assertion canary passed\033[0m"

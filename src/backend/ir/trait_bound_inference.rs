@@ -406,6 +406,10 @@ fn scan_expr_for_bounds(
             scan_expr_for_bounds(expr, type_params, params, bounds_map);
         }
 
+        IrExprKind::InteropCoerce { expr, .. } => {
+            scan_expr_for_bounds(expr, type_params, params, bounds_map);
+        }
+
         // ---- Range: recurse ----
         IrExprKind::Range { start, end, .. } => {
             if let Some(s) = start {
@@ -706,6 +710,9 @@ fn collect_calls_in_expr(
             if let Some(v) = value {
                 recurse_expr(v, result);
             }
+        }
+        IrExprKind::InteropCoerce { expr, .. } => {
+            recurse_expr(expr, result);
         }
         // Other expression kinds are not recursed into for transitive inference.
         // The primary call pattern (direct function calls) is covered above.

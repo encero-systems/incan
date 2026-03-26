@@ -167,7 +167,9 @@ impl<'a> IrEmitter<'a> {
     ///
     /// Handles simple bounds like `PartialEq` and bounds with associated types like `std::ops::Add<Output = T>`.
     fn emit_trait_bound(&self, bound: &super::super::decl::IrTraitBound) -> TokenStream {
-        if bound.trait_path == "Static" {
+        if matches!(bound.origin, super::super::decl::IrTraitBoundOrigin::RustCapability)
+            && bound.trait_path == "Static"
+        {
             return quote! { 'static };
         }
 

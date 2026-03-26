@@ -466,6 +466,9 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
 ///
 /// A [`Conversion`] strategy indicating what transformation (if any) to apply
 pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: ConversionContext) -> Conversion {
+    if matches!(expr.kind, IrExprKind::InteropCoerce { .. }) {
+        return Conversion::None;
+    }
     match context {
         ConversionContext::IncanFunctionArg => {
             // Incan functions expect owned values

@@ -52,7 +52,8 @@ mod structs_enums;
 use proc_macro2::{Literal, TokenStream};
 use quote::{ToTokens, format_ident, quote};
 
-use super::super::expr::{IrExprKind, Literal as IrLiteral, TypedExpr, UnaryOp, VarRefKind};
+use super::super::decl::IrInteropAdapterKind;
+use super::super::expr::{IrExprKind, IrInteropCoercionKind, Literal as IrLiteral, TypedExpr, UnaryOp, VarRefKind};
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
 
@@ -295,6 +296,50 @@ impl<'a> IrEmitter<'a> {
                 Ok(quote! { #e as #t })
             }
 
+            IrExprKind::InteropCoerce {
+                expr: inner,
+                from_ty: _,
+                to_ty: _,
+                kind,
+            } => {
+                let inner = self.emit_expr(inner)?;
+                match kind {
+                    IrInteropCoercionKind::Builtin { policy, rust_target } => {
+                        let rust_target = rust_target.replace(' ', "");
+                        let emitted = match policy {
+                            incan_core::interop::CoercionPolicy::Exact => match rust_target.as_str() {
+                                "String" | "std::string::String" => {
+                                    quote! { (#inner).to_string() }
+                                }
+                                "Vec<u8>" | "std::vec::Vec<u8>" => {
+                                    quote! { (#inner).to_vec() }
+                                }
+                                _ => quote! { #inner },
+                            },
+                            incan_core::interop::CoercionPolicy::Borrow => match rust_target.as_str() {
+                                "&str" | "&[u8]" => quote! { #inner },
+                                _ => quote! { &#inner },
+                            },
+                            incan_core::interop::CoercionPolicy::Lossy => match rust_target.as_str() {
+                                "f32" => quote! { (#inner) as f32 },
+                                _ => quote! { #inner },
+                            },
+                        };
+                        Ok(emitted)
+                    }
+                    IrInteropCoercionKind::AdapterCall { adapter, adapter_kind } => {
+                        let adapter = self.emit_expr(adapter)?;
+                        let call = quote! { #adapter(#inner) };
+                        let emitted = match adapter_kind {
+                            IrInteropAdapterKind::Via => call,
+                            IrInteropAdapterKind::Try => quote! { #call? },
+                        };
+                        Ok(emitted)
+                    }
+                    IrInteropCoercionKind::RustTypeUnwrap => Ok(quote! { #inner }),
+                }
+            }
+
             IrExprKind::Format { parts } => self.emit_format_expr(parts),
 
             IrExprKind::Literal(lit) => match lit {
@@ -317,5 +362,54 @@ impl<'a> IrEmitter<'a> {
                 })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::ir::FunctionRegistry;
+    use crate::backend::ir::expr::VarAccess;
+
+    #[test]
+    fn interop_try_adapter_emits_question_mark() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::InteropCoerce {
+                expr: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "value".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::String,
+                )),
+                from_ty: IrType::String,
+                to_ty: IrType::Struct("Email".to_string()),
+                kind: IrInteropCoercionKind::AdapterCall {
+                    adapter: Box::new(TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "email_parse".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Unknown,
+                    )),
+                    adapter_kind: IrInteropAdapterKind::Try,
+                },
+            },
+            IrType::Struct("Email".to_string()),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        assert!(
+            emitted.to_string().contains('?'),
+            "expected try-adapter emission to include `?`, got `{}`",
+            emitted
+        );
+        Ok(())
     }
 }

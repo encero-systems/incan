@@ -109,6 +109,7 @@ fn trait_info(tr: Trait, db: &RootDatabase, dt: DisplayTarget) -> RustTraitInfo 
                 if !is_exported_rust_api(c.visibility(db)) {
                     continue;
                 }
+                // Anonymous or nameless associated consts in extracted metadata surface as empty `name`.
                 let n = c.name(db).map(|name| name.as_str().to_owned()).unwrap_or_default();
                 items.push(RustTraitAssoc::Constant {
                     name: n,

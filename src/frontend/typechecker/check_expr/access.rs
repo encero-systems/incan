@@ -10,6 +10,7 @@ use crate::frontend::typechecker::helpers::{
     collection_name, collection_type_id, is_frozen_bytes, is_frozen_str, is_intlike_for_index, list_ty, option_ty,
     string_method_return,
 };
+use incan_core::interop::{CoercionPolicy, RustItemKind};
 use incan_core::lang::conventions;
 use incan_core::lang::magic_methods;
 use incan_core::lang::surface::types as surface_types;
@@ -23,7 +24,49 @@ use incan_core::lang::{enum_helpers, surface::option_methods};
 
 use super::TypeChecker;
 
+/// Diagnostic label for a Rust path receiver in type errors (`rust::{path}`).
+fn rust_receiver_display(path: &str) -> String {
+    format!("rust::{path}")
+}
+
 impl TypeChecker {
+    /// Resolve and validate a method call on a Rust metadata-backed path.
+    ///
+    /// Returns:
+    /// - `None` when Rust metadata is unavailable (caller should preserve permissive fallback behavior)
+    /// - `Some(ty)` when metadata exists and the call was resolved (or diagnosed as invalid)
+    fn resolve_rust_path_method_call(
+        &mut self,
+        rust_path: &str,
+        method: &str,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let metadata = self.rust_item_metadata_for_path(rust_path)?;
+        match &metadata.kind {
+            RustItemKind::Type(_) => {
+                let Some(sig) = self.rust_method_signature(rust_path, method) else {
+                    // Metadata only covers inherent methods; trait-provided or extension methods are
+                    // not yet extracted. Stay permissive rather than false-positiving on valid calls.
+                    return Some(ResolvedType::Unknown);
+                };
+                Some(self.validate_rust_method_call(rust_path, method, &sig, args, arg_types, span))
+            }
+            RustItemKind::Unsupported { description } => {
+                self.errors.push(errors::rust_item_shape_not_supported(
+                    rust_path,
+                    description.as_str(),
+                    span,
+                ));
+                Some(ResolvedType::Unknown)
+            }
+            // Function, Trait, Module, Constant: metadata is incomplete for method surfaces.
+            // Stay permissive and let rustc catch genuine errors at compile time.
+            _ => Some(ResolvedType::Unknown),
+        }
+    }
+
     /// Validate method call arguments against a method signature.
     fn validate_method_call_args(
         &mut self,
@@ -169,6 +212,64 @@ impl TypeChecker {
             }
         }
         None
+    }
+
+    /// Resolve a newtype/rusttype rebound method alias to its target method name.
+    fn resolve_newtype_method_name<'a>(&self, newtype: &'a NewtypeInfo, method: &'a str) -> &'a str {
+        newtype
+            .method_rebindings
+            .get(method)
+            .map(String::as_str)
+            .unwrap_or(method)
+    }
+
+    /// When a `rusttype` method resolves against an underlying Rust method with metadata, compare the Rust return type
+    /// against the Incan-declared return type. If they differ in a coercible way (e.g. `&str` vs `String`), record a
+    /// return coercion for `span` so lowering can wrap the call in `InteropCoerce`.
+    ///
+    /// This runs unconditionally but is a no-op when the metadata cache is empty (i.e. when the `rust-metadata` feature
+    /// is not enabled or no workspace was loaded).
+    fn maybe_record_rusttype_return_coercion(
+        &mut self,
+        nt: &NewtypeInfo,
+        method: &str,
+        incan_ret: &ResolvedType,
+        span: Span,
+    ) {
+        // Only relevant for rusttypes backed by a known Rust path.
+        let ResolvedType::RustPath(underlying_path) = &nt.underlying else {
+            return;
+        };
+        // Consult metadata for the actual Rust return type.
+        let Some(sig) = self.rust_method_signature(underlying_path, method) else {
+            return;
+        };
+        let normalized = sig.return_type.replace(' ', "");
+        // ---- `&str` → `String` (Incan `str` = Rust `String`) ----
+        let is_borrowed_str = normalized == "&str" || (normalized.starts_with("&'") && normalized.ends_with("str"));
+        if is_borrowed_str && matches!(incan_ret, ResolvedType::Str) {
+            self.type_info.rust_return_coercions.insert(
+                (span.start, span.end),
+                crate::frontend::typechecker::RustArgCoercionInfo {
+                    rust_target_type: "String".to_string(),
+                    target_type: ResolvedType::Str,
+                    kind: crate::frontend::typechecker::RustArgCoercionKind::Builtin(CoercionPolicy::Exact),
+                },
+            );
+            return;
+        }
+        // ---- `&[u8]` → `Vec<u8>` (Incan `bytes` = Rust `Vec<u8>`) ----
+        let is_borrowed_bytes = normalized == "&[u8]" || (normalized.starts_with("&'") && normalized.ends_with("[u8]"));
+        if is_borrowed_bytes && matches!(incan_ret, ResolvedType::Bytes) {
+            self.type_info.rust_return_coercions.insert(
+                (span.start, span.end),
+                crate::frontend::typechecker::RustArgCoercionInfo {
+                    rust_target_type: "Vec<u8>".to_string(),
+                    target_type: ResolvedType::Bytes,
+                    kind: crate::frontend::typechecker::RustArgCoercionKind::Builtin(CoercionPolicy::Exact),
+                },
+            );
+        }
     }
 
     /// Normalize a tuple index (supports negative indices) and emit bounds errors.
@@ -340,25 +441,43 @@ impl TypeChecker {
                 // Metadata backend disabled/unavailable: preserve permissive RFC 005 behavior.
                 return ResolvedType::Unknown;
             };
-            if let incan_core::interop::RustItemKind::Module(module) = meta.kind
-                && let Some(child) = module.children.iter().find(|c| c.name == field)
-            {
-                return match child.kind_hint {
-                    incan_core::interop::RustModuleChildKind::Module
-                    | incan_core::interop::RustModuleChildKind::Type
-                    | incan_core::interop::RustModuleChildKind::Trait
-                    | incan_core::interop::RustModuleChildKind::Other => {
-                        ResolvedType::RustPath(format!("{path}::{field}"))
+            match &meta.kind {
+                RustItemKind::Module(module) => {
+                    if let Some(child) = module.children.iter().find(|c| c.name == field) {
+                        return match child.kind_hint {
+                            incan_core::interop::RustModuleChildKind::Module
+                            | incan_core::interop::RustModuleChildKind::Type
+                            | incan_core::interop::RustModuleChildKind::Trait
+                            | incan_core::interop::RustModuleChildKind::Other => {
+                                ResolvedType::RustPath(format!("{path}::{field}"))
+                            }
+                            incan_core::interop::RustModuleChildKind::Function => {
+                                ResolvedType::Function(Vec::new(), Box::new(ResolvedType::Unknown))
+                            }
+                            incan_core::interop::RustModuleChildKind::Constant => ResolvedType::Unknown,
+                        };
                     }
-                    incan_core::interop::RustModuleChildKind::Function => {
-                        ResolvedType::Function(Vec::new(), Box::new(ResolvedType::Unknown))
+                    // Module membership from rust-analyzer is authoritative.
+                    self.errors
+                        .push(errors::missing_field(rust_receiver_display(path).as_str(), field, span));
+                    return ResolvedType::Unknown;
+                }
+                RustItemKind::Type(_) => {
+                    if let Some(sig) = self.rust_associated_function_signature(path, field) {
+                        return self.resolved_function_type_from_rust_sig(&sig, false);
                     }
-                    incan_core::interop::RustModuleChildKind::Constant => ResolvedType::Unknown,
-                };
-            }
-            self.errors
-                .push(errors::missing_field(format!("rust::{path}").as_str(), field, span));
-            return ResolvedType::Unknown;
+                    // Metadata only covers inherent methods; field may be a constant, type alias, or trait-provided
+                    // item not yet extracted. Stay permissive.
+                    return ResolvedType::Unknown;
+                }
+                RustItemKind::Unsupported { description } => {
+                    self.errors
+                        .push(errors::rust_item_shape_not_supported(path, description.as_str(), span));
+                    return ResolvedType::Unknown;
+                }
+                // Function, Trait, Constant: metadata coverage is incomplete, stay permissive.
+                _ => return ResolvedType::Unknown,
+            };
         }
 
         let resolve_on = |checker: &mut Self, ty: &ResolvedType| -> ResolvedType {
@@ -458,20 +577,11 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
         if let ResolvedType::RustPath(path) = &base_ty {
-            let Some(ret) = self.rust_method_return_type(path, method) else {
-                // With rust-metadata enabled, unresolved Rust methods should surface as diagnostics.
-                if cfg!(feature = "rust-metadata") {
-                    self.errors
-                        .push(errors::missing_method(format!("rust::{path}").as_str(), method, span));
-                }
+            let Some(ret) = self.resolve_rust_path_method_call(path, method, args, &arg_types, span) else {
+                // Metadata backend disabled/unavailable: preserve permissive RFC 005 behavior.
                 return ResolvedType::Unknown;
             };
-            if !matches!(ret, ResolvedType::Unknown) {
-                return ret;
-            }
-            self.errors
-                .push(errors::missing_method(format!("rust::{path}").as_str(), method, span));
-            return ResolvedType::Unknown;
+            return ret;
         }
         // Trait default methods typecheck against `Self`, so be permissive here too.
         if matches!(base_ty, ResolvedType::SelfType) {
@@ -711,14 +821,19 @@ impl TypeChecker {
                     }
                 }
                 TypeInfo::Newtype(newtype) => {
-                    if let Some(ret) = self.resolve_named_method(&newtype.methods, None, method, args, &arg_types, span)
+                    let resolved_method = self.resolve_newtype_method_name(&newtype, method);
+                    if let Some(ret) =
+                        self.resolve_named_method(&newtype.methods, None, resolved_method, args, &arg_types, span)
                     {
+                        if newtype.is_rusttype {
+                            self.maybe_record_rusttype_return_coercion(&newtype, resolved_method, &ret, span);
+                        }
                         return ret;
                     }
                     if newtype.is_rusttype
                         && let ResolvedType::RustPath(path) = &newtype.underlying
-                        && let Some(ret) = self.rust_method_return_type(path, method)
-                        && !matches!(ret, ResolvedType::Unknown)
+                        && let Some(ret) =
+                            self.resolve_rust_path_method_call(path, resolved_method, args, &arg_types, span)
                     {
                         return ret;
                     }
@@ -767,14 +882,21 @@ impl TypeChecker {
                         return ResolvedType::Str;
                     }
                     TypeInfo::Newtype(nt) => {
-                        if let Some(ret) = self.resolve_named_method(&nt.methods, None, method, args, &arg_types, span)
+                        let resolved_method = self.resolve_newtype_method_name(&nt, method);
+                        if let Some(ret) =
+                            self.resolve_named_method(&nt.methods, None, resolved_method, args, &arg_types, span)
                         {
+                            // When the method body is abstract and the underlying Rust type is known,
+                            // check whether the actual Rust return type needs a coercion (e.g. &str → String).
+                            if nt.is_rusttype {
+                                self.maybe_record_rusttype_return_coercion(&nt, resolved_method, &ret, span);
+                            }
                             return ret;
                         }
                         if nt.is_rusttype
                             && let ResolvedType::RustPath(path) = &nt.underlying
-                            && let Some(ret) = self.rust_method_return_type(path, method)
-                            && !matches!(ret, ResolvedType::Unknown)
+                            && let Some(ret) =
+                                self.resolve_rust_path_method_call(path, resolved_method, args, &arg_types, span)
                         {
                             return ret;
                         }

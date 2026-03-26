@@ -585,6 +585,16 @@ pub fn missing_method(type_name: &str, method: &str, span: Span) -> CompileError
         .with_hint("If this is your type, implement the method on the class/model/newtype")
 }
 
+/// The imported Rust item shape is known but currently unsupported in this language surface.
+pub fn rust_item_shape_not_supported(path: &str, description: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Rust item `rust::{path}` has unsupported shape `{description}` for this operation"),
+        span,
+    )
+    .with_hint("Import a module, type, function, or constant instead")
+    .with_note("RFC 041 intentionally limits which Rust item shapes are typechecked directly")
+}
+
 /// `type X = rusttype Y` requires `Y` to resolve to a Rust-origin imported item.
 pub fn rusttype_requires_rust_backing(type_name: &str, span: Span) -> CompileError {
     CompileError::type_error(
@@ -601,6 +611,161 @@ pub fn interop_block_requires_rusttype(type_name: &str, span: Span) -> CompileEr
         span,
     )
     .with_hint("Use `type X = rusttype Y` when declaring host interop edges")
+}
+
+/// `interop:` adapters must be simple callable references (`name` or `Type.name`).
+pub fn interop_adapter_ref_must_be_name_or_member(span: Span) -> CompileError {
+    CompileError::type_error(
+        "Interop adapter reference must be a callable name (`parse`) or member path (`Email.parse`)".to_string(),
+        span,
+    )
+}
+
+/// Qualified adapter refs must target the declaring rusttype surface.
+pub fn interop_adapter_wrong_owner(type_name: &str, owner: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Interop adapter reference `{owner}.*` must use the declaring rusttype `{type_name}`"),
+        span,
+    )
+    .with_hint(format!("Use `{type_name}.adapter_name` or a short-form adapter name"))
+}
+
+/// Short-form adapter names must resolve to exactly one callable.
+pub fn ambiguous_interop_adapter_short_name(
+    type_name: &str,
+    adapter_name: &str,
+    candidate_count: usize,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Ambiguous short-form interop adapter `{adapter_name}` on `{type_name}` ({candidate_count} candidates)"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Use a qualified adapter reference, e.g. `{type_name}.{adapter_name}`"
+    ))
+}
+
+/// `from S ...` adapters must be associated/free callables, not receiver methods.
+pub fn interop_from_adapter_requires_associated_callable(type_name: &str, adapter: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("`from` interop adapter `{adapter}` on `{type_name}` cannot require `self`"),
+        span,
+    )
+    .with_hint("Use an associated function or free callable that accepts the source type")
+}
+
+/// Adapter arity must match interop direction semantics.
+pub fn interop_adapter_arity_mismatch(
+    type_name: &str,
+    adapter: &str,
+    expected: usize,
+    found: usize,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!("Interop adapter `{adapter}` on `{type_name}` expects {expected} argument(s), got {found}"),
+        span,
+    )
+}
+
+/// Adapter input type must match the declared edge source.
+pub fn interop_adapter_input_mismatch(
+    type_name: &str,
+    adapter: &str,
+    expected: &str,
+    found: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Interop adapter `{adapter}` on `{type_name}` has incompatible input type: expected `{expected}`, found `{found}`"
+        ),
+        span,
+    )
+}
+
+/// Adapter output type must match the declared edge target.
+pub fn interop_adapter_output_mismatch(
+    type_name: &str,
+    adapter: &str,
+    expected: &str,
+    found: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Interop adapter `{adapter}` on `{type_name}` has incompatible output type: expected `{expected}`, found `{found}`"
+        ),
+        span,
+    )
+}
+
+/// `via` adapters are infallible and must not return `Result`/`Option`.
+pub fn interop_via_adapter_must_be_infallible(
+    type_name: &str,
+    adapter: &str,
+    found_return: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "`via` interop adapter `{adapter}` on `{type_name}` must be infallible (found return type `{found_return}`)"
+        ),
+        span,
+    )
+    .with_hint("Use `try` for fallible adapters that return `Result[...]` or `Option[...]`")
+}
+
+/// `try` adapters must return `Result` or `Option`.
+pub fn interop_try_adapter_requires_result_or_option(
+    type_name: &str,
+    adapter: &str,
+    found_return: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "`try` interop adapter `{adapter}` on `{type_name}` must return `Result[...]` or `Option[...]` (found `{found_return}`)"
+        ),
+        span,
+    )
+}
+
+/// Duplicate edge declarations are not allowed.
+pub fn duplicate_interop_edge(
+    type_name: &str,
+    direction: &str,
+    edge_ty: &str,
+    first_span: Span,
+    second_span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!("Duplicate interop edge `{direction} {edge_ty}` on `{type_name}`"),
+        second_span,
+    )
+    .with_note(format!("First declaration at span: {:?}", first_span))
+}
+
+/// Conflicting edge declarations for the same directed type are rejected.
+pub fn conflicting_interop_edge(
+    type_name: &str,
+    direction: &str,
+    edge_ty: &str,
+    first_adapter: &str,
+    second_adapter: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!("Conflicting interop edges `{direction} {edge_ty}` on `{type_name}`"),
+        span,
+    )
+    .with_note(format!(
+        "Adapters `{first_adapter}` and `{second_adapter}` both target the same edge"
+    ))
+    .with_hint("Keep one canonical adapter edge for each directed type")
 }
 
 pub fn duplicate_alias(type_name: &str, alias: &str, first_span: Span, second_span: Span) -> CompileError {

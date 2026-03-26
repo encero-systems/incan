@@ -1,0 +1,22 @@
+# RFC 041: `std.rust` capability markers in generic `with` clauses (surface + codegen smoke).
+# Note: `std.rust` is the Incan namespace for bound markers (`Send`, `Sync`, ...). That is not `rust::std::...`,
+# which imports Rust's standard library as foreign items (e.g. `Instant`).
+from std.rust import Send, Sync, Static, Fn, FnMut, FnOnce
+
+def run[T with Send, Sync](_t: T) -> None:
+  pass
+
+def run_static[T with Send, Static](_t: T) -> None:
+  pass
+
+def run_fn[F with Fn[int]](_f: F) -> None:
+  pass
+
+def run_fn_mut[F with FnMut[int], Send](_f: F) -> None:
+  pass
+
+def run_fn_once[F with FnOnce[int], Static](_f: F) -> None:
+  pass
+
+def main() -> None:
+  pass

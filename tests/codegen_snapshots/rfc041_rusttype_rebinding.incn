@@ -1,0 +1,13 @@
+from rust::mail import Sender as RustSender
+
+type Sender = rusttype RustSender:
+    send_now = try_send
+
+    def try_send(self, value: int) -> Result[None, str]:
+        ...
+
+def push(sender: Sender, value: int) -> Result[None, str]:
+    return sender.send_now(value)
+
+def main() -> None:
+    pass

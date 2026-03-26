@@ -1,0 +1,18 @@
+from rust::std::string import String as RustString
+
+type Name = rusttype RustString:
+    def parse(raw: str) -> Result[Name, str]:
+        ...
+
+    def as_str(self) -> str:
+        ...
+
+    interop:
+        from str try Name.parse
+        into str via Name.as_str
+
+def takes_name(name: Name) -> None:
+    println(name.as_str())
+
+def main() -> None:
+    pass

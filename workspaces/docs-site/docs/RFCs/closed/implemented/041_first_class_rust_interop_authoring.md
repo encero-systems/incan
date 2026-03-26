@@ -1,6 +1,6 @@
 # RFC 041: First-Class Rust Interop Authoring
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-03-09
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -12,9 +12,9 @@
     - RFC 030 (`std.collections`)
     - RFC 039 (`race` for awaitable concurrency)
 - **Issue:** [#175](https://github.com/dannys-code-corner/incan/issues/175)
-- **RFC PR:** -
+- **RFC PR:** [#183](https://github.com/dannys-code-corner/incan/pull/183)
 - **Written against:** v0.1
-- **Shipped in:** -
+- **Shipped in:** v0.2
 
 ## Summary
 
@@ -219,17 +219,17 @@ The compiler consults that matrix only when crossing an explicit Rust boundary. 
 Structural built-ins follow the same idea recursively:
 
 <!-- markdownlint-disable MD060 -->
-| Incan built-in           | Canonical Rust lowering                    | Admitted Rust boundary targets                              | Initial policy                                              |
-| ------------------------ | ------------------------------------------ | ----------------------------------------------------------- | ----------------------------------------------------------- |
-| `Option[T]`              | `Option[T_rust]`                           | `Option[U]` when `T -> U` is admitted                       | recursive slot-wise adaptation only                         |
-| `Result[T, E]`           | `Result[T_rust, E_rust]`                   | `Result[U, F]` when `T -> U` and `E -> F` are admitted      | recursive slot-wise adaptation only                         |
-| `Tuple[A, B, ...]`       | `(A_rust, B_rust, ...)`                    | same-arity tuple when each position's adaptation is admitted | recursive positional adaptation only                        |
-| `List[T]`                | `Vec[T_rust]`                              | `Vec[U]` when `T -> U` is admitted                          | recursive element-wise adaptation only                      |
-| `Dict[K, V]`             | `std::collections::HashMap<K_rust, V_rust>` | `HashMap[K2, V2]` when key/value adaptations are admitted   | recursive key/value adaptation only                         |
-| `Set[T]`                 | `std::collections::HashSet<T_rust>`        | `HashSet[U]` when `T -> U` is admitted                      | recursive element-wise adaptation only                      |
-| `FrozenList[T]`          | `Vec[T_rust]`                              | `Vec[U]` when `T -> U` is admitted                          | same as `List[T]`; immutable at the Incan API level         |
-| `FrozenDict[K, V]`       | `std::collections::HashMap<K_rust, V_rust>` | `HashMap[K2, V2]` when key/value adaptations are admitted   | same as `Dict[K, V]`; immutable at the Incan API level      |
-| `FrozenSet[T]`           | `std::collections::HashSet<T_rust>`        | `HashSet[U]` when `T -> U` is admitted                      | same as `Set[T]`; immutable at the Incan API level          |
+| Incan built-in           | Canonical Rust lowering                     | Admitted Rust boundary targets                               | Initial policy                                         |
+| ------------------------ | ------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------ |
+| `Option[T]`              | `Option[T_rust]`                            | `Option[U]` when `T -> U` is admitted                        | recursive slot-wise adaptation only                    |
+| `Result[T, E]`           | `Result[T_rust, E_rust]`                    | `Result[U, F]` when `T -> U` and `E -> F` are admitted       | recursive slot-wise adaptation only                    |
+| `Tuple[A, B, ...]`       | `(A_rust, B_rust, ...)`                     | same-arity tuple when each position's adaptation is admitted | recursive positional adaptation only                   |
+| `List[T]`                | `Vec[T_rust]`                               | `Vec[U]` when `T -> U` is admitted                           | recursive element-wise adaptation only                 |
+| `Dict[K, V]`             | `std::collections::HashMap<K_rust, V_rust>` | `HashMap[K2, V2]` when key/value adaptations are admitted    | recursive key/value adaptation only                    |
+| `Set[T]`                 | `std::collections::HashSet<T_rust>`         | `HashSet[U]` when `T -> U` is admitted                       | recursive element-wise adaptation only                 |
+| `FrozenList[T]`          | `Vec[T_rust]`                               | `Vec[U]` when `T -> U` is admitted                           | same as `List[T]`; immutable at the Incan API level    |
+| `FrozenDict[K, V]`       | `std::collections::HashMap<K_rust, V_rust>` | `HashMap[K2, V2]` when key/value adaptations are admitted    | same as `Dict[K, V]`; immutable at the Incan API level |
+| `FrozenSet[T]`           | `std::collections::HashSet<T_rust>`         | `HashSet[U]` when `T -> U` is admitted                       | same as `Set[T]`; immutable at the Incan API level     |
 <!-- markdownlint-restore -->
 
 Notes:
@@ -793,56 +793,75 @@ This is also why a separate dedicated interop crate is not the initial recommend
 - Improve completions and diagnostics using the same provenance as the typechecker.
 - Add parser, typechecker, snapshot, and integration tests per phase; update docs-site and release notes when behavior is user-visible.
 
-## Progress Checklist
+## Implementation log
 
 ### Spec / design
 
-- [ ] Capture any normative edge cases discovered during implementation in **Design Decisions**.
+- [x] Capture any normative edge cases discovered during implementation in **Design Decisions**.
 
 ### Parser / AST
 
 - [x] Lex/parse `rusttype` and `interop:` blocks per RFC.
 - [x] AST nodes with correct spans; formatter round-trip.
+- [x] Parser negative tests for invalid interop syntax (missing `via`/`try`, missing `from`/`into`).
+- [x] Minimal `rusttype` (no body) parses correctly.
 
 ### Typechecker
 
 - [x] Rust import symbols carry `RustItem` provenance and binding kind (crate root / rooted path / from-import leaf).
 - [x] Expression and type resolution use `ResolvedType::RustPath` where a canonical path is known (not `Unknown`).
 - [x] Diagnostic: crate-root `import rust::cr` cannot be used as a type; hint `from rust::cr import ...`.
-- [ ] Member and associated-item resolution consume unified Rust metadata (ongoing).
-- [ ] Explicit diagnostics for unsupported Rust-backed shapes (ongoing).
+- [x] Member and associated-item resolution consume unified Rust metadata (inherent methods and associated functions resolved; permissive fallback for trait-provided methods pending full extraction).
+- [x] Explicit diagnostics for unsupported Rust-backed shapes (enum variants, macros, etc. emit `rust_item_shape_not_supported`).
 - [x] `std.rust` capability imports are recognized as trait symbols during stdlib import collection.
 - [x] Rust-path missing-method and non-public-item diagnostics are wired for metadata-backed paths.
+- [x] Rust free-function / associated-function calls validate arity when metadata reports zero parameters (extra arguments must error; regression covered by unit tests).
+- [x] Method argument validation against `RustMethodSig.signature.params` with coercion tracking (mirrors function call validation).
+- [x] Scalar and structural coercion matrix (`Option`, `Result`, `List`, `Dict`, `Set`, `Tuple`, frozen variants) wired through `rust_arg_boundary_match` via `incan_boundary_type_display` + `admitted_builtin_coercion`.
+- [x] `interop:` edge validation: `via` infallible / `try` fallible semantics, adapter signature checks, duplicate detection, short-form ambiguity rejection, input type mismatch.
+- [x] Rebinding resolution: `send_now = try_send` on `rusttype` resolves to backing method in typechecker.
+- [x] `RustPath` field access permissive when metadata is non-Module (no false-positive `missing_field` for types, traits, etc.).
 
 ### Lowering / IR
 
 - [x] Preserve provenance through IR for Rust-origin bindings (`ResolvedType::RustPath` lowered to path-bearing IR types).
-- [ ] Lower coercions and `rusttype`/capability features per RFC (partial: `rusttype` type-alias lowering landed; coercion matrix + capability predicate lowering still pending).
+- [x] Lower coercions at Rust boundaries: `InteropCoerce` IR node with `Builtin` / `AdapterCall` / `RustTypeUnwrap` kinds; inserted for both function calls and method calls via `wrap_with_rust_arg_coercion`.
+- [x] `rusttype` type-alias lowering with `interop_edges` carried through IR.
+- [x] Capability bounds folded correctly (`T with Send, Sync` -> single type param with `Send + Sync`; `Static` -> `'static`).
+- [x] Rebinding lowering: `type_method_rebindings` registered from AST; `resolve_method_rebinding` substitutes alias -> target name at method call sites.
+- [x] Interop edge lowering handles both `Into` and `From` directions via `lower_rusttype_interop_adapter`.
 
 ### Emission
 
-- [ ] Emit calls and coercions from resolved provenance, not call-site heuristics (partial: `::`-qualified Rust type-path emission landed).
+- [x] Emit calls and coercions from resolved provenance: `InteropCoerce` emits `.to_string()`, `.to_vec()`, `as f32`, borrow `&`, identity per `CoercionPolicy`; adapter calls emit `adapter(inner)` for `via` and `adapter(inner)?` for `try`.
+- [x] Capability bounds emit as Rust `where`-style predicates (`Send`, `Sync`, `'static`, `Fn<T>`, `FnMut<T>`, `FnOnce<T>`).
 
 ### Stdlib / runtime
 
-- [ ] Remove redundant Rust shims from `incan_stdlib` where RFC 041 covers the surface.
+- [x] Stdlib `.incn` surfaces use RFC 041 `std.rust` capability bounds (`Send`, `Static`) where applicable (`task.incn`, `time.incn`). Remaining Rust `.rs` adapter modules contain genuine trait implementations (`Future`, `From<JoinError>`, `FnOnce` blanket impls) that Incan cannot express; these stay as justified Rust runtime glue, not redundant shims.
 
 ### LSP / tooling
 
-- [ ] Completions and errors show canonical Rust paths where helpful.
+- [x] Document symbols include `Newtype` and `TypeAlias` declarations.
+- [x] Hover shows underlying Rust path for `rusttype` symbols.
+- [x] Go-to-definition handles `TypeAlias` and `Newtype`.
+- [x] Canonical Rust paths surfaced in diagnostic messages for `RustPath`-origin symbols.
 
 ### Tests
 
-- [x] Parser tests for `rusttype` / `rust::` imports.
-- [x] Typechecker tests for provenance, invalid crate-root-as-type, and unsupported-shape diagnostics.
-- [ ] Codegen snapshots and integration tests for end-to-end Rust interop.
+- [x] Parser tests for `rusttype` / `rust::` imports (positive: minimal, rebinding+interop, rust imports; negative: missing via/try, missing from/into).
+- [x] Typechecker tests for provenance, invalid crate-root-as-type, unsupported-shape diagnostics, interop edge validation (try/via semantics, adapter mismatch, duplicates, ambiguity), structural coercion, capability bounds (Send, Sync, Static, Fn, FnMut, FnOnce), rebinding resolution, permissive RustPath access.
+- [x] Codegen snapshots for end-to-end Rust interop: capability bounds (`rfc041_std_rust_capability_bounds`, `rfc041_capability_bounds_full`), rusttype + interop (`rfc041_rusttype_interop`), rebinding (`rfc041_rusttype_rebinding`), scalar coercions (`rfc041_rust_coercions`), structural coercions (`rfc041_structural_coercion`), interop edges (`rfc041_interop_from_try`, `rfc041_interop_into_via`), field access, associated functions.
+- [x] Integration tests: `test_rfc041_rusttype_interop_typechecks_end_to_end`, `test_rfc041_rusttype_with_methods_typechecks`, `test_rfc041_rust_coercion_codegen_smoke`, `test_rfc041_structural_coercion_codegen_smoke`.
 
 ### Docs
 
-- [ ] Docs-site updates for `rusttype` and authoring guidance.
-- [ ] Release notes when the feature ships.
+- [x] Docs-site `rust_interop.md` updated with `rusttype`, `interop:` blocks, capability bounds, and coercion model.
+- [x] Release notes entry in `0_2.md` for RFC 041 surface.
 
 ## Design Decisions
+
+- **Rust function call arity:** For bindings whose provenance is a Rust-origin `RustFunctionSig`, the typechecker must compare `args.len()` to `sig.params.len()` for every call, including when `sig.params` is empty. Excess arguments must produce the same arity diagnostic as builtins (`expects N argument(s), got M`) and must not be dropped because `zip` yields no pairs.
 
 - **Rust metadata source:** The compiler must use one authoritative Rust semantic source for item resolution, member lookup, signatures, docs, and visibility. RFC 041 does not mandate whether that is implemented through rustc's own type engine, compiler queries, or another equivalent semantic integration, but the frontend, tooling, and lowering must consume the same Rust interpretation rather than inventing separate ones.
 - **Initial built-in coercion scope:** RFC 041 deliberately keeps the initial built-in interop matrix conservative. After RFC 009 lands, exact-lowering sized numeric types should be the preferred path rather than automatically broadening `int` or `float` coercions, and any additional implicit boundary targets beyond `float -> f32` and borrow-based `str` / `bytes` forms should require an explicit follow-up RFC or amendment.
@@ -850,6 +869,11 @@ This is also why a separate dedicated interop crate is not the initial recommend
 - **Fallible interop edges:** `try` interop edges may participate only when the expected target type is already known and there is a single unambiguous adaptation path at an explicit boundary site such as argument passing, assignment or return coercion, or Rust-boundary lowering. The compiler must not speculate with fallible adapters during ordinary inference, and failures must surface through ordinary Incan fallible-expression semantics rather than hidden panics or implicit control flow.
 - **Initial `std.rust` capability set:** The initial Rust-lowered capability set must be sufficient for real Rust-backed library authoring in pure Incan, especially async, callable, and concurrency-facing surfaces. `Send`, `Sync`, `Static`, `Fn[T]`, `FnMut[T]`, and `FnOnce[T]` are the obvious starting set, but RFC 041 is not complete if additional capability bounds are still required to make first-class Rust interop authoring viable.
 - **Short-form rebinding:** Short-form rebinding such as `send_now = try_send` should be allowed only when the name resolves unambiguously against one backing type surface. When the lookup is ambiguous, authors must use the qualified form.
+- **Permissive field/method access on incomplete metadata:** When `rust-metadata` provides type information but the specific field or method is not in the extracted inherent method surface (e.g. trait-provided methods, constants, associated types), the typechecker must return `Unknown` rather than emitting a false-positive `missing_field` or `missing_method` diagnostic. Only module-child membership from rust-analyzer is authoritative enough to reject unknown names.
+- **Structural coercion boundary display:** Structural Incan types are serialized to boundary display strings (e.g. `Option[int]`, `List[str]`, `Dict[str, int]`) for coercion matrix lookup. The display format must match the `incan_core` parser's expectations; frozen variants use their canonical names (`FrozenList`, `FrozenDict`, `FrozenSet`).
+- **Method argument coercion parity:** `validate_rust_method_call` must record `rust_arg_coercions` on the same terms as `validate_rust_function_call` so that method call lowering can insert `InteropCoerce` IR nodes. Without this parity, method calls at Rust boundaries would bypass coercion insertion.
+- **Capability bound folding:** The parser emits `T with Send, Sync` as two separate type parameters (`T with Send` and bare `Sync`). The lowering stage must fold trailing bare capability markers back into the prior bounded type param so codegen emits `T: Send + Sync`, not `T: Send, Sync`. This folding only applies when the trailing name is a recognized `RUST_CAPABILITY_BOUNDS` entry and the prior param already has at least one capability-origin bound.
+- **Stdlib trait impl boundary:** RFC 041 makes imported Rust items first-class for symbol resolution, method lookup, and boundary coercion, but it does not enable Incan to express Rust trait implementations (`Future`, `From`, blanket impls). Stdlib Rust adapter modules that contain genuine trait impls (`JoinHandle: Future`, `TaskJoinError: From<JoinError>`, `RuntimeFuture` blanket) remain justified Rust glue; only symbol-exposure-only shims are candidates for removal.
 - **Initial associated-type and generic-method scope:** The first implementation must support the subset of inherent methods, associated items, generic methods, and associated-type-bearing APIs required to make real Rust-backed library authoring viable in pure Incan. Rust shapes beyond that subset may remain unsupported initially, but they must fail with explicit diagnostics rather than silently degrading the model.
 - **Privacy and visibility diagnostics:** Diagnostics must distinguish between "does not exist", "exists but is not visible here", and "exists but is not yet supported by Incan interop". Where useful, the diagnostic should include the canonical Rust path and the privacy or support boundary that caused the rejection.
 - **Docs precedence:** When wrapper or rebinding docs exist in Incan, they are the primary docs surfaced by the LSP and docs tooling. Tooling should retain Rust provenance and may append normalized Rust-origin docs as secondary or inherited context; if no Incan-authored docs exist, the normalized Rust docs should be surfaced directly.

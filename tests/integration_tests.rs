@@ -41,6 +41,17 @@ fn strip_ansi_escapes(text: &str) -> String {
     out
 }
 
+/// Locate the `incan` debug binary, respecting `CARGO_TARGET_DIR` when set.
+fn incan_debug_binary() -> std::path::PathBuf {
+    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
+        let p = std::path::PathBuf::from(&target_dir).join("debug/incan");
+        if p.exists() {
+            return p;
+        }
+    }
+    std::path::PathBuf::from("target/debug/incan")
+}
+
 fn is_incan_fixture(path: &Path) -> bool {
     matches!(path.extension().and_then(|e| e.to_str()), Some("incn") | Some("incan"))
 }
@@ -134,7 +145,7 @@ fn test_invalid_fixtures() {
 
 #[test]
 fn test_help_is_banner_free() {
-    let Ok(output) = Command::new("target/debug/incan").arg("--help").output() else {
+    let Ok(output) = Command::new(incan_debug_binary()).arg("--help").output() else {
         panic!("failed to run incan --help");
     };
     assert!(
@@ -153,7 +164,7 @@ fn test_help_is_banner_free() {
 
 #[test]
 fn test_version_is_single_line_and_banner_free() {
-    let Ok(output) = Command::new("target/debug/incan").arg("--version").output() else {
+    let Ok(output) = Command::new(incan_debug_binary()).arg("--version").output() else {
         panic!("failed to run incan --version");
     };
     assert!(
@@ -173,7 +184,7 @@ fn test_version_is_single_line_and_banner_free() {
 
 #[test]
 fn test_parse_error_is_banner_free() {
-    let Ok(output) = Command::new("target/debug/incan")
+    let Ok(output) = Command::new(incan_debug_binary())
         .arg("--definitely-not-a-flag")
         .output()
     else {
@@ -195,7 +206,7 @@ fn test_parse_error_is_banner_free() {
 #[test]
 fn test_fstring_unknown_symbol_cli_caret_points_to_interpolation() {
     let source = "def main() -> str:\n  return f\"value: {unknown_var}\"\n";
-    let Ok(output) = Command::new("target/debug/incan").args(["run", "-c", source]).output() else {
+    let Ok(output) = Command::new(incan_debug_binary()).args(["run", "-c", source]).output() else {
         panic!("failed to run incan with f-string source");
     };
 
@@ -258,7 +269,7 @@ def helper() -> Unit:
         panic!("failed to write test file");
     };
 
-    let Ok(output) = Command::new("target/debug/incan")
+    let Ok(output) = Command::new(incan_debug_binary())
         .args(["test", dir.to_string_lossy().as_ref()])
         .output()
     else {
@@ -271,7 +282,7 @@ def helper() -> Unit:
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let Ok(output) = Command::new("target/debug/incan")
+    let Ok(output) = Command::new(incan_debug_binary())
         .args(["test", "--fail-on-empty", dir.to_string_lossy().as_ref()])
         .output()
     else {
@@ -419,6 +430,7 @@ def main() -> None:
 
 /// End-to-end codegen tests
 mod codegen_tests {
+    use super::incan_debug_binary;
     use incan::backend::IrCodegen;
     use incan::frontend::{lexer, parser, typechecker};
     use std::fs;
@@ -498,7 +510,7 @@ mod codegen_tests {
 
     #[test]
     fn test_run_c_import_this() {
-        let Ok(output) = Command::new("target/debug/incan")
+        let Ok(output) = Command::new(incan_debug_binary())
             .args(["run", "-c", "import this"])
             // This test should not require network access. We expect the workspace dependencies to already be available
             // (the test suite built them)
@@ -541,7 +553,7 @@ def main() -> None:
             panic!("failed to write source file");
         };
 
-        let Ok(output) = Command::new("target/debug/incan")
+        let Ok(output) = Command::new(incan_debug_binary())
             .args([
                 "build",
                 source_path.to_string_lossy().as_ref(),
@@ -584,7 +596,7 @@ def main() -> None:
     #[test]
     fn test_run_async_channel_facade() {
         let project_dir = make_temp_dir("incan_async_channel_facade_test");
-        let source_path = project_dir.join("main.incn");
+        let source_path = project_dir.join("async_channel.incn");
         let source = r#"
 import std.async
 from std.async.channel import channel, unbounded_channel, oneshot
@@ -626,7 +638,7 @@ async def main() -> None:
             panic!("failed to write source file");
         };
 
-        let Ok(output) = Command::new("target/debug/incan")
+        let Ok(output) = Command::new(incan_debug_binary())
             .args(["run", source_path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()
@@ -671,8 +683,115 @@ async def main() -> None:
     }
 
     #[test]
+    fn test_run_async_task_and_time_facade() {
+        let project_dir = make_temp_dir("incan_async_task_time_facade_test");
+        let source_path = project_dir.join("async_task_time.incn");
+        let source = r#"
+import std.async
+from std.async.task import spawn, spawn_blocking
+from std.async.time import sleep, timeout, timeout_ms
+
+async def quick_value() -> int:
+    await sleep(0.01)
+    return 7
+
+async def slow_value() -> int:
+    await sleep(0.05)
+    return 99
+
+def blocking_value() -> int:
+    return 42
+
+async def main() -> None:
+    match await spawn(quick_value()):
+        Ok(value) => println(f"spawn_ok:{value}")
+        Err(err) => println(f"spawn_err:{err.message()}")
+
+    match await spawn_blocking(blocking_value):
+        Ok(value) => println(f"spawn_blocking_ok:{value}")
+        Err(err) => println(f"spawn_blocking_err:{err.message()}")
+
+    match await timeout(0.25, quick_value()):
+        Ok(value) => println(f"timeout_ok:{value}")
+        Err(err) => println(f"timeout_err:{err.message()}")
+
+    match await timeout(0.001, slow_value()):
+        Ok(value) => println(f"timeout_unexpected_ok:{value}")
+        Err(err) => println(f"timeout_expired:{err.message()}")
+
+    match await timeout_ms(250, quick_value()):
+        Ok(value) => println(f"timeout_ms_ok:{value}")
+        Err(err) => println(f"timeout_ms_err:{err.message()}")
+
+    match await timeout_ms(1, slow_value()):
+        Ok(value) => println(f"timeout_ms_unexpected_ok:{value}")
+        Err(err) => println(f"timeout_ms_expired:{err.message()}")
+"#;
+        let Ok(()) = std::fs::write(&source_path, source) else {
+            panic!("failed to write source file");
+        };
+
+        let Ok(output) = Command::new(incan_debug_binary())
+            .args(["run", source_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+        else {
+            panic!("failed to run incan");
+        };
+
+        assert!(
+            output.status.success(),
+            "incan run async task/time facade failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("spawn_ok:7"),
+            "expected spawn success output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("spawn_blocking_ok:42"),
+            "expected spawn_blocking success output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("timeout_ok:7"),
+            "expected timeout success output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("timeout_expired:operation timed out"),
+            "expected timeout expiry output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("timeout_ms_ok:7"),
+            "expected timeout_ms success output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("timeout_ms_expired:operation timed out"),
+            "expected timeout_ms expiry output; got:\n{}",
+            stdout
+        );
+        assert!(
+            !stdout.contains("timeout_unexpected_ok")
+                && !stdout.contains("timeout_ms_unexpected_ok")
+                && !stdout.contains("spawn_err:")
+                && !stdout.contains("spawn_blocking_err:")
+                && !stdout.contains("timeout_err:")
+                && !stdout.contains("timeout_ms_err:"),
+            "unexpected error/success fallback branch output; got:\n{}",
+            stdout
+        );
+    }
+
+    #[test]
     fn test_run_repro_model_traits() {
-        let Ok(output) = Command::new("target/debug/incan")
+        let Ok(output) = Command::new(incan_debug_binary())
             .args(["run", "tests/fixtures/repro_model_traits.incn"])
             // This should not require network access (workspace deps should already be available).
             .env("CARGO_NET_OFFLINE", "true")
@@ -699,7 +818,7 @@ async def main() -> None:
     /// RFC 021: Runtime verification that __fields__() returns correct FieldInfo values
     #[test]
     fn test_run_field_info_reflection() {
-        let Ok(output) = Command::new("target/debug/incan")
+        let Ok(output) = Command::new(incan_debug_binary())
             .args(["run", "tests/fixtures/field_info_reflection.incn"])
             .env("CARGO_NET_OFFLINE", "true")
             .output()
@@ -835,7 +954,7 @@ async def main() -> None:
 
     #[test]
     fn test_const_declarations_compile_and_run() {
-        let Ok(output) = Command::new("target/debug/incan")
+        let Ok(output) = Command::new(incan_debug_binary())
             .args([
                 "run",
                 "-c",
@@ -885,8 +1004,114 @@ def main() -> None:
     }
 
     #[test]
+    fn test_rfc041_rusttype_interop_typechecks_end_to_end() {
+        let source = r#"
+from rust::std::string import String as RustString
+
+type Name = rusttype RustString:
+  def parse(raw: str) -> Result[Name, str]:
+    ...
+
+  def as_str(self) -> str:
+    ...
+
+  interop:
+    from str try Name.parse
+    into str via Name.as_str
+
+def main() -> None:
+  pass
+"#;
+        let Ok(()) = super::compile_source(source) else {
+            panic!("expected RFC 041 rusttype/interop source to typecheck");
+        };
+    }
+
+    #[test]
+    fn test_rfc041_rusttype_with_methods_typechecks() {
+        let source = r#"
+from rust::mail import Sender as RustSender
+
+type Sender = rusttype RustSender:
+  send_now = try_send
+
+  def try_send(self, value: int) -> Result[None, str]:
+    ...
+
+def push(sender: Sender, value: int) -> Result[None, str]:
+  return sender.send_now(value)
+
+def main() -> None:
+  pass
+"#;
+        let Ok(()) = super::compile_source(source) else {
+            panic!("expected RFC 041 rusttype method surface to typecheck");
+        };
+    }
+
+    #[test]
+    fn test_rfc041_rust_coercion_codegen_smoke() {
+        let source = r#"
+from rust::std::time import Duration
+
+def main() -> None:
+  _ = Duration.from_secs_f32(1.5)
+"#;
+        let Ok(tokens) = lexer::lex(source) else {
+            panic!("lexing failed");
+        };
+        let Ok(ast) = parser::parse(&tokens) else {
+            panic!("parse failed");
+        };
+        let Ok(()) = typechecker::check(&ast) else {
+            panic!("typecheck failed");
+        };
+        let Ok(rust_code) = IrCodegen::new().try_generate(&ast) else {
+            panic!("codegen failed");
+        };
+        assert!(
+            rust_code.contains("Duration::from_secs_f32"),
+            "expected RFC 041 coercion fixture to lower to Duration::from_secs_f32 call, got:\n{rust_code}"
+        );
+    }
+
+    #[test]
+    fn test_rfc041_structural_coercion_codegen_smoke() {
+        let source = r#"
+def main() -> None:
+  maybe: Option[int] = Some(1)
+  names: List[str] = ["a", "b"]
+  scores: Dict[str, float] = {"latency": 1.5}
+"#;
+        let Ok(tokens) = lexer::lex(source) else {
+            panic!("lexing failed");
+        };
+        let Ok(ast) = parser::parse(&tokens) else {
+            panic!("parse failed");
+        };
+        let Ok(()) = typechecker::check(&ast) else {
+            panic!("typecheck failed");
+        };
+        let Ok(rust_code) = IrCodegen::new().try_generate(&ast) else {
+            panic!("codegen failed");
+        };
+        assert!(
+            rust_code.contains("let maybe = Some(1);"),
+            "expected Option[int] smoke value to lower to a Rust Option expression; got:\n{rust_code}"
+        );
+        assert!(
+            rust_code.contains("let names = vec![\"a\", \"b\"];"),
+            "expected List[str] smoke value to lower to a Rust vec expression; got:\n{rust_code}"
+        );
+        assert!(
+            rust_code.contains("collect::<HashMap<_, _>>()"),
+            "expected Dict[str, float] smoke value to lower to a Rust HashMap collect; got:\n{rust_code}"
+        );
+    }
+
+    #[test]
     fn test_mixed_numeric_codegen_runs() {
-        let Ok(output) = Command::new("target/debug/incan")
+        let Ok(output) = Command::new(incan_debug_binary())
             .args([
                 "run",
                 "-c",
@@ -926,6 +1151,7 @@ def main() -> None:
 /// stdout/stderr/exit code.  They catch integration bugs like missing `fn main()` or broken parametrize expansion that
 /// unit tests cannot detect.
 mod test_runner_e2e {
+    use super::incan_debug_binary;
     use std::process::Command;
 
     /// Create a temp directory with a single test file and return the directory path.
@@ -949,7 +1175,7 @@ mod test_runner_e2e {
 
     /// Run `incan test` on a directory and return the combined output.
     fn run_incan_test(dir: &std::path::Path) -> std::process::Output {
-        Command::new("target/debug/incan")
+        Command::new(incan_debug_binary())
             .args(["test", dir.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()
@@ -958,7 +1184,7 @@ mod test_runner_e2e {
 
     /// Run `incan test` with extra flags.
     fn run_incan_test_with_args(dir: &std::path::Path, extra: &[&str]) -> std::process::Output {
-        let mut cmd = Command::new("target/debug/incan");
+        let mut cmd = Command::new(incan_debug_binary());
         cmd.arg("test");
         for arg in extra {
             cmd.arg(arg);

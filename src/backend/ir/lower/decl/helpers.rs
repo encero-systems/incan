@@ -7,6 +7,7 @@ use super::super::super::types::IrType;
 use super::super::AstLowering;
 use crate::frontend::ast::{self, Spanned};
 use crate::frontend::decorator_resolution;
+use incan_core::interop::is_rust_capability_bound;
 use incan_core::lang::conventions;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
@@ -23,7 +24,36 @@ impl AstLowering {
     /// RFC 023: Incan trait names (e.g., `Eq`) are mapped to their Rust equivalents (e.g., `PartialEq`).
     /// Inferred bounds from body scanning are added later during emission.
     pub(in crate::backend::ir::lower) fn lower_type_params(ast_params: &[ast::TypeParam]) -> Vec<IrTypeParam> {
-        ast_params.iter().map(Self::lower_type_param).collect()
+        let mut lowered: Vec<IrTypeParam> = Vec::new();
+        for tp in ast_params {
+            // RFC 041 capability shorthand support:
+            // `T with Send, Sync` is parsed as two type params (`T with Send`, `Sync`).
+            // Fold trailing bare capability markers back into the prior capability-bounded type param so codegen emits
+            // `T: Send + Sync`.
+            if tp.bounds.is_empty()
+                && is_rust_capability_bound(tp.name.as_str())
+                && let Some(prev) = lowered.last_mut()
+            {
+                let prev_is_capability_bounded = prev.bounds.iter().any(|bound| {
+                    matches!(
+                        bound.origin,
+                        super::super::super::decl::IrTraitBoundOrigin::RustCapability
+                    )
+                });
+                if prev_is_capability_bounded
+                    && !prev.bounds.iter().any(|bound| {
+                        bound.trait_path == tp.name && bound.type_args.is_empty() && bound.assoc_types.is_empty()
+                    })
+                {
+                    prev.bounds
+                        .push(IrTraitBound::with_type_args_classified(tp.name.clone(), Vec::new()));
+                    continue;
+                }
+            }
+
+            lowered.push(Self::lower_type_param(tp));
+        }
+        lowered
     }
 
     /// Lower a single AST type parameter to its IR representation.
@@ -87,7 +117,7 @@ impl AstLowering {
             .iter()
             .map(|arg| Self::lower_bound_type(&arg.node))
             .collect();
-        IrTraitBound::with_type_args(trait_path, type_args)
+        IrTraitBound::with_type_args_classified(trait_path, type_args)
     }
 
     /// Whether `name` resolves to a locally-known trait during lowering.
@@ -116,7 +146,7 @@ impl AstLowering {
                 let trait_path = trait_bounds::incan_to_rust(name)
                     .map(str::to_string)
                     .unwrap_or_else(|| name.clone());
-                Some(IrTraitBound::simple(trait_path))
+                Some(IrTraitBound::with_type_args_classified(trait_path, Vec::new()))
             }
             ast::Type::Generic(base, args) if self.is_known_trait_name(base) => {
                 let trait_path = trait_bounds::incan_to_rust(base)
@@ -126,7 +156,7 @@ impl AstLowering {
                     .iter()
                     .map(|arg| self.lower_type_with_type_params(&arg.node, type_param_names))
                     .collect();
-                Some(IrTraitBound::with_type_args(trait_path, type_args))
+                Some(IrTraitBound::with_type_args_classified(trait_path, type_args))
             }
             _ => None,
         }
