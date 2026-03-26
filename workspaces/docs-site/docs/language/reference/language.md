@@ -101,6 +101,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.derives` | - | `std.derives.string`, `std.derives.comparison`, `std.derives.copying`, `std.derives.collection` | - |
 | `std.traits` | - | `std.traits.convert`, `std.traits.ops`, `std.traits.error`, `std.traits.indexing`, `std.traits.callable`, `std.traits.prelude` | - |
 | `std.math` | - | - | - |
+| `std.rust` | - | - | - |
 
 ## Builtin exceptions
 
