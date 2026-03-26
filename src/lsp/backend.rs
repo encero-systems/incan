@@ -37,7 +37,8 @@ pub struct DocumentState {
     pub const_types: HashMap<String, String>,
     /// Local symbols that originate from `rust::...` imports with canonical Rust path provenance.
     rust_origin_symbols: Vec<RustOriginSymbol>,
-    /// For `rusttype` newtypes: maps the Incan type name to the canonical Rust path of the underlying type (e.g. `"Name"` -> `"std::string::String"`).  Populated from the typechecker's resolved `NewtypeInfo.underlying`.
+    /// For `rusttype` newtypes: maps the Incan type name to the canonical Rust path of the underlying type (e.g.
+    /// `"Name"` -> `"std::string::String"`).  Populated from the typechecker's resolved `NewtypeInfo.underlying`.
     rusttype_info: HashMap<String, String>,
 }
 
