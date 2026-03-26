@@ -12,22 +12,20 @@
       
       
       
-        <link rel="next" href="start_here/">
       
-      
-      <link rel="icon" href="assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>Incan Documentation</title>
+        <title>RFC 043: Rust Trait Implementation from Incan - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -46,9 +44,9 @@
       
     
     
-      <link rel="stylesheet" href="stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../stylesheets/pygments.css">
     
-    <script>__md_scope=new URL(".",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -74,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#incan-documentation" class="md-skip">
+        <a href="#rfc-043-rust-trait-implementation-from-incan" class="md-skip">
           Skip to content
         </a>
       
@@ -94,7 +92,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -114,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Home
+              RFC 043: Rust Trait Implementation from Incan
             
           </span>
         </div>
@@ -237,7 +235,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -264,30 +262,10 @@
       
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  <span class="md-ellipsis">
-    Home
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="." class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -296,77 +274,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#tooling-setup" class="md-nav__link">
-    <span class="md-ellipsis">
-      Tooling &amp; Setup
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#language-guide" class="md-nav__link">
-    <span class="md-ellipsis">
-      Language Guide
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Language Guide">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#derives-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      Derives Reference
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#rfcs-request-for-comments" class="md-nav__link">
-    <span class="md-ellipsis">
-      RFCs (Request for Comments)
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#compiler-contributing" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compiler &amp; Contributing
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -409,7 +316,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="start_here/" class="md-nav__link ">
+            <a href="../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -442,7 +349,7 @@
   
   
     <li class="md-nav__item">
-      <a href="start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -463,7 +370,7 @@
   
   
     <li class="md-nav__item">
-      <a href="start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -484,7 +391,7 @@
   
   
     <li class="md-nav__item">
-      <a href="start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -505,7 +412,7 @@
   
   
     <li class="md-nav__item">
-      <a href="start_here/beginner/" class="md-nav__link">
+      <a href="../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -564,7 +471,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="language/" class="md-nav__link ">
+            <a href="../../language/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -688,7 +595,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="language/tutorials/book/" class="md-nav__link ">
+            <a href="../../language/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -721,7 +628,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -742,7 +649,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -763,7 +670,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -784,7 +691,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -805,7 +712,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -826,7 +733,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -847,7 +754,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -868,7 +775,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -889,7 +796,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -910,7 +817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -931,7 +838,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -952,7 +859,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -973,7 +880,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1002,7 +909,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1023,7 +930,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1115,7 +1022,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/async_programming/" class="md-nav__link">
+      <a href="../../language/how-to/async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1136,7 +1043,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1157,7 +1064,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1178,7 +1085,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/error_messages/" class="md-nav__link">
+      <a href="../../language/how-to/error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1199,7 +1106,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/file_io/" class="md-nav__link">
+      <a href="../../language/how-to/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1220,7 +1127,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1241,7 +1148,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1262,7 +1169,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1283,7 +1190,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/string_processing/" class="md-nav__link">
+      <a href="../../language/how-to/string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1304,7 +1211,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/performance/" class="md-nav__link">
+      <a href="../../language/how-to/performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1325,7 +1232,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1346,7 +1253,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1417,7 +1324,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="language/reference/" class="md-nav__link ">
+            <a href="../../language/reference/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1450,7 +1357,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/language/" class="md-nav__link">
+      <a href="../../language/reference/language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1471,7 +1378,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/glossary/" class="md-nav__link">
+      <a href="../../language/reference/glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1492,7 +1399,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/file_io/" class="md-nav__link">
+      <a href="../../language/reference/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1513,7 +1420,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1534,7 +1441,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1555,7 +1462,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/strings/" class="md-nav__link">
+      <a href="../../language/reference/strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1576,7 +1483,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/testing/" class="md-nav__link">
+      <a href="../../language/reference/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1597,7 +1504,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/reflection/" class="md-nav__link">
+      <a href="../../language/reference/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1618,7 +1525,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1671,7 +1578,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1704,7 +1611,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1725,7 +1632,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1746,7 +1653,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1767,7 +1674,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1788,7 +1695,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1809,7 +1716,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1889,7 +1796,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1910,7 +1817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1931,7 +1838,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1952,7 +1859,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1973,7 +1880,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../language/reference/derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1994,7 +1901,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2098,7 +2005,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/why_incan/" class="md-nav__link">
+      <a href="../../language/explanation/why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2119,7 +2026,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2140,7 +2047,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2161,7 +2068,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/control_flow/" class="md-nav__link">
+      <a href="../../language/explanation/control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2182,7 +2089,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/closures/" class="md-nav__link">
+      <a href="../../language/explanation/closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2203,7 +2110,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/consts/" class="md-nav__link">
+      <a href="../../language/explanation/consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2224,7 +2131,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2245,7 +2152,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2266,7 +2173,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/enums/" class="md-nav__link">
+      <a href="../../language/explanation/enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2287,7 +2194,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/error_handling/" class="md-nav__link">
+      <a href="../../language/explanation/error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2308,7 +2215,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2353,7 +2260,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2386,7 +2293,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2407,7 +2314,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2436,7 +2343,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2457,7 +2364,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2524,7 +2431,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="tooling/" class="md-nav__link ">
+            <a href="../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2602,7 +2509,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2623,7 +2530,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2644,7 +2551,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2728,7 +2635,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2749,7 +2656,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2770,7 +2677,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2791,7 +2698,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2812,7 +2719,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2833,7 +2740,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2854,7 +2761,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2875,7 +2782,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2947,7 +2854,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2968,7 +2875,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3042,7 +2949,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3063,7 +2970,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3084,7 +2991,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3153,7 +3060,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="contributing/" class="md-nav__link ">
+            <a href="../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3263,7 +3170,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3296,7 +3203,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3317,7 +3224,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3338,7 +3245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3359,7 +3266,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3380,7 +3287,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3401,7 +3308,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3422,7 +3329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3443,7 +3350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3529,7 +3436,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3550,7 +3457,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3571,7 +3478,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3592,7 +3499,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3613,7 +3520,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3689,7 +3596,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3710,7 +3617,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3731,7 +3638,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3752,7 +3659,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3781,7 +3688,7 @@
   
   
     <li class="md-nav__item">
-      <a href="RFCs/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3836,7 +3743,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="release_notes/" class="md-nav__link ">
+            <a href="../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3869,7 +3776,7 @@
   
   
     <li class="md-nav__item">
-      <a href="release_notes/0_2/" class="md-nav__link">
+      <a href="../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3890,7 +3797,7 @@
   
   
     <li class="md-nav__item">
-      <a href="release_notes/0_1/" class="md-nav__link">
+      <a href="../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3918,7 +3825,7 @@
   
   
     <li class="md-nav__item">
-      <a href="roadmap/" class="md-nav__link">
+      <a href="../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3938,7 +3845,7 @@
   
   
     <li class="md-nav__item">
-      <a href="stability/" class="md-nav__link">
+      <a href="../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3978,28 +3885,64 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#tooling-setup" class="md-nav__link">
+  <a href="#summary" class="md-nav__link">
     <span class="md-ellipsis">
-      Tooling &amp; Setup
+      Summary
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#language-guide" class="md-nav__link">
+  <a href="#core-model" class="md-nav__link">
     <span class="md-ellipsis">
-      Language Guide
+      Core model
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Language Guide">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#motivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Motivation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Motivation">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#derives-reference" class="md-nav__link">
+  <a href="#rfc-041-solved-half-the-interop-story" class="md-nav__link">
     <span class="md-ellipsis">
-      Derives Reference
+      RFC 041 solved half the interop story
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-stdlib-proves-the-gap-is-real" class="md-nav__link">
+    <span class="md-ellipsis">
+      The stdlib proves the gap is real
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#library-authors-hit-this-wall-immediately" class="md-nav__link">
+    <span class="md-ellipsis">
+      Library authors hit this wall immediately
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-goal-is-clear" class="md-nav__link">
+    <span class="md-ellipsis">
+      The goal is clear
     </span>
   </a>
   
@@ -4011,18 +3954,231 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#rfcs-request-for-comments" class="md-nav__link">
+  <a href="#goals" class="md-nav__link">
     <span class="md-ellipsis">
-      RFCs (Request for Comments)
+      Goals
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#compiler-contributing" class="md-nav__link">
+  <a href="#non-goals" class="md-nav__link">
     <span class="md-ellipsis">
-      Compiler &amp; Contributing
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation (how users think about it)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Guide-level explanation (how users think about it)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#implementing-a-rust-trait-on-a-rusttype" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementing a Rust trait on a rusttype
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#async-future-bridging" class="md-nav__link">
+    <span class="md-ellipsis">
+      Async Future bridging
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#forwarding-rust-derive-macros" class="md-nav__link">
+    <span class="md-ellipsis">
+      Forwarding Rust derive macros
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#implementing-arbitrary-rust-traits" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementing arbitrary Rust traits
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reference-level explanation (precise rules)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reference-level explanation (precise rules)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#impl-block-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      impl block syntax
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rustderive-decorator" class="md-nav__link">
+    <span class="md-ellipsis">
+      @rust.derive decorator
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#async-future-bridging-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Async Future bridging rules
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction-with-existing-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interaction with existing features
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Interaction with existing features">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfc-026-trait-bridges-rustdelegate" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 026 (trait bridges / @rust.delegate)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfc-024-extensible-derive-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 024 (extensible derive protocol)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfc-041-first-class-rust-interop" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 041 (first-class Rust interop)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      Syntax
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Semantics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compatibility-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compatibility / migration
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      Alternatives considered
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#drawbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Drawbacks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unresolved-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unresolved questions
     </span>
   </a>
   
@@ -4046,468 +4202,242 @@
   
 
 
-<h1 id="incan-documentation">Incan Documentation<a class="headerlink" href="#incan-documentation" title="Permanent link">&para;</a></h1>
-<p>New here? Start with: <a href="start_here/">Start here</a>.</p>
-<!-- top level sections -->
-<h2 id="tooling-setup">Tooling &amp; Setup<a class="headerlink" href="#tooling-setup" title="Permanent link">&para;</a></h2>
-<!-- Tooling sub-sections -->
-<p>How to install, configure, and use Incan <a href="tooling/">Tooling</a>.</p>
-<table>
-<thead>
-<tr>
-<th>Document</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><a href="tooling/tutorials/getting_started/">Getting Started</a></td>
-<td>Installation and first steps</td>
-</tr>
-<tr>
-<td><a href="tooling/how-to/editor_setup/">Editor Setup</a></td>
-<td>IDE configuration and syntax highlighting</td>
-</tr>
-<tr>
-<td><a href="tooling/how-to/lsp/">Language Server</a></td>
-<td>LSP for diagnostics, hover, and go-to-definition</td>
-</tr>
-<tr>
-<td><a href="tooling/how-to/formatting/">Formatting</a></td>
-<td>Code formatter (<code>incan fmt</code>)</td>
-</tr>
-<tr>
-<td><a href="tooling/how-to/testing/">Testing</a></td>
-<td>Test runner (<code>incan test</code>)</td>
-</tr>
-</tbody>
-</table>
-<h2 id="language-guide">Language Guide<a class="headerlink" href="#language-guide" title="Permanent link">&para;</a></h2>
-<!-- Language sub-sections -->
-<p>How to write Incan code: <a href="language/">Language</a>.</p>
-<table>
-<thead>
-<tr>
-<th>Document</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><a href="language/tutorials/book/">the Book</a></td>
-<td>The Incan Book (Walks you through the Basics from a-z)</td>
-</tr>
-<tr>
-<td><a href="language/how-to/error_messages/">Error Messages</a></td>
-<td>Understanding and fixing compiler errors</td>
-</tr>
-<tr>
-<td><a href="language/explanation/error_handling/">Error Handling</a></td>
-<td>Result, Option, and the <code>?</code> operator</td>
-</tr>
-<tr>
-<td><a href="language/how-to/file_io/">File I/O</a></td>
-<td>Reading, writing files and path handling</td>
-</tr>
-<tr>
-<td><a href="language/how-to/async_programming/">Async Programming</a></td>
-<td>Async/await with Tokio</td>
-</tr>
-<tr>
-<td><a href="language/reference/derives_and_traits/">Derives &amp; Traits</a></td>
-<td>Derive macros and trait system</td>
-</tr>
-<tr>
-<td><a href="language/explanation/scopes_and_name_resolution/">Scopes &amp; Name Resolution</a></td>
-<td>Block scoping, shadowing, and how names are resolved</td>
-</tr>
-<tr>
-<td><a href="language/explanation/imports_and_modules/">Imports &amp; Modules</a></td>
-<td>Module system, imports, and built-in functions</td>
-</tr>
-<tr>
-<td><a href="language/how-to/rust_interop/">Rust Interop</a></td>
-<td>Using Rust crates directly from Incan</td>
-</tr>
-<tr>
-<td><a href="language/tutorials/web_framework/">Web Framework</a></td>
-<td>Building web apps with Axum</td>
-</tr>
-</tbody>
-</table>
-<h3 id="derives-reference">Derives Reference<a class="headerlink" href="#derives-reference" title="Permanent link">&para;</a></h3>
-<!-- language/reference/derives sub-sections -->
-<table>
-<thead>
-<tr>
-<th>Document</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><a href="language/reference/derives/string_representation/">String Representation</a></td>
-<td>Debug and Display</td>
-</tr>
-<tr>
-<td><a href="language/reference/derives/comparison/">Comparison</a></td>
-<td>Eq, Ord, Hash</td>
-</tr>
-<tr>
-<td><a href="language/reference/derives/copying_default/">Copying &amp; Default</a></td>
-<td>Clone, Copy, Default</td>
-</tr>
-<tr>
-<td><a href="language/reference/derives/serialization/">Serialization</a></td>
-<td>Serialize, Deserialize</td>
-</tr>
-<tr>
-<td><a href="language/reference/derives/custom_behavior/">Custom Behavior</a></td>
-<td>Overriding derived behavior</td>
-</tr>
-</tbody>
-</table>
-<h2 id="rfcs-request-for-comments">RFCs (Request for Comments)<a class="headerlink" href="#rfcs-request-for-comments" title="Permanent link">&para;</a></h2>
-<p>Design proposals for upcoming features are recorded in the form of <a href="RFCs/">RFCs</a>.</p>
-<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
+<h1 id="rfc-043-rust-trait-implementation-from-incan">RFC 043: Rust Trait Implementation from Incan<a class="headerlink" href="#rfc-043-rust-trait-implementation-from-incan" title="Permanent link">&para;</a></h1>
+<ul>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2026-03-25</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong><ul>
+<li>RFC 041 (First-class Rust interop authoring)</li>
+<li>RFC 026 (User-defined trait bridges)</li>
+<li>RFC 024 (Extensible derive protocol)</li>
+<li>RFC 005 (Rust interop)</li>
+<li>RFC 023 (Compilable stdlib &amp; Rust module binding)</li>
+</ul>
+</li>
+<li><strong>Issue:</strong> —</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> —</li>
+</ul>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>This RFC proposes that Incan authors can declare that a type satisfies a Rust trait contract, and the compiler generates the corresponding <code>impl</code> block in the emitted Rust code. This closes the gap between RFC 041's "use Rust APIs from Incan" and the reverse need: "make Incan types usable by Rust APIs that require trait bounds." Concretely, it introduces <code>impl</code> blocks on <code>rusttype</code> declarations, a <code>@rust.derive</code> decorator for forwarding Rust derive macros, and compiler-managed async Future bridging for <code>rusttype</code> wrappers over <code>Future</code>-implementing Rust types.</p>
+<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
+<p>Read this RFC as one foundation plus three mechanisms:</p>
+<p><strong>Foundation</strong>: after RFC 041, imported Rust items are first-class compiler symbols and Incan types can wrap Rust types via <code>rusttype</code>. What is still missing is the ability to make those Incan types satisfy Rust trait contracts — the reverse direction of interop.</p>
+<p><strong>Mechanisms</strong>:</p>
+<ol>
+<li><code>impl</code> blocks on <code>rusttype</code> declarations let authors declare that a type satisfies a Rust trait by providing method bodies in Incan. The compiler generates the corresponding <code>impl Trait for Type { ... }</code> in emitted Rust.</li>
+<li><code>@rust.derive(...)</code> forwards Rust derive macros to the emitted struct, so Incan-authored models and newtypes can participate in Rust-ecosystem derive workflows (<code>Serialize</code>, <code>Deserialize</code>, <code>Clone</code>, etc.) without handwritten Rust.</li>
+<li>Compiler-managed async bridging auto-generates <code>impl Future</code> for <code>rusttype</code> declarations that wrap <code>Future</code>-implementing Rust types, eliminating manual <code>Pin</code>/<code>Context</code>/<code>Poll</code> glue.</li>
+</ol>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<h3 id="rfc-041-solved-half-the-interop-story">RFC 041 solved half the interop story<a class="headerlink" href="#rfc-041-solved-half-the-interop-story" title="Permanent link">&para;</a></h3>
+<p>RFC 041 made imported Rust items behave like ordinary Incan symbols: methods resolve, coercions insert, capability bounds lower to Rust predicates. Users can <strong>call</strong> Rust APIs from Incan without ceremony.</p>
+<p>But Rust APIs are not just functions you call. They are also <strong>contracts you implement</strong>. DataFusion expects <code>impl ExecutionPlan</code>. Axum expects <code>impl FromRequestParts</code>. Tokio expects <code>impl Future</code>. Serde expects <code>impl Serialize</code>. Today, satisfying any of these contracts from Incan requires dropping into handwritten Rust — exactly the "bridge ceremony" that RFC 041 set out to eliminate.</p>
+<h3 id="the-stdlib-proves-the-gap-is-real">The stdlib proves the gap is real<a class="headerlink" href="#the-stdlib-proves-the-gap-is-real" title="Permanent link">&para;</a></h3>
+<p>The <code>std.async</code> stdlib is the clearest example. <code>JoinHandle</code> needs <code>impl Future</code> with a <code>poll</code> method that delegates to Tokio's handle. <code>TaskJoinError</code> needs <code>impl From&lt;tokio::task::JoinError&gt;</code>. <code>RuntimeFuture</code> and <code>RuntimeFnOnce</code> need blanket impls. Today these require handwritten Rust adapter modules that Incan library authors cannot write, modify, or understand without leaving the language.</p>
+<p>The <code>std.async.sync</code> and <code>std.async.channel</code> modules carry hundreds of lines of Rust adapter code for the same reason: Incan types need to satisfy Rust trait contracts, and there is no way to express that from Incan source.</p>
+<h3 id="library-authors-hit-this-wall-immediately">Library authors hit this wall immediately<a class="headerlink" href="#library-authors-hit-this-wall-immediately" title="Permanent link">&para;</a></h3>
+<p>The moment a library author wants to:</p>
+<ul>
+<li>wrap a Rust type and make it <code>await</code>-able (needs <code>impl Future</code>)</li>
+<li>convert between error types across a Rust boundary (needs <code>impl From</code>)</li>
+<li>make an Incan model serializable for a Rust framework (needs <code>#[derive(Serialize)]</code>)</li>
+<li>implement a Rust extension point (needs <code>impl SomeTrait</code>)</li>
+</ul>
+<p>they must create a parallel Rust adapter crate, maintain it separately, and wire it through <code>rust::</code> imports. This is the exact "parallel adapter layer" pattern that RFC 041's motivation section identifies as the problem.</p>
+<h3 id="the-goal-is-clear">The goal is clear<a class="headerlink" href="#the-goal-is-clear" title="Permanent link">&para;</a></h3>
+<p>Incan users should not have to write Rust to use Rust. RFC 041 achieved this for <strong>consuming</strong> Rust APIs. This RFC achieves it for <strong>satisfying</strong> Rust API contracts.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Let <code>rusttype</code> declarations include <code>impl</code> blocks that generate Rust <code>impl Trait for Type</code> code.</li>
+<li>Let <code>@rust.derive(...)</code> forward Rust derive macros to emitted structs and enums.</li>
+<li>Provide compiler-managed <code>impl Future</code> bridging for <code>rusttype</code> wrappers over <code>Future</code>-implementing Rust types.</li>
+<li>Enable the stdlib to express its current Rust adapter surface in Incan, reducing the Rust glue footprint.</li>
+<li>Keep the Incan surface Incan-shaped: authors write Incan method signatures and bodies, not raw Rust syntax.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Inline Rust code blocks in Incan source. This RFC does not add an escape hatch for arbitrary Rust syntax.</li>
+<li>Orphan rule circumvention. Incan follows Rust's coherence rules: you can only implement a foreign trait for a type you own (defined in your crate), or implement your own trait for a foreign type.</li>
+<li>Runtime trait objects (<code>dyn Trait</code>). All trait impl generation is compile-time only.</li>
+<li>Generic <code>impl</code> blocks with complex where-clauses in the initial version. Start with concrete types; generic impls are a future extension.</li>
+<li>Replacing RFC 026's <code>@rust.delegate</code> mechanism. Delegation (forwarding an existing impl through a newtype) and implementation (writing new trait methods) are complementary; both may coexist.</li>
+<li>Blanket impls (<code>impl&lt;F: FnOnce&gt; RuntimeFuture for F</code>). These require generics over trait bounds and are deferred to a follow-up or extension of this RFC.</li>
+</ul>
+<h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
+<h3 id="implementing-a-rust-trait-on-a-rusttype">Implementing a Rust trait on a rusttype<a class="headerlink" href="#implementing-a-rust-trait-on-a-rusttype" title="Permanent link">&para;</a></h3>
+<p>The most common case: you wrap a Rust type and need to satisfy a trait contract.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">tokio</span><span class="p">::</span><span class="n">task</span> <span class="kn">import</span><span class="w"> </span><span class="nn">JoinHandle</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">TokioJoinHandle</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">tokio</span><span class="p">::</span><span class="n">task</span> <span class="kn">import</span><span class="w"> </span><span class="nn">JoinError</span>
 
-<!-- markdownlint-disable MD013 MD060 MD053 MD033 -->
-<!-- Include RFC reference links (DRY: reuse rfcs_refs.md) -->
-<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
+<span class="nb">type</span> <span class="nc">TaskJoinError</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">impl</span> <span class="nc">From</span><span class="p">[</span><span class="nc">JoinError</span><span class="p">]:</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">from</span><span class="p">(</span><span class="n">error</span><span class="p">:</span> <span class="nc">JoinError</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">TaskJoinError</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nc">TaskJoinError</span><span class="p">(</span><span class="n">error</span><span class="o">.</span><span class="nb">to_string</span><span class="p">())</span>
+</code></pre></div>
+<p>The compiler generates:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="k">impl</span><span class="w"> </span><span class="nb">From</span><span class="o">&lt;</span><span class="n">tokio</span><span class="p">::</span><span class="n">task</span><span class="p">::</span><span class="n">JoinError</span><span class="o">&gt;</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">TaskJoinError</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">from</span><span class="p">(</span><span class="n">error</span><span class="p">:</span><span class="w"> </span><span class="nc">tokio</span><span class="p">::</span><span class="n">task</span><span class="p">::</span><span class="n">JoinError</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Self</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="bp">Self</span><span class="p">(</span><span class="n">error</span><span class="p">.</span><span class="n">to_string</span><span class="p">())</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>The user writes Incan. The compiler writes Rust.</p>
+<h3 id="async-future-bridging">Async Future bridging<a class="headerlink" href="#async-future-bridging" title="Permanent link">&para;</a></h3>
+<p>For <code>rusttype</code> declarations that wrap a Rust type implementing <code>Future</code>, the compiler can auto-generate the <code>impl Future</code> delegation:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">tokio</span><span class="p">::</span><span class="n">task</span> <span class="kn">import</span><span class="w"> </span><span class="nn">JoinHandle</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">TokioJoinHandle</span>
 
-<!-- RFC reference links for reuse: '[RFC 018]' or '[RFC 018: Title][RFC 018]' -->
-<!-- RFCs index table -->
+<span class="nb">type</span> <span class="kt">JoinHandle</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="nc">TokioJoinHandle</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
+    <span class="n">impl</span> <span class="nc">Future</span><span class="p">:</span>
+        <span class="nb">type</span> <span class="nc">Output</span> <span class="o">=</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">TaskJoinError</span><span class="p">]</span>
 
-<!-- RFC index filter UI -->
+    <span class="k">def</span><span class="w"> </span><span class="nf">abort</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="o">...</span>
+</code></pre></div>
+<p>The <code>impl Future</code> block declares the associated type. The compiler generates the <code>poll</code> method by delegating to the backing type's <code>poll</code> implementation, mapping the output type through any declared interop edges (here, <code>JoinError</code> -&gt; <code>TaskJoinError</code> via the <code>From</code> impl above).</p>
+<p>Without this mechanism, the same code requires ~25 lines of handwritten Rust with <code>Pin</code>, <code>Context</code>, <code>Poll</code>, and manual error mapping.</p>
+<h3 id="forwarding-rust-derive-macros">Forwarding Rust derive macros<a class="headerlink" href="#forwarding-rust-derive-macros" title="Permanent link">&para;</a></h3>
+<p>For Incan models that need to participate in Rust derive workflows:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">serde</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Serialize</span><span class="o">,</span><span class="w"> </span><span class="nn">Deserialize</span>
 
-<div class="rfc-index-filter">
-  <label>
-    Filter RFCs: <input type="search" data-rfc-filter="rfcs-index" placeholder="e.g. 018, testing, superseded">
-  </label>
-  <p><small>Tip: press <code>Esc</code> to clear.</small></p>
-</div>
+<span class="nd">@rust</span><span class="o">.</span><span class="k">derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">,</span> <span class="kt">Clone</span><span class="p">)</span>
+<span class="k">model</span> <span class="nc">CustomerEvent</span><span class="p">:</span>
+    <span class="n">customer_id</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">email</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">amount</span><span class="p">:</span> <span class="nb">int</span>
+</code></pre></div>
+<p>The compiler emits:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="cp">#[derive(serde::Serialize, serde::Deserialize, Clone)]</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">CustomerEvent</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">customer_id</span><span class="p">:</span><span class="w"> </span><span class="nb">String</span><span class="p">,</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">email</span><span class="p">:</span><span class="w"> </span><span class="nb">String</span><span class="p">,</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">amount</span><span class="p">:</span><span class="w"> </span><span class="kt">i64</span><span class="p">,</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><code>@rust.derive</code> is distinct from Incan's <code>@derive</code>: the former forwards to Rust derive macros, the latter uses the Incan derive protocol from RFC 024.</p>
+<h3 id="implementing-arbitrary-rust-traits">Implementing arbitrary Rust traits<a class="headerlink" href="#implementing-arbitrary-rust-traits" title="Permanent link">&para;</a></h3>
+<p>For extension points in Rust frameworks:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">fmt</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Display</span><span class="o">,</span><span class="w"> </span><span class="nn">Formatter</span><span class="o">,</span><span class="w"> </span><span class="nn">FmtError</span>
 
-<div data-rfc-table="rfcs-index">
-<table>
-<thead>
-<tr>
-<th style="text-align: right;">RFC</th>
-<th>Status</th>
-<th>Track</th>
-<th>Title</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/000_core_rfc">RFC 000</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Incan Core Language RFC (Phase 1)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/001_test_fixtures">RFC 001</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Test Fixtures</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/002_test_parametrize">RFC 002</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Parametrized Tests</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/003_frontend_wasm">RFC 003</a></td>
-<td>Blocked</td>
-<td>proposed / active</td>
-<td>Frontend &amp; WebAssembly Support</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/004_async_fixtures">RFC 004</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Async Fixtures</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Rust Interop</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/006_generators">RFC 006</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Python-Style Generators</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/007_inline_tests">RFC 007</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Inline Tests</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/008_const_bindings">RFC 008</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Const Bindings</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/009_sized_integers">RFC 009</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Sized Integer Types &amp; Builtin Type Registry</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/010_tempfile">RFC 010</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Temporary Files and Directories</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/011_fstring_error_spans">RFC 011</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Precise Error Spans in F-Strings</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/012_json_value">RFC 012</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>JsonValue</code> Type, Enum Methods, and Enum Trait Adoption</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Rust Crate Dependencies</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/014_generated_code_error_handling">RFC 014</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Error Handling in Generated Rust Code</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a></td>
-<td>In Progress</td>
-<td>proposed / active</td>
-<td>Hatch-like Tooling (Project Lifecycle CLI)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/016_loop_and_break_value">RFC 016</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>loop</code> and <code>break &lt;value&gt;</code> (Loop Expressions)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/017_validated_newtypes_with_implicit_coercion">RFC 017</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Validated newtypes with implicit coercion (pydantic-like feel)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/018_testing">RFC 018</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Language Primitives for Testing</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/019_runner_testing">RFC 019</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Test Runner, CLI, and Ecosystem</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/020_offline_locked_reproducible_builds">RFC 020</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Offline / Locked / Reproducible Builds (Cargo Policy + Generated Project Contract)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/021_model_field_metadata_and_aliases">RFC 021</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Model field metadata and schema-safe aliases</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Namespaced stdlib modules and compiler→stdlib handoff</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Compilable Stdlib &amp; Rust Module Binding</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Extensible Derive Protocol</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Multi-Instantiation Trait Dispatch</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/026_user_defined_trait_bridges">RFC 026</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>User-Defined Trait Bridges</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/027_incan_vocab_crate">RFC 027</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td><code>incan-vocab</code> — Library Vocabulary Registration Crate</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/028_trait_based_operator_overloading">RFC 028</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Trait-Based Operator Overloading</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/029_union_types">RFC 029</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Union Types and Type Narrowing</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/030_std_collections">RFC 030</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td><code>std.collections</code> — Extended Collection Types</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/031_library_system_phase1">RFC 031</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Incan Library System — Phase 1 (Local Path Dependencies)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/032_value_enums">RFC 032</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Value Enums — <code>StrEnum</code> and <code>IntEnum</code></td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/033_ctx_keyword">RFC 033</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td><code>ctx</code> — Typed Configuration Context</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/034_incan_pub_registry">RFC 034</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td><code>incan.pub</code> — The Incan Package Registry</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/035_first_class_function_references">RFC 035</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>First-Class Named Function References</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/036_user_defined_decorators">RFC 036</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>User-Defined Decorators</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/037_native_web_stdlib_redesign">RFC 037</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Native Web and HTTP Stdlib Redesign</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/038_variadic_positional_args_and_keyword_capture">RFC 038</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Variadic Positional Args and Keyword-Argument Capture (<code>*args</code> / <code>**kwargs</code>)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/039_race_for_awaitable_concurrency">RFC 039</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td><code>race</code> for Awaitable Concurrency</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/040_scoped_dsl_glyph_surfaces">RFC 040</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Scoped DSL Glyph Surfaces</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>First-Class Rust Interop Authoring</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/042_traits_are_always_abstract">RFC 042</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Traits Are Always Abstract</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/043_rust_trait_impl_from_incan">RFC 043</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Rust Trait Implementation from Incan</td>
-</tr>
-</tbody>
-</table>
-</div>
-<!-- markdownlint-enable MD013 MD060 MD053 MD033 -->
-
-<h2 id="compiler-contributing">Compiler &amp; Contributing<a class="headerlink" href="#compiler-contributing" title="Permanent link">&para;</a></h2>
-<div class="admonition info">
-<p class="admonition-title">For contributors</p>
-<p>Architecture and compiler-internals docs are primarily for contributors. If you’re learning the language, start with
-the Book and the Language Guide instead of RFCs.</p>
-</div>
-<p>Docs for contributors working on the compiler and language evolution:</p>
-<table>
-<thead>
-<tr>
-<th>Document</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><a href="roadmap/">Roadmap</a></td>
-<td>Tracks implementation status and near-term planning</td>
-</tr>
-<tr>
-<td><a href="RFCs/">RFCs</a></td>
-<td>Design proposals for upcoming features are recorded in the form of RFCs</td>
-</tr>
-<tr>
-<td><a href="contributing/">Contributing</a></td>
-<td>Contributor documentation landing page</td>
-</tr>
-<tr>
-<td><a href="contributing/explanation/architecture/">Compiler Architecture</a></td>
-<td>Compilation pipeline, module layout, and internal stages</td>
-</tr>
-<tr>
-<td><a href="contributing/how-to/extending_language/">Extending the Language</a></td>
-<td>When to add builtins vs new syntax; end-to-end checklists</td>
-</tr>
-<tr>
-<td><a href="contributing/">Contributing Index</a></td>
-<td>Contributor documentation landing page</td>
-</tr>
-</tbody>
-</table>
+<span class="nb">type</span> <span class="nc">UserId</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="kt">i64</span><span class="p">:</span>
+    <span class="n">impl</span> <span class="kt">Display</span><span class="p">:</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">fmt</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="nc">Formatter</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">FmtError</span><span class="p">]:</span>
+            <span class="k">return</span> <span class="n">f</span><span class="o">.</span><span class="n">write_str</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;user_</span><span class="si">{</span><span class="bp">self</span><span class="mf">.0</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>The compiler generates <code>impl std::fmt::Display for UserId { ... }</code> with the method body lowered from the Incan source.</p>
+<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
+<h3 id="impl-block-syntax"><code>impl</code> block syntax<a class="headerlink" href="#impl-block-syntax" title="Permanent link">&para;</a></h3>
+<p>An <code>impl</code> block may only appear inside a <code>rusttype</code> declaration body:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Name</span><span class="p">[</span><span class="nc">Params</span><span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="nc">RustBacking</span><span class="p">[</span><span class="nc">Params</span><span class="o">...</span><span class="p">]:</span>
+    <span class="n">impl</span> <span class="nc">TraitName</span><span class="p">[</span><span class="nc">Args</span><span class="o">...</span><span class="p">]:</span>
+        <span class="nb">type</span> <span class="nc">AssocType</span> <span class="o">=</span> <span class="nc">IncanType</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">method_name</span><span class="p">(</span><span class="n">params</span><span class="o">...</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">ReturnType</span><span class="p">:</span>
+            <span class="n">body</span>
+</code></pre></div>
+<p>Normative rules:</p>
+<ul>
+<li><code>impl</code> blocks must appear inside <code>rusttype</code> declarations only. Ordinary <code>newtype</code> and <code>model</code> declarations must not contain <code>impl</code> blocks; the compiler must reject them with a clear diagnostic.</li>
+<li>The trait name must resolve to an imported Rust trait (via <code>rust::</code> or <code>std.rust</code>).</li>
+<li>Method signatures in the <code>impl</code> block must match the trait's method signatures as reported by Rust metadata. The compiler must validate parameter types, return types, and receiver shapes.</li>
+<li>Associated types declared with <code>type AssocType = T</code> must be compatible with the trait's associated type constraints.</li>
+<li>The compiler must generate a complete <code>impl Trait for Type { ... }</code> block in the emitted Rust, with method bodies lowered from the Incan source.</li>
+<li>When the backing Rust type already implements the trait and the <code>impl</code> block contains no method bodies, the compiler should delegate to the backing type's implementation (this overlaps with RFC 026's delegation but is expressed through <code>impl</code> syntax rather than a decorator).</li>
+</ul>
+<h3 id="rustderive-decorator"><code>@rust.derive</code> decorator<a class="headerlink" href="#rustderive-decorator" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>@rust.derive(Name1, Name2, ...)</code> is valid on <code>model</code>, <code>class</code>, <code>enum</code>, and <code>newtype</code> declarations.</li>
+<li>Each name must resolve to an imported Rust derive macro (via <code>rust::</code> imports or known standard derives like <code>Clone</code>, <code>Debug</code>).</li>
+<li>The compiler emits <code>#[derive(path::Name1, path::Name2, ...)]</code> on the generated Rust struct/enum.</li>
+<li><code>@rust.derive</code> must not conflict with Incan's <code>@derive</code>: using both on the same declaration is valid when they target different derives. The compiler must reject duplicates that appear in both.</li>
+<li>Rust derive macros that require additional crate dependencies must have those dependencies declared in <code>incan.toml</code> <code>[rust-dependencies]</code>.</li>
+</ul>
+<h3 id="async-future-bridging-rules">Async Future bridging rules<a class="headerlink" href="#async-future-bridging-rules" title="Permanent link">&para;</a></h3>
+<ul>
+<li>When a <code>rusttype</code> declaration includes <code>impl Future:</code> with an associated <code>type Output = T</code>, the compiler generates <code>impl Future for Type</code> with a <code>poll</code> method that delegates to the backing type.</li>
+<li>The generated <code>poll</code> must handle <code>Pin</code> projection correctly: the compiler must emit <code>Pin::new(&amp;mut self.0).poll(cx)</code> (or the appropriate projection for the backing type's pinning requirements).</li>
+<li>Output type mapping: if the backing type's <code>Future::Output</code> differs from the declared <code>Output</code>, the compiler must insert the appropriate conversion (using <code>From</code> impls, <code>map</code>, or <code>map_err</code>) in the generated <code>poll</code> method.</li>
+<li>The compiler should verify (via Rust metadata when available) that the backing type actually implements <code>Future</code>. When metadata is unavailable, the compiler must accept the declaration and let rustc validate it.</li>
+</ul>
+<h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
+<h4 id="rfc-026-trait-bridges-rustdelegate">RFC 026 (trait bridges / <code>@rust.delegate</code>)<a class="headerlink" href="#rfc-026-trait-bridges-rustdelegate" title="Permanent link">&para;</a></h4>
+<p>RFC 026's <code>@rust.delegate</code> delegates an <strong>existing</strong> trait implementation through a newtype wrapper. This RFC's <code>impl</code> blocks <strong>create new</strong> trait implementations with Incan-authored method bodies. They are complementary:</p>
+<ul>
+<li>Use <code>@rust.delegate(FromRequestParts)</code> when the backing type already implements the trait and you want pure forwarding.</li>
+<li>Use <code>impl From[JoinError]: ...</code> when you need custom logic in the trait methods.</li>
+</ul>
+<h4 id="rfc-024-extensible-derive-protocol">RFC 024 (extensible derive protocol)<a class="headerlink" href="#rfc-024-extensible-derive-protocol" title="Permanent link">&para;</a></h4>
+<p>RFC 024's <code>@derive</code> uses the Incan derive protocol (trait adoption, method injection). This RFC's <code>@rust.derive</code> forwards to Rust's <code>#[derive]</code> macro system. They serve different ecosystems and may coexist on the same type.</p>
+<h4 id="rfc-041-first-class-rust-interop">RFC 041 (first-class Rust interop)<a class="headerlink" href="#rfc-041-first-class-rust-interop" title="Permanent link">&para;</a></h4>
+<p>This RFC is a direct extension of RFC 041. It uses the same <code>rusttype</code>, <code>rust::</code> import, and metadata infrastructure. <code>impl</code> blocks on <code>rusttype</code> are syntactically an extension of the <code>rusttype</code> body that RFC 041 defined for <code>interop:</code> edges and rebindings.</p>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
+<p>New syntax additions:</p>
+<ul>
+<li><code>impl TraitName[Args...]:</code> block inside <code>rusttype</code> body (indented, same level as <code>interop:</code>)</li>
+<li><code>type AssocType = IncanType</code> inside an <code>impl</code> block (associated type declaration)</li>
+<li><code>@rust.derive(Name, ...)</code> decorator on type declarations</li>
+</ul>
+<h3 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h3>
+<p>The semantic center of this RFC is:</p>
+<ol>
+<li><code>impl</code> blocks on <code>rusttype</code> are Incan-authored, Rust-emitted trait implementations.</li>
+<li>The compiler owns the translation: method signatures are validated against Rust metadata, bodies are lowered through the standard Incan pipeline, and the output is a valid Rust <code>impl</code> block.</li>
+<li><code>@rust.derive</code> is a passthrough: the compiler does not interpret the derive macro, it forwards it to rustc.</li>
+<li>Async bridging is a specialization of <code>impl Future</code> that the compiler can optimize by delegating <code>poll</code> to the backing type.</li>
+</ol>
+<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
+<p>Existing code continues to work unchanged. The new features are purely additive:</p>
+<ul>
+<li>Existing <code>rusttype</code> declarations without <code>impl</code> blocks remain valid.</li>
+<li>Existing Rust adapter modules in <code>incan_stdlib</code> can be incrementally migrated to Incan <code>impl</code> blocks.</li>
+<li><code>@rust.delegate</code> from RFC 026 remains available for pure forwarding cases.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<ul>
+<li>
+<p><strong>Inline Rust blocks</strong><br />
+    Some languages (e.g. Mojo, Zig) allow embedding target-language code directly. This was rejected because it breaks the "write Incan, not Rust" promise and makes tooling (formatter, LSP, diagnostics) much harder.</p>
+</li>
+<li>
+<p><strong>Automatic trait forwarding for all rusttype wrappers</strong><br />
+    Instead of explicit <code>impl</code> blocks, the compiler could auto-forward all trait impls from the backing type. This was rejected because it would be unpredictable (users wouldn't know which traits their type satisfies), could cause coherence violations, and removes the author's ability to curate the type's API surface.</p>
+</li>
+<li>
+<p><strong>Extending <code>@rust.delegate</code> to cover custom implementations</strong>
+    RFC 026's decorator could be extended with method-body syntax. This was rejected because <code>@rust.delegate</code> has clear "pure forwarding" semantics; mixing in custom logic would confuse the mental model. <code>impl</code> blocks are a more natural syntax for "I am writing the implementation."</p>
+</li>
+</ul>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
+<ul>
+<li>The compiler must understand enough of Rust's trait system to validate <code>impl</code> block signatures. This is a significant increase in semantic complexity.</li>
+<li><code>Pin</code> projection for <code>impl Future</code> is notoriously tricky in Rust. Generating correct <code>poll</code> delegation requires careful handling of pinning guarantees.</li>
+<li>Associated types, default methods, and supertraits in Rust traits create a large surface area for edge cases.</li>
+<li>Orphan rules may confuse users who expect to implement any trait for any type (Rust's coherence rules will reject some combinations that seem natural from Incan's perspective).</li>
+</ul>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Parser / AST</strong>: <code>impl TraitName[Args...]:</code> blocks inside <code>rusttype</code> bodies; <code>type AssocType = T</code> declarations; <code>@rust.derive(...)</code> decorator parsing.</li>
+<li><strong>Typechecker / Symbol resolution</strong>: validate <code>impl</code> method signatures against Rust trait metadata; check associated type compatibility; validate <code>@rust.derive</code> targets resolve to known Rust derive macros.</li>
+<li><strong>IR Lowering</strong>: generate <code>impl</code>-block IR nodes from <code>impl</code> declarations; lower method bodies through the standard expression pipeline.</li>
+<li><strong>Emission</strong>: emit <code>impl Trait for Type { ... }</code> blocks with correct method signatures, associated types, and <code>Pin</code> projection for <code>Future</code>; emit <code>#[derive(...)]</code> attributes for <code>@rust.derive</code>.</li>
+<li><strong>Stdlib / Runtime (<code>incan_stdlib</code>)</strong>: migrate async task, time, sync, and channel Rust adapter modules to Incan <code>impl</code> blocks once the feature lands; shrink or remove handwritten Rust glue.</li>
+<li><strong>Formatter</strong>: format <code>impl</code> blocks and <code>@rust.derive</code> decorators stably.</li>
+<li><strong>LSP / Tooling</strong>: completions for trait method signatures inside <code>impl</code> blocks; diagnostics for signature mismatches.</li>
+</ul>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Should <code>impl Future</code> for <code>rusttype</code> wrappers be automatic (compiler-managed when the backing type implements <code>Future</code>) or always explicit (user must write <code>impl Future:</code> with the associated type)?</li>
+<li>How do associated types in <code>impl</code> blocks interact with Incan's type system? Should they be full Incan type expressions or restricted to imported Rust types?</li>
+<li>Should <code>@rust.derive</code> require the derive macro's crate to be declared in <code>incan.toml</code> <code>[rust-dependencies]</code>, or should well-known standard derives (<code>Clone</code>, <code>Debug</code>, <code>Copy</code>) be allowed without explicit declarations?</li>
+<li>How does this interact with RFC 026's <code>@rust.delegate</code> when both are applied to the same trait on the same type? Should one take precedence, or should the compiler reject the combination?</li>
+<li>Should blanket impls (e.g. <code>impl&lt;F: FnOnce&gt; RuntimeFuture for F</code>) be expressible in a future extension of this RFC, or should they remain Rust-only?</li>
+<li>What diagnostics should the compiler produce when an <code>impl</code> block's method signature does not match the Rust trait's expected signature? Should it show the expected Rust signature alongside the Incan mismatch?</li>
+<li>How should <code>self</code> receiver types (<code>self</code>, <code>&amp;self</code>, <code>&amp;mut self</code>, <code>Pin&lt;&amp;mut Self&gt;</code>) be expressed in Incan syntax inside <code>impl</code> blocks?</li>
+</ul>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved.
+     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
@@ -4556,18 +4486,18 @@ the Book and the Language Guide instead of RFCs.</p>
     </div>
     
     
-    <script id="__config" type="application/json">{"base": ".", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="_snippets/javascripts/mathjax.js"></script>
+        <script src="../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="_snippets/javascripts/tablesort.js"></script>
+        <script src="../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>

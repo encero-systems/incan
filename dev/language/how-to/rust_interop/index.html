@@ -1361,6 +1361,48 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rust-backed-types-with-rusttype" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust-backed types with rusttype
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rust-backed types with rusttype">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#declaring-conversion-edges-with-interop" class="md-nav__link">
+    <span class="md-ellipsis">
+      Declaring conversion edges with interop:
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capability-bounds-with-stdrust" class="md-nav__link">
+    <span class="md-ellipsis">
+      Capability bounds with std.rust
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#coercions-at-explicit-rust-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      Coercions at explicit Rust boundaries
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#examples" class="md-nav__link">
     <span class="md-ellipsis">
       Examples
@@ -4212,6 +4254,48 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rust-backed-types-with-rusttype" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust-backed types with rusttype
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rust-backed types with rusttype">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#declaring-conversion-edges-with-interop" class="md-nav__link">
+    <span class="md-ellipsis">
+      Declaring conversion edges with interop:
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capability-bounds-with-stdrust" class="md-nav__link">
+    <span class="md-ellipsis">
+      Capability bounds with std.rust
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#coercions-at-explicit-rust-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      Coercions at explicit Rust boundaries
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#examples" class="md-nav__link">
     <span class="md-ellipsis">
       Examples
@@ -4583,6 +4667,98 @@ import a crate without a version annotation and without an <code>incan.toml</cod
 hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add it to incan.toml.
 </code></pre></div>
 <p><strong>Fix</strong>: add an inline version annotation, or add the crate to your <code>incan.toml</code>.</p>
+<h2 id="rust-backed-types-with-rusttype">Rust-backed types with <code>rusttype</code><a class="headerlink" href="#rust-backed-types-with-rusttype" title="Permanent link">&para;</a></h2>
+<p>Use <code>rusttype</code> when you want an Incan type that is directly backed by a Rust type:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">string</span> <span class="kn">import</span><span class="w"> </span><span class="nn">String</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">RustString</span>
+
+<span class="nb">type</span> <span class="nc">Name</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="nc">RustString</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">parse</span><span class="p">(</span><span class="n">raw</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Name</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+        <span class="o">...</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">as_str</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="o">...</span>
+</code></pre></div>
+<p>This keeps Rust provenance explicit (<code>rust::...</code> import) while giving you an Incan-facing type name (<code>Name</code>) for docs, APIs, and rebinding.</p>
+<h3 id="declaring-conversion-edges-with-interop">Declaring conversion edges with <code>interop:</code><a class="headerlink" href="#declaring-conversion-edges-with-interop" title="Permanent link">&para;</a></h3>
+<p>Inside a <code>rusttype</code> body, <code>interop:</code> declares explicit adapters across the Incan/Rust boundary:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">string</span> <span class="kn">import</span><span class="w"> </span><span class="nn">String</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">RustString</span>
+
+<span class="nb">type</span> <span class="nc">Name</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="nc">RustString</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">parse</span><span class="p">(</span><span class="n">raw</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Name</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+        <span class="o">...</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">as_str</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="o">...</span>
+
+    <span class="n">interop</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">str</span> <span class="k">try</span> <span class="nc">Name</span><span class="o">.</span><span class="n">parse</span>
+        <span class="n">into</span> <span class="nb">str</span> <span class="n">via</span> <span class="nc">Name</span><span class="o">.</span><span class="n">as_str</span>
+</code></pre></div>
+<p>Use:</p>
+<ul>
+<li><code>from S via adapter</code> for infallible inbound adaptation (<code>S -&gt; ThisType</code>)</li>
+<li><code>from S try adapter</code> for fallible inbound adaptation (<code>S -&gt; Result[ThisType, E]</code> or <code>S -&gt; Option[ThisType]</code>)</li>
+<li><code>into T via adapter</code> for outbound adaptation (<code>ThisType -&gt; T</code>)</li>
+</ul>
+<h2 id="capability-bounds-with-stdrust">Capability bounds with <code>std.rust</code><a class="headerlink" href="#capability-bounds-with-stdrust" title="Permanent link">&para;</a></h2>
+<p>Import Rust capability markers from <code>std.rust</code> and use them in generic <code>with</code> clauses:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.rust</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Send</span><span class="p">,</span> <span class="nc">Sync</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="nc">Send</span><span class="p">,</span> <span class="nc">Sync</span><span class="p">](</span><span class="n">_value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">pass</span>
+</code></pre></div>
+<p>These are Incan-syntax bounds that lower to Rust-native predicates in generated code.</p>
+<h2 id="coercions-at-explicit-rust-boundaries">Coercions at explicit Rust boundaries<a class="headerlink" href="#coercions-at-explicit-rust-boundaries" title="Permanent link">&para;</a></h2>
+<p>When calling Rust functions or methods, the compiler can apply a bounded, compiler-managed coercion model for built-in types:</p>
+<table>
+<thead>
+<tr>
+<th>Incan built-in</th>
+<th>Canonical Rust lowering</th>
+<th>Admitted Rust boundary targets</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>int</code></td>
+<td><code>i64</code></td>
+<td><code>i64</code></td>
+</tr>
+<tr>
+<td><code>float</code></td>
+<td><code>f64</code></td>
+<td><code>f64</code>, <code>f32</code></td>
+</tr>
+<tr>
+<td><code>bool</code></td>
+<td><code>bool</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>str</code></td>
+<td><code>String</code></td>
+<td><code>String</code>, <code>&amp;str</code></td>
+</tr>
+<tr>
+<td><code>bytes</code></td>
+<td><code>Vec&lt;u8&gt;</code></td>
+<td><code>Vec&lt;u8&gt;</code>, <code>&amp;[u8]</code></td>
+</tr>
+<tr>
+<td><code>None</code> / unit</td>
+<td><code>()</code></td>
+<td><code>()</code></td>
+</tr>
+</tbody>
+</table>
+<p>Example (<code>float -&gt; f32</code> boundary adaptation):</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">time</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Duration</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="c1"># `from_secs_f32` expects f32; Incan `float` can be adapted at this Rust boundary.</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="nc">Duration</span><span class="o">.</span><span class="n">from_secs_f32</span><span class="p">(</span><span class="mf">1.5</span><span class="p">)</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">as_secs_f32</span><span class="p">())</span>
+</code></pre></div>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
 <h3 id="working-with-json-serde_json">Working with JSON (serde_json)<a class="headerlink" href="#working-with-json-serde_json" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">serde_json</span> <span class="k">as</span> <span class="n">json</span>
@@ -4653,7 +4829,7 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
     <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Generated ID: </span><span class="si">{</span><span class="nb">id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="type-mapping">Type Mapping<a class="headerlink" href="#type-mapping" title="Permanent link">&para;</a></h2>
-<p>Incan types map to Rust types:</p>
+<p>Incan types map to canonical Rust types:</p>
 <table>
 <thead>
 <tr>
@@ -4673,6 +4849,10 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
 <tr>
 <td><code>str</code></td>
 <td><code>String</code></td>
+</tr>
+<tr>
+<td><code>bytes</code></td>
+<td><code>Vec&lt;u8&gt;</code></td>
 </tr>
 <tr>
 <td><code>bool</code></td>
@@ -4697,6 +4877,10 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
 <tr>
 <td><code>Result[T, E]</code></td>
 <td><code>Result&lt;T, E&gt;</code></td>
+</tr>
+<tr>
+<td><code>None</code> / unit</td>
+<td><code>()</code></td>
 </tr>
 </tbody>
 </table>
@@ -4729,8 +4913,7 @@ compiler automatically passes it as a borrowed <code>&amp;str</code> — the mos
     Types that require explicit lifetime management may not work directly.</p>
 </li>
 <li>
-<p><strong>Generic bounds</strong>: Complex trait bounds on generic types are simplified.
-    Some advanced generic patterns may need wrapper functions.</p>
+<p><strong>Generic bounds</strong>: Capability bounds from <code>std.rust</code> (<code>Send</code>, <code>Sync</code>, <code>Static</code>, <code>Fn</code>, <code>FnMut</code>, <code>FnOnce</code>) are supported via <code>with</code> clauses. Custom trait bounds and more complex generic patterns may need wrapper functions.</p>
 </li>
 <li>
 <p><strong>Unsafe code</strong>: Incan cannot call unsafe Rust functions directly.
@@ -4781,6 +4964,7 @@ compiler automatically passes it as a borrowed <code>&amp;str</code> — the mos
 <ul>
 <li><a href="../../../tooling/how-to/dependencies/">Managing dependencies</a> - Adding crates, locking, CI</li>
 <li><a href="../../../tooling/reference/project_configuration/">Project configuration reference</a> - Full <code>incan.toml</code> format</li>
+<li><a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a> - <code>rusttype</code>, <code>interop</code>, capability bounds</li>
 <li><a href="../../explanation/error_handling/">Error Handling</a> - Working with <code>Result</code> types</li>
 <li><a href="../../reference/derives_and_traits/">Derives &amp; Traits</a> - Drop trait for custom cleanup</li>
 <li><a href="../file_io/">File I/O</a> - Reading, writing, and path handling</li>
@@ -4788,6 +4972,9 @@ compiler automatically passes it as a borrowed <code>&amp;str</code> — the mos
 <li><a href="../imports_and_modules/">Imports &amp; Modules</a> - Module system, imports, and built-in functions</li>
 <li><a href="../../tutorials/web_framework/">Web Framework</a> - Building web apps with Axum</li>
 </ul>
+<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
+
+<!-- RFC reference links for reuse: '[RFC 018]' or '[RFC 018: Title][RFC 018]' -->
 
 
 

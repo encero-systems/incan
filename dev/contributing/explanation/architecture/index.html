@@ -3792,7 +3792,16 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Backend (src/backend/)">
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rust-metadata-subsystem-srcrust_metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust metadata subsystem (src/rust_metadata/)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rust metadata subsystem (src/rust_metadata/)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4294,7 +4303,16 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Backend (src/backend/)">
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rust-metadata-subsystem-srcrust_metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust metadata subsystem (src/rust_metadata/)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rust metadata subsystem (src/rust_metadata/)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4421,8 +4439,6 @@
 └─────────────────────────────────────────────────────────────────────────────┘
 </code></pre></div>
 <h3 id="glossary">Glossary<a class="headerlink" href="#glossary" title="Permanent link">&para;</a></h3>
-<!-- markdownlint-disable MD013 MD060 -->
-
 <table>
 <thead>
 <tr>
@@ -4517,8 +4533,6 @@
 </tr>
 </tbody>
 </table>
-<!-- markdownlint-enable MD013 MD060 -->
-
 <h2 id="walkthrough-incan-build">Walkthrough: <code>incan build</code><a class="headerlink" href="#walkthrough-incan-build" title="Permanent link">&para;</a></h2>
 <p>This section describes what happens internally when you run <code>incan build path/to/main.incn</code>.</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>file.incn
@@ -4671,6 +4685,10 @@ dependency-light crate suitable for reuse across compiler and tooling.</p>
 <td>Two-pass collection + type checking</td>
 </tr>
 <tr>
+<td><code>rust_metadata/</code></td>
+<td>Rust item metadata loading/cache/extraction for Rust interop typechecking</td>
+</tr>
+<tr>
 <td><code>symbols.rs</code></td>
 <td>Symbol table and scope management</td>
 </tr>
@@ -4734,8 +4752,6 @@ compiler performs each action):</p>
 <h3 id="action-descriptors">Action descriptors<a class="headerlink" href="#action-descriptors" title="Permanent link">&para;</a></h3>
 <p>Packs don't execute compiler logic directly (that would create circular dependencies). Instead, they return small
 <strong>action descriptor</strong> enums that tell the compiler <em>what to do</em>:</p>
-<!-- markdownlint-disable MD013 -->
-
 <table>
 <thead>
 <tr>
@@ -4778,8 +4794,6 @@ compiler performs each action):</p>
 </tr>
 </tbody>
 </table>
-<!-- markdownlint-enable MD013 -->
-
 <p>Multiple keywords can share the same action descriptor (e.g., a hypothetical <code>ensure</code> keyword could reuse
 <code>AssertCall</code>). Adding a keyword that fits an existing action pattern is a <strong>pack-only change</strong> — zero touches to the
 main compiler crate.</p>
@@ -4897,6 +4911,38 @@ descriptors represent compiler behavior patterns, not individual keywords.</p>
 <tr>
 <td><code>project.rs</code></td>
 <td>Cargo project scaffolding and generation</td>
+</tr>
+</tbody>
+</table>
+<h3 id="rust-metadata-subsystem-srcrust_metadata">Rust metadata subsystem (<code>src/rust_metadata/</code>)<a class="headerlink" href="#rust-metadata-subsystem-srcrust_metadata" title="Permanent link">&para;</a></h3>
+<p><code>rust_metadata/</code> powers RFC 041 interop checks that need Rust-side signatures and item shapes.</p>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mod.rs</code></td>
+<td>Public entry points and orchestration of metadata retrieval</td>
+</tr>
+<tr>
+<td><code>cache.rs</code></td>
+<td>Workspace-scoped in-memory cache for extracted Rust item metadata</td>
+</tr>
+<tr>
+<td><code>loader.rs</code></td>
+<td>Rust workspace loading and crate graph setup for metadata extraction</td>
+</tr>
+<tr>
+<td><code>extractor.rs</code></td>
+<td>rust-analyzer-backed extraction of item signatures and method shapes</td>
+</tr>
+<tr>
+<td><code>error.rs</code></td>
+<td>Typed metadata load/extract error surface</td>
 </tr>
 </tbody>
 </table>

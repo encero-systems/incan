@@ -4373,26 +4373,22 @@ They are not intended as runtime function calls.</p>
   <code>[dependencies]</code> in <code>incan.toml</code> and emits the correct <code>use</code> statements in generated Rust (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
 <li><strong>Compiler</strong>: Rust crate dependency management with inline version annotations, manifest-based configuration,
   version validation (semver), and lock files for reproducible builds (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
+<li><strong>Compiler</strong>: RFC 041 first-class Rust interop authoring surface: <code>rusttype</code> declarations, <code>interop:</code> edge blocks, and <code>std.rust</code> capability markers used in generic <code>with</code> bounds (<a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a>, #175).</li>
+<li><strong>Tooling</strong>: LSP document symbols, hover, and completions now include <code>newtype</code>/<code>rusttype</code> and <code>type</code> alias declarations. Hovering over a <code>rusttype</code> shows the canonical Rust path of the underlying type (<a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a>).</li>
 <li><strong>Compiler</strong>: Convention-based source root resolution — the compiler and test runner resolve user module imports
   against <code>src/</code> (or an explicit <code>[build] source-root</code>) so imports are uniform across source and test files (<a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a>).</li>
 <li><strong>Web</strong>: Compiler-to-stdlib routing handoff via <code>incan_stdlib</code> macros (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>).</li>
-<li><strong>Web</strong>: Web-free compiler — all web-specific knowledge (route registration, extractor types, response builders)
-  lives in <code>std.web</code> stdlib modules and the <code>incan_web_macros</code> proc-macro crate. The compiler uses generic decorator
-  passthrough (<code>@rust.extern</code> + <code>rust.module()</code>) and derive passthrough (<code>@derive(X)</code> from <code>rust.module()</code> traits)
-  with no domain-specific web logic in the compiler core (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
+<li><strong>Web</strong>: Web-free compiler — all web-specific knowledge (route registration, extractor types, response builders) lives in <code>std.web</code> stdlib modules and the <code>incan_web_macros</code> proc-macro crate. The compiler uses generic decorator passthrough (<code>@rust.extern</code> + <code>rust.module()</code>) and derive passthrough (<code>@derive(X)</code> from <code>rust.module()</code> traits) with no domain-specific web logic in the compiler core (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Web</strong>: Import-driven web feature activation — importing <code>std.web</code> automatically enables <code>axum</code>,
   <code>incan_web_macros</code>, and <code>inventory</code> dependencies in the generated project (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Runtime</strong>: <code>incan_stdlib::r#async</code> now provides the narrow Rust runtime leaves behind the source-declared
   <code>std.async</code> modules, rather than exposing the async surface as a raw Tokio re-export facade.</li>
 <li><strong>Tooling</strong>: <code>incan init</code> scaffolds a full project: <code>src/main.incn</code>, <code>tests/test_main.incn</code>, and <code>incan.toml</code>
   with <code>[project.scripts] main</code> set (<a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a>).</li>
-<li><strong>Tooling</strong>: <code>incan lock</code> generates <code>incan.lock</code> for reproducible builds; <code>--locked</code> and <code>--frozen</code> flags enforce lock
-  freshness in CI (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
+<li><strong>Tooling</strong>: <code>incan lock</code> generates <code>incan.lock</code> for reproducible builds; <code>--locked</code> and <code>--frozen</code> flags enforce lock freshness in CI (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
 <li><strong>Tooling</strong>: Test runner resolves imports against the project source root, enabling tests to import directly from
   source modules (e.g., <code>from greet import greet</code>) without duplication (<a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a>).</li>
-<li><strong>Tooling</strong>: Test marker semantics (<code>@skip</code>, <code>@xfail</code>, <code>@slow</code>, <code>@fixture</code>, <code>@parametrize</code>) are derived from
-  <code>std.testing</code> metadata in <code>crates/incan_stdlib/stdlib/testing.incn</code> instead of brittle string/path hardcoding
-  (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
+<li><strong>Tooling</strong>: Test marker semantics (<code>@skip</code>, <code>@xfail</code>, <code>@slow</code>, <code>@fixture</code>, <code>@parametrize</code>) are derived from <code>std.testing</code> metadata in <code>crates/incan_stdlib/stdlib/testing.incn</code> instead of brittle string/path hardcoding (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Parser</strong>: <code>async</code> is allowed as a module path segment in imports (e.g., <code>from std.async.time import sleep</code>).</li>
 <li><strong>Diagnostics</strong>: Clearer error messages for unknown decorators and reserved namespace violations.</li>
 <li><strong>Diagnostics</strong>: Enhanced lock-out-of-date error with expected vs actual fingerprint for easier debugging.</li>
@@ -4401,25 +4397,23 @@ They are not intended as runtime function calls.</p>
 <li><strong>Diagnostics</strong>: Rust interop dependency errors now include the import site path and a hint to verify the
   crate/module/item path or add version/features in <code>incan.toml</code> (<a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a>, <a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
 <li><strong>Docs</strong>: "Your first Incan project" tutorial covering <code>incan init</code>, modules, and testing.</li>
+<li><strong>Docs</strong>: Rust interoperability how-to expanded with <code>rusttype</code>, <code>interop:</code> adapters, capability bounds from <code>std.rust</code>, and explicit Rust-boundary coercion guidance (<a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a>, #175).</li>
 <li><strong>Docs</strong>: Contributor docs now describe the registry-driven keyword path, including <code>incan-vocab</code>, parser <code>Ident</code> keyword handling, and generated VS Code grammar synchronization (<a href="/dev/RFCs/closed/implemented/027_incan_vocab_crate">RFC 027</a>).</li>
 <li><strong>Codegen</strong>: String literals passed to external Rust type methods now emit <code>.into()</code> instead of <code>.to_string()</code>,
   letting the Rust compiler resolve custom string types (e.g. Polars' <code>PlSmallStr</code>) via the <code>Into</code> trait.</li>
-<li><strong>Compiler</strong>: MSRV bumped from 1.85 to 1.89 (required by the <code>wasmtime</code> 40.x runtime used for vocab desugarers).</li>
+<li><strong>Compiler</strong>: MSRV bumped from 1.85 to 1.91 (required by the current compiler/runtime/tooling dependency set, including <code>wasmtime</code> 40.x and rust-analyzer metadata crates).</li>
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Diagnostics</strong>: Unknown symbol errors in f-string interpolations now point to the precise <code>{expr}</code> span (including
-  nested interpolation expressions) instead of the full f-string (<a href="/dev/RFCs/closed/implemented/011_fstring_error_spans">RFC 011</a>, #71).</li>
-<li><strong>Compiler</strong>: Fixed project root resolving to empty string when running <code>incan run src/main.incn</code> from the
-  project directory, causing "No such file or directory" errors.</li>
+<li><strong>Diagnostics</strong>: Unknown symbol errors in f-string interpolations now point to the precise <code>{expr}</code> span (including nested interpolation expressions) instead of the full f-string (<a href="/dev/RFCs/closed/implemented/011_fstring_error_spans">RFC 011</a>, #71).</li>
+<li><strong>Compiler</strong>: Fixed project root resolving to empty string when running <code>incan run src/main.incn</code> from the project directory, causing "No such file or directory" errors.</li>
 <li><strong>Docs</strong>: Web tutorial examples updated to <code>std.web</code> imports and namespaced decorators.</li>
 <li><strong>Docs</strong>: Derives and traits explanation updated to use <code>@rust.extern</code>.</li>
 </ul>
 <h2 id="known-limitations-02">Known limitations (0.2)<a class="headerlink" href="#known-limitations-02" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Web route handlers and their request models must be declared <code>pub</code> for cross-module wrapper generation (#117).</li>
-<li>Rust macro syntax (e.g., <code>serde_json::json!(...)</code>) is not supported in Incan source — use Rust crate functions
-  and types directly instead.</li>
+<li>Rust macro syntax (e.g., <code>serde_json::json!(...)</code>) is not supported in Incan source — use Rust crate functions and types directly instead.</li>
 </ul>
 <h2 id="rfcs-implemented">RFCs implemented<a class="headerlink" href="#rfcs-implemented" title="Permanent link">&para;</a></h2>
 <ul>
