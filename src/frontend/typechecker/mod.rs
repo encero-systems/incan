@@ -596,7 +596,7 @@ impl TypeChecker {
 
     /// Instantiate `supertrait_name`'s type arguments when `subtrait_name` is known with `subtrait_args`.
     ///
-    /// Used for trait-to-supertrait compatibility: a value typed `Subtrait[A1,...]` may appear where ab
+    /// Used for trait-to-supertrait compatibility: a value typed `Subtrait[A1,...]` may appear where
     /// `Supertrait[B1,...]` is required when the supertrait edge is satisfied after substitution.
     fn instantiated_supertrait_args(
         &self,

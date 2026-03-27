@@ -197,8 +197,8 @@ pub fn resolve_import_path(base_dir: &Path, import: &ImportDecl) -> Option<PathB
 
 /// Resolves an Incan module file under `base` from import path segments (e.g. `foo.bar` → `foo/bar`).
 ///
-/// Tries, in order: `segments.incn`, `segments.incan`, `segments/mod.incn`, `segments/mod.incan`. Returns the first path
-/// that exists on disk, canonicalized when possible. Returns `None` if none match.
+/// Tries, in order: `segments.incn`, `segments.incan`, `segments/mod.incn`, `segments/mod.incan`. Returns the first
+/// path that exists on disk, canonicalized when possible. Returns `None` if none match.
 fn resolve_module_path_from_base(base: &Path, path: &[String]) -> Option<PathBuf> {
     // Build file path from segments
     let mut file_path = base.to_path_buf();
