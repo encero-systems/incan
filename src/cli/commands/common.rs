@@ -538,7 +538,9 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
 /// Return modules in stable topological order (dependencies first).
 ///
 /// Discovery traversal uses a stack, which is not guaranteed to produce dependency-safe ordering for siblings.
-/// This explicit sort guarantees each module appears only after its direct and transitive dependencies.
+/// This explicit sort guarantees each module appears only after its direct and transitive dependencies for acyclic
+/// portions of the graph. For cyclic components (for example stdlib prelude re-export loops), we keep deterministic
+/// fallback ordering rather than hard-failing in collection.
 fn topologically_sort_modules(
     modules: Vec<ParsedModule>,
     dependency_edges: &HashMap<String, HashSet<String>>,
@@ -605,82 +607,18 @@ fn topologically_sort_modules(
     }
 
     if !module_by_path.is_empty() {
-        let remaining: HashSet<String> = module_by_path.keys().cloned().collect();
-        let detail = if let Some(cycle) = find_cycle_in_dependency_graph(&remaining, dependency_edges) {
-            format!(": {}", cycle.join(" -> "))
-        } else {
-            String::new()
-        };
-        return Err(CliError::failure(format!(
-            "Cyclic module dependency detected while ordering modules for type checking{detail}",
-        )));
+        // Kahn's algorithm leaves cycle members (and dependents blocked by them) unresolved.
+        // Preserve deterministic behavior by appending unresolved modules in reverse discovery order, which matches the
+        // previous `modules.reverse()` shape that existing stdlib integration tests rely on.
+        let mut unresolved: Vec<(usize, ParsedModule)> = module_by_path
+            .into_iter()
+            .map(|(path, module)| (order_index.get(&path).copied().unwrap_or(usize::MAX), module))
+            .collect();
+        unresolved.sort_by_key(|(idx, _)| std::cmp::Reverse(*idx));
+        sorted.extend(unresolved.into_iter().map(|(_, module)| module));
     }
 
     Ok(sorted)
-}
-
-/// Find one cycle inside the remaining dependency graph subset.
-///
-/// Returns a cycle path where the first node is repeated at the end
-/// (`A -> B -> C -> A`) so diagnostics can display a clear loop.
-fn find_cycle_in_dependency_graph(
-    remaining_nodes: &HashSet<String>,
-    dependency_edges: &HashMap<String, HashSet<String>>,
-) -> Option<Vec<String>> {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum VisitState {
-        Visiting,
-        Done,
-    }
-
-    fn dfs(
-        node: &str,
-        remaining_nodes: &HashSet<String>,
-        dependency_edges: &HashMap<String, HashSet<String>>,
-        state: &mut HashMap<String, VisitState>,
-        stack: &mut Vec<String>,
-    ) -> Option<Vec<String>> {
-        state.insert(node.to_string(), VisitState::Visiting);
-        stack.push(node.to_string());
-
-        if let Some(deps) = dependency_edges.get(node) {
-            for dep in deps {
-                if !remaining_nodes.contains(dep) {
-                    continue;
-                }
-                match state.get(dep) {
-                    Some(VisitState::Done) => continue,
-                    Some(VisitState::Visiting) => {
-                        let start_idx = stack.iter().position(|entry| entry == dep).unwrap_or(0);
-                        let mut cycle = stack[start_idx..].to_vec();
-                        cycle.push(dep.clone());
-                        return Some(cycle);
-                    }
-                    None => {
-                        if let Some(cycle) = dfs(dep, remaining_nodes, dependency_edges, state, stack) {
-                            return Some(cycle);
-                        }
-                    }
-                }
-            }
-        }
-
-        stack.pop();
-        state.insert(node.to_string(), VisitState::Done);
-        None
-    }
-
-    let mut state: HashMap<String, VisitState> = HashMap::new();
-    let mut stack: Vec<String> = Vec::new();
-    for node in remaining_nodes {
-        if state.contains_key(node) {
-            continue;
-        }
-        if let Some(cycle) = dfs(node, remaining_nodes, dependency_edges, &mut state, &mut stack) {
-            return Some(cycle);
-        }
-    }
-    None
 }
 
 /// Resolve the project root from a source file path.
@@ -1283,7 +1221,7 @@ pub def probe() -> SubstraitPlan:
     }
 
     #[test]
-    fn collect_modules_cycle_error_includes_path() -> Result<(), Box<dyn std::error::Error>> {
+    fn collect_modules_cycle_falls_back_to_deterministic_order() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
@@ -1322,22 +1260,11 @@ pub def main() -> int:
 "#,
         )?;
 
-        let result = collect_modules(entry.to_string_lossy().as_ref());
-        let err = match result {
-            Ok(_) => {
-                return Err("expected cycle error from collect_modules, but collection succeeded".into());
-            }
-            Err(err) => err,
-        };
-
-        let msg = err.to_string();
-        assert!(
-            msg.contains("Cyclic module dependency detected"),
-            "expected cycle diagnostic prefix, got: {msg}"
-        );
-        assert!(msg.contains("a.incn"), "cycle message should mention a.incn: {msg}");
-        assert!(msg.contains("b.incn"), "cycle message should mention b.incn: {msg}");
-        assert!(msg.contains("->"), "cycle message should show cycle edges: {msg}");
+        let modules = collect_modules(entry.to_string_lossy().as_ref())?;
+        assert_eq!(modules.len(), 3, "expected all modules to be collected even with cycle");
+        assert!(modules[0].file_path.ends_with("src/b.incn"));
+        assert!(modules[1].file_path.ends_with("src/a.incn"));
+        assert!(modules[2].file_path.ends_with("src/main.incn"));
         Ok(())
     }
 }
