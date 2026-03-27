@@ -63,8 +63,11 @@ impl Formatter {
             idx += consumed;
         }
 
-        // Ensure file ends with newline
-        self.writer.newline();
+        // Top-level declarations already end their emitted text with a trailing newline (`writeln`, `newline`, etc.).
+        // An extra newline here produced two blank lines at EOF after `reattach_comments` normalized output (#189).
+        if program.declarations.is_empty() {
+            self.writer.newline();
+        }
     }
 
     /// Coalesce adjacent compatible top-level imports for cleaner Black-style output.

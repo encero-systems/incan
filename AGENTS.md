@@ -11,10 +11,12 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 > **CRITICAL — THE USER DECIDES WHAT IS RELEVANT.** Scope, PR boundaries, and which files “belong” on a branch are **the maintainer’s call**, not the agent’s. Never label work as “unrelated PR noise,” “cleanup,” or “hygiene” as a reason to remove or revert it. Always check with the user when in doubt.
 >
 > **FORBIDDEN without explicit user approval that quotes the exact paths or commands:** anything that overwrites or deletes uncommitted work — including `git checkout -- <path>`, `git restore <path>`, `git clean`, `git reset --hard`, `stash drop`, or equivalent. If you believe files should be split, reverted, or left out of a PR, **state that and ask**; do not run destructive git operations on your own initiative.
+>
+> **Commits and pushes:** The maintainer commits code unless they **explicitly** ask you to run `git commit` or `git push`. Implement and test in the working tree; offer a suggested commit message as text. The `/start-work` skill states the same rule.
 
 ## Key References
 
-|         Document         |                                         Path                                         |
+| Document                 | Path                                                                                 |
 | ------------------------ | ------------------------------------------------------------------------------------ |
 | Rust coding conventions  | [`workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md`] |
 | Project architecture     | [`workspaces/docs-site/docs/contributing/explanation/architecture.md`]               |
@@ -43,7 +45,7 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 
 ### Common commands
 
-|                          Command                          |                     Purpose                      |
+| Command                                                   | Purpose                                          |
 | --------------------------------------------------------- | ------------------------------------------------ |
 | `make build`                                              | Debug build (fast)                               |
 | `make release`                                            | Optimized build                                  |
@@ -109,7 +111,7 @@ Agents must treat documentation updates as part of implementation, not optional 
 
 The project style guide covers broad principles. This section is a concrete quick-reference of patterns agents **must not** introduce.
 
-|                  Instead of                   |                 Prefer                 |                                Why                                |
+| Instead of                                    | Prefer                                 | Why                                                               |
 | --------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------- |
 | `.unwrap()` / `.expect("…")` **anywhere**     | `?`, `.context()`, or explicit `match` | Panics crash the compiler; deny lints reject these in CI          |
 | `.clone()` to appease the borrow checker      | Restructure ownership or borrow        | Hides design issues and adds unnecessary allocations              |
@@ -168,7 +170,7 @@ Key directories:
 
 ## Code Locations Reference
 
-|     Feature      |                         Parser                         |                             Typechecker                             |    Lowering     |    Emission     |
+| Feature          | Parser                                                 | Typechecker                                                         | Lowering        | Emission        |
 | ---------------- | ------------------------------------------------------ | ------------------------------------------------------------------- | --------------- | --------------- |
 | Field metadata   | `parser/decl.rs`                                       | `check_decl.rs`                                                     | `lower/decl.rs` | `emit/decls.rs` |
 | Alias resolution | -                                                      | `check_expr/access.rs`, `calls.rs`, `match_.rs`                     | `lower/expr.rs` | -               |
@@ -182,21 +184,21 @@ Key directories:
 
 Skills are reusable workflows in `.cursor/skills/`. Use them by name when the task matches:
 
-|      Skill       |              Trigger               |                           What it does                            |
-| ---------------- | ---------------------------------- | ----------------------------------------------------------------- |
-| `/start-work`    | Starting work on an issue or RFC   | Creates branch, gathers context from issue/RFC, checks learnings  |
-| `/test`          | Writing tests for a change         | Guides test selection, provides correct patterns per compiler stage |
-| `/review`        | Code review, PR review             | Runs the full Incan-aware review checklist                        |
-| `/write-rfc`     | Drafting a new RFC                 | Scaffolds an RFC with correct structure and conventions            |
-| `/review-rfc`    | Checking an RFC before submission  | Validates formatting, structure, content, and status-specific rules |
-| `/bump-rfc`      | Promoting an RFC status            | Handles Draft -> Planned -> In Progress -> Done transitions       |
-| `/add-learning`  | Recording a reusable insight       | Appends to learnings file with correct format and topic grouping  |
+| Skill           | Trigger                           | What it does                                                                                                                            |
+| --------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `/start-work`   | Starting work on an issue or RFC  | Creates branch, gathers context from issue/RFC, checks learnings; does **not** commit (maintainer-only commits unless explicitly asked) |
+| `/test`         | Writing tests for a change        | Guides test selection, provides correct patterns per compiler stage                                                                     |
+| `/review`       | Code review, PR review            | Runs the full Incan-aware review checklist                                                                                              |
+| `/write-rfc`    | Drafting a new RFC                | Scaffolds an RFC with correct structure and conventions                                                                                 |
+| `/review-rfc`   | Checking an RFC before submission | Validates formatting, structure, content, and status-specific rules                                                                     |
+| `/bump-rfc`     | Promoting an RFC status           | Handles Draft -> Planned -> In Progress -> Done transitions                                                                             |
+| `/add-learning` | Recording a reusable insight      | Appends to learnings file with correct format and topic grouping                                                                        |
 
 ### Agents
 
 Subagents in `.cursor/agents/` run as isolated specialists that can be delegated to:
 
-|    Agent     |                  When it's used                  |                         What it does                          |
+| Agent        | When it's used                                   | What it does                                                  |
 | ------------ | ------------------------------------------------ | ------------------------------------------------------------- |
 | `test-suite` | Validating changes, checking regressions, pre-PR | Analyzes diff, runs targeted tests, checks snapshots + clippy |
 

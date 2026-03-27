@@ -489,7 +489,6 @@ mod tests {
         let formatted = format_source(source)?;
         let expected = r#"trait OrderedCollection[T] with Collection[T], Serializable:
     def sorted(self) -> OrderedCollection[T]: ...
-
 "#;
         assert_eq!(formatted, expected);
         Ok(())
@@ -507,6 +506,21 @@ mod tests {
         let source = "";
         let result = format_source(source);
         assert!(result.is_ok());
+    }
+
+    /// Regression (GitHub #189): declarations already end with a newline; an extra `newline()` at EOF produced `\n\n`.
+    #[test]
+    fn test_format_source_eof_has_single_trailing_newline_only() -> Result<(), FormatError> {
+        let source = r#"def f() -> int:
+    return 1
+"#;
+        let formatted = format_source(source)?;
+        let trailing_nl = formatted.chars().rev().take_while(|c| *c == '\n').count();
+        assert_eq!(
+            trailing_nl, 1,
+            "expected exactly one trailing newline at EOF; got {trailing_nl}: {formatted:?}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -550,7 +564,6 @@ const B: int = 2
         let source = r#"def greet() -> str:
     """Return a greeting."""
     return "hi"
-
 "#;
         let formatted = format_source(source)?;
         assert_eq!(formatted, source);
@@ -574,7 +587,6 @@ pub type MutexGuard[T with Clone] = newtype RawMutexGuard[T]:
     def example(self) -> None:
         shared_counter = Mutex.new(0)  # XXX: constructor lives on Mutex
         return None
-
 "#;
         let formatted = format_source(source)?;
         assert_eq!(formatted, source);
@@ -595,7 +607,6 @@ type Middle = newtype int
 # ---- second ----
 @derive(Clone)
 type Second = newtype int
-
 "#;
         let formatted = format_source(source)?;
         assert_eq!(formatted, source);
@@ -794,7 +805,6 @@ const B: int = 2
 
 def sum_constants() -> int:
     return A + B
-
 "#;
         assert_eq!(result, expected);
         Ok(())

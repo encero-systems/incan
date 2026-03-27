@@ -18,6 +18,22 @@ If none is provided, ask the user what they want to work on.
 
 ---
 
+## Git commits — maintainer only
+
+**Do not commit unless the user explicitly asks you to** (e.g. “commit this”, “make a commit”, “git commit with message …”). The maintainer is the only person who commits code to this repository by default.
+
+Agents must **not** run, on their own initiative:
+
+- `git commit` (any variant)
+- `git merge` / `git rebase` / `git cherry-pick` when the result would create or rewrite commits the user did not ask for
+- `git push` (unless the user explicitly asked to push)
+
+**Do** create branches, apply edits, run tests, and leave the working tree ready for the user to review and commit. If finishing a task, summarize what changed and suggest a commit message **as text**; the user runs `git commit` when they are ready.
+
+This policy applies whenever this skill is used (and is the default for Incan work even without `/start-work`).
+
+---
+
 ## Workflow
 
 ### Step 1: Fetch issue/RFC context
@@ -120,6 +136,8 @@ Provide a concise summary:
 
 ### Next steps
 <Suggested first actions based on the issue/RFC>
+
+**Proposed commit message**: `<one line; include in this same summary for the maintainer to use when they commit>`
 ```
 
 ---
@@ -127,5 +145,5 @@ Provide a concise summary:
 ## Edge cases
 
 - **No GitHub CLI (`gh`)**: Fall back to reading the RFC file directly. Note that the issue could not be fetched and ask the user for context.
-- **Dirty working tree**: Warn the user about uncommitted changes before switching branches. Ask whether to stash, commit, or abort.
+- **Dirty working tree**: Warn the user about uncommitted changes before switching branches. Ask whether to stash, commit themselves, or abort — do not commit on their behalf unless they explicitly asked you to commit.
 - **Branch already exists with divergent history**: Always ask before overwriting.
