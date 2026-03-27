@@ -338,6 +338,7 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
 
     let mut modules = Vec::new();
     let mut processed = HashSet::new();
+    let mut dependency_edges: HashMap<String, HashSet<String>> = HashMap::new();
     let mut incan_source_stdlib_module_paths: HashMap<String, PathBuf> = HashMap::new();
     // (file_path, module_name, path_segments)
     let mut to_process: Vec<(String, String, Vec<String>)> =
@@ -348,6 +349,7 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
             continue;
         }
         processed.insert(file_path.clone());
+        dependency_edges.entry(file_path.clone()).or_default();
 
         let source = read_source(&file_path)?;
         let tokens = match lexer::lex(&source) {
@@ -430,8 +432,12 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
                             let module_name = module_segments.join("_");
                             let dep_path_str = source_path.to_string_lossy().to_string();
                             if !processed.contains(&dep_path_str) {
-                                to_process.push((dep_path_str, module_name, module_segments));
+                                to_process.push((dep_path_str.clone(), module_name, module_segments));
                             }
+                            dependency_edges
+                                .entry(file_path.clone())
+                                .or_default()
+                                .insert(dep_path_str);
                         }
                         // Unknown `std.*` imports are diagnosed by frontend validation with stdlib hinting;
                         // do not fail early here by trying to resolve them as source files.
@@ -508,6 +514,10 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
                         if !processed.contains(&dep_path_str) {
                             to_process.push((dep_path_str, module_name, module_segments.clone()));
                         }
+                        dependency_edges
+                            .entry(file_path.clone())
+                            .or_default()
+                            .insert(path.to_string_lossy().to_string());
                     }
                 }
             }
@@ -522,8 +532,155 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
         });
     }
 
-    modules.reverse();
-    Ok(modules)
+    topologically_sort_modules(modules, &dependency_edges)
+}
+
+/// Return modules in stable topological order (dependencies first).
+///
+/// Discovery traversal uses a stack, which is not guaranteed to produce dependency-safe ordering for siblings.
+/// This explicit sort guarantees each module appears only after its direct and transitive dependencies.
+fn topologically_sort_modules(
+    modules: Vec<ParsedModule>,
+    dependency_edges: &HashMap<String, HashSet<String>>,
+) -> CliResult<Vec<ParsedModule>> {
+    if modules.is_empty() {
+        return Ok(modules);
+    }
+
+    let mut module_by_path: HashMap<String, ParsedModule> = HashMap::new();
+    let mut order_index: HashMap<String, usize> = HashMap::new();
+    for (idx, module) in modules.into_iter().enumerate() {
+        let key = module.file_path.to_string_lossy().to_string();
+        order_index.insert(key.clone(), idx);
+        module_by_path.insert(key, module);
+    }
+
+    let mut indegree: HashMap<String, usize> = module_by_path.keys().cloned().map(|key| (key, 0usize)).collect();
+    let mut reverse_adj: HashMap<String, Vec<String>> = HashMap::new();
+
+    for (module_path, deps) in dependency_edges {
+        if !module_by_path.contains_key(module_path) {
+            continue;
+        }
+        for dep in deps {
+            if !module_by_path.contains_key(dep) {
+                continue;
+            }
+            if let Some(value) = indegree.get_mut(module_path) {
+                *value += 1;
+            }
+            reverse_adj.entry(dep.clone()).or_default().push(module_path.clone());
+        }
+    }
+
+    let mut ready: BTreeSet<(usize, String)> = indegree
+        .iter()
+        .filter_map(|(path, &degree)| {
+            (degree == 0).then_some((order_index.get(path).copied().unwrap_or(usize::MAX), path.clone()))
+        })
+        .collect();
+
+    let mut sorted = Vec::new();
+    while let Some((_, next)) = ready.pop_first() {
+        let Some(module) = module_by_path.remove(&next) else {
+            continue;
+        };
+        sorted.push(module);
+
+        if let Some(dependents) = reverse_adj.get(&next) {
+            for dependent in dependents {
+                if let Some(value) = indegree.get_mut(dependent)
+                    && *value > 0
+                {
+                    *value -= 1;
+                    if *value == 0 {
+                        ready.insert((
+                            order_index.get(dependent).copied().unwrap_or(usize::MAX),
+                            dependent.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    if !module_by_path.is_empty() {
+        let remaining: HashSet<String> = module_by_path.keys().cloned().collect();
+        let detail = if let Some(cycle) = find_cycle_in_dependency_graph(&remaining, dependency_edges) {
+            format!(": {}", cycle.join(" -> "))
+        } else {
+            String::new()
+        };
+        return Err(CliError::failure(format!(
+            "Cyclic module dependency detected while ordering modules for type checking{detail}",
+        )));
+    }
+
+    Ok(sorted)
+}
+
+/// Find one cycle inside the remaining dependency graph subset.
+///
+/// Returns a cycle path where the first node is repeated at the end
+/// (`A -> B -> C -> A`) so diagnostics can display a clear loop.
+fn find_cycle_in_dependency_graph(
+    remaining_nodes: &HashSet<String>,
+    dependency_edges: &HashMap<String, HashSet<String>>,
+) -> Option<Vec<String>> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum VisitState {
+        Visiting,
+        Done,
+    }
+
+    fn dfs(
+        node: &str,
+        remaining_nodes: &HashSet<String>,
+        dependency_edges: &HashMap<String, HashSet<String>>,
+        state: &mut HashMap<String, VisitState>,
+        stack: &mut Vec<String>,
+    ) -> Option<Vec<String>> {
+        state.insert(node.to_string(), VisitState::Visiting);
+        stack.push(node.to_string());
+
+        if let Some(deps) = dependency_edges.get(node) {
+            for dep in deps {
+                if !remaining_nodes.contains(dep) {
+                    continue;
+                }
+                match state.get(dep) {
+                    Some(VisitState::Done) => continue,
+                    Some(VisitState::Visiting) => {
+                        let start_idx = stack.iter().position(|entry| entry == dep).unwrap_or(0);
+                        let mut cycle = stack[start_idx..].to_vec();
+                        cycle.push(dep.clone());
+                        return Some(cycle);
+                    }
+                    None => {
+                        if let Some(cycle) = dfs(dep, remaining_nodes, dependency_edges, state, stack) {
+                            return Some(cycle);
+                        }
+                    }
+                }
+            }
+        }
+
+        stack.pop();
+        state.insert(node.to_string(), VisitState::Done);
+        None
+    }
+
+    let mut state: HashMap<String, VisitState> = HashMap::new();
+    let mut stack: Vec<String> = Vec::new();
+    for node in remaining_nodes {
+        if state.contains_key(node) {
+            continue;
+        }
+        if let Some(cycle) = dfs(node, remaining_nodes, dependency_edges, &mut state, &mut stack) {
+            return Some(cycle);
+        }
+    }
+    None
 }
 
 /// Resolve the project root from a source file path.
@@ -761,6 +918,7 @@ pub(crate) fn cargo_command_flags(locked: bool, frozen: bool, cargo_features: &C
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frontend::typechecker;
     use std::path::Path;
 
     fn parsed_module_for_test(source: &str) -> Result<ParsedModule, Box<dyn std::error::Error>> {
@@ -974,6 +1132,212 @@ def main() -> None:
             modules.iter().any(|m| m.file_path.ends_with("src/dataset.incn")),
             "expected dataset module to resolve from source root"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn collect_modules_orders_dependencies_before_dependents() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        std::fs::write(
+            project_root.join("incan.toml"),
+            r#"[project]
+name = "dep_order_demo"
+version = "0.1.0"
+"#,
+        )?;
+        let src_dir = project_root.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+
+        std::fs::write(
+            src_dir.join("substrait_model.incn"),
+            r#"pub model SubstraitPlan:
+    rels: list[str]
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("substrait_builder.incn"),
+            r#"from substrait_model import SubstraitPlan
+
+pub def plan_from_named_table(name: str) -> SubstraitPlan:
+    _ = name
+    return SubstraitPlan(rels=[])
+"#,
+        )?;
+        let entry = src_dir.join("lib.incn");
+        std::fs::write(
+            &entry,
+            r#"from substrait_builder import plan_from_named_table
+from substrait_model import SubstraitPlan
+
+pub def probe() -> SubstraitPlan:
+    return plan_from_named_table(str("orders"))
+"#,
+        )?;
+
+        let modules = collect_modules(entry.to_string_lossy().as_ref())?;
+        let mut model_idx = None;
+        let mut builder_idx = None;
+        let mut entry_idx = None;
+        for (idx, module) in modules.iter().enumerate() {
+            if module.file_path.ends_with("src/substrait_model.incn") {
+                model_idx = Some(idx);
+            } else if module.file_path.ends_with("src/substrait_builder.incn") {
+                builder_idx = Some(idx);
+            } else if module.file_path.ends_with("src/lib.incn") {
+                entry_idx = Some(idx);
+            }
+        }
+
+        let Some(model_idx) = model_idx else {
+            panic!("expected substrait_model module");
+        };
+        let Some(builder_idx) = builder_idx else {
+            panic!("expected substrait_builder module");
+        };
+        let Some(entry_idx) = entry_idx else {
+            panic!("expected entry module");
+        };
+
+        assert!(
+            model_idx < builder_idx,
+            "dependency module must be ordered before dependent module"
+        );
+        assert!(
+            builder_idx < entry_idx,
+            "entry module must be ordered after imported modules"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn collect_modules_order_keeps_imported_types_resolved_during_typecheck() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        std::fs::write(
+            project_root.join("incan.toml"),
+            r#"[project]
+name = "dep_check_demo"
+version = "0.1.0"
+"#,
+        )?;
+        let src_dir = project_root.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+
+        std::fs::write(
+            src_dir.join("substrait_model.incn"),
+            r#"@derive(Clone)
+pub model SubstraitRelNode:
+    rel_id: str
+
+@derive(Clone)
+pub model SubstraitPlan:
+    plan_id: str
+    root_rel_id: str
+    rels: list[SubstraitRelNode]
+    profile_tags: list[str]
+
+pub def empty_substrait_plan() -> SubstraitPlan:
+    return SubstraitPlan(plan_id=str("p"), root_rel_id=str(""), rels=[], profile_tags=[])
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("substrait_builder.incn"),
+            r#"from substrait_model import SubstraitPlan, SubstraitRelNode, empty_substrait_plan
+
+pub def build_one() -> SubstraitPlan:
+    plan = empty_substrait_plan()
+    mut rels = plan.rels
+    rel = SubstraitRelNode(rel_id=str("r1"))
+    rels.append(rel)
+    return SubstraitPlan(plan_id=plan.plan_id, root_rel_id=rel.rel_id, rels=rels, profile_tags=plan.profile_tags)
+"#,
+        )?;
+        let entry = src_dir.join("lib.incn");
+        std::fs::write(
+            &entry,
+            r#"from substrait_builder import build_one
+from substrait_model import SubstraitPlan
+
+pub def probe() -> SubstraitPlan:
+    return build_one()
+"#,
+        )?;
+
+        let modules = collect_modules(entry.to_string_lossy().as_ref())?;
+        for (idx, module) in modules.iter().enumerate() {
+            let deps: Vec<(&str, &crate::frontend::ast::Program)> =
+                modules[..idx].iter().map(|m| (m.name.as_str(), &m.ast)).collect();
+            let mut checker = typechecker::TypeChecker::new();
+            if let Err(errs) = checker.check_with_imports(&module.ast, &deps) {
+                return Err(format!(
+                    "typecheck failed for module {}: {:?}",
+                    module.file_path.display(),
+                    errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>()
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn collect_modules_cycle_error_includes_path() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        std::fs::write(
+            project_root.join("incan.toml"),
+            r#"[project]
+name = "cycle_demo"
+version = "0.1.0"
+"#,
+        )?;
+        let src_dir = project_root.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+
+        std::fs::write(
+            src_dir.join("a.incn"),
+            r#"from b import pong
+
+pub def ping() -> int:
+    return pong()
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("b.incn"),
+            r#"from a import ping
+
+pub def pong() -> int:
+    return 1
+"#,
+        )?;
+        let entry = src_dir.join("main.incn");
+        std::fs::write(
+            &entry,
+            r#"from a import ping
+
+pub def main() -> int:
+    return ping()
+"#,
+        )?;
+
+        let result = collect_modules(entry.to_string_lossy().as_ref());
+        let err = match result {
+            Ok(_) => {
+                return Err("expected cycle error from collect_modules, but collection succeeded".into());
+            }
+            Err(err) => err,
+        };
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Cyclic module dependency detected"),
+            "expected cycle diagnostic prefix, got: {msg}"
+        );
+        assert!(msg.contains("a.incn"), "cycle message should mention a.incn: {msg}");
+        assert!(msg.contains("b.incn"), "cycle message should mention b.incn: {msg}");
+        assert!(msg.contains("->"), "cycle message should show cycle edges: {msg}");
         Ok(())
     }
 }
