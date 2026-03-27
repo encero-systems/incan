@@ -33,7 +33,14 @@ def take_label(items: OrderedCarton[int]) -> str:
     return items.label()
 
 
+def as_carton(items: OrderedCarton[int]) -> Carton[int]:
+    """Subtrait-typed value is assignable to supertrait (RFC 042)."""
+    return items
+
+
 def main() -> None:
     values = BoxedValue(values=[10, 20, 30])
     println(f"size={take_size(values)}")
     println(f"label={take_label(values)}")
+    c = as_carton(values)
+    println(f"as_carton_size={take_size(c)}")

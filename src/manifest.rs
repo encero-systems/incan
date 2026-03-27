@@ -223,7 +223,12 @@ impl ProjectManifest {
 
     /// The project root directory (parent of `incan.toml`).
     pub fn project_root(&self) -> &Path {
-        self.path.parent().unwrap_or_else(|| Path::new("."))
+        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        if parent.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            parent
+        }
     }
 
     /// Optional vocab configuration.
@@ -828,6 +833,13 @@ parent_crate = "2.0"
 
         let manifest = ProjectManifest::discover(&subdir)?.ok_or("should find manifest in parent")?;
         assert!(manifest.rust_dependencies().contains_key("parent_crate"));
+        Ok(())
+    }
+
+    #[test]
+    fn project_root_normalizes_empty_parent_to_dot() -> Result<(), ManifestError> {
+        let manifest = ProjectManifest::from_str("", Path::new("incan.toml"))?;
+        assert_eq!(manifest.project_root(), Path::new("."));
         Ok(())
     }
 

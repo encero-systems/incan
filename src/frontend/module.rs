@@ -177,9 +177,32 @@ pub fn resolve_import_path(base_dir: &Path, import: &ImportDecl) -> Option<PathB
         return None;
     }
 
+    if let Some(resolved) = resolve_module_path_from_base(&base, &path) {
+        return Some(resolved);
+    }
+
+    // For simple relative imports (e.g. `from dataset import ...`) in non-source directories
+    // like `tests/` or `examples/`, also attempt resolution from the project source root.
+    if !is_absolute
+        && parent_levels == 0
+        && let Some(source_root) = resolve_source_root_for_imports(base_dir)
+        && source_root != base
+        && let Some(resolved) = resolve_module_path_from_base(&source_root, &path)
+    {
+        return Some(resolved);
+    }
+
+    None
+}
+
+/// Resolves an Incan module file under `base` from import path segments (e.g. `foo.bar` → `foo/bar`).
+///
+/// Tries, in order: `segments.incn`, `segments.incan`, `segments/mod.incn`, `segments/mod.incan`. Returns the first path
+/// that exists on disk, canonicalized when possible. Returns `None` if none match.
+fn resolve_module_path_from_base(base: &Path, path: &[String]) -> Option<PathBuf> {
     // Build file path from segments
-    let mut file_path = base.clone();
-    for segment in &path {
+    let mut file_path = base.to_path_buf();
+    for segment in path {
         file_path = file_path.join(segment);
     }
 
@@ -209,6 +232,24 @@ pub fn resolve_import_path(base_dir: &Path, import: &ImportDecl) -> Option<PathB
     }
 
     None
+}
+
+/// Returns the project's configured or conventional source root for resolving unqualified module imports.
+///
+/// Walks up from `start_dir` to find `incan.toml`, then uses `[build] source-root` when set; otherwise `src/` if it
+/// exists, else the project root. Returns `None` if no manifest is found.
+fn resolve_source_root_for_imports(start_dir: &Path) -> Option<PathBuf> {
+    let manifest = crate::manifest::ProjectManifest::discover(start_dir).ok().flatten()?;
+    let project_root = manifest.project_root().to_path_buf();
+    if let Some(custom) = manifest.build.as_ref().and_then(|build| build.source_root.as_deref()) {
+        return Some(project_root.join(custom));
+    }
+    let src_root = project_root.join("src");
+    if src_root.exists() {
+        Some(src_root)
+    } else {
+        Some(project_root)
+    }
 }
 
 /// Extract symbols exported by a module.
@@ -321,6 +362,21 @@ mod tests {
         }
     }
 
+    fn relative_from_import(module: &str) -> ImportDecl {
+        ImportDecl {
+            visibility: Visibility::Private,
+            kind: ImportKind::From {
+                module: ImportPath {
+                    segments: vec![module.to_string()],
+                    is_absolute: false,
+                    parent_levels: 0,
+                },
+                items: vec![],
+            },
+            alias: None,
+        }
+    }
+
     // ========================================
     // ModuleCollector tests
     // ========================================
@@ -339,6 +395,80 @@ mod tests {
         let collector = ModuleCollector::new(path);
         // Should default to "." as base_dir when parent is none
         assert!(collector.loaded.is_empty());
+    }
+
+    #[test]
+    fn resolve_import_path_falls_back_to_project_source_root_for_tests_dir() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path();
+        std::fs::write(
+            root.join("incan.toml"),
+            r#"[project]
+name = "demo"
+version = "0.1.0"
+"#,
+        )?;
+        let tests_dir = root.join("tests");
+        let src_dir = root.join("src");
+        std::fs::create_dir_all(&tests_dir)?;
+        std::fs::create_dir_all(&src_dir)?;
+        let dataset = src_dir.join("dataset.incn");
+        std::fs::write(&dataset, "pub trait DataSet[T]:\n    pass\n")?;
+
+        let resolved = resolve_import_path(&tests_dir, &relative_from_import("dataset"));
+        assert_eq!(resolved, Some(dataset.canonicalize().unwrap_or(dataset)));
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_import_path_prefers_base_dir_before_source_root_fallback() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path();
+        std::fs::write(
+            root.join("incan.toml"),
+            r#"[project]
+name = "demo"
+version = "0.1.0"
+"#,
+        )?;
+        let tests_dir = root.join("tests");
+        let src_dir = root.join("src");
+        std::fs::create_dir_all(&tests_dir)?;
+        std::fs::create_dir_all(&src_dir)?;
+        let tests_dataset = tests_dir.join("dataset.incn");
+        let src_dataset = src_dir.join("dataset.incn");
+        std::fs::write(&tests_dataset, "pub trait LocalDataSet[T]:\n    pass\n")?;
+        std::fs::write(&src_dataset, "pub trait SourceDataSet[T]:\n    pass\n")?;
+
+        let resolved = resolve_import_path(&tests_dir, &relative_from_import("dataset"));
+        assert_eq!(resolved, Some(tests_dataset.canonicalize().unwrap_or(tests_dataset)));
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_import_path_uses_manifest_source_root_when_configured() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path();
+        std::fs::write(
+            root.join("incan.toml"),
+            r#"[project]
+name = "demo"
+version = "0.1.0"
+
+[build]
+source-root = "library"
+"#,
+        )?;
+        let tests_dir = root.join("tests");
+        let library_dir = root.join("library");
+        std::fs::create_dir_all(&tests_dir)?;
+        std::fs::create_dir_all(&library_dir)?;
+        let dataset = library_dir.join("dataset.incn");
+        std::fs::write(&dataset, "pub trait DataSet[T]:\n    pass\n")?;
+
+        let resolved = resolve_import_path(&tests_dir, &relative_from_import("dataset"));
+        assert_eq!(resolved, Some(dataset.canonicalize().unwrap_or(dataset)));
+        Ok(())
     }
 
     // ========================================

@@ -584,6 +584,48 @@ impl TypeChecker {
         None
     }
 
+    /// Whether `supertrait_name` is `subtrait_name` itself or appears in its RFC 042 transitive supertrait closure.
+    fn trait_is_supertrait_of(&self, subtrait_name: &str, supertrait_name: &str) -> bool {
+        if subtrait_name == supertrait_name {
+            return true;
+        }
+        self.supertrait_closure
+            .get(subtrait_name)
+            .is_some_and(|closure| closure.iter().any(|(n, _)| n == supertrait_name))
+    }
+
+    /// Instantiate `supertrait_name`'s type arguments when `subtrait_name` is known with `subtrait_args`.
+    ///
+    /// Used for trait-to-supertrait compatibility: a value typed `Subtrait[A1,...]` may appear where ab
+    /// `Supertrait[B1,...]` is required when the supertrait edge is satisfied after substitution.
+    fn instantiated_supertrait_args(
+        &self,
+        subtrait_name: &str,
+        subtrait_args: &[ResolvedType],
+        supertrait_name: &str,
+    ) -> Option<Vec<ResolvedType>> {
+        let sub_info = self.lookup_trait_info(subtrait_name)?;
+        if subtrait_args.len() != sub_info.type_params.len() {
+            return None;
+        }
+        let subst = crate::frontend::resolved_type_subst::type_param_subst_map(&sub_info.type_params, subtrait_args);
+        if subtrait_name == supertrait_name {
+            return Some(subtrait_args.to_vec());
+        }
+        let closure = self.supertrait_closure.get(subtrait_name)?;
+        for (name, args) in closure {
+            if name != supertrait_name {
+                continue;
+            }
+            let instantiated: Vec<ResolvedType> = args
+                .iter()
+                .map(|a| crate::frontend::resolved_type_subst::substitute_resolved_type(a, &subst))
+                .collect();
+            return Some(instantiated);
+        }
+        None
+    }
+
     /// Whether a concrete named type declares adoption of `trait_name` (RFC 042: includes transitive supertraits).
     pub(crate) fn type_implements_trait(&self, type_name: &str, trait_name: &str) -> bool {
         let adopted = match self.lookup_type_info(type_name) {
@@ -773,7 +815,12 @@ impl TypeChecker {
         self.surface_context = SurfaceContext::from_program(program);
         self.import_aliases = self.surface_context.import_aliases().clone();
         self.supertrait_closure.clear();
-        self.pending_trait_supertraits.clear();
+
+        // `check_with_imports` / `import_module` can queue supertrait bounds while collecting dependency ASTs.
+        // Resolve those queued bounds into trait symbols before we collect and resolve the current program.
+        if !self.pending_trait_supertraits.is_empty() {
+            self.resolve_pending_trait_supertraits();
+        }
 
         // First pass: collect type declarations
         for decl in &program.declarations {
@@ -917,16 +964,56 @@ impl TypeChecker {
         match (actual, expected) {
             (ResolvedType::Unknown, _) | (_, ResolvedType::Unknown) => true,
             (ResolvedType::TypeVar(_), _) | (_, ResolvedType::TypeVar(_)) => true,
+
+            // ---- Context: RFC 042 — `expected` is a trait reference (`Named` or nullary trait on RHS) ----
             (ResolvedType::Named(type_name), ResolvedType::Named(trait_name))
                 if self.lookup_trait_info(trait_name).is_some() =>
             {
-                self.type_implements_trait(type_name, trait_name)
+                if self.lookup_trait_info(type_name).is_some() {
+                    self.trait_is_supertrait_of(type_name, trait_name)
+                } else {
+                    self.type_implements_trait(type_name, trait_name)
+                }
             }
-            (ResolvedType::Generic(type_name, _), ResolvedType::Named(trait_name))
+            (ResolvedType::Generic(type_name, actual_args), ResolvedType::Named(trait_name))
                 if self.lookup_trait_info(trait_name).is_some() =>
             {
-                self.type_implements_trait(type_name, trait_name)
+                if self.lookup_trait_info(type_name).is_some() {
+                    let Some(super_info) = self.lookup_trait_info(trait_name) else {
+                        return false;
+                    };
+                    if !super_info.type_params.is_empty() {
+                        return false;
+                    }
+                    self.trait_is_supertrait_of(type_name, trait_name)
+                        && self
+                            .instantiated_supertrait_args(type_name, actual_args, trait_name)
+                            .is_some_and(|inst| inst.is_empty())
+                } else {
+                    self.type_implements_trait(type_name, trait_name)
+                }
             }
+
+            // ---- Context: RFC 042 — `Subtrait[T…]` assignable to `Supertrait[T…]` (trait upcast) ----
+            (
+                ResolvedType::Generic(subtrait_name, actual_args),
+                ResolvedType::Generic(supertrait_name, expected_args),
+            ) if self.lookup_trait_info(subtrait_name).is_some()
+                && self.lookup_trait_info(supertrait_name).is_some() =>
+            {
+                let Some(instantiated) = self.instantiated_supertrait_args(subtrait_name, actual_args, supertrait_name)
+                else {
+                    return false;
+                };
+                if instantiated.len() != expected_args.len() {
+                    return false;
+                }
+                expected_args
+                    .iter()
+                    .zip(instantiated.iter())
+                    .all(|(e, a)| self.types_compatible(a, e))
+            }
+
             // RFC 042: `Concrete[T]` assignable to generic trait annotation `Trait[T]` (and similar).
             (ResolvedType::Generic(type_name, actual_args), ResolvedType::Generic(trait_name, expected_args))
                 if self.lookup_trait_info(trait_name).is_some()
@@ -955,19 +1042,35 @@ impl TypeChecker {
                     .zip(instantiated_args.iter())
                     .all(|(e, a)| self.types_compatible(a, e))
             }
+
+            // ---- Context: RFC 042 — `Named` actual vs `Trait` / `Trait[T…]` expected (incl. trait upcast) ----
             (ResolvedType::Named(type_name), ResolvedType::Generic(trait_name, expected_args))
                 if self.lookup_trait_info(trait_name).is_some() =>
             {
-                let Some(instantiated_args) = self.instantiated_trait_args_for_type(type_name, &[], trait_name) else {
-                    return false;
-                };
-                if instantiated_args.len() != expected_args.len() {
-                    return false;
+                if self.lookup_trait_info(type_name).is_some() {
+                    let Some(instantiated_args) = self.instantiated_supertrait_args(type_name, &[], trait_name) else {
+                        return false;
+                    };
+                    if instantiated_args.len() != expected_args.len() {
+                        return false;
+                    }
+                    expected_args
+                        .iter()
+                        .zip(instantiated_args.iter())
+                        .all(|(e, a)| self.types_compatible(a, e))
+                } else {
+                    let Some(instantiated_args) = self.instantiated_trait_args_for_type(type_name, &[], trait_name)
+                    else {
+                        return false;
+                    };
+                    if instantiated_args.len() != expected_args.len() {
+                        return false;
+                    }
+                    expected_args
+                        .iter()
+                        .zip(instantiated_args.iter())
+                        .all(|(expected, actual)| self.types_compatible(actual, expected))
                 }
-                expected_args
-                    .iter()
-                    .zip(instantiated_args.iter())
-                    .all(|(expected, actual)| self.types_compatible(actual, expected))
             }
             // Allow bare surface generic types (e.g. `Json`) to match `Json[T]` when used without args.
             (ResolvedType::Named(name), ResolvedType::Generic(generic_name, _))

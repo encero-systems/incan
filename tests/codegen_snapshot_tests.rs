@@ -826,6 +826,13 @@ fn test_trait_supertraits_codegen() {
 }
 
 #[test]
+fn test_trait_supertrait_assignability_codegen() {
+    let source = load_test_file("trait_supertrait_assignability");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("trait_supertrait_assignability", rust_code);
+}
+
+#[test]
 fn test_enums_codegen() {
     let source = load_test_file("enums");
     let rust_code = generate_rust(&source);

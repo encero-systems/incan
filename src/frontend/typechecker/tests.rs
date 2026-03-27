@@ -2198,6 +2198,231 @@ model IntBox with Boxed:
     Ok(())
 }
 
+// RFC 042: trait-typed value assignable to supertrait (trait-to-trait upcasts)
+
+#[test]
+fn test_types_compatible_trait_to_supertrait_named() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Root:
+  def root_m(self) -> int: ...
+
+trait Mid with Root:
+  def mid_m(self) -> int: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let actual = ResolvedType::Named("Mid".to_string());
+    let expected = ResolvedType::Named("Root".to_string());
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "Named subtrait should be assignable to supertrait (RFC 042)"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_types_compatible_trait_to_supertrait_generic() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait DataSet[T]:
+  def id(self) -> T: ...
+
+trait BoundedDataSet[T] with DataSet[T]:
+  def bounded(self) -> T: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let actual = ResolvedType::Generic("BoundedDataSet".to_string(), vec![ResolvedType::Int]);
+    let expected = ResolvedType::Generic("DataSet".to_string(), vec![ResolvedType::Int]);
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "Generic subtrait[T] should be assignable to supertrait[T] with compatible args"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_types_compatible_trait_to_supertrait_transitive_generic() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Root[T]:
+  def r(self) -> T: ...
+
+trait Mid[T] with Root[T]:
+  def m(self) -> T: ...
+
+trait Leaf[T] with Mid[T]:
+  def l(self) -> T: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let actual = ResolvedType::Generic("Leaf".to_string(), vec![ResolvedType::Int]);
+    let expected = ResolvedType::Generic("Root".to_string(), vec![ResolvedType::Int]);
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "Transitive supertrait generics should substitute through the chain"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_types_compatible_concrete_to_transitive_supertrait_generic() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait DataSet[T]:
+  def filter(self, _p: bool) -> Self: ...
+
+trait BoundedDataSet[T] with DataSet[T]:
+  def bounded_marker(self) -> T: ...
+
+class DataFrame[T] with BoundedDataSet:
+  _row_schema_marker: T
+
+  def filter(self, _p: bool) -> Self:
+    return self
+
+  def bounded_marker(self) -> T:
+    return self._row_schema_marker
+
+model Order:
+  id: int
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let order = ResolvedType::Named("Order".to_string());
+    let actual = ResolvedType::Generic("DataFrame".to_string(), vec![order.clone()]);
+    let expected = ResolvedType::Generic("DataSet".to_string(), vec![order]);
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "Concrete class through intermediate trait should satisfy transitive supertrait"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_check_with_imports_concrete_and_supertrait_upcasts() -> Result<(), Box<dyn std::error::Error>> {
+    let dependency_source = r#"
+pub trait DataSet[T]:
+  def filter(self, _p: bool) -> Self: ...
+
+pub trait BoundedDataSet[T] with DataSet[T]:
+  def bounded_marker(self) -> T: ...
+
+pub class DataFrame[T] with BoundedDataSet:
+  _row_schema_marker: T
+
+  def filter(self, _p: bool) -> Self:
+    return self
+
+  def bounded_marker(self) -> T:
+    return self._row_schema_marker
+"#;
+    let consumer_source = r#"
+from dataset import DataFrame, BoundedDataSet, DataSet
+
+def upcast_data_frame[T](v: DataFrame[T]) -> BoundedDataSet[T]:
+  return v
+
+def upcast_bounded[T](v: BoundedDataSet[T]) -> DataSet[T]:
+  return v
+"#;
+
+    let dep_tokens = lexer::lex(dependency_source).map_err(|errs| format!("dependency lex failed: {errs:?}"))?;
+    let dep_ast = parser::parse(&dep_tokens).map_err(|errs| format!("dependency parse failed: {errs:?}"))?;
+    let consumer_tokens = lexer::lex(consumer_source).map_err(|errs| format!("consumer lex failed: {errs:?}"))?;
+    let consumer_ast = parser::parse(&consumer_tokens).map_err(|errs| format!("consumer parse failed: {errs:?}"))?;
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&consumer_ast, &[("dataset", &dep_ast)])
+        .map_err(|errs| format!("typecheck failed: {errs:?}"))?;
+    Ok(())
+}
+
+#[test]
+fn test_types_compatible_trait_to_supertrait_identity() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait DataSet[T]:
+  def id(self) -> T: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let actual = ResolvedType::Generic("DataSet".to_string(), vec![ResolvedType::Str]);
+    let expected = ResolvedType::Generic("DataSet".to_string(), vec![ResolvedType::Str]);
+    assert!(checker.types_compatible(&actual, &expected));
+    Ok(())
+}
+
+#[test]
+fn test_types_compatible_trait_to_supertrait_wrong_args() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait DataSet[T]:
+  def id(self) -> T: ...
+
+trait BoundedDataSet[T] with DataSet[T]:
+  def b(self) -> T: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let actual = ResolvedType::Generic("BoundedDataSet".to_string(), vec![ResolvedType::Int]);
+    let expected = ResolvedType::Generic("DataSet".to_string(), vec![ResolvedType::Str]);
+    assert!(
+        !checker.types_compatible(&actual, &expected),
+        "Mismatched type arguments across trait upcast must be rejected"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_types_compatible_unrelated_traits_rejected() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Apple[T]:
+  def a(self) -> T: ...
+
+trait Orange[T]:
+  def o(self) -> T: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let actual = ResolvedType::Generic("Apple".to_string(), vec![ResolvedType::Int]);
+    let expected = ResolvedType::Generic("Orange".to_string(), vec![ResolvedType::Int]);
+    assert!(!checker.types_compatible(&actual, &expected));
+    Ok(())
+}
+
+#[test]
+fn test_types_compatible_wrong_direction_supertrait_to_subtrait_rejected() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait DataSet[T]:
+  def id(self) -> T: ...
+
+trait BoundedDataSet[T] with DataSet[T]:
+  def b(self) -> T: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let actual = ResolvedType::Generic("DataSet".to_string(), vec![ResolvedType::Int]);
+    let expected = ResolvedType::Generic("BoundedDataSet".to_string(), vec![ResolvedType::Int]);
+    assert!(
+        !checker.types_compatible(&actual, &expected),
+        "Supertrait must not be assignable to subtrait"
+    );
+    Ok(())
+}
+
 #[test]
 fn test_supertrait_requires_merge_conflict() -> Result<(), Vec<CompileError>> {
     let source = r#"

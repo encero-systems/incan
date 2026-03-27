@@ -351,9 +351,12 @@ fn prepare_project(
 
     let dep_modules = &modules[..modules.len() - 1];
     let path = Path::new(file_path);
-    let project_root = resolve_project_root(path);
-
-    let manifest = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))?;
+    let inferred_project_root = resolve_project_root(path);
+    let manifest = ProjectManifest::discover(&inferred_project_root).map_err(|e| CliError::failure(e.to_string()))?;
+    let project_root = manifest
+        .as_ref()
+        .map(|manifest| manifest.project_root().to_path_buf())
+        .unwrap_or(inferred_project_root);
     let library_manifest_index = manifest
         .as_ref()
         .map(LibraryManifestIndex::from_project_manifest)

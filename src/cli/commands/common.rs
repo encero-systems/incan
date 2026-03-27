@@ -321,8 +321,13 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
     let path = Path::new(entry_path);
     let base_dir = path.parent().unwrap_or(Path::new("."));
 
-    let project_root = resolve_project_root(path);
-    let manifest = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))?;
+    let inferred_project_root = resolve_project_root(path);
+    let manifest = ProjectManifest::discover(&inferred_project_root).map_err(|e| CliError::failure(e.to_string()))?;
+    let project_root = manifest
+        .as_ref()
+        .map(|manifest| manifest.project_root().to_path_buf())
+        .unwrap_or(inferred_project_root);
+    let source_root = resolve_source_root(&project_root, manifest.as_ref());
     let library_manifest_index = manifest
         .as_ref()
         .and_then(|manifest| {
@@ -471,20 +476,29 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
                         continue;
                     }
 
-                    let mut dep_path = target_dir.clone();
-                    for segment in &module_segments {
-                        dep_path = dep_path.join(segment);
-                    }
+                    // When running entrypoints outside `src/` (for example `examples/*.incn`),
+                    // unqualified imports like `from dataset import ...` should still be able to
+                    // resolve project modules from the configured source root.
+                    let try_source_root = (!path.is_absolute && path.parent_levels == 0 && source_root != target_dir)
+                        .then_some(source_root.as_path());
 
-                    dep_path.set_extension("incn");
                     let mut found_path: Option<PathBuf> = None;
+                    for base in std::iter::once(target_dir.as_path()).chain(try_source_root) {
+                        let mut dep_path = base.to_path_buf();
+                        for segment in &module_segments {
+                            dep_path.push(segment);
+                        }
 
-                    if dep_path.exists() {
-                        found_path = Some(dep_path.clone());
-                    } else {
+                        dep_path.set_extension("incn");
+                        if dep_path.exists() {
+                            found_path = Some(dep_path);
+                            break;
+                        }
+
                         dep_path.set_extension("incan");
                         if dep_path.exists() {
-                            found_path = Some(dep_path.clone());
+                            found_path = Some(dep_path);
+                            break;
                         }
                     }
 
@@ -919,6 +933,47 @@ from std.math import sqrt
 
         let modules = collect_modules(entry.to_string_lossy().as_ref())?;
         assert_eq!(modules.len(), 1, "unknown std.* imports should not queue source stubs");
+        Ok(())
+    }
+
+    #[test]
+    fn collect_modules_resolves_source_root_for_examples_entrypoints() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        std::fs::write(
+            project_root.join("incan.toml"),
+            r#"[project]
+name = "demo"
+version = "0.1.0"
+"#,
+        )?;
+        let src_dir = project_root.join("src");
+        let examples_dir = project_root.join("examples");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::create_dir_all(&examples_dir)?;
+
+        std::fs::write(
+            src_dir.join("dataset.incn"),
+            r#"pub trait DataSet[T]:
+    pass
+"#,
+        )?;
+        let entry = examples_dir.join("trait_hierarchy.incn");
+        std::fs::write(
+            &entry,
+            r#"from dataset import DataSet
+
+def main() -> None:
+    pass
+"#,
+        )?;
+
+        let modules = collect_modules(entry.to_string_lossy().as_ref())?;
+        assert_eq!(modules.len(), 2, "example entrypoint should pull source-root imports");
+        assert!(
+            modules.iter().any(|m| m.file_path.ends_with("src/dataset.incn")),
+            "expected dataset module to resolve from source root"
+        );
         Ok(())
     }
 }
