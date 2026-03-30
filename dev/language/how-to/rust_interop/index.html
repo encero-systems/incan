@@ -1304,6 +1304,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#paths-and-names-that-match-incan-keywords" class="md-nav__link">
+    <span class="md-ellipsis">
+      Paths and names that match Incan keywords
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1369,6 +1378,15 @@
   
     <nav class="md-nav" aria-label="Rust-backed types with rusttype">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#qualified-backing-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      Qualified backing paths
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#declaring-conversion-edges-with-interop" class="md-nav__link">
@@ -4197,6 +4215,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#paths-and-names-that-match-incan-keywords" class="md-nav__link">
+    <span class="md-ellipsis">
+      Paths and names that match Incan keywords
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4262,6 +4289,15 @@
   
     <nav class="md-nav" aria-label="Rust-backed types with rusttype">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#qualified-backing-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      Qualified backing paths
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#declaring-conversion-edges-with-interop" class="md-nav__link">
@@ -4473,6 +4509,11 @@
 <p><strong>Note:</strong> <code>rust::core::...</code> and <code>rust::alloc::...</code> are reserved for future <code>no_std</code>/target work and are not yet
 supported. The compiler will tell you to use <code>rust::std::...</code> instead.</p>
 </blockquote>
+<h3 id="paths-and-names-that-match-incan-keywords">Paths and names that match Incan keywords<a class="headerlink" href="#paths-and-names-that-match-incan-keywords" title="Permanent link">&para;</a></h3>
+<p>Rust modules and items sometimes use names that are reserved in Incan (<code>type</code>, <code>async</code>, and others). In <code>rust::</code> paths and in <code>from rust::... import ...</code> item lists, those spellings are still accepted. When you import a keyword-named symbol, bind it with <code>as</code> so you have a normal identifier in Incan source:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">my_crate</span><span class="p">::</span><span class="n">proto</span> <span class="kn">import</span><span class="w"> </span><span class="nn">type</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">proto_type</span>
+</code></pre></div>
+<p>The same rule applies to path segments after <code>rust::</code> (for example <code>rust::substrait::proto::type::Binary</code>).</p>
 <h2 id="dependency-management">Dependency Management<a class="headerlink" href="#dependency-management" title="Permanent link">&para;</a></h2>
 <p>When you use <code>import rust::crate_name</code>, Incan automatically adds the dependency to your generated <code>Cargo.toml</code>.
 Dependencies are resolved using a three-tier precedence system:</p>
@@ -4679,6 +4720,14 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
         <span class="o">...</span>
 </code></pre></div>
 <p>This keeps Rust provenance explicit (<code>rust::...</code> import) while giving you an Incan-facing type name (<code>Name</code>) for docs, APIs, and rebinding.</p>
+<h3 id="qualified-backing-paths">Qualified backing paths<a class="headerlink" href="#qualified-backing-paths" title="Permanent link">&para;</a></h3>
+<p>When a <code>rust::</code> import binds a Rust module (or other namespace), you can name a concrete type inside it with <code>::</code> after that binding:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">substrait</span><span class="p">::</span><span class="n">proto</span> <span class="kn">import</span><span class="w"> </span><span class="nn">type</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">proto_type</span>
+
+<span class="nb">type</span> <span class="nc">Binary</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="n">proto_type</span><span class="p">::</span><span class="nc">Binary</span>
+</code></pre></div>
+<p>The first segment must resolve to a <code>rust::</code> import; the compiler builds the full Rust path for lowering and tooling.</p>
+<p>Generics on qualified type paths (for example <code>binding::Wrapper[int]</code>) are not supported yet — import or spell a path to the concrete type without type arguments in that position.</p>
 <h3 id="declaring-conversion-edges-with-interop">Declaring conversion edges with <code>interop:</code><a class="headerlink" href="#declaring-conversion-edges-with-interop" title="Permanent link">&para;</a></h3>
 <p>Inside a <code>rusttype</code> body, <code>interop:</code> declares explicit adapters across the Incan/Rust boundary:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">string</span> <span class="kn">import</span><span class="w"> </span><span class="nn">String</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">RustString</span>

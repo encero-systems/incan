@@ -4370,7 +4370,16 @@ They are not intended as runtime function calls.</p>
 <li><strong>Compiler</strong>: Reserved root namespaces — <code>std</code> and <code>rust</code> cannot be used as user declaration names.</li>
 <li><strong>Compiler</strong>: Stdlib types require explicit imports with actionable error messages when used without import.</li>
 <li><strong>Compiler</strong>: <code>from rust import &lt;crate&gt;</code> syntax for importing Rust crates — the compiler validates imports against
-  <code>[dependencies]</code> in <code>incan.toml</code> and emits the correct <code>use</code> statements in generated Rust (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
+  <code>[rust-dependencies]</code> in <code>incan.toml</code> and emits the correct <code>use</code> statements in generated Rust (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
+<li><strong>Compiler</strong>: <code>rust::</code> paths accept segments whose spellings match Incan keywords (for example Rust modules named
+  <code>type</code>), and <code>from rust::... import</code> can import such symbols — use <code>as</code> for a safe local name (e.g.
+  <code>from rust::my_crate::proto import type as proto_type</code>) (#197).</li>
+<li><strong>Compiler</strong>: <code>rusttype</code> backing types may use Rust-style qualified paths after a <code>rust::</code> import binding
+  (e.g. <code>type Binary = rusttype proto_type::Binary</code> when <code>proto_type</code> is an imported module). Generics on qualified
+  paths (<code>a::B[T]</code>) are rejected at parse time with a clear diagnostic (#197).</li>
+<li><strong>Tooling</strong>: <code>make build</code> in the Incan repository symlinks <code>~/.cargo/bin/incan</code> and <code>~/.cargo/bin/incan-lsp</code> to the
+  workspace <code>target/debug</code> binaries when not running under CI (opt out with <code>INCAN_SKIP_CARGO_BIN_LINK=1</code>), so the CLI
+  and language server on your PATH match the checkout without a separate <code>cargo install</code>.</li>
 <li><strong>Compiler</strong>: Rust crate dependency management with inline version annotations, manifest-based configuration,
   version validation (semver), and lock files for reproducible builds (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
 <li><strong>Compiler</strong>: RFC 041 first-class Rust interop authoring surface: <code>rusttype</code> declarations, <code>interop:</code> edge blocks, and <code>std.rust</code> capability markers used in generic <code>with</code> bounds (<a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a>, #175).</li>
@@ -4397,7 +4406,7 @@ They are not intended as runtime function calls.</p>
 <li><strong>Diagnostics</strong>: Rust interop dependency errors now include the import site path and a hint to verify the
   crate/module/item path or add version/features in <code>incan.toml</code> (<a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a>, <a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
 <li><strong>Docs</strong>: "Your first Incan project" tutorial covering <code>incan init</code>, modules, and testing.</li>
-<li><strong>Docs</strong>: Rust interoperability how-to expanded with <code>rusttype</code>, <code>interop:</code> adapters, capability bounds from <code>std.rust</code>, and explicit Rust-boundary coercion guidance (<a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a>, #175).</li>
+<li><strong>Docs</strong>: Rust interoperability how-to expanded with <code>rusttype</code>, <code>interop:</code> adapters, capability bounds from <code>std.rust</code>, and explicit Rust-boundary coercion guidance (<a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a>, #175). The same guide now covers keyword-named Rust path segments, qualified <code>rusttype</code> backing paths, and the LSP page recommends <code>make build</code> for keeping CLI and <code>incan-lsp</code> aligned (#197).</li>
 <li><strong>Docs</strong>: Contributor docs now describe the registry-driven keyword path, including <code>incan-vocab</code>, parser <code>Ident</code> keyword handling, and generated VS Code grammar synchronization (<a href="/dev/RFCs/closed/implemented/027_incan_vocab_crate">RFC 027</a>).</li>
 <li><strong>Codegen</strong>: String literals passed to external Rust type methods now emit <code>.into()</code> instead of <code>.to_string()</code>,
   letting the Rust compiler resolve custom string types (e.g. Polars' <code>PlSmallStr</code>) via the <code>Into</code> trait.</li>
