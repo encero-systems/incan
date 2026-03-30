@@ -11,25 +11,21 @@
       
       
       
-        <link rel="prev" href="../contributing/explanation/stdlib_testing_internals/">
       
       
-        <link rel="next" href="../release_notes/">
-      
-      
-      <link rel="icon" href="../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>RFCs - Incan Documentation</title>
+        <title>RFC 045: Scoped DSL symbol surfaces - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -48,9 +44,9 @@
       
     
     
-      <link rel="stylesheet" href="../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../stylesheets/pygments.css">
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -76,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfcs-design-records" class="md-skip">
+        <a href="#rfc-045-scoped-dsl-symbol-surfaces" class="md-skip">
           Skip to content
         </a>
       
@@ -96,7 +92,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -116,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFCs
+              RFC 045: Scoped DSL symbol surfaces
             
           </span>
         </div>
@@ -239,7 +235,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -269,7 +265,7 @@
   
   
     <li class="md-nav__item">
-      <a href=".." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -320,7 +316,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../start_here/" class="md-nav__link ">
+            <a href="../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -353,7 +349,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -374,7 +370,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -395,7 +391,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -416,7 +412,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../start_here/beginner/" class="md-nav__link">
+      <a href="../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -475,7 +471,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../language/" class="md-nav__link ">
+            <a href="../../language/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -599,7 +595,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../language/tutorials/book/" class="md-nav__link ">
+            <a href="../../language/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -632,7 +628,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -653,7 +649,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -674,7 +670,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -695,7 +691,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -716,7 +712,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -737,7 +733,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -758,7 +754,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -779,7 +775,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -800,7 +796,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -821,7 +817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -842,7 +838,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -863,7 +859,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -884,7 +880,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -913,7 +909,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -934,7 +930,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1026,7 +1022,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/async_programming/" class="md-nav__link">
+      <a href="../../language/how-to/async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1047,7 +1043,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1068,7 +1064,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1089,7 +1085,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/error_messages/" class="md-nav__link">
+      <a href="../../language/how-to/error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1110,7 +1106,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/file_io/" class="md-nav__link">
+      <a href="../../language/how-to/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1131,7 +1127,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1152,7 +1148,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1173,7 +1169,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1194,7 +1190,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/string_processing/" class="md-nav__link">
+      <a href="../../language/how-to/string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1215,7 +1211,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/performance/" class="md-nav__link">
+      <a href="../../language/how-to/performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1236,7 +1232,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1257,7 +1253,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1328,7 +1324,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../language/reference/" class="md-nav__link ">
+            <a href="../../language/reference/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1361,7 +1357,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/language/" class="md-nav__link">
+      <a href="../../language/reference/language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1382,7 +1378,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/glossary/" class="md-nav__link">
+      <a href="../../language/reference/glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1403,7 +1399,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/file_io/" class="md-nav__link">
+      <a href="../../language/reference/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1424,7 +1420,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1445,7 +1441,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1466,7 +1462,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/strings/" class="md-nav__link">
+      <a href="../../language/reference/strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1487,7 +1483,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/testing/" class="md-nav__link">
+      <a href="../../language/reference/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1508,7 +1504,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/reflection/" class="md-nav__link">
+      <a href="../../language/reference/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1529,7 +1525,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1582,7 +1578,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1615,7 +1611,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1636,7 +1632,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1657,7 +1653,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1678,7 +1674,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1699,7 +1695,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1720,7 +1716,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1800,7 +1796,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1821,7 +1817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1842,7 +1838,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1863,7 +1859,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1884,7 +1880,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../language/reference/derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1905,7 +1901,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2009,7 +2005,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/why_incan/" class="md-nav__link">
+      <a href="../../language/explanation/why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2030,7 +2026,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2051,7 +2047,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2072,7 +2068,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/control_flow/" class="md-nav__link">
+      <a href="../../language/explanation/control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2093,7 +2089,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/closures/" class="md-nav__link">
+      <a href="../../language/explanation/closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2114,7 +2110,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/consts/" class="md-nav__link">
+      <a href="../../language/explanation/consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2135,7 +2131,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2156,7 +2152,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2177,7 +2173,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/enums/" class="md-nav__link">
+      <a href="../../language/explanation/enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2198,7 +2194,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/error_handling/" class="md-nav__link">
+      <a href="../../language/explanation/error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2219,7 +2215,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2264,7 +2260,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2297,7 +2293,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2318,7 +2314,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2347,7 +2343,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2368,7 +2364,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2435,7 +2431,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../tooling/" class="md-nav__link ">
+            <a href="../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2513,7 +2509,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2534,7 +2530,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2555,7 +2551,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2639,7 +2635,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2660,7 +2656,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2681,7 +2677,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2702,7 +2698,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2723,7 +2719,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2744,7 +2740,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2765,7 +2761,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2786,7 +2782,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2858,7 +2854,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2879,7 +2875,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2953,7 +2949,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2974,7 +2970,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2995,7 +2991,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3028,8 +3024,6 @@
       
   
   
-    
-  
   
   
     
@@ -3057,16 +3051,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../contributing/" class="md-nav__link ">
+            <a href="../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3083,7 +3077,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             Contributing
@@ -3176,7 +3170,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3209,7 +3203,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3230,7 +3224,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3251,7 +3245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3272,7 +3266,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3293,7 +3287,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3314,7 +3308,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3335,7 +3329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3356,7 +3350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3442,7 +3436,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3463,7 +3457,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3484,7 +3478,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3505,7 +3499,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3526,7 +3520,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3602,7 +3596,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3623,7 +3617,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3644,7 +3638,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3665,7 +3659,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3691,30 +3685,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  <span class="md-ellipsis">
-    RFCs
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3723,44 +3697,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#index" class="md-nav__link">
-    <span class="md-ellipsis">
-      Index
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
-    <span class="md-ellipsis">
-      See also
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -3807,7 +3743,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../release_notes/" class="md-nav__link ">
+            <a href="../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3840,7 +3776,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../release_notes/0_2/" class="md-nav__link">
+      <a href="../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3861,7 +3797,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../release_notes/0_1/" class="md-nav__link">
+      <a href="../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3889,7 +3825,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../roadmap/" class="md-nav__link">
+      <a href="../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3909,7 +3845,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../stability/" class="md-nav__link">
+      <a href="../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3949,18 +3885,228 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#index" class="md-nav__link">
+  <a href="#summary" class="md-nav__link">
     <span class="md-ellipsis">
-      Index
+      Summary
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
+  <a href="#core-model" class="md-nav__link">
     <span class="md-ellipsis">
-      See also
+      Core model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#motivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Motivation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation (how users think about it)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reference-level explanation (precise rules)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reference-level explanation (precise rules)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#scoped-symbol-descriptor" class="md-nav__link">
+    <span class="md-ellipsis">
+      Scoped symbol descriptor
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#activation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Activation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resolution-order-in-eligible-positions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Resolution order in eligible positions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resolution-outside-eligible-positions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Resolution outside eligible positions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#explicit-builtin-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      Explicit builtin access
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#diagnostics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Diagnostics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compatibility-expectations" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compatibility expectations
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      Syntax
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Semantics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction-with-existing-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interaction with existing features
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compatibility-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compatibility / migration
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      Alternatives considered
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#drawbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Drawbacks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation architecture
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unresolved-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unresolved questions
     </span>
   </a>
   
@@ -3984,347 +4130,197 @@
   
 
 
-<h1 id="rfcs-design-records">RFCs (Design records)<a class="headerlink" href="#rfcs-design-records" title="Permanent link">&para;</a></h1>
-<p>RFCs are design/evolution records (PEP-style). They are primarily for contributors and advanced readers.</p>
+<h1 id="rfc-045-scoped-dsl-symbol-surfaces">RFC 045: Scoped DSL symbol surfaces<a class="headerlink" href="#rfc-045-scoped-dsl-symbol-surfaces" title="Permanent link">&para;</a></h1>
 <ul>
-<li>RFCs are not canonical user docs.</li>
-<li>User docs may link to RFCs for background and rationale.</li>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2026-03-27</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong><ul>
+<li>RFC 027 (<code>incan-vocab</code> library registration and desugaring)</li>
+<li>RFC 028 (global operator overloading)</li>
+<li>RFC 040 (scoped DSL glyph surfaces)</li>
+<li>RFC 022 (namespaced stdlib and compiler handoff)</li>
+<li>RFC 031 (library system phase 1)</li>
 </ul>
-<p>For status, see: <a href="../roadmap/">Roadmap</a>.</p>
-<h2 id="index">Index<a class="headerlink" href="#index" title="Permanent link">&para;</a></h2>
-<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
-
-<!-- markdownlint-disable MD013 MD060 MD053 MD033 -->
-<!-- Include RFC reference links (DRY: reuse rfcs_refs.md) -->
-<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
-
-<!-- RFC reference links for reuse: '[RFC 018]' or '[RFC 018: Title][RFC 018]' -->
-<!-- RFCs index table -->
-
-<!-- RFC index filter UI -->
-
-<div class="rfc-index-filter">
-  <label>
-    Filter RFCs: <input type="search" data-rfc-filter="rfcs-index" placeholder="e.g. 018, testing, superseded">
-  </label>
-  <p><small>Tip: press <code>Esc</code> to clear.</small></p>
-</div>
-
-<div data-rfc-table="rfcs-index">
-<table>
-<thead>
-<tr>
-<th style="text-align: right;">RFC</th>
-<th>Status</th>
-<th>Track</th>
-<th>Title</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/000_core_rfc">RFC 000</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Incan Core Language RFC (Phase 1)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/001_test_fixtures">RFC 001</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Test Fixtures</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/002_test_parametrize">RFC 002</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Parametrized Tests</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/003_frontend_wasm">RFC 003</a></td>
-<td>Blocked</td>
-<td>proposed / active</td>
-<td>Frontend &amp; WebAssembly Support</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/004_async_fixtures">RFC 004</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Async Fixtures</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Rust Interop</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/006_generators">RFC 006</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Python-Style Generators</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/007_inline_tests">RFC 007</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Inline Tests</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/008_const_bindings">RFC 008</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Const Bindings</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/009_sized_integers">RFC 009</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Sized Integer Types &amp; Builtin Type Registry</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/010_tempfile">RFC 010</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Temporary Files and Directories</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/011_fstring_error_spans">RFC 011</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Precise Error Spans in F-Strings</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/012_json_value">RFC 012</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>JsonValue</code> Type, Enum Methods, and Enum Trait Adoption</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Rust Crate Dependencies</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/014_generated_code_error_handling">RFC 014</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Error Handling in Generated Rust Code</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a></td>
-<td>In Progress</td>
-<td>proposed / active</td>
-<td>Hatch-like Tooling (Project Lifecycle CLI)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/016_loop_and_break_value">RFC 016</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>loop</code> and <code>break &lt;value&gt;</code> (Loop Expressions)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/017_validated_newtypes_with_implicit_coercion">RFC 017</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Validated newtypes with implicit coercion (pydantic-like feel)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/018_testing">RFC 018</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Language Primitives for Testing</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/019_runner_testing">RFC 019</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Test Runner, CLI, and Ecosystem</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/020_offline_locked_reproducible_builds">RFC 020</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Offline / Locked / Reproducible Builds (Cargo Policy + Generated Project Contract)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/021_model_field_metadata_and_aliases">RFC 021</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Model field metadata and schema-safe aliases</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Namespaced stdlib modules and compiler→stdlib handoff</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Compilable Stdlib &amp; Rust Module Binding</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Extensible Derive Protocol</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Multi-Instantiation Trait Dispatch</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/026_user_defined_trait_bridges">RFC 026</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>User-Defined Trait Bridges</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/027_incan_vocab_crate">RFC 027</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td><code>incan-vocab</code> — Library Vocabulary Registration Crate</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/028_trait_based_operator_overloading">RFC 028</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Trait-Based Operator Overloading</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/029_union_types">RFC 029</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Union Types and Type Narrowing</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/030_std_collections">RFC 030</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td><code>std.collections</code> — Extended Collection Types</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/031_library_system_phase1">RFC 031</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Incan Library System — Phase 1 (Local Path Dependencies)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/032_value_enums">RFC 032</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Value Enums — <code>StrEnum</code> and <code>IntEnum</code></td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/033_ctx_keyword">RFC 033</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td><code>ctx</code> — Typed Configuration Context</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/034_incan_pub_registry">RFC 034</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td><code>incan.pub</code> — The Incan Package Registry</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/035_first_class_function_references">RFC 035</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>First-Class Named Function References</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/036_user_defined_decorators">RFC 036</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>User-Defined Decorators</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/037_native_web_stdlib_redesign">RFC 037</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Native Web and HTTP Stdlib Redesign</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/038_variadic_positional_args_and_keyword_capture">RFC 038</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Variadic Positional Args and Keyword-Argument Capture (<code>*args</code> / <code>**kwargs</code>)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/039_race_for_awaitable_concurrency">RFC 039</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td><code>race</code> for Awaitable Concurrency</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/040_scoped_dsl_glyph_surfaces">RFC 040</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Scoped DSL Glyph Surfaces</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>First-Class Rust Interop Authoring</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/042_traits_are_always_abstract">RFC 042</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Traits Are Always Abstract</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/043_rust_trait_impl_from_incan">RFC 043</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Rust Trait Implementation from Incan</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/044_open_ended_trait_methods">RFC 044</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Open-Ended Trait Methods</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/045_scoped_dsl_symbol_surfaces">RFC 045</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Scoped DSL symbol surfaces</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/046_computed_properties">RFC 046</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Computed properties (<code>property name -&gt; Type</code>)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/047_lightweight_directed_graph_stdlib">RFC 047</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Lightweight directed graph types (stdlib)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/048_contract_backed_models_emit_and_tooling">RFC 048</a></td>
-<td>Unknown</td>
-<td>proposed / active</td>
-<td>Contract-backed models, Incan emit, and interrogation tooling</td>
-</tr>
-</tbody>
-</table>
-</div>
-<!-- markdownlint-enable MD013 MD060 MD053 MD033 -->
-
-<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+</li>
+<li><strong>Issue:</strong> #202</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> —</li>
+</ul>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>This RFC introduces scoped DSL symbol surfaces: library-registered identifier semantics that are active only inside explicit owning DSL blocks and eligible DSL positions. It allows names such as <code>sum</code>, <code>count</code>, <code>avg</code>, or other DSL-defined symbols to be ambient where the DSL owns meaning, while preserving ordinary Incan resolution outside those positions. The feature is designed to let multiple DSL ecosystems define concise domain vocabulary without global namespace collisions or ad-hoc compiler special cases.</p>
+<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
+<p>Read this RFC as one foundation plus three mechanisms:</p>
+<ol>
+<li><strong>Foundation:</strong> symbol meaning can be scoped to an explicit owning DSL block and eligible positions, not only to global lexical scope.</li>
+<li><strong>Mechanism A:</strong> DSL authors register scoped symbol descriptors alongside existing DSL surfaces.</li>
+<li><strong>Mechanism B:</strong> typechecking resolves scoped symbols first in eligible positions, then falls back to ordinary language resolution.</li>
+<li><strong>Mechanism C:</strong> core builtins remain globally available through explicit namespaced access even when scoped symbols reuse the same unqualified name.</li>
+</ol>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>Incan currently has globally recognized builtin names such as <code>sum</code>, and unqualified call resolution treats those names as core language vocabulary. This creates friction for DSLs that need concise, domain-specific meaning for the same symbols in constrained contexts. Query-like DSLs often need <code>sum(...)</code> and <code>count(...)</code> to express aggregate intent without import boilerplate or naming workarounds, while still preserving ordinary builtin behavior in non-DSL code. Without a scoped symbol mechanism, library authors must either pick awkward substitute names, force mandatory imports for common domain primitives, or ask the compiler for one-off special handling per DSL. Those options do not scale as more DSLs and libraries adopt concise, context-owned authoring surfaces. The language already has a scoped model for glyphs (RFC 040). Identifier symbols need the same class of capability so that DSL meaning can be explicit, local, and tooling-safe.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>RFC template: <a href="TEMPLATE/">TEMPLATE</a></li>
-<li>How to write an RFC: <a href="../contributing/how-to/writing_rfcs/">Writing RFCs (how-to)</a></li>
+<li>Allow libraries to register scoped identifier symbols (for example <code>sum</code>, <code>count</code>) as part of DSL surfaces.</li>
+<li>Make scoped symbols ambient inside eligible DSL positions without requiring explicit import of each symbol.</li>
+<li>Keep ordinary Incan name resolution unchanged outside scoped DSL positions.</li>
+<li>Define deterministic precedence between scoped symbols, lexical names, and core builtins.</li>
+<li>Provide explicit escape hatches so users can still call core builtins and non-DSL symbols when names overlap.</li>
+<li>Preserve parser, typechecker, lowering, formatter, and LSP parity through a shared registry-driven contract.</li>
 </ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Replacing or removing core builtin functions.</li>
+<li>Introducing runtime dunder-style operator or function dispatch for scoped symbols.</li>
+<li>Making imports globally mutate language semantics outside explicit DSL activation.</li>
+<li>Defining one DSL-specific aggregate catalog in this RFC; symbol sets remain library-defined.</li>
+<li>Standardizing backend-specific execution semantics for any one domain library.</li>
+<li>Scoped glyph surfaces (<code>&gt;&gt;</code>, <code>|&gt;</code>, <code>:=</code>) or scoped expression forms (<code>.column</code>) — those belong to RFC 040.</li>
+</ul>
+<h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
+<p>A DSL can own short names in the places where that DSL has semantic authority.</p>
+<p>Inside an owning query-like block, <code>sum</code> and <code>count</code> can mean aggregate functions by default:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">analytics</span> <span class="kn">import</span><span class="w"> </span><span class="nn">query</span>
+
+<span class="kt">result</span> <span class="o">=</span> <span class="n">query</span> <span class="p">{</span>
+    <span class="nc">FROM</span> <span class="n">orders</span>
+    <span class="nc">GROUP</span> <span class="nc">BY</span> <span class="o">.</span><span class="n">region</span>
+    <span class="nc">SELECT</span>
+        <span class="n">region</span><span class="p">,</span>
+        <span class="nb">count</span><span class="p">()</span> <span class="k">as</span> <span class="n">order_count</span><span class="p">,</span>
+        <span class="nb">sum</span><span class="p">(</span><span class="o">.</span><span class="n">amount</span><span class="p">)</span> <span class="k">as</span> <span class="n">total_revenue</span><span class="p">,</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>No per-symbol import is required in that scoped position.</p>
+<p>Outside that query block, ordinary Incan behavior applies:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">totals</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>  <span class="c1"># ordinary language meaning outside scoped DSL positions</span>
+</code></pre></div>
+<p>When users need to force core builtin meaning even inside a scoped DSL position, they use explicit namespaced builtin access:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span> <span class="o">=</span> <span class="n">query</span> <span class="p">{</span>
+    <span class="nc">FROM</span> <span class="n">metrics</span>
+    <span class="nc">SELECT</span> <span class="n">std</span><span class="o">.</span><span class="n">builtins</span><span class="o">.</span><span class="nb">sum</span><span class="p">(</span><span class="o">.</span><span class="n">raw_values</span><span class="p">)</span> <span class="k">as</span> <span class="n">scalar_sum</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>When users need to force a non-DSL symbol with the same name, they use explicit qualification or aliasing:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">my_math</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sum</span> <span class="k">as</span> <span class="n">numeric_sum</span>
+
+<span class="kt">result</span> <span class="o">=</span> <span class="n">query</span> <span class="p">{</span>
+    <span class="nc">FROM</span> <span class="n">metrics</span>
+    <span class="nc">SELECT</span> <span class="n">numeric_sum</span><span class="p">(</span><span class="o">.</span><span class="n">value</span><span class="p">)</span> <span class="k">as</span> <span class="n">adjusted</span>
+<span class="p">}</span>
+</code></pre></div>
+<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
+<h3 id="scoped-symbol-descriptor">Scoped symbol descriptor<a class="headerlink" href="#scoped-symbol-descriptor" title="Permanent link">&para;</a></h3>
+<p>A DSL may register a scoped symbol descriptor with at least:</p>
+<ul>
+<li><code>symbol</code> (identifier spelling, e.g. <code>sum</code>)</li>
+<li><code>family</code> (e.g. aggregate-like, function-like)</li>
+<li><code>owning_block</code></li>
+<li><code>positive_scope</code></li>
+<li><code>misuse_scope</code></li>
+<li><code>eligible_positions</code></li>
+<li><code>outside_scope_diagnostic</code> (optional)</li>
+</ul>
+<p>Field names intentionally mirror RFC 040 scoped surface descriptors so vocab registration and tooling can treat glyph surfaces and symbol surfaces as parallel, composable metadata. For symbols, <code>eligible_positions</code> describes <strong>name-resolution</strong> contexts (for example where an unqualified call target may be interpreted as a scoped DSL symbol), not parser-only glyph eligibility.</p>
+<p>Descriptor naming and shape should follow the same registry discipline used for other DSL metadata.</p>
+<h3 id="activation">Activation<a class="headerlink" href="#activation" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Scoped symbol descriptors must be activated only through explicit DSL activation in the current file/module.</li>
+<li>Activation must not change symbol meaning globally across unrelated files/modules.</li>
+</ul>
+<h3 id="resolution-order-in-eligible-positions">Resolution order in eligible positions<a class="headerlink" href="#resolution-order-in-eligible-positions" title="Permanent link">&para;</a></h3>
+<p>For an unqualified call-form identifier <code>name(...)</code> in an eligible position of an active owning block:</p>
+<ol>
+<li>If <code>name</code> matches an active scoped symbol descriptor for that owning block and position, it must resolve as the scoped DSL symbol.</li>
+<li>If not matched by scoped descriptors, ordinary language resolution must apply (lexical bindings, imports, and module-scoped names per existing rules).</li>
+<li>If ordinary resolution fails, builtin resolution may still apply per existing language rules.</li>
+</ol>
+<p>Precedence when <strong>both</strong> an active scoped symbol descriptor and an ordinary lexical binding could apply to the same unqualified call (for example an imported alias that spells the same as a scoped DSL symbol) is not settled in this Draft; see <strong>Unresolved questions</strong>.</p>
+<h3 id="resolution-outside-eligible-positions">Resolution outside eligible positions<a class="headerlink" href="#resolution-outside-eligible-positions" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Scoped symbol descriptors must not alter ordinary language resolution outside eligible positions.</li>
+<li>Outside eligible positions, names must resolve exactly as they do without scoped symbol registration.</li>
+</ul>
+<h3 id="explicit-builtin-access">Explicit builtin access<a class="headerlink" href="#explicit-builtin-access" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Core builtins must be reachable through explicit namespaced access (<code>std.builtins.&lt;name&gt;</code>).</li>
+<li>Scoped symbol matching must not intercept explicit namespaced builtin calls.</li>
+</ul>
+<h3 id="diagnostics">Diagnostics<a class="headerlink" href="#diagnostics" title="Permanent link">&para;</a></h3>
+<p>Implementations should emit targeted diagnostics for:</p>
+<ul>
+<li>likely outside-scope DSL symbol misuse</li>
+<li>ambiguous intent where both scoped DSL meaning and ordinary lexical meaning are plausible</li>
+<li>missing activation when a scoped symbol is used in DSL-styled contexts</li>
+</ul>
+<p>Diagnostics should suggest explicit rewrites (<code>std.builtins.&lt;name&gt;</code> or qualified lexical symbol) when overlap occurs.</p>
+<h3 id="compatibility-expectations">Compatibility expectations<a class="headerlink" href="#compatibility-expectations" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Existing code outside scoped DSL positions must preserve behavior.</li>
+<li>Inside scoped DSL positions, behavior may change from ordinary builtin resolution to DSL-owned resolution where descriptors are active.</li>
+<li>DSL authors should document scoped symbol sets as part of their language surface contract.</li>
+</ul>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
+<p>This RFC does not require new token syntax. It reuses ordinary identifier call syntax and explicit namespaced calls.</p>
+<h3 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h3>
+<p>Scoped symbol semantics are lexical and compile-time, not runtime. Meaning comes from the enclosing DSL block and eligible position metadata, not from dynamic value dispatch.</p>
+<h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>RFC 027 (<code>incan-vocab</code>)</strong>: scoped symbol descriptors should be registered through the same extension surface and activation pipeline.</li>
+<li><strong>RFC 040 (scoped DSL surfaces)</strong>: scoped symbols and scoped glyphs/expression forms are parallel mechanisms; neither replaces the other. Leading-dot field access (<code>.column</code>) is an RFC 040 expression-form surface, not an RFC 045 concern.</li>
+<li><strong>RFC 028 (global operators)</strong>: scoped symbol semantics do not modify global operator contracts.</li>
+<li><strong>Imports/modules</strong>: explicit qualification remains the escape hatch for overlapping names.</li>
+<li><strong>LSP/formatter</strong>: tooling must reflect scoped symbol meaning in eligible positions and ordinary meaning elsewhere.</li>
+</ul>
+<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
+<p>The feature is additive at language surface level, but it can change behavior for overlapping unqualified names inside active DSL positions. DSL maintainers should provide migration guidance where previous versions required per-symbol imports or alternate spellings.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Keep import-only DSL symbols forever.</strong> Rejected because it keeps repetitive boilerplate and naming workarounds for common DSL primitives; every DSL user must import <code>sum</code>, <code>count</code>, etc. explicitly even though the meaning is unambiguous in context.</li>
+<li><strong>Require globally unique DSL symbol names.</strong> Rejected because it produces unnatural user-facing APIs (<code>inql_sum</code>, <code>hees_count</code>) and does not scale across independent DSL ecosystems that may reasonably want the same short names.</li>
+<li><strong>Allow global shadowing of builtins by libraries.</strong> Rejected because it is too broad and unsafe; it breaks predictability outside DSL contexts and makes it impossible for the compiler to provide helpful diagnostics about intent.</li>
+<li><strong>Use runtime dunder-like dispatch for function calls.</strong> Rejected because scoped language meaning should be compile-time and lexical, not ambient runtime magic; the enclosing DSL block owns the meaning, not a runtime inspection of "where am I."</li>
+<li><strong>Fold scoped symbols into RFC 040 (scoped glyph surfaces).</strong> Rejected because scoped identifiers are a distinct problem class from scoped syntax tokens; glyphs need parser-level token handling; identifiers need name-resolution-level precedence rules; keeping them in separate RFCs keeps each RFC focused and independently implementable.</li>
+</ul>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Adds complexity to name-resolution rules and diagnostics.</li>
+<li>Increases mental-model surface: the same identifier may mean different things by context.</li>
+<li>Requires careful tooling parity to prevent editor/compiler drift.</li>
+<li>Requires explicit compatibility guidance for DSL upgrades when scoped symbol sets evolve.</li>
+</ul>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
+<p>Non-normative recommended shape:</p>
+<ul>
+<li>Extend DSL registration metadata with scoped symbol descriptors.</li>
+<li>Carry owning-block and eligible-position context through frontend semantic analysis.</li>
+<li>Resolve scoped symbols during typechecking before ordinary fallback in eligible positions.</li>
+<li>Lower resolved scoped symbols through DSL-specific desugar/lowering paths.</li>
+<li>Preserve explicit namespaced builtin calls as direct builtin targets.</li>
+</ul>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Parser / AST</strong>: parser must preserve enough DSL block and clause-position context for scoped symbol eligibility checks.</li>
+<li><strong>Typechecker / Symbol resolution</strong>: resolver must apply scoped symbol precedence in eligible positions and preserve ordinary resolution elsewhere.</li>
+<li><strong>IR Lowering</strong>: lowering must keep scoped symbol identity so DSL-owned semantics are emitted through the correct path.</li>
+<li><strong>Emission</strong>: emitted output must preserve DSL-scoped meaning and explicit builtin calls without ambiguity.</li>
+<li><strong><code>incan-vocab</code> registry</strong>: registration schema must support scoped symbol descriptors and activation metadata.</li>
+<li><strong>Formatter</strong>: formatter should preserve explicit qualification used to disambiguate scoped vs builtin calls.</li>
+<li><strong>LSP / Tooling</strong>: completions, hover, go-to-definition, and diagnostics should reflect scoped symbol meaning by context.</li>
+</ul>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Should scoped symbol precedence in eligible positions always outrank lexical names, or should lexical aliases outrank scoped symbols when explicitly imported?</li>
+<li>Is <code>std.builtins.&lt;name&gt;</code> the correct canonical builtin escape path, or should a dedicated reserved root be introduced instead?</li>
+<li>Should misuse diagnostics outside eligible positions be warning-level or error-level by default when a likely scoped intent is detected?</li>
+<li>How should scoped symbol descriptor families be modeled for non-aggregate DSL symbols so tooling can provide semantic hints consistently?</li>
+<li>Should descriptor activation be file-local only, or should there be an opt-in module subtree propagation model?</li>
+<li>How should scoped symbol overloading across nested DSL blocks be resolved when multiple active descriptors share a name?</li>
+</ul>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved.
+     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
@@ -4373,18 +4369,18 @@
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="../_snippets/javascripts/mathjax.js"></script>
+        <script src="../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../_snippets/javascripts/tablesort.js"></script>
+        <script src="../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>

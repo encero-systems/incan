@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 040: Scoped DSL Glyph Surfaces - Incan Documentation</title>
+        <title>RFC 047: Lightweight directed graph types (stdlib) - Incan Documentation</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-040-scoped-dsl-glyph-surfaces" class="md-skip">
+        <a href="#rfc-047-lightweight-directed-graph-types-stdlib" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 040: Scoped DSL Glyph Surfaces
+              RFC 047: Lightweight directed graph types (stdlib)
             
           </span>
         </div>
@@ -3900,48 +3900,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Motivation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#global-operator-overloading-is-not-the-right-model-for-every-dsl" class="md-nav__link">
-    <span class="md-ellipsis">
-      Global operator overloading is not the right model for every DSL
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfc-027-already-provides-the-right-substrate-but-not-the-full-glyph-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      RFC 027 already provides the right substrate, but not the full glyph model
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#dsls-need-concise-chaining-and-concise-naming" class="md-nav__link">
-    <span class="md-ellipsis">
-      DSLs need concise chaining and concise naming
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#the-real-restriction-is-not-the-glyph-but-the-contract" class="md-nav__link">
-    <span class="md-ellipsis">
-      The real restriction is not the glyph, but the contract
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -3956,7 +3914,7 @@
         <li class="md-nav__item">
   <a href="#non-goals" class="md-nav__link">
     <span class="md-ellipsis">
-      Non-goals
+      Non-Goals
     </span>
   </a>
   
@@ -3969,94 +3927,85 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Guide-level explanation">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#illustrative-api-sketches-non-normative" class="md-nav__link">
+    <span class="md-ellipsis">
+      Illustrative API sketches (non-normative)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Illustrative API sketches (non-normative)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#same-glyph-separate-semantic-namespace" class="md-nav__link">
+  <a href="#constructing-a-directed-graph-and-querying-neighbors" class="md-nav__link">
     <span class="md-ellipsis">
-      Same glyph, separate semantic namespace
+      Constructing a directed graph and querying neighbors
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#example-pipeline-linking" class="md-nav__link">
+  <a href="#node-payloads-as-object-references-eg-step" class="md-nav__link">
     <span class="md-ellipsis">
-      Example: pipeline linking
+      Node payloads as object references (e.g. Step)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#example-query-style-pipes" class="md-nav__link">
+  <a href="#traversal-bfs-dfs-from-a-start-node" class="md-nav__link">
     <span class="md-ellipsis">
-      Example: query-style pipes
+      Traversal (BFS / DFS) from a start node
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#example-route-head-composition" class="md-nav__link">
+  <a href="#topological-order-on-a-dag-shaped-graph" class="md-nav__link">
     <span class="md-ellipsis">
-      Example: route-head composition
+      Topological order on a DAG-shaped graph
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#example-rails-style-routing-families" class="md-nav__link">
+  <a href="#dag-mode-reject-edges-that-would-create-a-cycle" class="md-nav__link">
     <span class="md-ellipsis">
-      Example: Rails-style routing families
+      DAG mode: reject edges that would create a cycle
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#example-r-style-data-pipelines" class="md-nav__link">
+  <a href="#parallel-edges-multigraph-profile-if-supported" class="md-nav__link">
     <span class="md-ellipsis">
-      Example: R-style data pipelines
+      Parallel edges (multigraph profile), if supported
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#example-matillion-style-orchestration-graphs" class="md-nav__link">
+  <a href="#edge-kind-on-a-simple-directed-graph" class="md-nav__link">
     <span class="md-ellipsis">
-      Example: Matillion-style orchestration graphs
+      Edge kind on a simple directed graph
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#example-taskbuild-automation-dsls" class="md-nav__link">
+  <a href="#storing-a-graph-as-data-not-a-singleton" class="md-nav__link">
     <span class="md-ellipsis">
-      Example: task/build automation DSLs
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#example-future-binding-like-glyphs" class="md-nav__link">
-    <span class="md-ellipsis">
-      Example: future binding-like glyphs
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#example-leading-dot-field-access-expression-form-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      Example: leading-dot field access (expression-form surface)
+      Storing a graph as data (not a singleton)
     </span>
   </a>
   
@@ -4078,81 +4027,45 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#core-rule" class="md-nav__link">
+  <a href="#directed-graph" class="md-nav__link">
     <span class="md-ellipsis">
-      Core rule
+      Directed graph
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#registration-and-conflict-policy" class="md-nav__link">
+  <a href="#nodeid-stability" class="md-nav__link">
     <span class="md-ellipsis">
-      Registration and conflict policy
+      NodeId stability
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#expression-form-surfaces" class="md-nav__link">
+  <a href="#dag-profile" class="md-nav__link">
     <span class="md-ellipsis">
-      Expression-form surfaces
+      DAG profile
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#registration-model" class="md-nav__link">
+  <a href="#topological-order" class="md-nav__link">
     <span class="md-ellipsis">
-      Registration model
+      Topological order
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#parsing-and-ast" class="md-nav__link">
+  <a href="#interrogation-api-minimum-bar" class="md-nav__link">
     <span class="md-ellipsis">
-      Parsing and AST
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#resolution-order" class="md-nav__link">
-    <span class="md-ellipsis">
-      Resolution order
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#pairwise-chaining" class="md-nav__link">
-    <span class="md-ellipsis">
-      Pairwise chaining
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#implicit-block-receivercontext" class="md-nav__link">
-    <span class="md-ellipsis">
-      Implicit block receiver/context
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#diagnostics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Diagnostics
+      Interrogation API (minimum bar)
     </span>
   </a>
   
@@ -4169,39 +4082,6 @@
       Design details
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Design details">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#interaction-with-rfc-028" class="md-nav__link">
-    <span class="md-ellipsis">
-      Interaction with RFC 028
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interaction-with-rfc-027" class="md-nav__link">
-    <span class="md-ellipsis">
-      Interaction with RFC 027
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#compatibility-migration" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compatibility / migration
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -4227,6 +4107,15 @@
   <a href="#layers-affected" class="md-nav__link">
     <span class="md-ellipsis">
       Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prior-art-survey-informative" class="md-nav__link">
+    <span class="md-ellipsis">
+      Prior art survey (informative)
     </span>
   </a>
   
@@ -4259,481 +4148,265 @@
   
 
 
-<h1 id="rfc-040-scoped-dsl-glyph-surfaces">RFC 040: Scoped DSL Glyph Surfaces<a class="headerlink" href="#rfc-040-scoped-dsl-glyph-surfaces" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-047-lightweight-directed-graph-types-stdlib">RFC 047: Lightweight directed graph types (stdlib)<a class="headerlink" href="#rfc-047-lightweight-directed-graph-types-stdlib" title="Permanent link">&para;</a></h1>
 <ul>
 <li><strong>Status:</strong> Draft</li>
-<li><strong>Created:</strong> 2026-03-08</li>
+<li><strong>Created:</strong> 2026-03-31</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
-<li>RFC 027 (<code>incan-vocab</code> block registration and desugaring)</li>
-<li>RFC 028 (global operator overloading)</li>
-<li>RFC 045 (scoped DSL symbol surfaces — companion RFC for identifier-level scoping)</li>
+<li>RFC 005 (Rust interop)</li>
+<li>RFC 023 (stdlib namespacing and compiler handoff)</li>
+<li>RFC 030 (std collections)</li>
+<li>RFC 033 (<code>ctx</code> — contrast only; graphs are not ambient singletons)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> —</li>
+<li><strong>Issue:</strong> #204</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Introduce <strong>scoped glyph surfaces</strong> for explicit DSL blocks and their registered subgrammars.</p>
-<p>A registered DSL may declare scoped glyph surfaces with two layers of effect:</p>
-<ul>
-<li><strong>positive meaning</strong> inside an explicit owning block and its eligible registered positions</li>
-<li><strong>negative misuse diagnostics</strong> across the activating file/module outside that block</li>
-</ul>
-<p>Operator-like glyphs such as <code>&gt;&gt;</code>, <code>&lt;&lt;</code>, <code>|&gt;</code>, <code>&lt;|</code>, <code>-&gt;</code>, <code>&lt;-</code>, or <code>+</code> can support chaining, routing, linking, or composition within a DSL block without implying that the operand types globally implement the corresponding RFC 028 operator traits. Binding-like glyphs such as <code>:=</code> are reserved for block-local alias/binding forms and are specified as a separate family from operators. Expression-form surfaces such as leading-dot field access (<code>.column</code>) provide implicit-receiver syntax that is valid only inside eligible DSL positions, without becoming a general Incan expression form.</p>
-<p>This RFC does <strong>not</strong> define a closed whitelist of legal DSL surfaces. It defines the registration, scoping, parsing-eligibility, and conflict rules that make scoped surfaces safe to use. The surface set is open-ended as long as a DSL registers the shape explicitly and it coexists cleanly with the core grammar and tooling.</p>
+<p>This RFC proposes a <strong>small, opinionated directed-graph abstraction</strong> in the <strong>Incan standard library</strong>: stable <strong>node identifiers</strong>, <strong>node payloads</strong> (including <strong>references to user-defined objects</strong> such as <code>model</code> or <code>class</code> instances), <strong>directed edges</strong> with optional <strong>kind</strong> metadata, and a <strong>minimal interrogation API</strong> (adjacency, roots/sinks, traversal, optional topological order). It is <strong>not</strong> a graph database, query language, or persistence layer. New graph-related stdlib surfaces <strong>must</strong> be specified through RFCs (this document or successors) before they become stable contracts.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<h3 id="global-operator-overloading-is-not-the-right-model-for-every-dsl">Global operator overloading is not the right model for every DSL<a class="headerlink" href="#global-operator-overloading-is-not-the-right-model-for-every-dsl" title="Permanent link">&para;</a></h3>
-<p>RFC 028 defines ordinary global operator overloading. That is the right tool when a type truly supports an operator everywhere:</p>
-<ul>
-<li>a matrix type can globally support <code>@</code></li>
-<li>a custom numeric type can globally support <code>+</code></li>
-<li>a pipeline object can globally support <code>&gt;&gt;</code></li>
-</ul>
-<p>But some DSLs need the same glyphs with a meaning that exists <strong>only inside an explicit block and specific DSL positions within it</strong>.</p>
-<p>Example:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">pipeline</span> <span class="n">user_sync</span><span class="p">:</span>
-    <span class="n">extract</span> <span class="o">&gt;&gt;</span> <span class="n">normalize</span> <span class="o">&gt;&gt;</span> <span class="n">validate</span> <span class="o">&gt;&gt;</span> <span class="n">store</span>
-</code></pre></div>
-<p>The intent here is not necessarily that <code>Step</code> globally implements <code>Shr</code>. The real meaning may be "inside a <code>pipeline</code> block, register directed links between adjacent steps." Outside that block, <code>extract &gt;&gt; normalize</code> should be an error with a targeted message.</p>
-<p>If the types globally implement RFC 028 operator traits, the compiler can no longer honestly say "this is only valid inside a pipeline block." That is why block-local glyph meaning needs its own mechanism.</p>
-<h3 id="rfc-027-already-provides-the-right-substrate-but-not-the-full-glyph-model">RFC 027 already provides the right substrate, but not the full glyph model<a class="headerlink" href="#rfc-027-already-provides-the-right-substrate-but-not-the-full-glyph-model" title="Permanent link">&para;</a></h3>
-<p>RFC 027 gives Incan an explicit DSL block model:</p>
-<ul>
-<li>libraries register block keywords and placement rules</li>
-<li>the parser preserves block structure</li>
-<li>desugarers transform block syntax into regular Incan before ordinary compilation continues</li>
-</ul>
-<p>That is already the correct architectural home for DSL-owned glyphs. What is missing is a way for a block to say "inside these positions, this glyph has a local meaning."</p>
-<h3 id="dsls-need-concise-chaining-and-concise-naming">DSLs need concise chaining and concise naming<a class="headerlink" href="#dsls-need-concise-chaining-and-concise-naming" title="Permanent link">&para;</a></h3>
-<p>The immediate motivating cases are operator-like glyphs:</p>
-<ul>
-<li><code>&gt;&gt;</code> / <code>&lt;&lt;</code> for directional linking</li>
-<li><code>|&gt;</code> / <code>&lt;|</code> for pipe-style flow or reverse application inside a block</li>
-<li><code>-&gt;</code> / <code>&lt;-</code> for transitions, edges, mappings, or directional flow inside a block</li>
-</ul>
-<p>But the same family also needs room for future binding-like surfaces such as <code>:=</code>, where the glyph is not a global walrus operator, but a block-local alias or slot-binding form.</p>
-<p>Beyond operators and bindings, DSLs also need <strong>expression-form surfaces</strong>: syntax shapes that are only valid inside eligible DSL positions. The leading example is <code>.column</code> notation — a leading-dot field access with an implicit receiver supplied by the owning block's context. Outside DSL positions, <code>.field</code> at expression start is not valid Incan syntax and must be rejected. Inside a query or relational block, <code>.amount</code> means "the <code>amount</code> field of the primary relation" without needing a named receiver.</p>
-<p>This RFC therefore covers <strong>scoped DSL surfaces</strong> as a broader category, split into operator-like, binding-like, and expression-form families.</p>
-<h3 id="the-real-restriction-is-not-the-glyph-but-the-contract">The real restriction is not the glyph, but the contract<a class="headerlink" href="#the-real-restriction-is-not-the-glyph-but-the-contract" title="Permanent link">&para;</a></h3>
-<p>The language does not need to pre-decide that only a handful of symbols are ever valid in DSLs. A DSL may reasonably want shapes like:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">api</span> <span class="n">app</span><span class="p">:</span>
-    <span class="n">route</span> <span class="nb">get</span> <span class="o">+</span> <span class="n">delete</span> <span class="o">-&gt;</span> <span class="p">(</span><span class="o">...</span><span class="p">)</span>
-</code></pre></div>
-<p>where <code>+</code> combines route verbs and <code>-&gt;</code> maps a route specification to a handler or body.</p>
-<p>That is fine. The thing the language must restrict is not <em>which</em> glyphs are imaginable, but <em>how</em> a DSL claims them:</p>
-<ul>
-<li>the glyph must be explicitly registered</li>
-<li>the DSL must declare the positions where it becomes special</li>
-<li>the DSL must declare its family and parsing shape</li>
-<li>conflicts with core grammar must be explicit and tooling-safe</li>
-</ul>
-<p>That is the real safety boundary for this RFC.</p>
+<p>Several Incan-backed domains benefit from a <strong>shared in-memory graph model</strong>: lazy <strong>relational plan</strong> DAGs, <strong>task or dependency</strong> graphs, configuration <strong>pipelines</strong>, and other tools that need <strong>nodes and edges</strong> with <strong>programmatic traversal</strong> rather than ad hoc maps and lists per project.</p>
+<p>Without a stdlib shape, each library reinvents <strong>id allocation</strong>, <strong>edge storage</strong>, and <strong>walk order</strong>, which fragments tooling, tests, and Rust interop. A <strong>lightweight, RFC-governed</strong> type keeps the surface <strong>small</strong> while allowing <strong>domain-specific payloads</strong> and <strong>future extension</strong> (weights, attributes, alternate backends) in follow-on RFCs.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Define the registration, scoping, parsing-eligibility, and conflict rules under which explicit DSL blocks may own position-scoped glyph surfaces.</li>
-<li>Cover three surface families: operator-like glyphs (e.g. <code>&gt;&gt;</code>, <code>|&gt;</code>), binding-like glyphs (e.g. <code>:=</code>), and expression-form surfaces (e.g. leading-dot <code>.field</code> access).</li>
-<li>Ensure scoped glyph meaning is block-local and position-scoped: glyphs gain DSL-owned semantics only inside eligible positions of an explicit owning block, not as blanket redefinition for the whole block body.</li>
-<li>Provide targeted misuse diagnostics when DSL-shaped glyphs appear outside eligible positions but inside an activating file or module.</li>
-<li>Coexist cleanly with RFC 028 global operator overloading and the rest of the core grammar.</li>
-<li>Keep the surface set open-ended: any glyph that satisfies the registration and conflict rules is valid, with no pre-closed whitelist.</li>
+<li>Define <strong>normative semantics</strong> for a <strong>directed graph</strong> type (and optionally a <strong>DAG</strong> variant or mode) exposed through the stdlib.</li>
+<li>Specify <strong>stable <code>NodeId</code></strong> (or equivalent) semantics: what it means to add/remove nodes and edges, and when ids <strong>must not</strong> be reused in ways that confuse callers.</li>
+<li>Specify a <strong>minimal interrogation API</strong> sufficient for common compiler and orchestration patterns: successors, predecessors, roots, sinks, <strong>reachability traversal</strong> from a start node in at least one <strong>documented</strong> order (e.g. <strong>breadth-first search (BFS)</strong> or <strong>depth-first search (DFS)</strong> — see <a href="#interrogation-api-minimum-bar">Interrogation API (minimum bar)</a>, and topological order when acyclic). Illustrative sketches live under <strong>Illustrative API sketches (non-normative)</strong>.</li>
+<li>Require that <strong>new</strong> stdlib graph features (additional types, serialization guarantees, query dialects) go through the <strong>RFC process</strong> rather than growing ad hoc in implementation.</li>
 </ul>
-<h2 id="non-goals">Non-goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Arbitrary ad-hoc punctuation with no registration or conflict policy</li>
-<li>Project-wide or import-only operator redefinition</li>
-<li>Hidden ambient runtime state as the source of block-local meaning</li>
-<li>A global walrus operator for ordinary Incan code</li>
-<li>Scoped identifier symbol semantics (e.g. <code>sum</code>, <code>count</code> gaining DSL-specific meaning by position) — that belongs to RFC 045</li>
+<li>A <strong>graph query language</strong>, <strong>index structures</strong> for scale-out property search, or <strong>disk-backed</strong> storage.</li>
+<li><strong>Undirected</strong> graphs as a first-class mandatory type (may be added later via RFC).</li>
+<li><strong>Distributed</strong> graphs, <strong>transactions</strong>, or <strong>Cypher</strong>-style interfaces.</li>
+<li>Mandating a specific <strong>Rust crate</strong> as the sole implementation; the contract is <strong>behavioral</strong>, not crate-specific.</li>
+<li>A <strong>process-wide</strong> or <strong>language-global singleton</strong> graph (no single ambient “the graph” for all callers). <strong>Named registries</strong>, <strong>session-held</strong> graphs, or <strong>scoped</strong> “current plan” handles are <strong>host / session</strong> concerns and <strong>must not</strong> be required by this stdlib contract.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="same-glyph-separate-semantic-namespace">Same glyph, separate semantic namespace<a class="headerlink" href="#same-glyph-separate-semantic-namespace" title="Permanent link">&para;</a></h3>
-<p>The central rule is:</p>
-<ul>
-<li>the <strong>glyph</strong> may be the same</li>
-<li>the <strong>owner of the meaning</strong> is different</li>
-</ul>
-<p>Outside an owning DSL block, or outside the DSL positions that block explicitly marks as eligible, the glyph falls back to the ordinary language surface and is interpreted according to RFC 028 and the rest of the core grammar.</p>
-<p>Inside an explicit DSL block, the enclosing block may own a position-scoped meaning for the same glyph.</p>
-<p>That means:</p>
-<ul>
-<li><code>a &gt;&gt; b</code> in ordinary code uses global operator resolution</li>
-<li><code>a &gt;&gt; b</code> inside a <code>pipeline</code> block may mean "link these two steps"</li>
-<li><code>a &gt;&gt; b</code> outside a <code>pipeline</code> block, but in a file that activated the pipeline DSL, may receive a targeted "outside the block" diagnostic</li>
-</ul>
-<p>The latter does <strong>not</strong> imply that <code>a</code> or <code>b</code> globally implement <code>Shr</code>.</p>
-<h3 id="example-pipeline-linking">Example: pipeline linking<a class="headerlink" href="#example-pipeline-linking" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">pipeline</span> <span class="n">user_sync</span><span class="p">:</span>
-    <span class="n">extract</span> <span class="o">&gt;&gt;</span> <span class="n">normalize</span> <span class="o">&gt;&gt;</span> <span class="n">validate</span> <span class="o">&gt;&gt;</span> <span class="n">store</span>
-</code></pre></div>
-<p>Inside the block, the DSL may interpret that chain pairwise:</p>
-<ul>
-<li><code>extract &gt;&gt; normalize</code></li>
-<li><code>normalize &gt;&gt; validate</code></li>
-<li><code>validate &gt;&gt; store</code></li>
-</ul>
-<p>Conceptually, the desugared meaning might be:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">_pipeline_ctx</span><span class="o">.</span><span class="n">link</span><span class="p">(</span><span class="n">extract</span><span class="p">,</span> <span class="n">normalize</span><span class="p">)</span>
-<span class="n">_pipeline_ctx</span><span class="o">.</span><span class="n">link</span><span class="p">(</span><span class="n">normalize</span><span class="p">,</span> <span class="n">validate</span><span class="p">)</span>
-<span class="n">_pipeline_ctx</span><span class="o">.</span><span class="n">link</span><span class="p">(</span><span class="n">validate</span><span class="p">,</span> <span class="n">store</span><span class="p">)</span>
-</code></pre></div>
-<p>Outside the block, but still in a file that activated the pipeline DSL:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">extract</span> <span class="o">&gt;&gt;</span> <span class="n">normalize</span>
-</code></pre></div>
-<p>can produce a targeted diagnostic such as:</p>
-<div class="language-text highlight"><pre><span></span><code>`&gt;&gt;` between pipeline steps is only valid inside a `pipeline` block
-</code></pre></div>
-<h3 id="example-query-style-pipes">Example: query-style pipes<a class="headerlink" href="#example-query-style-pipes" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">query</span> <span class="n">active_users</span><span class="p">:</span>
-    <span class="n">users</span> <span class="o">|&gt;</span> <span class="nb">filter</span><span class="p">(</span><span class="n">active</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="o">|&gt;</span> <span class="n">group_by</span><span class="p">(</span><span class="n">country</span><span class="p">)</span>
-</code></pre></div>
-<p>The exact desugaring is library-defined, but the important rule is that <code>|&gt;</code> here is owned by the <code>query</code> block, not by a global <code>PipeForward</code> implementation on every participating type.</p>
-<h3 id="example-route-head-composition">Example: route-head composition<a class="headerlink" href="#example-route-head-composition" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">api</span> <span class="n">app</span><span class="p">:</span>
-    <span class="n">route</span> <span class="nb">get</span> <span class="o">+</span> <span class="n">delete</span> <span class="s2">&quot;/users/:id&quot;</span> <span class="o">-&gt;</span> <span class="n">users</span><span class="o">.</span><span class="n">destroy</span>
-</code></pre></div>
-<p>Here <code>+</code> and <code>-&gt;</code> do not need to mean anything special everywhere in the <code>api</code> block. They only need to be special in the DSL's registered route-head position:</p>
-<ul>
-<li><code>+</code> combines route verbs</li>
-<li><code>-&gt;</code> maps the route specification to its handler/body</li>
-</ul>
-<p>The same <code>api</code> block may still contain ordinary Incan expressions elsewhere. That is why this RFC models scoped glyphs as block-owned but position-scoped, not as blanket operator redefinition for the whole block body.</p>
-<h3 id="example-rails-style-routing-families">Example: Rails-style routing families<a class="headerlink" href="#example-rails-style-routing-families" title="Permanent link">&para;</a></h3>
-<p>Ruby on Rails routing shows how much mileage a DSL can get from a small amount of declarative syntax. Incan should be able to support similarly expressive surfaces:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">api</span> <span class="n">app</span><span class="p">:</span>
-    <span class="n">namespace</span> <span class="n">admin</span><span class="p">:</span>
-        <span class="n">route</span> <span class="nb">get</span> <span class="o">+</span> <span class="n">post</span> <span class="s2">&quot;/users&quot;</span> <span class="o">-&gt;</span> <span class="n">users</span><span class="o">.</span><span class="nb">index</span>
-        <span class="n">route</span> <span class="nb">get</span> <span class="o">+</span> <span class="n">patch</span> <span class="o">+</span> <span class="n">delete</span> <span class="s2">&quot;/users/:id&quot;</span> <span class="o">-&gt;</span> <span class="n">users</span><span class="o">.</span><span class="n">member</span>
-</code></pre></div>
-<p>The important point is not that Incan must copy Rails literally. The point is that a library author should be able to define:</p>
-<ul>
-<li>a route-head position where <code>+</code> combines verbs</li>
-<li>a mapping position where <code>-&gt;</code> binds a route spec to a handler</li>
-<li>nested DSL blocks such as <code>namespace admin:</code> that preserve structure for desugaring</li>
-</ul>
-<p>This is a good example of a DSL that is simultaneously:</p>
-<ul>
-<li>block-oriented</li>
-<li>position-scoped</li>
-<li>highly declarative</li>
-</ul>
-<h3 id="example-r-style-data-pipelines">Example: R-style data pipelines<a class="headerlink" href="#example-r-style-data-pipelines" title="Permanent link">&para;</a></h3>
-<p>R's data DSLs show that users often want left-to-right, readable pipeline syntax with small operator-like connectors:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">query</span> <span class="n">active_users</span><span class="p">:</span>
-    <span class="n">users</span>
-        <span class="o">|&gt;</span> <span class="nb">filter</span><span class="p">(</span><span class="n">active</span> <span class="o">==</span> <span class="kc">True</span><span class="p">)</span>
-        <span class="o">|&gt;</span> <span class="n">group_by</span><span class="p">(</span><span class="n">country</span><span class="p">)</span>
-        <span class="o">|&gt;</span> <span class="n">summarize</span><span class="p">(</span><span class="n">total</span> <span class="o">=</span> <span class="nb">count</span><span class="p">())</span>
-</code></pre></div>
-<p>or, with a block-owned assignment/binding form:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">query</span> <span class="n">revenue</span><span class="p">:</span>
-    <span class="n">net</span> <span class="o">:=</span> <span class="n">sales</span> <span class="o">|&gt;</span> <span class="n">mutate</span><span class="p">(</span><span class="n">net</span> <span class="o">=</span> <span class="n">gross</span> <span class="o">-</span> <span class="n">tax</span><span class="p">)</span>
-    <span class="n">net</span> <span class="o">|&gt;</span> <span class="n">summarize</span><span class="p">(</span><span class="n">total</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">net</span><span class="p">))</span>
-</code></pre></div>
-<p>Here the library may want:</p>
-<ul>
-<li><code>|&gt;</code> in a query-expression position</li>
-<li><code>:=</code> in a query-binding position</li>
-<li>ordinary arithmetic like <code>gross - tax</code> to remain ordinary Incan even inside the same enclosing block</li>
-</ul>
-<p>That combination only works cleanly if the glyph semantics are position-scoped rather than whole-block overrides.</p>
-<h3 id="example-matillion-style-orchestration-graphs">Example: Matillion-style orchestration graphs<a class="headerlink" href="#example-matillion-style-orchestration-graphs" title="Permanent link">&para;</a></h3>
-<p>Matillion-style orchestration and transformation flows are another strong fit for scoped glyph surfaces:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">orchestration</span> <span class="n">nightly_sales</span><span class="p">:</span>
-    <span class="n">extract_sales</span> <span class="o">-&gt;</span> <span class="n">stage_raw</span> <span class="o">-&gt;</span> <span class="n">run</span> <span class="n">transform_sales</span> <span class="o">-&gt;</span> <span class="n">publish_dashboard</span>
-    <span class="n">on_failure</span> <span class="o">&lt;-</span> <span class="n">notify_slack</span>
-</code></pre></div>
-<p>or with nested orchestration/transformation blocks:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">pipeline</span> <span class="n">nightly_sales</span><span class="p">:</span>
-    <span class="n">orchestration</span><span class="p">:</span>
-        <span class="n">extract</span> <span class="o">-&gt;</span> <span class="n">stage</span> <span class="o">-&gt;</span> <span class="n">run</span> <span class="n">transform</span>
+<p>Authors obtain a <strong>graph handle</strong> from the stdlib, <strong>add nodes</strong> with optional typed or opaque payloads, and <strong>add directed edges</strong> from one node to another. They can ask for <strong>outgoing</strong> or <strong>incoming</strong> neighbors, enumerate <strong>roots</strong> (no incoming edges) or <strong>sinks</strong> (no outgoing edges), and <strong>walk</strong> from a start node in a documented order. Common walk orders are <strong>breadth-first search (BFS)</strong>—visit nodes in layers by distance from the start—and <strong>depth-first search (DFS)</strong>—follow one path to the end, then backtrack; the stdlib <strong>must</strong> document which order(s) each traversal API uses. When the graph is intended to be acyclic, they may use a <strong>DAG mode</strong> (or a separate type) that <strong>rejects</strong> edge insertions that would create a cycle, or they may call <strong>topological order</strong> and handle the error if a cycle exists.</p>
+<p>The type is <strong>in-memory</strong> and <strong>library-scoped</strong>: persistence, network sync, and engine-specific optimization remain <strong>outside</strong> this RFC.</p>
+<p>Authors construct <strong>values</strong>—variables, fields on carriers, arguments—rather than reaching for one implicit global graph.</p>
+<h2 id="illustrative-api-sketches-non-normative">Illustrative API sketches (non-normative)<a class="headerlink" href="#illustrative-api-sketches-non-normative" title="Permanent link">&para;</a></h2>
+<p>The following examples show <strong>one possible</strong> Incan-facing shape. <strong>Names, return types, and error modeling</strong> are illustrative until the RFC moves beyond Draft; they are <strong>not</strong> a commitment to exact signatures.</p>
+<p><strong>Module path</strong> is assumed to be <code>std.graph</code> (see RFC 022 stdlib namespacing); final names <strong>may</strong> differ.</p>
+<h3 id="constructing-a-directed-graph-and-querying-neighbors">Constructing a directed graph and querying neighbors<a class="headerlink" href="#constructing-a-directed-graph-and-querying-neighbors" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
 
-    <span class="n">transformation</span><span class="p">:</span>
-        <span class="n">raw</span> <span class="o">|&gt;</span> <span class="n">clean</span> <span class="o">|&gt;</span> <span class="n">aggregate</span> <span class="o">|&gt;</span> <span class="n">publish</span>
+<span class="c1"># Empty graph; nodes and edges added explicitly.</span>
+<span class="k">mut</span> <span class="n">g</span> <span class="o">=</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span><span class="o">.</span><span class="n">new</span><span class="p">()</span>
+
+<span class="n">a</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;scan_users&quot;</span><span class="p">)</span>
+<span class="n">b</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;filter_active&quot;</span><span class="p">)</span>
+<span class="n">c</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;join_orders&quot;</span><span class="p">)</span>
+
+<span class="n">g</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">a</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">b</span><span class="p">)</span>
+<span class="n">g</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">b</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">c</span><span class="p">)</span>
+
+<span class="n">out_from_b</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">successors</span><span class="p">(</span><span class="n">b</span><span class="p">)</span>
+<span class="n">roots</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">roots</span><span class="p">()</span>
 </code></pre></div>
-<p>This kind of library may want:</p>
-<ul>
-<li><code>-&gt;</code> for forward stage dependencies</li>
-<li><code>&lt;-</code> for reverse notification or fallback relationships</li>
-<li><code>|&gt;</code> for transformation threading</li>
-<li>multiple related subgrammars inside one higher-level block</li>
-</ul>
-<p>Again, the same DSL might reserve these glyphs only in graph-head or transform-chain positions, while leaving other expressions alone.</p>
-<h3 id="example-taskbuild-automation-dsls">Example: task/build automation DSLs<a class="headerlink" href="#example-taskbuild-automation-dsls" title="Permanent link">&para;</a></h3>
-<p>Ruby's Rake and Groovy/Kotlin-style build DSLs suggest another useful family:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">build</span> <span class="n">app</span><span class="p">:</span>
-    <span class="n">task</span> <span class="n">lint</span> <span class="o">+</span> <span class="k">test</span> <span class="o">+</span> <span class="n">package</span> <span class="o">-&gt;</span> <span class="n">publish</span>
-    <span class="n">file</span> <span class="s2">&quot;dist/app.tar.gz&quot;</span> <span class="o">&lt;-</span> <span class="n">package</span>
+<h3 id="node-payloads-as-object-references-eg-step">Node payloads as <strong>object references</strong> (e.g. <code>Step</code>)<a class="headerlink" href="#node-payloads-as-object-references-eg-step" title="Permanent link">&para;</a></h3>
+<p>Graphs are <strong>not</strong> limited to string or primitive payloads. A common pattern is <strong><code>DiGraph[Step]</code></strong> (or another user type) where each <strong><code>NodeId</code></strong> maps to a <strong><code>Step</code></strong> (or similar) <strong>value</strong> the author already holds; <strong>edges</strong> still connect <strong><code>NodeId</code></strong>s, so one <strong><code>Step</code></strong> instance can be the payload of node <strong><code>a</code></strong> and another of node <strong><code>b</code></strong>, with a directed edge <strong><code>a → b</code></strong> meaning “this step runs before that step” (or any domain semantics).</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
+
+<span class="k">pub</span> <span class="k">model</span> <span class="nc">Step</span><span class="p">:</span>
+    <span class="k">pub</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="k">pub</span> <span class="nb">timeout_ms</span><span class="p">:</span> <span class="nb">int</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_step_graph</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nc">Step</span><span class="p">]:</span>
+    <span class="k">mut</span> <span class="n">g</span> <span class="o">=</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nc">Step</span><span class="p">]</span><span class="o">.</span><span class="n">new</span><span class="p">()</span>
+    <span class="n">fetch</span> <span class="o">=</span> <span class="nc">Step</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;fetch&quot;</span><span class="p">,</span> <span class="nb">timeout_ms</span><span class="o">=</span><span class="mi">5000</span><span class="p">)</span>
+    <span class="n">parse</span> <span class="o">=</span> <span class="nc">Step</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;parse&quot;</span><span class="p">,</span> <span class="nb">timeout_ms</span><span class="o">=</span><span class="mi">2000</span><span class="p">)</span>
+
+    <span class="n">n_fetch</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="n">fetch</span><span class="p">)</span>
+    <span class="n">n_parse</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="n">parse</span><span class="p">)</span>
+
+    <span class="n">g</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">n_fetch</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">n_parse</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">g</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">step_name_at</span><span class="p">(</span><span class="n">g</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nc">Step</span><span class="p">],</span> <span class="n">nid</span><span class="p">:</span> <span class="nc">NodeId</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">g</span><span class="o">.</span><span class="n">node_payload</span><span class="p">(</span><span class="n">nid</span><span class="p">)</span><span class="o">.</span><span class="n">name</span>
 </code></pre></div>
-<p>or:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">tasks</span> <span class="n">ci</span><span class="p">:</span>
-    <span class="n">namespace</span> <span class="n">release</span><span class="p">:</span>
-        <span class="n">build</span> <span class="o">-&gt;</span> <span class="k">test</span> <span class="o">-&gt;</span> <span class="n">deploy</span>
+<p><strong>Semantics:</strong> the graph <strong>stores</strong> (or references, per implementation) the <strong>payload</strong> per node; <strong><code>add_node(payload=...)</code></strong> ties <strong><code>NodeId</code></strong> to that object. <strong>Identity:</strong> if two nodes should represent the <strong>same</strong> <code>Step</code> instance, that is a <strong>domain</strong> choice—either one node is shared or two nodes hold <strong>cloned</strong> payloads; the stdlib <strong>must</strong> document <strong>clone</strong> vs <strong>shared reference</strong> behavior for mutable payloads.</p>
+<p><strong>Bounds:</strong> generic graphs <strong><code>DiGraph[T]</code></strong> will likely require <strong><code>T</code></strong> to satisfy whatever the language requires for <strong>stored</strong> or <strong>shared</strong> data (e.g. <strong><code>Clone</code></strong>), analogous to <strong><code>DataSet[T]</code></strong>; exact bounds are an <strong>implementation</strong> detail but <strong>must</strong> appear in user-facing docs.</p>
+<h3 id="traversal-bfs-dfs-from-a-start-node">Traversal (BFS / DFS) from a start node<a class="headerlink" href="#traversal-bfs-dfs-from-a-start-node" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">collect_bfs</span><span class="p">(</span><span class="n">g</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">start</span><span class="p">:</span> <span class="nc">NodeId</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="n">g</span><span class="o">.</span><span class="n">bfs_nodes</span><span class="p">(</span><span class="n">start</span><span class="p">)</span><span class="o">.</span><span class="n">to_list</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">collect_dfs_preorder</span><span class="p">(</span><span class="n">g</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">start</span><span class="p">:</span> <span class="nc">NodeId</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="n">g</span><span class="o">.</span><span class="n">dfs_preorder_nodes</span><span class="p">(</span><span class="n">start</span><span class="p">)</span><span class="o">.</span><span class="n">to_list</span><span class="p">()</span>
 </code></pre></div>
-<p>This reinforces a key point of the RFC: a glyph like <code>+</code> need not be globally special, or even special throughout the whole DSL block. It only needs a well-defined meaning in the DSL positions that register it.</p>
-<h3 id="example-future-binding-like-glyphs">Example: future binding-like glyphs<a class="headerlink" href="#example-future-binding-like-glyphs" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">query</span> <span class="n">totals</span><span class="p">:</span>
-    <span class="n">total</span> <span class="o">:=</span> <span class="nb">count</span><span class="p">()</span>
+<p>Implementations <strong>must</strong> document iteration order; the method names above are <strong>placeholders</strong>.</p>
+<h3 id="topological-order-on-a-dag-shaped-graph">Topological order on a DAG-shaped graph<a class="headerlink" href="#topological-order-on-a-dag-shaped-graph" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">topo_or_empty</span><span class="p">(</span><span class="n">g</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]:</span>
+    <span class="k">match</span> <span class="n">g</span><span class="o">.</span><span class="n">topological_order</span><span class="p">():</span>
+        <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">order</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">order</span>
+        <span class="k">case</span><span class="w"> </span><span class="nb">Err</span><span class="p">(</span><span class="k">_</span><span class="p">):</span>
+            <span class="k">return</span> <span class="p">[]</span>  <span class="c1"># cycle present — real API might use Result throughout</span>
 </code></pre></div>
-<p>This RFC reserves space for binding-like glyphs inside explicit blocks. <code>:=</code> in this design is <strong>not</strong> a global walrus operator. It is a DSL-owned glyph family that may create aliases, named slots, or intermediate bindings according to the DSL's registration and desugaring rules.</p>
-<h3 id="example-leading-dot-field-access-expression-form-surface">Example: leading-dot field access (expression-form surface)<a class="headerlink" href="#example-leading-dot-field-access-expression-form-surface" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">query</span> <span class="n">active_orders</span><span class="p">:</span>
-    <span class="nc">FROM</span> <span class="n">orders</span>
-    <span class="nc">WHERE</span> <span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">&quot;active&quot;</span>
-    <span class="nc">SELECT</span> <span class="o">.</span><span class="n">customer_id</span><span class="p">,</span> <span class="o">.</span><span class="n">amount</span>
+<h3 id="dag-mode-reject-edges-that-would-create-a-cycle">DAG mode: reject edges that would create a cycle<a class="headerlink" href="#dag-mode-reject-edges-that-would-create-a-cycle" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Dag</span><span class="p">,</span> <span class="nc">NodeId</span>
+
+<span class="k">mut</span> <span class="n">d</span> <span class="o">=</span> <span class="nc">Dag</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span><span class="o">.</span><span class="n">new</span><span class="p">()</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<span class="n">z</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+
+<span class="n">d</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">x</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">y</span><span class="p">)</span>
+<span class="n">d</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">y</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">z</span><span class="p">)</span>
+
+<span class="k">match</span> <span class="n">d</span><span class="o">.</span><span class="n">try_add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">z</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">x</span><span class="p">):</span>
+    <span class="k">case</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(</span><span class="k">_</span><span class="p">):</span>
+        <span class="k">pass</span>  <span class="c1"># unexpected if cycle detection works</span>
+    <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">CycleWouldBeCreated</span><span class="p">):</span>
+        <span class="k">pass</span>  <span class="c1"># expected</span>
 </code></pre></div>
-<p><code>.status</code>, <code>.customer_id</code>, and <code>.amount</code> are leading-dot field references. They resolve against the implicit primary relation supplied by the <code>FROM</code> clause. Outside this query block, <code>.status</code> at expression start is not valid Incan syntax.</p>
-<p>The same pattern applies to method-chain relational arguments:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">orders</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="o">.</span><span class="n">amount</span> <span class="o">&gt;</span> <span class="mi">100</span><span class="p">)</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="o">.</span><span class="n">customer_id</span><span class="p">,</span> <span class="o">.</span><span class="n">region</span><span class="p">)</span>
+<p>Alternatively, a single <strong><code>DiGraph</code></strong> type could use <strong><code>DiGraph.new(enforce_dag=True)</code></strong> instead of a separate <strong><code>Dag</code></strong> name—see <strong>Unresolved questions</strong>.</p>
+<h3 id="parallel-edges-multigraph-profile-if-supported">Parallel edges (multigraph profile), if supported<a class="headerlink" href="#parallel-edges-multigraph-profile-if-supported" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">MultiDiGraph</span><span class="p">,</span> <span class="nc">NodeId</span><span class="p">,</span> <span class="nc">EdgeId</span>
+
+<span class="k">mut</span> <span class="n">m</span> <span class="o">=</span> <span class="nc">MultiDiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span><span class="o">.</span><span class="n">new</span><span class="p">()</span>
+<span class="n">u</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="s2">&quot;a&quot;</span><span class="p">)</span>
+<span class="n">v</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="s2">&quot;b&quot;</span><span class="p">)</span>
+
+<span class="n">e1</span><span class="p">:</span> <span class="nc">EdgeId</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">u</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">v</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;primary&quot;</span><span class="p">)</span>
+<span class="n">e2</span><span class="p">:</span> <span class="nc">EdgeId</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">u</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">v</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;backup&quot;</span><span class="p">)</span>
+
+<span class="n">edges_uv</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">EdgeId</span><span class="p">]</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">edges_between</span><span class="p">(</span><span class="n">u</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
 </code></pre></div>
-<p>Here <code>.amount</code>, <code>.customer_id</code>, and <code>.region</code> are in relational argument positions owned by the DSL that registered the <code>filter</code> and <code>select</code> operations. The implicit receiver is the dataset value the method is called on.</p>
-<p>Conceptually, the desugared meaning of <code>.amount</code> might be:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">_relation_ctx</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;amount&quot;</span><span class="p">)</span>
+<p>If v1 is <strong>simple-only</strong>, this profile is omitted or deferred; authors use <strong><code>DiGraph</code></strong> without <strong><code>MultiDiGraph</code></strong>.</p>
+<h3 id="edge-kind-on-a-simple-directed-graph">Edge <strong>kind</strong> on a simple directed graph<a class="headerlink" href="#edge-kind-on-a-simple-directed-graph" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
+
+<span class="k">mut</span> <span class="n">g</span> <span class="o">=</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span><span class="o">.</span><span class="n">new</span><span class="p">()</span>
+<span class="n">read</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="s2">&quot;read&quot;</span><span class="p">)</span>
+<span class="n">write</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="s2">&quot;write&quot;</span><span class="p">)</span>
+
+<span class="n">g</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">read</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">write</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;dataflow&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p>The DSL supplies the implicit context; the leading dot is the surface syntax. Outside eligible DSL positions, <code>.field</code> at expression start must be rejected by the parser.</p>
+<h3 id="storing-a-graph-as-data-not-a-singleton">Storing a graph as <strong>data</strong> (not a singleton)<a class="headerlink" href="#storing-a-graph-as-data-not-a-singleton" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">model</span> <span class="nc">PipelinePlan</span><span class="p">:</span>
+    <span class="k">pub</span> <span class="n">deps</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+    <span class="k">pub</span> <span class="n">tip</span><span class="p">:</span> <span class="nc">NodeId</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">describe_roots</span><span class="p">(</span><span class="n">plan</span><span class="p">:</span> <span class="nc">PipelinePlan</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="nb">join</span><span class="p">(</span><span class="n">plan</span><span class="o">.</span><span class="n">deps</span><span class="o">.</span><span class="n">node_payload</span><span class="p">(</span><span class="n">nid</span><span class="p">)</span> <span class="k">for</span> <span class="n">nid</span> <span class="ow">in</span> <span class="n">plan</span><span class="o">.</span><span class="n">deps</span><span class="o">.</span><span class="n">roots</span><span class="p">())</span>
+</code></pre></div>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="core-rule">Core rule<a class="headerlink" href="#core-rule" title="Permanent link">&para;</a></h3>
-<p>Scoped glyphs are owned by the enclosing explicit DSL block, not by the operand types alone.</p>
-<p>Their semantics are <strong>position-scoped</strong> within that block. A DSL does not claim a glyph for every expression in the block body; it claims the glyph only for the eligible positions or subgrammars it explicitly registers.</p>
-<p>Scoped glyph activation has two scopes:</p>
+<h3 id="directed-graph">Directed graph<a class="headerlink" href="#directed-graph" title="Permanent link">&para;</a></h3>
+<p>A <strong>directed graph</strong> value <strong>must</strong> conceptually consist of:</p>
 <ul>
-<li><strong>positive scope</strong>: entering a registered block may activate DSL-owned glyph meaning for eligible positions in that block body</li>
-<li><strong>negative scope</strong>: activating the DSL in a file/module may enable targeted misuse diagnostics for that glyph family elsewhere in that same file/module</li>
+<li>A set of <strong>nodes</strong>, each with a <strong>distinct <code>NodeId</code></strong> while the node exists. Each node <strong>may</strong> carry an optional <strong>payload</strong>: any <strong>Incan value</strong> the API allows (primitives, <strong><code>model</code></strong> / <strong><code>class</code></strong> instances, newtypes, etc.). <strong>Edges always connect <code>NodeId</code>s</strong>, not raw object references—so “<strong><code>Step</code> A links to <code>Step</code> B</strong>” is modeled as <strong><code>NodeId</code></strong> for the node holding A <strong>pointing to</strong> <strong><code>NodeId</code></strong> for the node holding B.</li>
+<li>A multiset of <strong>directed edges</strong> <strong>from</strong> one <code>NodeId</code> <strong>to</strong> another <code>NodeId</code>. <strong>Parallel edges</strong> (same pair, multiple edges) <strong>may</strong> be permitted unless a future profile forbids them; if permitted, edges <strong>must</strong> be distinguishable by an <strong><code>EdgeId</code></strong> or by iteration order, as specified by the stdlib API.</li>
 </ul>
-<p>Imports or other activation hooks do <strong>not</strong> globally change operator meaning. They only make the DSL's glyph descriptors available to the current file/module so the compiler can:</p>
+<p><strong>Removing</strong> a node <strong>must</strong> either <strong>remove</strong> all incident edges or <strong>define</strong> explicit behavior (e.g. error) in the stdlib contract; implementations <strong>must not</strong> leave the graph in an inconsistent state silently.</p>
+<h3 id="nodeid-stability">NodeId stability<a class="headerlink" href="#nodeid-stability" title="Permanent link">&para;</a></h3>
+<p>The stdlib <strong>must</strong> document whether <strong><code>NodeId</code></strong> values are <strong>reused</strong> after node removal. Recommended default: <strong>do not reuse</strong> ids in the same graph instance without an explicit <strong>compact</strong> or <strong>reset</strong> operation documented for advanced users.</p>
+<h3 id="dag-profile">DAG profile<a class="headerlink" href="#dag-profile" title="Permanent link">&para;</a></h3>
+<p>If a <strong>DAG</strong> type or <strong>acyclicity-enforcing</strong> mode is provided, <strong>adding an edge</strong> that would introduce a cycle <strong>must</strong> fail with a <strong>defined</strong> error or return type; the graph <strong>must not</strong> accept the edge.</p>
+<h3 id="topological-order">Topological order<a class="headerlink" href="#topological-order" title="Permanent link">&para;</a></h3>
+<p>When <strong><code>topological_order</code></strong> (or equivalent) is provided, it <strong>must</strong> return a linear order <strong>consistent with</strong> all edges (every edge goes from an earlier to a later index). If the graph contains a cycle, the operation <strong>must</strong> report failure in a <strong>defined</strong> way.</p>
+<h3 id="interrogation-api-minimum-bar">Interrogation API (minimum bar)<a class="headerlink" href="#interrogation-api-minimum-bar" title="Permanent link">&para;</a></h3>
+<p>The stdlib <strong>must</strong> expose operations equivalent to the following capabilities (names may differ):</p>
 <ul>
-<li>apply DSL-owned meaning inside eligible positions in eligible blocks</li>
-<li>emit better diagnostics for misplaced DSL-shaped glyph use outside those blocks</li>
+<li><strong>Lookup</strong> node existence by <code>NodeId</code>.</li>
+<li><strong>Successors</strong> and <strong>predecessors</strong> (or outgoing/incoming edge iteration).</li>
+<li><strong>Roots</strong> and <strong>sinks</strong> according to the definitions above.</li>
+<li><strong>Reachability traversal</strong> from a start <code>NodeId</code> in at least one <strong>documented</strong> order—for example <strong>breadth-first search (BFS)</strong> (layer by layer from the start) and/or <strong>depth-first search (DFS)</strong> (follow a path to the end, then backtrack).</li>
 </ul>
-<p>This is analogous to method bodies having an implicit <code>self</code>: the body gets extra meaning from the enclosing construct, not from ambient runtime state. The difference here is that the DSL may also reserve a file-local "negative space" for misuse diagnostics.</p>
-<h3 id="registration-and-conflict-policy">Registration and conflict policy<a class="headerlink" href="#registration-and-conflict-policy" title="Permanent link">&para;</a></h3>
-<p>This RFC does <strong>not</strong> standardize a permanently closed glyph inventory. Instead, it standardizes the rules under which a DSL may claim block-owned, position-scoped glyph meaning.</p>
-<p>A scoped glyph is allowed if all of the following hold:</p>
-<ul>
-<li>the glyph is explicitly registered by the DSL</li>
-<li>the surface is composed of lexer-recognized tokens (symbolic for glyphs, leading-dot for expression forms)</li>
-<li>the surface declares its family (<code>OperatorLike</code>, <code>BindingLike</code>, or <code>ExpressionForm</code>)</li>
-<li>the glyph does not collide with a core grammar form in the same position unless the DSL also declares an explicit eligibility/disambiguation rule</li>
-<li>the formatter and tooling can preserve it without ad-hoc special cases</li>
-</ul>
-<p>Common operator-like examples include:</p>
-<ul>
-<li><code>&gt;&gt;</code></li>
-<li><code>&lt;&lt;</code></li>
-<li><code>|&gt;</code></li>
-<li><code>&lt;|</code></li>
-<li><code>-&gt;</code></li>
-<li><code>&lt;-</code></li>
-<li><code>+</code></li>
-</ul>
-<p>These are infix glyphs with operator-like shape. A DSL may interpret them as linking, piping, chaining, directional flow, verb composition, or other block-local relations.</p>
-<p>Arrow-shaped glyphs deserve one extra constraint: scoped reuse of <code>-&gt;</code> or <code>&lt;-</code> must not silently override existing core-language arrow forms such as function return annotations or other grammar positions that already reserve <code>-&gt;</code>. They are valid only where the enclosing block grammar explicitly admits a scoped glyph occurrence.</p>
-<p>Common binding-like examples include:</p>
-<ul>
-<li><code>:=</code></li>
-</ul>
-<p>This is a binding-shaped glyph family, not an RFC 028 global operator. A DSL may interpret it as aliasing, named slots, or block-local binding according to its own desugaring contract.</p>
-<h3 id="expression-form-surfaces">Expression-form surfaces<a class="headerlink" href="#expression-form-surfaces" title="Permanent link">&para;</a></h3>
-<p>An expression-form surface is a syntax shape that is only valid inside eligible DSL positions and relies on an implicit receiver or context supplied by the owning block. The leading example is <code>.field</code> — leading-dot field access.</p>
-<p>Expression-form surfaces follow the same scoping contract as operator-like and binding-like surfaces:</p>
-<ul>
-<li><strong>positive scope</strong>: inside eligible positions of an owning block, the expression form is parsed and resolved against the block-supplied implicit context.</li>
-<li><strong>negative scope</strong>: outside eligible positions, the form must be rejected by the parser with a targeted diagnostic.</li>
-<li><strong>no global effect</strong>: expression-form registration must not make the syntax form valid in ordinary Incan code.</li>
-</ul>
-<p>A DSL registering an expression-form surface must declare:</p>
-<ul>
-<li>the syntactic shape (e.g. leading-dot followed by identifier)</li>
-<li>the eligible positions where it is valid</li>
-<li>how the implicit receiver/context is determined (e.g. primary relation from <code>FROM</code>, dataset value from method receiver)</li>
-</ul>
-<p>Expression-form surfaces do not use <code>chain_mode</code> or <code>inherits_core_precedence</code>; those fields apply only to operator-like surfaces.</p>
-<h3 id="registration-model">Registration model<a class="headerlink" href="#registration-model" title="Permanent link">&para;</a></h3>
-<p>A vocab provider that registers a block keyword may also register scoped glyph surfaces for that block.</p>
-<p>Conceptually:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">ScopedSurfaceFamily</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">OperatorLike</span><span class="p">,</span>
-<span class="w">    </span><span class="n">BindingLike</span><span class="p">,</span>
-<span class="w">    </span><span class="n">ExpressionForm</span><span class="p">,</span>
-<span class="p">}</span>
-
-<span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">ChainMode</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">Nested</span><span class="p">,</span>
-<span class="w">    </span><span class="n">Pairwise</span><span class="p">,</span>
-<span class="w">    </span><span class="n">NotChainable</span><span class="p">,</span>
-<span class="p">}</span>
-
-<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">ScopedSurfaceDescriptor</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">surface</span><span class="p">:</span><span class="w"> </span><span class="nb">String</span><span class="p">,</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">family</span><span class="p">:</span><span class="w"> </span><span class="nc">ScopedSurfaceFamily</span><span class="p">,</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">owning_block</span><span class="p">:</span><span class="w"> </span><span class="nb">String</span><span class="p">,</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">positive_scope</span><span class="p">:</span><span class="w"> </span><span class="nc">PositiveScope</span><span class="p">,</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">misuse_scope</span><span class="p">:</span><span class="w"> </span><span class="nc">MisuseScope</span><span class="p">,</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">eligible_positions</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">ScopedGlyphPosition</span><span class="o">&gt;</span><span class="p">,</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">chain_mode</span><span class="p">:</span><span class="w"> </span><span class="nc">ChainMode</span><span class="p">,</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">inherits_core_precedence</span><span class="p">:</span><span class="w"> </span><span class="kt">bool</span><span class="p">,</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">lhs_constraint</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">OperandConstraint</span><span class="o">&gt;</span><span class="p">,</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">rhs_constraint</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">OperandConstraint</span><span class="o">&gt;</span><span class="p">,</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">outside_scope_diagnostic</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">,</span>
-<span class="p">}</span>
-</code></pre></div>
-<p>The important parts are:</p>
-<ul>
-<li><code>owning_block</code>: the block kind that owns this glyph family</li>
-<li><code>positive_scope</code>: where the glyph acquires block-local meaning</li>
-<li><code>misuse_scope</code>: where targeted outside-the-block diagnostics may fire</li>
-<li><code>eligible_positions</code>: which syntactic positions the parser may treat as scoped-glyph candidates</li>
-<li><code>chain_mode</code>: whether <code>a &gt;&gt; b &gt;&gt; c</code> is nested or pairwise</li>
-<li><code>inherits_core_precedence</code>: scoped glyphs reuse the existing token precedence instead of inventing a custom table</li>
-<li>operand constraints: used for validation and diagnostics</li>
-</ul>
-<h3 id="parsing-and-ast">Parsing and AST<a class="headerlink" href="#parsing-and-ast" title="Permanent link">&para;</a></h3>
-<p>Scoped glyphs should not be forced through the ordinary global AST shape when their meaning is position-scoped within a DSL.</p>
-<p>In particular, a DSL-owned <code>a &gt;&gt; b</code> should not have to masquerade as the same <code>BinaryOp::Shr</code> node used for ordinary global operator overloading. The parser/desugaring boundary should preserve that this was a <strong>scoped glyph occurrence</strong> owned by the block and encountered in an eligible DSL position.</p>
-<p>Conceptually, the public vocab AST needs a dedicated node family for scoped glyph surfaces, parallel to scoped functions and other block-local constructs.</p>
-<p>The exact AST type names are an implementation detail, but the semantic requirement is:</p>
-<ul>
-<li>global operator expressions remain global operator expressions</li>
-<li>DSL-owned glyph occurrences remain identifiable as DSL-owned glyph occurrences</li>
-</ul>
-<h3 id="resolution-order">Resolution order<a class="headerlink" href="#resolution-order" title="Permanent link">&para;</a></h3>
-<p>For a glyph-shaped form such as <code>a &gt;&gt; b</code>:</p>
-<ol>
-<li>If the current file/module has activated a DSL that declares this glyph family, keep its descriptor available for diagnostics and scoped parsing eligibility.</li>
-<li>If the current occurrence is inside an eligible owning block and an eligible registered DSL position, and it matches that block's scoped glyph descriptor, use the DSL-owned glyph resolution path.</li>
-<li>Otherwise use the ordinary language path (including RFC 028 global operator resolution where applicable).</li>
-<li>If ordinary resolution fails, and an active file-local descriptor matches the operand constraints or shape closely enough, emit that descriptor's outside-scope diagnostic instead of a generic operator error.</li>
-</ol>
-<p>This yields the intended behavior:</p>
-<ul>
-<li>inside the owning block and an eligible position: DSL-owned meaning</li>
-<li>outside the owning block but inside the activating file/module: targeted diagnostic when the DSL can recognize likely misuse</li>
-<li>ordinary code elsewhere: ordinary global operator semantics</li>
-</ul>
-<p>For glyphs that already have a core syntactic role, such as <code>-&gt;</code>, the parser must first respect the core grammar. Scoped-glyph resolution only applies in positions the enclosing block has marked as eligible for scoped glyph parsing.</p>
-<h3 id="pairwise-chaining">Pairwise chaining<a class="headerlink" href="#pairwise-chaining" title="Permanent link">&para;</a></h3>
-<p>Operator-like scoped glyphs may opt into <code>Pairwise</code> chaining.</p>
-<p>For <code>ChainMode::Pairwise</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">a</span> <span class="o">&gt;&gt;</span> <span class="n">b</span> <span class="o">&gt;&gt;</span> <span class="n">c</span> <span class="o">&gt;&gt;</span> <span class="n">d</span>
-</code></pre></div>
-<p>means:</p>
-<ul>
-<li><code>(a, b)</code></li>
-<li><code>(b, c)</code></li>
-<li><code>(c, d)</code></li>
-</ul>
-<p>not:</p>
-<ul>
-<li><code>((a &gt;&gt; b) &gt;&gt; c) &gt;&gt; d</code></li>
-</ul>
-<p>This is important for DSLs that describe edges, links, or dataflow between adjacent stages.</p>
-<p>For <code>ChainMode::Nested</code>, the DSL receives the ordinary nested parse shape instead.</p>
-<h3 id="implicit-block-receivercontext">Implicit block receiver/context<a class="headerlink" href="#implicit-block-receivercontext" title="Permanent link">&para;</a></h3>
-<p>Scoped glyph semantics are not ambient runtime magic. They are lexical semantics supplied by the enclosing block and the specific DSL position being parsed.</p>
-<p>Conceptually, a DSL-owned glyph lowers against an implicit block context such as:</p>
-<ul>
-<li><code>_pipeline_ctx</code></li>
-<li><code>_query_ctx</code></li>
-<li><code>_machine_ctx</code></li>
-</ul>
-<p>That context is supplied by the block/desugaring machinery, not discovered at runtime by a plain global dunder method.</p>
-<p>So:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">pipeline</span> <span class="n">user_sync</span><span class="p">:</span>
-    <span class="n">extract</span> <span class="o">&gt;&gt;</span> <span class="n">normalize</span>
-</code></pre></div>
-<p>is conceptually closer to:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">_pipeline_ctx</span><span class="o">.</span><span class="n">link</span><span class="p">(</span><span class="n">extract</span><span class="p">,</span> <span class="n">normalize</span><span class="p">)</span>
-</code></pre></div>
-<p>than to:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">extract</span><span class="o">.</span><span class="fm">__rshift__</span><span class="p">(</span><span class="n">normalize</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="diagnostics">Diagnostics<a class="headerlink" href="#diagnostics" title="Permanent link">&para;</a></h3>
-<p>This RFC requires targeted diagnostics for scoped glyph misuse.</p>
-<p>Required classes:</p>
-<ul>
-<li>outside-scope use<ul>
-<li>example: "<code>&gt;&gt;</code> between pipeline steps is only valid inside a <code>pipeline</code> block"</li>
-</ul>
-</li>
-<li>wrong operand kinds inside the block<ul>
-<li>example: "<code>&gt;&gt;</code> in a <code>pipeline</code> block expects <code>PipelineStep</code> operands, got <code>Foo</code> and <code>Bar</code>"</li>
-</ul>
-</li>
-<li>invalid binding target for binding-like glyphs<ul>
-<li>example: "<code>:=</code> in a <code>query</code> block expects an identifier on the left-hand side"</li>
-</ul>
-</li>
-</ul>
-<p>These should be preferred over generic "unknown operator" or "type mismatch" messages when the compiler has enough information to recognize the scoped intent.</p>
+<p>Implementations <strong>may</strong> add further helpers (e.g. strongly connected components) in later RFCs.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="interaction-with-rfc-028">Interaction with RFC 028<a class="headerlink" href="#interaction-with-rfc-028" title="Permanent link">&para;</a></h3>
-<p>RFC 028 defines ordinary global operator semantics.</p>
-<p>This RFC does <strong>not</strong> add more global operators to the language. Instead, it defines how an explicit DSL block may reuse a registered glyph in eligible local positions without implying global trait adoption.</p>
-<p>That means these are different statements:</p>
 <ul>
-<li>"<code>Query</code> globally implements <code>PipeForward</code>" (RFC 028)</li>
-<li>"<code>query</code> blocks own <code>|&gt;</code> in registered query positions" (this RFC)</li>
+<li>
+<p><strong>Payload model.</strong>
+  Nodes <strong>should</strong> carry a <strong>payload</strong> slot. Payloads <strong>may</strong> be ordinary <strong>Incan object references</strong> (e.g. a <strong><code>model</code></strong> or <strong><code>class</code></strong> value such as <strong><code>Step</code></strong>) so that <strong><code>DiGraph[Step]</code></strong> means “each node’s payload is a <strong><code>Step</code></strong>.” Payloads <strong>may</strong> also use <strong>Rust interop</strong> (RFC 005), <strong>newtypes</strong>, or <strong>opaque handles</strong> where that fits better. The RFC does <strong>not</strong> mandate a single <code>payload: any</code> model; the stdlib <strong>must</strong> document how payloads are represented, whether they are <strong>type-erased</strong> at the Incan boundary, and how <strong>cloning</strong> / <strong>shared mutation</strong> interact with <strong>graph</strong> operations when payloads are <strong>mutable</strong>.</p>
+</li>
+<li>
+<p><strong>Edge metadata.</strong>
+  Edges <strong>should</strong> support an optional <strong>kind</strong> or <strong>label</strong> (enumerated or string) so multiple domains can filter edges without separate side maps. This <strong>must</strong> be specified in the final API review before <strong>Planned</strong> status.</p>
+</li>
+<li>
+<p><strong>Immutability vs mutation.</strong>
+  The stdlib <strong>may</strong> offer <strong>mutable</strong> graphs, <strong>immutable persistent</strong> updates (copy-on-write), or both as separate types. The chosen model <strong>must</strong> be documented so carriers like lazy plans can pick <strong>cheap clone</strong> semantics where needed.</p>
+</li>
+<li>
+<p><strong>Relationship to other stdlib types.</strong>
+  Graph types <strong>should</strong> compose with existing <strong>collections</strong> (RFC 030) where natural (e.g. returning <strong>lists</strong> of <code>NodeId</code>). They <strong>must not</strong> silently duplicate <strong>dictionary</strong> semantics without documenting key conflicts.</p>
+</li>
+<li>
+<p><strong>Graph values vs global singletons (design decision).</strong></p>
+<ul>
+<li><strong>Normative:</strong> The stdlib graph abstraction <strong>must</strong> be usable as ordinary <strong>first-class data</strong>: many independent instances may exist at once; callers <strong>pass</strong> or <strong>store</strong> them explicitly (e.g. on a lazy carrier, in a module field, or as a function argument).</li>
+<li><strong>Normative:</strong> The stdlib <strong>must not</strong> define or require a <strong>single ambient graph</strong> analogous to RFC 033 <strong><code>ctx</code></strong> (typed configuration context). <strong><code>ctx</code></strong> addresses <strong>set-once configuration</strong> and <strong>parameter threading</strong> for app settings; graphs address <strong>structured relational or dependency data</strong> that is naturally <strong>per-pipeline</strong>, <strong>per-test</strong>, or <strong>per-request</strong>. Conflating the two would break <strong>concurrency</strong>, <strong>test isolation</strong>, and <strong>composition</strong> (two datasets, two plans, two dependency graphs in one process).</li>
+<li><strong>Non-normative:</strong> A <strong>session</strong>, <strong>runtime</strong>, or <strong>application</strong> layer <strong>may</strong> hold a <strong>default</strong> or <strong>named</strong> graph registry for ergonomics; that remains <strong>outside</strong> this RFC and <strong>must</strong> layer on top of <strong>value</strong>-based graph types rather than replacing them.</li>
 </ul>
-<p>Both may exist in the language, but they are not the same mechanism and must not be conflated.</p>
-<h3 id="interaction-with-rfc-027">Interaction with RFC 027<a class="headerlink" href="#interaction-with-rfc-027" title="Permanent link">&para;</a></h3>
-<p>RFC 027 remains the substrate for:</p>
-<ul>
-<li>block registration</li>
-<li>placement rules</li>
-<li>scoped functions</li>
-<li>block desugaring</li>
-</ul>
-<p>This RFC extends that world with block-owned, position-scoped glyph surfaces. It does not replace RFC 027; it builds on it.</p>
-<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Non-breaking</strong>: no existing syntax or semantics change. Scoped glyph surfaces are additive and only activate inside explicit DSL blocks that register them.</li>
-<li><strong>No migration needed</strong>: code that does not use scoped DSL blocks is unaffected.</li>
-<li><strong>Library adoption</strong>: DSL authors opt in by registering scoped surface descriptors alongside their block keywords.</li>
+</li>
 </ul>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
 <li>
-<p>Force DSL chaining through global RFC 028 operators
-    Rejected because it makes block-local syntax pretend to be global type capability. That weakens diagnostics and blurs the boundary between ordinary operator overloading and explicit DSL context.</p>
+<p><strong>Only document a pattern</strong> (hand-rolled <code>dict</code> + lists) — avoids stdlib surface but perpetuates fragmentation and weak interoperability between libraries.</p>
 </li>
 <li>
-<p>Let plain global dunder methods inspect ambient block state
-    Rejected because it turns lexical language context into hidden runtime magic. Scoped glyph meaning should come from the compiler's explicit block context, similar to how method bodies get <code>self</code>, not from "look around and see where I am" behavior.</p>
+<p><strong>Expose a full-featured property-graph stdlib immediately</strong> — too large, blurs boundaries with databases and query engines.</p>
 </li>
 <li>
-<p>Allow glyph semantics without explicit registration or conflict rules
-    Rejected because it would make parsing, formatting, highlighting, and language tooling much harder to keep coherent. The problem is not that a DSL wants <code>+</code> or <code>-&gt;</code>; the problem is allowing those meanings without an explicit contract about where and how they apply.</p>
+<p><strong>Standardize on an external Rust crate’s types in user-visible Incan APIs</strong> — couples the language to one dependency layout; better to define <strong>Incan-facing</strong> types and map implementations under the hood.</p>
 </li>
 </ol>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Parser and formatter complexity increase because some glyphs can now be block-local as well as global.</li>
-<li>Readers must understand that the same glyph can mean different things in ordinary code versus an explicit DSL block.</li>
-<li>Desugarers need good diagnostics and clear docs; otherwise scoped glyphs can become opaque.</li>
+<li><strong>Surface area</strong>: even a minimal graph API is a long-lived commitment; changes require RFC discipline.</li>
+<li><strong>Performance</strong>: a single generic graph type may not fit every workload; domains may still need specialized structures <strong>behind</strong> thin wrappers.</li>
+<li><strong>Teaching cost</strong>: users must learn <strong>when</strong> to use graph stdlib vs plain collections.</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Parser</strong> — the parser must distinguish scoped-surface occurrences in eligible DSL positions from ordinary expressions; <code>-&gt;</code> and other glyphs with existing core meanings must continue to parse normally outside registered positions; expression-form surfaces such as leading-dot access must only be accepted in eligible DSL positions and rejected elsewhere</li>
-<li><strong>Typechecker / Symbol resolution</strong> — block-local glyph resolution must follow the defined order (DSL-owned first, then core, then outside-scope diagnostic); <code>PositiveScope</code> and <code>MisuseScope</code> descriptors must be tracked per active DSL in the current file/module</li>
-<li><strong>IR Lowering</strong> — DSL-owned glyph occurrences desugar against the implicit block context (<code>_pipeline_ctx.link(...)</code> etc.) rather than lowering to global binary operator nodes; pairwise chaining must be expanded correctly</li>
-<li><strong>RFC 027 extension</strong> — the vocab block registration API needs a <code>ScopedGlyphDescriptor</code> surface so DSL authors can declare glyphs alongside block keywords; RFC 027 may need a small extension for expression-position block kinds to support <code>race for value:</code> and similar forms</li>
-<li><strong>Formatter</strong> — must preserve scoped glyph markers without ad-hoc special-casing; the formatter should understand <code>chain_mode</code> to format <code>a &gt;&gt; b &gt;&gt; c</code> correctly</li>
-<li><strong>LSP</strong> — hover and syntax highlighting should distinguish block-local glyph use from global operator use; misuse diagnostics should be actionable</li>
+<li><strong>Stdlib / Rust bindings</strong> — new types and methods, likely backed by Rust structures exposed via <code>rust.module</code> or equivalent.</li>
+<li><strong>Typechecker</strong> — generic methods on graph types, error types for cycle detection.</li>
+<li><strong>Formatter / LSP</strong> — completions and formatting for new stdlib paths.</li>
+<li><strong>Docs-site</strong> — user-facing reference for graph types and examples.</li>
+<li><strong>RFC process</strong> — this RFC establishes that <strong>further</strong> graph stdlib growth is <strong>RFC-gated</strong>.</li>
 </ul>
+<h2 id="prior-art-survey-informative">Prior art survey (informative)<a class="headerlink" href="#prior-art-survey-informative" title="Permanent link">&para;</a></h2>
+<p>This section is <strong>not normative</strong>. It summarizes how <strong>popular libraries</strong> split <strong>directed vs multigraph</strong> and <strong>DAG policy</strong>, to inform <strong>Unresolved questions 1–2</strong>. It is <strong>not</strong> a mandate to copy any API.</p>
+<ul>
+<li>
+<p><strong>Python (NetworkX).</strong> <strong><code>DiGraph</code></strong> is a <strong>simple</strong> directed graph: <strong>at most one</strong> edge per ordered pair of nodes. <strong><code>MultiDiGraph</code></strong> is the parallel-edge variant; parallel edges are distinguished by <strong>keys</strong>. <strong>Acyclicity</strong> is <strong>not</strong> usually a separate class: callers use algorithms such as topological sorting that <strong>fail</strong> or <strong>error</strong> when a cycle exists, or validate graphs beforehand.</p>
+</li>
+<li>
+<p><strong>Java (JGraphT).</strong> <strong>Separate concrete types</strong> are common: e.g. <strong><code>SimpleDirectedGraph</code></strong> (no parallel edges, no self-loops per that type’s contract) vs <strong><code>DirectedMultigraph</code></strong> / <strong><code>DirectedWeightedMultigraph</code></strong> when parallel edges are needed. Authors <strong>choose the graph class</strong> at construction.</p>
+</li>
+<li>
+<p><strong>JavaScript / TypeScript (Graphology).</strong> One <strong><code>Graph</code></strong> constructor with <strong>options</strong>: e.g. <strong><code>type: 'directed'</code></strong> and <strong><code>multi: true | false</code></strong>, plus specialized constructors like <strong><code>DirectedGraph</code></strong> vs <strong><code>MultiDirectedGraph</code></strong>. Parallel edges are <strong>opt-in</strong> via <strong><code>multi</code></strong>.</p>
+</li>
+<li>
+<p><strong>Ruby (RGL).</strong> <strong><code>DirectedAdjacencyGraph</code></strong> is a widely used <strong>directed</strong> structure; the <strong>default mental model</strong> in tutorials is <strong>simple</strong> adjacency (one logical edge per pair for many uses). <strong>Multigraph</strong>-first APIs are <strong>less</strong> central than in NetworkX’s split.</p>
+</li>
+<li>
+<p><strong>Rust (<code>petgraph</code>, illustrative only).</strong> <strong><code>Graph</code></strong> stores edges as distinct indices and <strong>can</strong> represent <strong>multiple</strong> edges between the same node pair. <strong><code>GraphMap</code></strong> explicitly <strong>does not</strong> allow parallel edges. <strong>Acyclicity</strong> is <strong>not</strong> enforced by <strong><code>Graph::add_edge</code></strong> by default; DAG guarantees are <strong>algorithm or wrapper</strong> concerns.</p>
+</li>
+</ul>
+<p><strong>Loose takeaway for question 1 (DAG shape).</strong> Ecosystems <strong>rarely</strong> expose a <strong>third</strong> ubiquitous type name <strong><code>Dag</code></strong> alongside <strong><code>DiGraph</code></strong>; <strong>DAG</strong> is often <strong>policy</strong> (reject cycle on insert, or check before topo sort) on a <strong>directed</strong> container. A <strong>separate <code>Dag</code> type</strong> in Incan is still allowed if it improves <strong>ergonomics</strong> or <strong>static</strong> guarantees—it is just <strong>less</strong> common in the surveyed libraries.</p>
+<p><strong>Loose takeaway for question 2 (parallel edges).</strong> <strong>Simple</strong> directed graphs are the <strong>default</strong> in several major libraries; <strong>parallel</strong> edges are <strong>opt-in</strong> via <strong><code>Multi*</code></strong> types, <strong><code>multi: true</code></strong>, or a <strong>multigraph</strong> class. That pattern suggests <strong>defaulting to no parallel edges</strong> for v1 unless a domain <strong>clearly</strong> needs a multigraph profile—but the RFC <strong>need not</strong> decide here without Incan use-case review.</p>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ol>
-<li>What are the exact APIs for <code>PositiveScope</code> and <code>MisuseScope</code>? These types appear in <code>ScopedGlyphDescriptor</code> but are not fully defined in this RFC.</li>
-<li>Can scoped glyph registrations nest? If a DSL block contains a nested DSL sub-block, and both register <code>|&gt;</code>, which descriptor wins inside the inner block?</li>
-<li>How does the formatter determine when to line-break a pairwise chain vs. keep it inline? Is that a formatter config or part of the glyph descriptor?</li>
-<li>Should <code>PositiveScope</code> and <code>MisuseScope</code> be separate concerns, or should a single <code>ScopeDescriptor</code> express both simultaneously?</li>
-<li>How does the LSP communicate the block-local vs global semantic distinction in completions and hover? Does the language server need access to which DSL blocks are active in the current file?</li>
-<li>Does this RFC need to define how a DSL explicitly opts <code>-&gt;</code> out of core function-return-annotation parsing in a position that admits both?</li>
-<li>For expression-form surfaces, should the implicit receiver be a single well-known concept (e.g. "primary relation") or should DSLs be able to register arbitrary implicit receiver shapes?</li>
-<li>Should expression-form surfaces support chained leading-dot access (e.g. <code>.order.amount</code>) or only single-level <code>.field</code>? If chained, how does the parser distinguish DSL-owned chained access from ordinary Incan field access on the resolved value?</li>
+<li><strong>Single <code>DiGraph</code> type vs separate <code>Dag</code> type</strong> vs <strong><code>DiGraph</code> with <code>enforce_dag: bool</code> at construction</strong> — which default best matches Incan authors? Informative: <strong>Prior art survey</strong> — separate <code>Dag</code> <strong>types</strong> are uncommon elsewhere; <strong>DAG-as-policy</strong> on a directed graph is common.</li>
+<li><strong>Parallel edges</strong>: allowed by default, or opt-in <strong>multigraph</strong> profile only? Informative: <strong>Prior art survey</strong> — <strong>opt-in</strong> multigraph is a recurring pattern.</li>
+<li><strong>Node removal</strong>: required for v1, or <strong>append-only</strong> graphs only until a follow-on RFC?</li>
+<li><strong>Payload typing</strong> on the Incan side: opaque handle only for v1, or generic <strong><code>DiGraph[T]</code></strong> / <strong><code>Graph[NodePayload, EdgeKind]</code></strong>-style surface? (Object references such as <strong><code>Step</code></strong> are a primary motivation for <strong>generic</strong> payload typing.)</li>
+<li><strong>Serialization</strong>: stable <strong>JSON</strong> (or other) snapshot format in v1, or explicitly <strong>out of scope</strong> until a dedicated RFC?</li>
 </ol>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+<!-- Rename this section to "Design Decisions" once all questions have been resolved.
+     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
