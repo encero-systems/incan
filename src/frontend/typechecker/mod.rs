@@ -108,6 +108,10 @@ pub struct TypeCheckInfo {
     /// Includes locally-declared and imported traits so backend lowering can handle cross-module trait hierarchies
     /// without relying on local AST declarations.
     pub trait_type_params: HashMap<String, Vec<String>>,
+    /// `rusttype` Incan name → canonical Rust path string (`substrait::proto::type::Binary`), when the checker
+    /// resolved the underlying type to [`ResolvedType::RustPath`]. Used by lowering so `m::T` spellings emit full
+    /// paths without re-running import resolution.
+    pub rusttype_canonical_rust_paths: HashMap<String, String>,
     /// Map from expression span (start,end) -> resolved type.
     pub expr_types: HashMap<(usize, usize), ResolvedType>,
     /// Map from identifier expression span (start,end) -> how it resolved (value vs type vs module).
@@ -740,6 +744,11 @@ impl TypeChecker {
     fn validate_stdlib_type_usage_inner(&mut self, ty: &Type, span: Span) {
         match ty {
             Type::Simple(name) => self.validate_stdlib_type_name(name, span),
+            Type::Qualified(segments) => {
+                if let Some(first) = segments.first() {
+                    self.validate_stdlib_type_name(first, span);
+                }
+            }
             Type::Generic(name, args) => {
                 self.validate_stdlib_type_name(name, span);
                 for arg in args {

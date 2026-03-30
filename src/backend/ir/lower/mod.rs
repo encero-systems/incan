@@ -434,8 +434,14 @@ impl AstLowering {
                     self.type_method_rebindings.insert(n.name.clone(), rebindings);
                 }
                 if n.is_rusttype {
-                    self.rusttype_underlying
-                        .insert(n.name.clone(), self.lower_type(&n.underlying.node));
+                    let ir_underlying = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|ti| ti.rusttype_canonical_rust_paths.get(&n.name))
+                        .cloned()
+                        .map(IrType::Struct)
+                        .unwrap_or_else(|| self.lower_type(&n.underlying.node));
+                    self.rusttype_underlying.insert(n.name.clone(), ir_underlying);
                     self.rusttype_interop_edges.insert(
                         n.name.clone(),
                         n.interop_edges.iter().map(|edge| edge.node.clone()).collect(),

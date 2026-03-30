@@ -617,6 +617,19 @@ type Email = rusttype RustEmailAddress
     }
 
     #[test]
+    fn test_parse_rusttype_qualified_underlying() -> Result<(), Vec<CompileError>> {
+        let source = "type MyBin = rusttype proto_type::Binary\n";
+        let program = parse_str(source)?;
+        let nt = require_newtype_decl(&program.declarations[0])?;
+        assert!(nt.is_rusttype);
+        assert!(matches!(
+            &nt.underlying.node,
+            Type::Qualified(segs) if segs == &vec!["proto_type".to_string(), "Binary".to_string()]
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_into_try_interop_edge() -> Result<(), Vec<CompileError>> {
         let source = r#"
 type Email = rusttype RustEmailAddress:
@@ -1310,6 +1323,86 @@ def add(a: int, b: int) -> int:
             _ => panic!("Expected import declaration"),
         }
         Ok(())
+    }
+
+    /// Rust item paths may use module names that are Incan keywords (e.g. Substrait `proto::type`).
+    #[test]
+    fn test_parse_rust_from_import_path_type_keyword_segment() -> Result<(), Vec<CompileError>> {
+        let source = "from rust::substrait::proto::type import Binary, Boolean\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::RustFrom { crate_name, path, items, .. } => {
+                    assert_eq!(crate_name, "substrait");
+                    assert_eq!(path, &["proto".to_string(), "type".to_string()]);
+                    assert_eq!(items.len(), 2);
+                    assert_eq!(items[0].name, "Binary");
+                    assert_eq!(items[1].name, "Boolean");
+                }
+                _ => panic!("Expected RustFrom import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_rust_import_crate_path_type_keyword_segment() -> Result<(), Vec<CompileError>> {
+        let source = "import rust::substrait::proto::type::Binary\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::RustCrate {
+                    crate_name,
+                    path,
+                    version,
+                    features,
+                } => {
+                    assert_eq!(crate_name, "substrait");
+                    assert_eq!(
+                        path,
+                        &[
+                            "proto".to_string(),
+                            "type".to_string(),
+                            "Binary".to_string()
+                        ]
+                    );
+                    assert!(version.is_none());
+                    assert!(features.is_empty());
+                }
+                _ => panic!("Expected RustCrate import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    /// `from rust::... import` may name Rust items that are Incan keywords (e.g. `type` module).
+    #[test]
+    fn test_parse_rust_from_import_keyword_item_with_alias() -> Result<(), Vec<CompileError>> {
+        let source = "from rust::substrait::proto import type as proto_type\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::RustFrom { crate_name, path, items, .. } => {
+                    assert_eq!(crate_name, "substrait");
+                    assert_eq!(path, &["proto".to_string()]);
+                    assert_eq!(items.len(), 1);
+                    assert_eq!(items[0].name, "type");
+                    assert_eq!(items[0].alias.as_deref(), Some("proto_type"));
+                }
+                _ => panic!("Expected RustFrom import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_from_import_rejects_keyword_item_name_for_incan_modules() {
+        let source = "from db import type\n";
+        let result = parse_str(source);
+        assert!(result.is_err(), "expected parse error for keyword import item on Incan from-import");
     }
 
     #[test]

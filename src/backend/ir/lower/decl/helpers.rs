@@ -71,6 +71,7 @@ impl AstLowering {
     /// resolution so the two stay in sync when new primitive types are added.
     fn lower_bound_type(ty: &ast::Type) -> IrType {
         match ty {
+            ast::Type::Qualified(segments) => IrType::Struct(segments.join("::")),
             ast::Type::Simple(name) => {
                 let n = name.as_str();
                 if n == conventions::NONE_TYPE_NAME || n == conventions::UNIT_TYPE_NAME {
@@ -372,6 +373,7 @@ impl AstLowering {
     fn serialize_type(ty: &ast::Type) -> String {
         match ty {
             ast::Type::Simple(name) => name.clone(),
+            ast::Type::Qualified(segments) => segments.join("::"),
             ast::Type::Generic(name, args) => {
                 let inner = args
                     .iter()

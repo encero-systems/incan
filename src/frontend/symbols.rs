@@ -658,8 +658,34 @@ fn normalize_type_name(name: &str) -> String {
     name.to_string()
 }
 
+/// Resolve `a::b::c` in type position when `a` is a `rust::` import binding (module or item).
+fn resolve_qualified_rust_type_path(segments: &[String], symbols: &SymbolTable) -> ResolvedType {
+    if segments.len() < 2 {
+        return ResolvedType::Unknown;
+    }
+    let Some(root) = segments.first() else {
+        return ResolvedType::Unknown;
+    };
+    let Some(id) = symbols.lookup(root) else {
+        return ResolvedType::Unknown;
+    };
+    let Some(sym) = symbols.get(id) else {
+        return ResolvedType::Unknown;
+    };
+    let SymbolKind::RustItem(info) = &sym.kind else {
+        return ResolvedType::Unknown;
+    };
+    let mut path = info.path.clone();
+    for seg in segments.iter().skip(1) {
+        path.push_str("::");
+        path.push_str(seg);
+    }
+    ResolvedType::RustPath(path)
+}
+
 pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
     match ty {
+        Type::Qualified(segments) => resolve_qualified_rust_type_path(segments, symbols),
         Type::Simple(name) => {
             if let Some(id) = numerics::from_str(name.as_str()) {
                 return match id {
@@ -850,5 +876,24 @@ mod tests {
             ty,
             ResolvedType::Function(vec![ResolvedType::Int, ResolvedType::Str], Box::new(ResolvedType::Bool))
         );
+    }
+
+    #[test]
+    fn resolve_type_qualified_rust_module_item() {
+        let mut table = SymbolTable::new();
+        table.define(Symbol {
+            name: "proto_type".to_string(),
+            kind: SymbolKind::RustItem(RustItemInfo {
+                crate_name: "substrait".to_string(),
+                path: "substrait::proto::type".to_string(),
+                binding: RustImportBindingKind::FromImport,
+                metadata: None,
+            }),
+            span: Span::default(),
+            scope: 0,
+        });
+        let ty = Type::Qualified(vec!["proto_type".to_string(), "Binary".to_string()]);
+        let r = resolve_type(&ty, &table);
+        assert_eq!(r, ResolvedType::RustPath("substrait::proto::type::Binary".to_string()));
     }
 }

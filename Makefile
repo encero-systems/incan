@@ -9,6 +9,16 @@ else
 TEST_CMD = cargo nextest run --all --status-level all
 endif
 
+# After `make build` / `make build-fast`, symlink ~/.cargo/bin/incan → target/debug/incan so `incan` on PATH (IDE run,
+# other repos) matches this checkout. When `incan-lsp` was built (`make build` uses --features lsp), also symlink
+# ~/.cargo/bin/incan-lsp so the editor LSP matches without `cargo install`. Off when CI is set; opt out with
+# INCAN_SKIP_CARGO_BIN_LINK=1.
+ifneq ($(CI),)
+INCAN_LINK_CARGO_BIN ?= 0
+else
+INCAN_LINK_CARGO_BIN ?= 1
+endif
+
 .PHONY: help
 help: build-quiet  ## Display this help message
 	@INCAN_NO_BANNER=1 ./target/debug/incan --version
@@ -36,15 +46,29 @@ help: build-quiet  ## Display this help message
 # Build
 # =============================================================================
 
-.PHONY: build  ## build - Debug build (compiler + incan-lsp for editor parity)
+.PHONY: _incan_link_debug_to_cargo_bin
+_incan_link_debug_to_cargo_bin:
+	@if [ "$(INCAN_LINK_CARGO_BIN)" != "1" ] || [ "$(INCAN_SKIP_CARGO_BIN_LINK)" = "1" ]; then exit 0; fi
+	@if [ ! -f "$(CURDIR)/target/debug/incan" ]; then echo "incan: expected $(CURDIR)/target/debug/incan after build"; exit 1; fi
+	@mkdir -p "$(HOME)/.cargo/bin"
+	@ln -sf "$(CURDIR)/target/debug/incan" "$(HOME)/.cargo/bin/incan"
+	@echo "\033[32m✓ Linked ~/.cargo/bin/incan -> $(CURDIR)/target/debug/incan\033[0m"
+	@if [ -f "$(CURDIR)/target/debug/incan-lsp" ]; then \
+		ln -sf "$(CURDIR)/target/debug/incan-lsp" "$(HOME)/.cargo/bin/incan-lsp"; \
+		echo "\033[32m✓ Linked ~/.cargo/bin/incan-lsp -> $(CURDIR)/target/debug/incan-lsp\033[0m"; \
+	fi
+
+.PHONY: build  ## build - Debug build (compiler + LSP); links ~/.cargo/bin/incan + incan-lsp locally
 build:
 	@echo "\033[1mBuilding (debug)...\033[0m"
 	@cargo build --features lsp
+	@$(MAKE) _incan_link_debug_to_cargo_bin
 
-.PHONY: build-fast  ## build - Debug build (compiler only, fastest local loop)
+.PHONY: build-fast  ## build - Debug build (compiler only); links ~/.cargo/bin/incan locally
 build-fast:
 	@echo "\033[1mBuilding compiler only (debug)...\033[0m"
 	@cargo build
+	@$(MAKE) _incan_link_debug_to_cargo_bin
 
 .PHONY: build-quiet
 build-quiet:

@@ -574,6 +574,7 @@ fn format_function_signature(func: &crate::frontend::ast::FunctionDecl) -> Strin
 fn format_type(ty: &Type) -> String {
     match ty {
         Type::Simple(name) => name.clone(),
+        Type::Qualified(segments) => segments.join("::"),
         Type::Generic(name, params) => {
             let params_str: Vec<String> = params.iter().map(|p| format_type(&p.node)).collect();
             format!("{}[{}]", name, params_str.join(", "))

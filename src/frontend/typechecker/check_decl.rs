@@ -1067,6 +1067,13 @@ impl TypeChecker {
             self.errors
                 .push(errors::rusttype_requires_rust_backing(&nt.name, nt.underlying.span));
         }
+        if nt.is_rusttype {
+            if let ResolvedType::RustPath(path) = &underlying {
+                self.type_info
+                    .rusttype_canonical_rust_paths
+                    .insert(nt.name.clone(), path.clone());
+            }
+        }
         if !nt.is_rusttype && !nt.interop_edges.is_empty() {
             self.errors
                 .push(errors::interop_block_requires_rusttype(&nt.name, nt.underlying.span));

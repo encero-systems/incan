@@ -184,7 +184,7 @@ impl<'a> Parser<'a> {
             return Ok(Spanned::new(Type::Simple("None".to_string()), Span::new(start, end)));
         }
 
-        // Named type
+        // Named type (optionally `::`-qualified for Rust paths: `proto_mod::Binary`)
         let name = self.identifier()?;
 
         // Check for Self type (refers to the implementing type in traits)
@@ -193,21 +193,43 @@ impl<'a> Parser<'a> {
             return Ok(Spanned::new(Type::SelfType, Span::new(start, end)));
         }
 
-        // Check for generic arguments
+        let mut path = vec![name];
+        while self.match_punct(PunctuationId::ColonColon) {
+            path.push(self.identifier_or_any_keyword()?);
+        }
+
+        // Check for generic arguments (only on a simple name, not `a::B[T]` yet)
         if self.match_token(&TokenKind::Punctuation(PunctuationId::LBracket)) {
+            if path.len() != 1 {
+                return Err(CompileError::syntax(
+                    "Generics on qualified type paths (`a::B[T]`) are not supported yet; import the concrete type directly"
+                        .to_string(),
+                    Span::new(start, self.current_span().start),
+                ));
+            }
+            let type_name = path[0].clone();
             let args = self.type_list()?;
             self.expect(
                 &TokenKind::Punctuation(PunctuationId::RBracket),
                 "Expected ']' after type arguments",
             )?;
             let end = self.tokens[self.pos - 1].span.end;
-            if name == "Callable" {
+            if type_name == "Callable" {
                 return self.desugar_callable_type(args, start, end);
             }
-            Ok(Spanned::new(Type::Generic(name, args), Span::new(start, end)))
+            Ok(Spanned::new(
+                Type::Generic(type_name, args),
+                Span::new(start, end),
+            ))
+        } else if path.len() == 1 {
+            let end = self.tokens[self.pos - 1].span.end;
+            Ok(Spanned::new(
+                Type::Simple(path[0].clone()),
+                Span::new(start, end),
+            ))
         } else {
             let end = self.tokens[self.pos - 1].span.end;
-            Ok(Spanned::new(Type::Simple(name), Span::new(start, end)))
+            Ok(Spanned::new(Type::Qualified(path), Span::new(start, end)))
         }
     }
 

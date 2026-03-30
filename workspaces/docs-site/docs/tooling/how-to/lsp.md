@@ -13,38 +13,36 @@ The Incan Language Server provides IDE integration for real-time feedback while 
 
 ## Installation
 
-### 1. Build the LSP Server
+### Recommended: build from a clone (CLI + LSP stay in sync)
+
+From the Incan repository, a normal debug build updates both the compiler and the language server and, on local machines (not CI), symlinks them into `~/.cargo/bin` so your shell and editor see the same binaries:
+
+```bash
+cd /path/to/incan-programming-language
+make build
+```
+
+This runs `cargo build --features lsp` and then links `~/.cargo/bin/incan` → `target/debug/incan` and `~/.cargo/bin/incan-lsp` → `target/debug/incan-lsp` when that binary exists. Set `INCAN_SKIP_CARGO_BIN_LINK=1` to skip linking, or rely on CI defaults (linking is off when `CI` is set).
+
+After upgrading the compiler, **reload the editor window** (or restart the Incan language server) so the IDE spawns a fresh `incan-lsp` process.
+
+### Alternative: release binary on `PATH`
 
 ```bash
 cd /path/to/incan-programming-language
 make lsp
 ```
 
-### 2. Add to PATH
-
-Add the binary to your PATH:
-
-```bash
-# Add to .bashrc, .zshrc, or your shell profile
-export PATH="$PATH:/path/to/incan-programming-language/target/release"
-```
-
-If you prefer installing the binary into a user-writable location, you can run:
+Then add `target/release` to your `PATH`, or install into `~/.cargo/bin`:
 
 ```bash
 cd /path/to/incan-programming-language
-cargo install --path . --bin incan-lsp --force
+cargo install --path . --features lsp --bin incan-lsp --force
 ```
 
-This installs to `~/.cargo/bin` by default, which is typically already on PATH.
+You can also use `make install-lsp` as a Makefile shortcut for the `cargo install` path.
 
-If you're in the Incan repo, you can also use the Makefile shortcut:
-
-```bash
-make install-lsp
-```
-
-### 3. Install VS Code Extension
+### Install VS Code Extension
 
 See [Editor Setup](editor_setup.md) for VS Code/Cursor extension installation.
 

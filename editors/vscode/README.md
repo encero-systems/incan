@@ -15,7 +15,7 @@ The extension includes support for the Incan Language Server, providing:
 
 **Requirements:** The `incan-lsp` binary must be installed and available in your PATH, or you can configure the path in settings.
 
-**Tip (development):** When your workspace is the Incan compiler repo, the extension will automatically prefer `target/debug/incan-lsp` (or `target/release/incan-lsp`) if present. This keeps diagnostics in sync with the syntax supported by your current checkout (e.g. `pub const`).
+**Tip (development):** When your workspace is the Incan compiler repo, the extension will automatically prefer `target/debug/incan-lsp` (or `target/release/incan-lsp`) if present. This keeps diagnostics in sync with the syntax supported by your current checkout (e.g. `pub const`). Running `make build` at the repo root also symlinks `~/.cargo/bin/incan-lsp` (and `incan`) to `target/debug/...` on local machines, so other workspaces pick up the same binaries via PATH after you reload the window.
 
 ### Syntax Highlighting
 

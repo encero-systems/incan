@@ -592,6 +592,7 @@ fn ast_type_to_resolved(ty: &ast::Type, type_params: &[String]) -> ResolvedType 
     match ty {
         ast::Type::Unit => ResolvedType::Unit,
         ast::Type::SelfType => ResolvedType::SelfType,
+        ast::Type::Qualified(_) => ResolvedType::Unknown,
         ast::Type::Simple(name) => {
             // Check if it's a type parameter first.
             if type_params.contains(name) {

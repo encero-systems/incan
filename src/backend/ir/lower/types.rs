@@ -222,6 +222,7 @@ impl AstLowering {
         type_param_names: Option<&std::collections::HashSet<&str>>,
     ) -> IrType {
         match ty {
+            ast::Type::Qualified(segments) => IrType::Struct(segments.join("::")),
             ast::Type::Simple(name) => {
                 let n = name.as_str();
 

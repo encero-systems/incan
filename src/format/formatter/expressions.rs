@@ -361,6 +361,14 @@ impl Formatter {
     pub(super) fn format_type(&mut self, ty: &Type) {
         match ty {
             Type::Simple(name) => self.writer.write(name),
+            Type::Qualified(segments) => {
+                for (i, seg) in segments.iter().enumerate() {
+                    if i > 0 {
+                        self.writer.write("::");
+                    }
+                    self.writer.write(seg);
+                }
+            }
             Type::Generic(name, args) => {
                 self.writer.write(name);
                 self.writer.write("[");

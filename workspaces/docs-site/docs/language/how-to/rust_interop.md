@@ -38,6 +38,16 @@ For example, if you would use `import std::fs`, this would refer to Incan's stdl
 > **Note:** `rust::core::...` and `rust::alloc::...` are reserved for future `no_std`/target work and are not yet
 > supported. The compiler will tell you to use `rust::std::...` instead.
 
+### Paths and names that match Incan keywords
+
+Rust modules and items sometimes use names that are reserved in Incan (`type`, `async`, and others). In `rust::` paths and in `from rust::... import ...` item lists, those spellings are still accepted. When you import a keyword-named symbol, bind it with `as` so you have a normal identifier in Incan source:
+
+```incan
+from rust::my_crate::proto import type as proto_type
+```
+
+The same rule applies to path segments after `rust::` (for example `rust::substrait::proto::type::Binary`).
+
 ## Dependency Management
 
 When you use `import rust::crate_name`, Incan automatically adds the dependency to your generated `Cargo.toml`.
@@ -162,6 +172,20 @@ type Name = rusttype RustString:
 ```
 
 This keeps Rust provenance explicit (`rust::...` import) while giving you an Incan-facing type name (`Name`) for docs, APIs, and rebinding.
+
+### Qualified backing paths
+
+When a `rust::` import binds a Rust module (or other namespace), you can name a concrete type inside it with `::` after that binding:
+
+```incan
+from rust::substrait::proto import type as proto_type
+
+type Binary = rusttype proto_type::Binary
+```
+
+The first segment must resolve to a `rust::` import; the compiler builds the full Rust path for lowering and tooling.
+
+Generics on qualified type paths (for example `binding::Wrapper[int]`) are not supported yet — import or spell a path to the concrete type without type arguments in that position.
 
 ### Declaring conversion edges with `interop:`
 

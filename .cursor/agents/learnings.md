@@ -20,7 +20,7 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 
 - **Always test both typechecker and codegen.** Typechecker unit tests validate semantics; codegen snapshot tests verify end-to-end output. Neither alone is sufficient.
 - **Snapshot tests must exercise features in expressions**, not just declarations. A model that declares an alias but never uses it in an expression won't catch lowering bugs.
-- **Test both `From` and `RustFrom` import forms** when changing import handling — they share `parse_import_items()` but a test gap for one form can hide regressions.
+- **Test both `From` and `RustFrom` import forms** when changing import handling — they share `parse_import_items(rust_item_names)`; only `RustFrom` passes `true` so Rust symbols may be Incan keywords (e.g. `import type as proto_type`). Incan `from m import ...` keeps `rust_item_names=false`.
 
 ## Parser and lexer patterns
 
@@ -39,7 +39,7 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 
 - **CLI wiring for warnings**: surface `ast.warnings` via `eprint!` in `common.rs`'s `collect_modules()` — this automatically covers all CLI commands.
 - **LSP wiring for warnings**: after `parser::parse()` succeeds, loop `ast.warnings` and push each through `compile_error_to_diagnostic()` before typechecking.
-- **LSP is feature-gated**: `make lsp` / `make install-lsp` require `--features lsp`. Always verify with a fresh `make install-lsp` after changing LSP-touching code.
+- **LSP is feature-gated**: `cargo build --features lsp` (or `make build`, which enables it) produces `incan-lsp`. For local dev, `make build` symlinks `~/.cargo/bin/incan-lsp` to `target/debug/incan-lsp` unless CI / `INCAN_SKIP_CARGO_BIN_LINK=1`; use `make install-lsp` or `cargo install --path . --features lsp --bin incan-lsp --force` when you need a crates.io-style install instead.
 
 ## Generic bounds and extern functions
 

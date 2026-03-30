@@ -12,6 +12,10 @@ use super::{Ident, Spanned};
 pub enum Type {
     /// Simple type: `int`, `str`, `MyType`
     Simple(Ident),
+    /// Rust-style qualified path in type position: `proto_mod::Binary`, `std::time::Instant`.
+    ///
+    /// At least two segments. Used with `rusttype` when the backing type lives under an imported Rust module binding.
+    Qualified(Vec<Ident>),
     /// Generic type: `List[T]`, `Result[T, E]`
     Generic(Ident, Vec<Spanned<Type>>),
     /// Function type: `(int, str) -> bool`
@@ -28,6 +32,15 @@ impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Type::Simple(name) => write!(f, "{}", name),
+            Type::Qualified(segments) => {
+                for (i, seg) in segments.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, "::")?;
+                    }
+                    write!(f, "{}", seg)?;
+                }
+                Ok(())
+            }
             Type::Generic(name, args) => {
                 write!(f, "{}[", name)?;
                 for (i, arg) in args.iter().enumerate() {
