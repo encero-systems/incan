@@ -1,0 +1,104 @@
+# Composite action: Install Incan with caching
+#
+# Supported runners: Linux and macOS only (ubuntu-*, macos-*). Not supported on
+# Windows (release binary path and bash steps assume a Unix-style `incan` in
+# target/release/).
+#
+# This action:
+#   1. Downloads a pre-built incan binary from cache if available
+#   2. Falls back to building from source if not cached
+#   3. Caches the built binary for faster subsequent runs
+#
+# Usage:
+#   - name: Install Incan
+#     uses: dannys-code-corner/incan/.github/actions/install-incan@main
+#     with:
+#       incan-ref: main
+#       incan-repo: dannys-code-corner/incan
+#       runner-os: ubuntu-latest
+
+name: Install Incan
+description: Install Incan compiler with binary caching (Linux and macOS runners only)
+
+inputs:
+  incan-ref:
+    description: Git reference to checkout/build (SHA, tag, or branch)
+    required: false
+    default: "main"
+  incan-repo:
+    description: Repository to checkout
+    required: false
+    default: "dannys-code-corner/incan"
+  runner-os:
+    description: Runner OS label for the cache key (e.g. ubuntu-latest, macos-latest)
+    required: false
+    default: ${{ runner.os }}
+
+outputs:
+  cache-key:
+    description: Cache key used for restore/save (incan-bin-<ref>-<os>)
+    value: ${{ steps.emit-outputs.outputs.cache-key }}
+  incan-path:
+    description: Directory containing the release incan binary
+    value: ${{ steps.emit-outputs.outputs.incan-path }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Compute cache key
+      id: cache-key
+      shell: bash
+      run: |
+        # Cache key format: incan-bin-<ref>-<os>
+        # This ensures different refs and OSes have separate caches
+        CACHE_KEY="incan-bin-${{ inputs.incan-ref }}-${{ inputs.runner-os }}"
+        echo "key=${CACHE_KEY}" >> "$GITHUB_OUTPUT"
+        echo "CACHE_KEY=${CACHE_KEY}" >> "$GITHUB_ENV"
+
+    - name: Download cached incan binary
+      id: cache-download
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ github.workspace }}/incan/target/release/incan
+        key: ${{ steps.cache-key.outputs.key }}
+        fail-on-cache-miss: false
+
+    - name: Check out Incan
+      if: steps.cache-download.outputs.cache-hit != 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.incan-repo }}
+        ref: ${{ inputs.incan-ref }}
+        path: incan
+
+    - name: Set up Rust
+      if: steps.cache-download.outputs.cache-hit != 'true'
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build Incan
+      if: steps.cache-download.outputs.cache-hit != 'true'
+      working-directory: incan
+      shell: bash
+      run: cargo build --release
+
+    - name: Add Incan to PATH
+      shell: bash
+      run: echo "${{ github.workspace }}/incan/target/release" >> "$GITHUB_PATH"
+
+    - name: Upload incan binary to cache
+      if: steps.cache-download.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ github.workspace }}/incan/target/release/incan
+        key: ${{ steps.cache-key.outputs.key }}
+
+    - name: Verify installation
+      shell: bash
+      run: incan --version
+
+    - name: Set outputs
+      id: emit-outputs
+      shell: bash
+      run: |
+        echo "cache-key=${CACHE_KEY}" >> "$GITHUB_OUTPUT"
+        echo "incan-path=${{ github.workspace }}/incan/target/release" >> "$GITHUB_OUTPUT"

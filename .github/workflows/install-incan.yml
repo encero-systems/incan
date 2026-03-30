@@ -1,0 +1,74 @@
+# Reusable workflow: Install Incan compiler
+#
+# This workflow can be called from other repositories to install the Incan
+# compiler. It uses a composite action that:
+#   1. Downloads a pre-built incan binary from cache if available
+#   2. Falls back to building from source if not cached
+#
+# Usage in a downstream repo (.github/workflows/ci.yml) — reusable workflows are invoked at job level, not as a step:
+#
+#   jobs:
+#     install-incan:
+#       uses: dannys-code-corner/incan/.github/workflows/install-incan.yml@main
+#       with:
+#         incan-ref: main  # or specific SHA, tag, or branch
+#         incan-repo: dannys-code-corner/incan
+#
+#     build:
+#       needs: install-incan
+#       runs-on: ubuntu-latest
+#       steps:
+#         - uses: actions/checkout@v4
+#         # incan is not on this runner unless you also run the composite action here or pass artifacts between jobs.
+#         # For most repos, prefer the composite action in each job that needs incan (see docs-site CI guide).
+#
+#   Reusable inputs:
+#     - incan-ref: Git reference to build (SHA, tag, or branch) - default: "main"
+#     - incan-repo: Repository to checkout - default: "dannys-code-corner/incan"
+#
+#   Reusable outputs:
+#     - cache-key: Cache key for the built binary (use with actions/cache)
+#     - incan-path: Path to the directory containing the incan binary (on this job's runner)
+#
+# This job always runs on ubuntu-latest and keys the cache accordingly.
+# For macOS builds, use the composite action in a job with runs-on: macos-* and
+# pass runner-os: ${{ runner.os }} (or ${{ matrix.os }}). Windows is not supported.
+
+name: Install Incan
+
+on:
+  workflow_call:
+    inputs:
+      incan-ref:
+        description: Git reference to checkout/build (SHA, tag, or branch)
+        required: false
+        default: "main"
+        type: string
+      incan-repo:
+        description: Repository to checkout
+        required: false
+        default: "dannys-code-corner/incan"
+        type: string
+    outputs:
+      cache-key:
+        description: Cache key for the built binary
+        value: ${{ jobs.install-incan.outputs.cache-key }}
+      incan-path:
+        description: Path to the directory containing the incan binary
+        value: ${{ jobs.install-incan.outputs.incan-path }}
+
+jobs:
+  install-incan:
+    name: Install Incan
+    runs-on: ubuntu-latest
+    outputs:
+      cache-key: ${{ steps.install.outputs.cache-key }}
+      incan-path: ${{ steps.install.outputs.incan-path }}
+    steps:
+      - id: install
+        name: Install Incan (cached)
+        uses: ./.github/actions/install-incan
+        with:
+          incan-ref: ${{ inputs.incan-ref }}
+          incan-repo: ${{ inputs.incan-repo }}
+          runner-os: ubuntu-latest

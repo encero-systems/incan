@@ -16,15 +16,16 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 
 ## Key References
 
-| Document                 | Path                                                                                 |
-| ------------------------ | ------------------------------------------------------------------------------------ |
-| Rust coding conventions  | [`workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md`] |
-| Project architecture     | [`workspaces/docs-site/docs/contributing/explanation/architecture.md`]               |
-| Layer boundaries         | [`workspaces/docs-site/docs/contributing/explanation/layering.md`]                   |
-| Writing RFCs             | [`workspaces/docs-site/docs/contributing/how-to/writing_rfcs.md`]                    |
-| Contributor guide        | [`CONTRIBUTING.md`]                                                                  |
-| GitHub issue templates   | [`.github/ISSUE_TEMPLATE/`]                                                          |
-| Implementation learnings | [`.cursor/agents/learnings.md`]                                                      |
+| Document                   | Path                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------ |
+| Rust coding conventions    | [`workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md`] |
+| Project architecture       | [`workspaces/docs-site/docs/contributing/explanation/architecture.md`]               |
+| Layer boundaries           | [`workspaces/docs-site/docs/contributing/explanation/layering.md`]                   |
+| Writing RFCs               | [`workspaces/docs-site/docs/contributing/how-to/writing_rfcs.md`]                    |
+| Contributor guide          | [`CONTRIBUTING.md`]                                                                  |
+| GitHub issue templates     | [`.github/ISSUE_TEMPLATE/`]                                                          |
+| Implementation learnings   | [`.cursor/agents/learnings.md`]                                                      |
+| CI & automation (projects) | [`workspaces/docs-site/docs/tooling/how-to/ci_and_automation.md`]                    |
 
 [`workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md`]: workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md
 [`workspaces/docs-site/docs/contributing/explanation/architecture.md`]: workspaces/docs-site/docs/contributing/explanation/architecture.md
@@ -33,6 +34,7 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 [`CONTRIBUTING.md`]: CONTRIBUTING.md
 [`.github/ISSUE_TEMPLATE/`]: .github/ISSUE_TEMPLATE/
 [`.cursor/agents/learnings.md`]: .cursor/agents/learnings.md
+[`workspaces/docs-site/docs/tooling/how-to/ci_and_automation.md`]: workspaces/docs-site/docs/tooling/how-to/ci_and_automation.md
 
 ## General Workflow
 
@@ -45,18 +47,18 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 
 ### Common commands
 
-| Command                                                   | Purpose                                          |
-| --------------------------------------------------------- | ------------------------------------------------ |
-| `make build`                                              | Debug build (fast)                               |
-| `make release`                                            | Optimized build                                  |
-| `make test`                                               | Run all tests                                    |
-| `make fmt`                                                | Format Rust code (`cargo +nightly fmt`)          |
-| `make lint`                                               | Run clippy                                       |
-| `make check`                                              | Format check + clippy                            |
-| `make pre-commit`                                         | Fast local gate (format check + `cargo check`)   |
-| `make pre-commit-full`                                    | Full local gate (format check + tests + clippy)  |
-| `make examples`                                           | Smoke test all examples (requires release build) |
-| `INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests` | Update codegen snapshots                         |
+| Command                                                   | Purpose                                                                                                                                                   |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `make build`                                              | Debug build with LSP; symlinks `~/.cargo/bin/incan` and `~/.cargo/bin/incan-lsp` → `target/debug/...` unless `CI` is set or `INCAN_SKIP_CARGO_BIN_LINK=1` |
+| `make release`                                            | Optimized build                                                                                                                                           |
+| `make test`                                               | Run all tests                                                                                                                                             |
+| `make fmt`                                                | Format Rust code (`cargo +nightly fmt`)                                                                                                                   |
+| `make lint`                                               | Run clippy                                                                                                                                                |
+| `make check`                                              | Format check + clippy                                                                                                                                     |
+| `make pre-commit`                                         | Fast local gate (format check + `cargo check`)                                                                                                            |
+| `make pre-commit-full`                                    | Full local gate (format check + tests + clippy)                                                                                                           |
+| `make examples`                                           | Smoke test all examples (requires release build)                                                                                                          |
+| `INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests` | Update codegen snapshots                                                                                                                                  |
 
 ## Docs-site Workflow (MkDocs Material)
 
