@@ -229,6 +229,7 @@ impl<'a> IrEmitter<'a> {
                             IrType::Int | IrType::Float | IrType::Bool => {
                                 quote! { #iter.iter().copied() }
                             }
+                            e if self.type_is_user_enum(e) => quote! { #iter.iter().cloned() },
                             _ => quote! { #iter.iter() },
                         },
                         IrType::Set(_) | IrType::Dict(_, _) => {
@@ -243,6 +244,13 @@ impl<'a> IrEmitter<'a> {
                             match elem_ty.as_ref() {
                                 IrType::Int | IrType::Float | IrType::Bool => {
                                     quote! { #iter.iter().copied() }
+                                }
+                                e if self.type_is_user_enum(e) => {
+                                    if needs_mut_items {
+                                        quote! { #iter.iter_mut() }
+                                    } else {
+                                        quote! { #iter.iter().cloned() }
+                                    }
                                 }
                                 // For non-Copy types (structs), use .iter_mut() to allow mutation
                                 _ => {

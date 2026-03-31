@@ -212,6 +212,19 @@ impl<'a> IrEmitter<'a> {
         self.type_module_paths = paths;
         self.ambiguous_type_names = ambiguous;
     }
+
+    /// True if `ty` is a user-defined Incan enum in IR.
+    ///
+    /// Named enums lower to [`IrType::Struct`] (see `lower_resolved_type`); [`IrType::Enum`] is also treated as enum.
+    /// Used by for-loop emission to iterate with `.iter().cloned()` so the loop variable is an owned `E`, matching the
+    /// typechecker and `PartialEq` (#195).
+    pub(super) fn type_is_user_enum(&self, ty: &IrType) -> bool {
+        match ty {
+            IrType::Enum(_) => true,
+            IrType::Struct(name) => self.enum_variant_fields.keys().any(|(enum_name, _)| enum_name == name),
+            _ => false,
+        }
+    }
 }
 
 #[cfg(test)]
