@@ -4116,6 +4116,11 @@
     <span class="n">xs</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
     <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;first=</span><span class="si">{</span><span class="n">xs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
+<p>Use <code>append</code> to add an element at the end, and <code>pop()</code> to remove and return the last element. If you call <code>pop()</code> when the list is empty, the program panics with <code>IndexError: pop from empty list</code> and does not return a default value for the element type (the compiler does not require <code>Default</code> on the element type).</p>
+<div class="admonition tip">
+<p class="admonition-title">Coming from Python?</p>
+<p>Incan lists are close to Python’s: out-of-range indexing and empty <code>list.pop()</code> both surface as <a href="../../../reference/language/#indexerror"><code>IndexError</code></a> panics with the same canonical messages as CPython where applicable (including <code>pop from empty list</code>).</p>
+</div>
 <h2 id="dicts">Dicts<a class="headerlink" href="#dicts" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">scores</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">([(</span><span class="s2">&quot;alice&quot;</span><span class="p">,</span> <span class="mi">10</span><span class="p">),</span> <span class="p">(</span><span class="s2">&quot;bob&quot;</span><span class="p">,</span> <span class="mi">7</span><span class="p">)])</span>

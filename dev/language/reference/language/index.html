@@ -5508,7 +5508,7 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 <td>IndexError</td>
 <td><code>IndexError</code></td>
 <td></td>
-<td>Raised when an index is out of bounds (e.g. string/list indexing).</td>
+<td>Raised when an index is out of bounds (e.g. string/list indexing) or when calling <code>list.pop()</code> on an empty list.</td>
 <td>RFC 000</td>
 <td>0.1</td>
 <td>Stable</td>
@@ -5575,6 +5575,11 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
     <span class="nb">print</span><span class="p">(</span><span class="n">xs</span><span class="p">[</span><span class="mi">99</span><span class="p">])</span>
 </code></pre></div>
 <p>Panics at runtime with <code>IndexError: index 99 out of range for list of length 3</code>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">xs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">_</span> <span class="o">=</span> <span class="n">xs</span><span class="o">.</span><span class="nb">pop</span><span class="p">()</span>
+</code></pre></div>
+<p>Panics at runtime with <code>IndexError: pop from empty list</code>.</p>
 <h4 id="keyerror"><code>KeyError</code><a class="headerlink" href="#keyerror" title="Permanent link">&para;</a></h4>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">d</span><span class="p">:</span> <span class="kt">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;a&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">}</span>
@@ -7745,7 +7750,7 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 <td>Pop</td>
 <td><code>pop</code></td>
 <td></td>
-<td>Remove and return the last element.</td>
+<td>Remove and return the last element. On an empty list, panics with <code>IndexError: pop from empty list</code> (Python-compatible).</td>
 <td>RFC 009</td>
 <td>0.1</td>
 <td>Stable</td>
