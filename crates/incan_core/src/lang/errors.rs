@@ -77,7 +77,7 @@ pub const EXCEPTIONS: &[ExceptionInfo] = &[
     info(
         ErrorKind::IndexError,
         "IndexError",
-        "Raised when an index is out of bounds (e.g. string/list indexing).",
+        "Raised when an index is out of bounds (e.g. string/list indexing) or when calling `list.pop()` on an empty list.",
         RFC::_000,
         Since(0, 1),
         &[
@@ -93,6 +93,13 @@ pub const EXCEPTIONS: &[ExceptionInfo] = &[
     print(xs[99])
 "#,
                 note: Some("Panics at runtime with `IndexError: index 99 out of range for list of length 3`."),
+            },
+            Example {
+                code: r#"def main() -> None:
+    xs: list[int] = []
+    _ = xs.pop()
+"#,
+                note: Some("Panics at runtime with `IndexError: pop from empty list`."),
             },
         ],
     ),

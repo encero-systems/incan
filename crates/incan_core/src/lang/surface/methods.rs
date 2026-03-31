@@ -305,7 +305,7 @@ pub mod list_methods {
             ListMethodId::Pop,
             "pop",
             &[],
-            "Remove and return the last element.",
+            "Remove and return the last element. On an empty list, panics with `IndexError: pop from empty list` (Python-compatible).",
             RFC::_009,
             Since(0, 1),
         ),

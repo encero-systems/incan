@@ -48,7 +48,9 @@ fn test_function_calls() {
     );
     let numbers = vec![1, 2, 3];
     numbers.push(4);
-    let popped = numbers.pop().unwrap_or_default();
+    let popped = numbers
+        .pop()
+        .unwrap_or_else(|| incan_stdlib::errors::raise_list_pop_empty());
     let data = [("a", 1), ("b", 2)].into_iter().collect::<HashMap<_, _>>();
 }
 fn main() {

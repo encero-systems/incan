@@ -527,7 +527,8 @@ pub enum MethodKind {
     // ---- List methods ----
     /// `list.append(item)` → `list.push(item)`
     Append,
-    /// `list.pop()` → `list.pop().unwrap_or(default)`
+    /// `list.pop()` lowers via `Vec::pop()` without requiring `T: Default`. An empty list raises
+    /// `IndexError: pop from empty list` through `incan_stdlib::errors::raise_list_pop_empty` (#194).
     Pop,
     /// `list.swap(i, j)` → `list.swap(i as usize, j as usize)`
     Swap,

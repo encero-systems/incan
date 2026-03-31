@@ -20,6 +20,11 @@ def main() -> None:
     println(f"first={xs[0]}")
 ```
 
+Use `append` to add an element at the end, and `pop()` to remove and return the last element. If you call `pop()` when the list is empty, the program panics with `IndexError: pop from empty list` and does not return a default value for the element type (the compiler does not require `Default` on the element type).
+
+!!! tip "Coming from Python?"
+    Incan lists are close to Python’s: out-of-range indexing and empty `list.pop()` both surface as [`IndexError`](../../reference/language.md#indexerror) panics with the same canonical messages as CPython where applicable (including `pop from empty list`).
+
 ## Dicts
 
 ```incan

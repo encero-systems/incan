@@ -110,7 +110,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | ValueError | `ValueError` |  | Raised when an operation receives a value of the right type but an invalid value. | RFC 000 | 0.1 | Stable |
 | TypeError | `TypeError` |  | Raised when an operation receives a value of an inappropriate type. | RFC 000 | 0.1 | Stable |
 | ZeroDivisionError | `ZeroDivisionError` |  | Raised when dividing or taking modulo by zero (Python-like numeric semantics). | RFC 000 | 0.1 | Stable |
-| IndexError | `IndexError` |  | Raised when an index is out of bounds (e.g. string/list indexing). | RFC 000 | 0.1 | Stable |
+| IndexError | `IndexError` |  | Raised when an index is out of bounds (e.g. string/list indexing) or when calling `list.pop()` on an empty list. | RFC 000 | 0.1 | Stable |
 | KeyError | `KeyError` |  | Raised when a dict key is missing. | RFC 000 | 0.1 | Stable |
 | JsonDecodeError | `JSONDecodeError` |  | Raised when parsing JSON fails (Python-like). | RFC 000 | 0.1 | Stable |
 
@@ -193,6 +193,15 @@ def main() -> None:
 ```
 
 Panics at runtime with `IndexError: index 99 out of range for list of length 3`.
+
+```incan
+def main() -> None:
+    xs: list[int] = []
+    _ = xs.pop()
+
+```
+
+Panics at runtime with `IndexError: pop from empty list`.
 
 #### `KeyError`
 
@@ -522,7 +531,7 @@ def main() -> None:
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
 |---|---|---|---|---|---|---|
 | Append | `append` |  | Append an element to the end of the list. | RFC 009 | 0.1 | Stable |
-| Pop | `pop` |  | Remove and return the last element. | RFC 009 | 0.1 | Stable |
+| Pop | `pop` |  | Remove and return the last element. On an empty list, panics with `IndexError: pop from empty list` (Python-compatible). | RFC 009 | 0.1 | Stable |
 | Contains | `contains` |  | Return true if the list contains a value. | RFC 009 | 0.1 | Stable |
 | Swap | `swap` |  | Swap two elements by index. | RFC 009 | 0.1 | Stable |
 | Reserve | `reserve` |  | Reserve capacity for at least N more elements. | RFC 009 | 0.1 | Stable |

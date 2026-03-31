@@ -115,7 +115,10 @@ impl Stack {
     }
     pub fn pop(&self) -> i64 {
         if self.items.len() as i64 > 0 {
-            return self.items.pop().unwrap_or_default();
+            return self
+                .items
+                .pop()
+                .unwrap_or_else(|| incan_stdlib::errors::raise_list_pop_empty());
         }
         return -1;
     }
@@ -319,7 +322,9 @@ fn main() {
         String > = vec![format!("{}", stack.size())]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
     );
-    let top = stack.pop().unwrap_or_default();
+    let top = stack
+        .pop()
+        .unwrap_or_else(|| incan_stdlib::errors::raise_list_pop_empty());
     println!(
         "{}", { let __parts : [& str; 2usize] = ["Popped: ", ""]; let __args : Vec <
         String > = vec![format!("{}", top)]; incan_stdlib::strings::fstring(& __parts, &

@@ -53,6 +53,13 @@ pub fn raise_index_error(msg: &str) -> ! {
     raise(IncanError::with_message(ErrorKind::IndexError, msg))
 }
 
+/// Raise `IndexError: pop from empty list` (Python-compatible empty `list.pop()`).
+#[cold]
+#[track_caller]
+pub fn raise_list_pop_empty() -> ! {
+    raise(IncanError::list_pop_empty())
+}
+
 /// Raise a `KeyError` with a canonical `KeyError: ...` prefix.
 #[cold]
 #[track_caller]

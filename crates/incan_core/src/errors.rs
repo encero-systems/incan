@@ -82,6 +82,14 @@ impl<'a> IncanError<'a> {
         Self::new(ErrorKind::IndexError, ErrorArgs::Static("string index out of range"))
     }
 
+    /// `IndexError: pop from empty list`
+    ///
+    /// Mirrors Python's `list.pop()` on an empty list.
+    #[inline]
+    pub const fn list_pop_empty() -> Self {
+        Self::new(ErrorKind::IndexError, ErrorArgs::Static("pop from empty list"))
+    }
+
     /// `ValueError: slice step cannot be zero`
     #[inline]
     pub const fn slice_step_zero() -> Self {
@@ -223,6 +231,10 @@ mod tests {
         assert_eq!(
             IncanError::string_index_out_of_range().to_string(),
             "IndexError: string index out of range"
+        );
+        assert_eq!(
+            IncanError::list_pop_empty().to_string(),
+            "IndexError: pop from empty list"
         );
         assert_eq!(
             IncanError::slice_step_zero().to_string(),

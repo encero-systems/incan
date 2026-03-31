@@ -1,0 +1,16 @@
+"""Regression #194: list.pop() on Clone-only model must not require Default in generated Rust."""
+
+@derive(Clone)
+model PopRegressItem:
+    id: int
+
+
+def drain_items() -> None:
+    mut xs: list[PopRegressItem] = [PopRegressItem(id=1)]
+    while len(xs) > 0:
+        item: PopRegressItem = xs.pop()
+        print(item.id)
+
+
+def main() -> None:
+    drain_items()

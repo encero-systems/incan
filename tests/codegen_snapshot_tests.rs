@@ -812,6 +812,13 @@ fn test_models_codegen() {
 }
 
 #[test]
+fn test_list_pop_clone_only_model_codegen() {
+    let source = load_test_file("list_pop_clone_only_model");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("list_pop_clone_only_model", rust_code);
+}
+
+#[test]
 fn test_traits_codegen() {
     let source = load_test_file("traits");
     let rust_code = generate_rust(&source);

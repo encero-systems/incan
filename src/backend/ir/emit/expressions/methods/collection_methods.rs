@@ -67,8 +67,12 @@ pub(super) fn emit_collection_method(
             Some(Ok(quote! { () }))
         }
         MethodKind::Pop => {
-            // Snapshot-stable behavior: always default the popped value.
-            Some(Ok(quote! { #r.pop().unwrap_or_default() }))
+            // Incan types `pop()` as `T`, but `Vec::pop` is `Option<T>`. Avoid `unwrap_or_default()` so `T` need not
+            // implement `Default` (e.g. Clone-only models, #194). Empty list uses canonical `IndexError: pop from
+            // empty list` via stdlib (Python-compatible).
+            Some(Ok(
+                quote! { #r.pop().unwrap_or_else(|| incan_stdlib::errors::raise_list_pop_empty()) },
+            ))
         }
         MethodKind::Swap => {
             if args.len() >= 2 {

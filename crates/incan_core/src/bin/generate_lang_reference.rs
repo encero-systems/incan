@@ -5,7 +5,10 @@
 //!
 //! ## Notes
 //! - The generated files are meant to be checked into the repo and treated as derived artifacts.
-//! - Do not edit the generated Markdown by hand; update the registries instead.
+//! - **Do not edit `language.md` by hand.** Change the source registries under `crates/incan_core/src/lang/` (for
+//!   example `surface::methods` for list method blurbs, `errors` for builtin exception rows and examples, `keywords`,
+//!   `builtins`, …) and re-run this binary so `workspaces/docs-site/docs/language/reference/language.md` updates in
+//!   sync.
 //!
 //! ## Examples
 //! Run from the workspace root:
