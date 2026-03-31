@@ -185,7 +185,65 @@ impl TypeChecker {
         }
     }
 
+    /// [`ResolvedType::SelfType`] in a trait method signature means the receiver type for this call site.
+    fn concrete_type_for_trait_self(&self, receiver: &ResolvedType) -> ResolvedType {
+        match receiver {
+            ResolvedType::Generic(name, args) => ResolvedType::Generic(name.clone(), args.clone()),
+            ResolvedType::Named(name) => {
+                let n_params = self
+                    .lookup_type_info(name)
+                    .map(|info| match info {
+                        TypeInfo::Model(m) => m.type_params.len(),
+                        TypeInfo::Class(c) => c.type_params.len(),
+                        TypeInfo::Enum(e) => e.type_params.len(),
+                        TypeInfo::Newtype(n) => n.type_params.len(),
+                        _ => 0,
+                    })
+                    .unwrap_or(0);
+                if n_params > 0 {
+                    ResolvedType::Generic(name.clone(), vec![ResolvedType::Unknown; n_params])
+                } else {
+                    receiver.clone()
+                }
+            }
+            _ => receiver.clone(),
+        }
+    }
+
+    fn substitute_self_in_resolved_type(&self, ty: ResolvedType, receiver: &ResolvedType) -> ResolvedType {
+        match ty {
+            ResolvedType::SelfType => self.concrete_type_for_trait_self(receiver),
+            ResolvedType::Generic(name, args) => ResolvedType::Generic(
+                name,
+                args.into_iter()
+                    .map(|a| self.substitute_self_in_resolved_type(a, receiver))
+                    .collect(),
+            ),
+            ResolvedType::Tuple(items) => ResolvedType::Tuple(
+                items
+                    .into_iter()
+                    .map(|a| self.substitute_self_in_resolved_type(a, receiver))
+                    .collect(),
+            ),
+            ResolvedType::FrozenList(inner) => {
+                ResolvedType::FrozenList(Box::new(self.substitute_self_in_resolved_type(*inner, receiver)))
+            }
+            ResolvedType::FrozenSet(inner) => {
+                ResolvedType::FrozenSet(Box::new(self.substitute_self_in_resolved_type(*inner, receiver)))
+            }
+            ResolvedType::FrozenDict(k, v) => ResolvedType::FrozenDict(
+                Box::new(self.substitute_self_in_resolved_type(*k, receiver)),
+                Box::new(self.substitute_self_in_resolved_type(*v, receiver)),
+            ),
+            ResolvedType::Ref(inner) => {
+                ResolvedType::Ref(Box::new(self.substitute_self_in_resolved_type(*inner, receiver)))
+            }
+            other => other,
+        }
+    }
+
     /// Resolve a method on a type's own methods or trait-adopted methods.
+    #[allow(clippy::too_many_arguments)]
     fn resolve_named_method(
         &mut self,
         methods: &std::collections::HashMap<String, MethodInfo>,
@@ -194,6 +252,7 @@ impl TypeChecker {
         args: &[CallArg],
         arg_types: &[ResolvedType],
         call_site_span: Span,
+        receiver_ty: &ResolvedType,
     ) -> Option<ResolvedType> {
         if let Some(method_info) = methods.get(method) {
             let params = method_info.params.clone();
@@ -205,7 +264,8 @@ impl TypeChecker {
             for trait_name in traits {
                 if let Some(method_info) = self.trait_method_info_resolved(trait_name, method, call_site_span) {
                     let params = method_info.params.clone();
-                    let return_type = method_info.return_type.clone();
+                    let return_type =
+                        self.substitute_self_in_resolved_type(method_info.return_type.clone(), receiver_ty);
                     self.validate_method_call_args(&params, args, arg_types);
                     return Some(return_type);
                 }
@@ -807,24 +867,58 @@ impl TypeChecker {
         {
             match type_info {
                 TypeInfo::Model(model) => {
-                    if let Some(ret) =
-                        self.resolve_named_method(&model.methods, Some(&model.traits), method, args, &arg_types, span)
-                    {
+                    let traits = self.trait_names_for_type_methods(&model.traits, &model.derives);
+                    if let Some(ret) = self.resolve_named_method(
+                        &model.methods,
+                        Some(&traits),
+                        method,
+                        args,
+                        &arg_types,
+                        span,
+                        &base_ty,
+                    ) {
                         return ret;
                     }
                 }
                 TypeInfo::Class(class) => {
-                    if let Some(ret) =
-                        self.resolve_named_method(&class.methods, Some(&class.traits), method, args, &arg_types, span)
-                    {
+                    let traits = self.trait_names_for_type_methods(&class.traits, &class.derives);
+                    if let Some(ret) = self.resolve_named_method(
+                        &class.methods,
+                        Some(&traits),
+                        method,
+                        args,
+                        &arg_types,
+                        span,
+                        &base_ty,
+                    ) {
+                        return ret;
+                    }
+                }
+                TypeInfo::Enum(en) => {
+                    let traits = self.trait_names_for_type_methods(&[], &en.derives);
+                    if let Some(ret) = self.resolve_named_method(
+                        &std::collections::HashMap::new(),
+                        Some(&traits),
+                        method,
+                        args,
+                        &arg_types,
+                        span,
+                        &base_ty,
+                    ) {
                         return ret;
                     }
                 }
                 TypeInfo::Newtype(newtype) => {
                     let resolved_method = self.resolve_newtype_method_name(&newtype, method);
-                    if let Some(ret) =
-                        self.resolve_named_method(&newtype.methods, None, resolved_method, args, &arg_types, span)
-                    {
+                    if let Some(ret) = self.resolve_named_method(
+                        &newtype.methods,
+                        None,
+                        resolved_method,
+                        args,
+                        &arg_types,
+                        span,
+                        &base_ty,
+                    ) {
                         if newtype.is_rusttype {
                             self.maybe_record_rusttype_return_coercion(&newtype, resolved_method, &ret, span);
                         }
@@ -853,39 +947,61 @@ impl TypeChecker {
                 }
                 Some(type_info) => match type_info {
                     TypeInfo::Model(model) => {
+                        let traits = self.trait_names_for_type_methods(&model.traits, &model.derives);
                         if let Some(ret) = self.resolve_named_method(
                             &model.methods,
-                            Some(&model.traits),
+                            Some(&traits),
                             method,
                             args,
                             &arg_types,
                             span,
+                            &base_ty,
                         ) {
                             return ret;
                         }
                     }
                     TypeInfo::Class(class) => {
+                        let traits = self.trait_names_for_type_methods(&class.traits, &class.derives);
                         if let Some(ret) = self.resolve_named_method(
                             &class.methods,
-                            Some(&class.traits),
+                            Some(&traits),
                             method,
                             args,
                             &arg_types,
                             span,
+                            &base_ty,
                         ) {
                             return ret;
                         }
                     }
-                    TypeInfo::Enum(_enum_info)
-                        if enum_helpers::from_str(method) == Some(enum_helpers::EnumHelperId::Message) =>
-                    {
-                        return ResolvedType::Str;
+                    TypeInfo::Enum(en) => {
+                        if enum_helpers::from_str(method) == Some(enum_helpers::EnumHelperId::Message) {
+                            return ResolvedType::Str;
+                        }
+                        let traits = self.trait_names_for_type_methods(&[], &en.derives);
+                        if let Some(ret) = self.resolve_named_method(
+                            &std::collections::HashMap::new(),
+                            Some(&traits),
+                            method,
+                            args,
+                            &arg_types,
+                            span,
+                            &base_ty,
+                        ) {
+                            return ret;
+                        }
                     }
                     TypeInfo::Newtype(nt) => {
                         let resolved_method = self.resolve_newtype_method_name(&nt, method);
-                        if let Some(ret) =
-                            self.resolve_named_method(&nt.methods, None, resolved_method, args, &arg_types, span)
-                        {
+                        if let Some(ret) = self.resolve_named_method(
+                            &nt.methods,
+                            None,
+                            resolved_method,
+                            args,
+                            &arg_types,
+                            span,
+                            &base_ty,
+                        ) {
                             // When the method body is abstract and the underlying Rust type is known,
                             // check whether the actual Rust return type needs a coercion (e.g. &str → String).
                             if nt.is_rusttype {

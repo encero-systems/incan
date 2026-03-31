@@ -41,6 +41,11 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 - **LSP wiring for warnings**: after `parser::parse()` succeeds, loop `ast.warnings` and push each through `compile_error_to_diagnostic()` before typechecking.
 - **LSP is feature-gated**: `cargo build --features lsp` (or `make build`, which enables it) produces `incan-lsp`. For local dev, `make build` symlinks `~/.cargo/bin/incan-lsp` to `target/debug/incan-lsp` unless CI / `INCAN_SKIP_CARGO_BIN_LINK=1`; use `make install-lsp` or `cargo install --path . --features lsp --bin incan-lsp --force` when you need a crates.io-style install instead.
 
+## Builtin trait stubs and stdlib method lookup (#193)
+
+- **Vocabulary-only builtin traits ship with empty `methods` maps** in the symbol table. For instance method resolution, `trait_method_info_resolved` can fall back to `StdlibAstCache::lookup_trait` after `stdlib_module_segments_for_trait_methods` in `src/frontend/typechecker/check_decl.rs` maps the trait name to a stdlib module path.
+- **That path map is limited to `std.derives.{copying,string,comparison}`** (Clone/Default/Debug/Eq/…). Traits defined under other stdlib prefixes—**example:** `Serialize` / `Deserialize` in `std.serde.json`—are **not** discovered by this fallback. Extending derive-backed instance methods for those traits means adding entries (short term) or a **registry-driven** trait→module mapping (long term), not duplicating path logic in scattered call sites.
+
 ## Generic bounds and extern functions
 
 - **Store explicit generic bounds in frontend symbols**, not just type-parameter names. A per-parameter bounds map lets call checking enforce `with` contracts before lowering.

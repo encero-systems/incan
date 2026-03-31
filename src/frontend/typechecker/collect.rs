@@ -444,12 +444,14 @@ impl TypeChecker {
     /// Register an enum declaration and define symbols for each variant.
     fn collect_enum(&mut self, en: &EnumDecl, span: Span) {
         let variants: Vec<_> = en.variants.iter().map(|v| v.node.name.clone()).collect();
+        let derives = self.extract_derive_names(&en.decorators);
 
         self.symbols.define(Symbol {
             name: en.name.clone(),
             kind: SymbolKind::Type(TypeInfo::Enum(EnumInfo {
                 type_params: en.type_params.iter().map(|tp| tp.name.clone()).collect(),
                 variants: variants.clone(),
+                derives,
             })),
             span,
             scope: 0,

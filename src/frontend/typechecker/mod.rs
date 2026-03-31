@@ -631,10 +631,16 @@ impl TypeChecker {
     }
 
     /// Whether a concrete named type declares adoption of `trait_name` (RFC 042: includes transitive supertraits).
+    ///
+    /// Also treats `@derive(T)` as implementing trait `T` when `T` is a visible trait symbol (e.g. `Clone`).
     pub(crate) fn type_implements_trait(&self, type_name: &str, trait_name: &str) -> bool {
-        let adopted = match self.lookup_type_info(type_name) {
-            Some(TypeInfo::Model(model)) => &model.traits,
-            Some(TypeInfo::Class(class)) => &class.traits,
+        let Some(info) = self.lookup_type_info(type_name) else {
+            return false;
+        };
+        let (adopted, derives) = match info {
+            TypeInfo::Model(m) => (m.traits.as_slice(), Some(m.derives.as_slice())),
+            TypeInfo::Class(c) => (c.traits.as_slice(), Some(c.derives.as_slice())),
+            TypeInfo::Enum(e) => (&[][..], Some(e.derives.as_slice())),
             _ => return false,
         };
         for t in adopted {
@@ -647,7 +653,24 @@ impl TypeChecker {
                 return true;
             }
         }
+        if let Some(derives) = derives
+            && derives.iter().any(|d| d == trait_name)
+            && self.lookup_trait_info(trait_name).is_some()
+        {
+            return true;
+        }
         false
+    }
+
+    /// Explicit `with Trait` names plus `@derive` entries that name a registered trait, for instance method lookup.
+    pub(crate) fn trait_names_for_type_methods(&self, adopted: &[String], derives: &[String]) -> Vec<String> {
+        let mut out = adopted.to_vec();
+        for d in derives {
+            if self.lookup_trait_info(d).is_some() && !out.iter().any(|t| t == d) {
+                out.push(d.clone());
+            }
+        }
+        out
     }
 
     /// Look up a variable binding by name (in any scope) and return its [`VariableInfo`].

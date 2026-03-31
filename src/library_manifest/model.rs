@@ -275,6 +275,9 @@ pub struct EnumExport {
     pub name: String,
     pub type_params: Vec<TypeParamExport>,
     pub variants: Vec<EnumVariantExport>,
+    /// `@derive(...)` names (empty for manifests predating this field).
+    #[serde(default)]
+    pub derives: Vec<String>,
 }
 
 /// One exported enum variant and its positional payload fields.
@@ -541,6 +544,7 @@ fn enum_export_from_checked(export: &CheckedEnumExport) -> EnumExport {
                 fields: variant.fields.iter().map(type_ref_from_resolved).collect(),
             })
             .collect(),
+        derives: export.derives.clone(),
     }
 }
 

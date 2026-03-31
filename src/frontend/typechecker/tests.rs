@@ -91,6 +91,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                         fields: Vec::new(),
                     },
                 ],
+                derives: Vec::new(),
             }],
             type_aliases: Vec::new(),
             newtypes: Vec::new(),
@@ -4025,6 +4026,45 @@ def main() -> Token:
         "Expected explicit generic bound error; got: {:?}",
         errs.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
+}
+
+/// GitHub #193: `@derive(Clone)` must allow `.clone()` on the concrete type (not only through unconstrained `T`).
+#[test]
+fn test_derive_clone_allows_direct_clone_on_model() {
+    let source = r#"
+@derive(Clone)
+model Issue193Foo:
+  id: int
+
+def direct(f: Issue193Foo) -> Issue193Foo:
+  return f.clone()
+
+def via_generic[T](x: T) -> T:
+  return x.clone()
+
+def main() -> Issue193Foo:
+  x = Issue193Foo(id=1)
+  _ = via_generic(x)
+  return direct(x)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_derive_clone_allows_direct_clone_on_enum() {
+    let source = r#"
+@derive(Clone)
+enum Issue193Bar:
+  A
+  B
+
+def dup_bar(e: Issue193Bar) -> Issue193Bar:
+  return e.clone()
+
+def main() -> None:
+  pass
+"#;
+    assert_check_ok(source);
 }
 
 #[test]

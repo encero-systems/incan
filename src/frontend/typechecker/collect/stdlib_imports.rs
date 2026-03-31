@@ -754,6 +754,7 @@ impl TypeChecker {
         EnumInfo {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
             variants: export.variants.iter().map(|variant| variant.name.clone()).collect(),
+            derives: export.derives.clone(),
         }
     }
 

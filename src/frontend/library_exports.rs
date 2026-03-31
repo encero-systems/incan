@@ -102,6 +102,7 @@ pub struct CheckedEnumExport {
     pub name: String,
     pub type_params: Vec<CheckedTypeParam>,
     pub variants: Vec<CheckedEnumVariant>,
+    pub derives: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -345,6 +346,7 @@ fn checked_enum_export(enum_decl: &EnumDecl, checker: &TypeChecker) -> Option<Ch
         name: enum_decl.name.clone(),
         type_params: checked_type_params(&enum_decl.type_params, checker),
         variants,
+        derives: checker.extract_derive_names(&enum_decl.decorators),
     })
 }
 

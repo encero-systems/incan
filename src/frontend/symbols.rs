@@ -449,6 +449,8 @@ pub struct NewtypeInfo {
 pub struct EnumInfo {
     pub type_params: Vec<String>,
     pub variants: Vec<String>,
+    /// Names from `@derive(...)` (same vocabulary as models/classes).
+    pub derives: Vec<String>,
 }
 
 /// Trait information
