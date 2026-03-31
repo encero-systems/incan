@@ -4139,6 +4139,7 @@
     <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">names</span><span class="p">:</span>
         <span class="nb">println</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
 </code></pre></div>
+<p>When you iterate a list stored in a variable, the compiler picks a Rust iteration strategy that matches Incan’s element type. Scalars such as <code>int</code> are stepped by value. For <strong>enums</strong>, the loop variable is the enum type itself (the compiler uses clone-backed iteration under the hood), so you can compare it to another value of the same enum with <code>==</code> without extra cloning in your source.</p>
 <h2 id="comprehensions-quick-transforms">Comprehensions (quick transforms)<a class="headerlink" href="#comprehensions-quick-transforms" title="Permanent link">&para;</a></h2>
 <p>Use comprehensions to build a new list/dict from an existing collection:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
