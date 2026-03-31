@@ -53,6 +53,8 @@ def main() -> None:
         println(name)
 ```
 
+When you iterate a list stored in a variable, the compiler picks a Rust iteration strategy that matches Incan’s element type. Scalars such as `int` are stepped by value. For **enums**, the loop variable is the enum type itself (the compiler uses clone-backed iteration under the hood), so you can compare it to another value of the same enum with `==` without extra cloning in your source.
+
 ## Comprehensions (quick transforms)
 
 Use comprehensions to build a new list/dict from an existing collection:

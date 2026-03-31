@@ -818,6 +818,18 @@ fn test_list_pop_clone_only_model_codegen() {
     insta::assert_snapshot!("list_pop_clone_only_model", rust_code);
 }
 
+/// Issue #195: `for x in list[E]` must iterate owned `E` (via `.iter().cloned()`) so `==` against `E` compiles.
+#[test]
+fn test_for_in_list_enum_equality_codegen() {
+    let source = load_test_file("for_in_list_enum_equality");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("for expected in required.iter().cloned()"),
+        "expected enum list for-loop to use .iter().cloned(); generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("for_in_list_enum_equality", rust_code);
+}
+
 #[test]
 fn test_traits_codegen() {
     let source = load_test_file("traits");
