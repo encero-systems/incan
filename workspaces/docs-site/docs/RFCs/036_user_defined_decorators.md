@@ -8,7 +8,7 @@
     - RFC 005 (Rust interop — foundation for `@rust.extern`)
     - RFC 023 (Compilable stdlib — where `@route` and `@rust.extern` were first systematised)
     - RFC 024 (Extensible derive protocol — compiler built-in decorator counterpart)
-    - RFC 026 (User-defined trait bridges)
+    - RFC 026 (Superseded — see RFC 043 for Rust trait surface on wrappers)
     - RFC 027 (incan-vocab — library vocabulary registration, enables DSL decorators)
     - RFC 031 (Library system — enables decorator libraries to ship as `pub::` packages)
 - **Issue:** —

@@ -348,7 +348,7 @@ redefine derive semantics; those remain governed by RFC 024.
 
 **Generics:** Operator traits are generic (`Add[Rhs, Output]`). A type can implement `Add[int, MyType]` and `Add[float, MyType]` — different behavior for different right-hand types. Generic constraints still speak in trait language even when a concrete type chooses to declare its operator support through dunders alone; the compiler may infer the trait view from the matching dunder surface.
 
-**Rust interop:** Raw `rust::...` imported types are not assumed to satisfy Incan operator protocols automatically. If a Rust-backed type should participate in Incan operators, the normal path is to wrap it in an Incan type/newtype and define the relevant dunders or traits there. RFC 026-style trait bridges are the natural place to discuss delegation to host-language trait behavior.
+**Rust interop:** Raw `rust::...` imported types are not assumed to satisfy Incan operator protocols automatically. If a Rust-backed type should participate in Incan operators, the normal path is to wrap it in an Incan type/newtype and define the relevant dunders or traits there. **[RFC 043](043_rust_trait_impl_from_incan.md)** (`impl` on `rusttype`, `@rust.derive`) is the normative place for Rust-side trait contracts on those wrappers; [RFC 026](closed/superseded/026_user_defined_trait_bridges.md) is superseded.
 
 ## Alternatives considered
 

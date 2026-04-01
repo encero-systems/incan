@@ -5,7 +5,7 @@
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
     - RFC 028 (trait-based operator overloading)
-    - RFC 026 (user-defined trait bridges)
+    - RFC 026 (Superseded — archival; Rust trait contracts on wrappers: RFC 043)
     - RFC 003 (traits and derives)
 - **Issue:** #201
 - **RFC PR:** —

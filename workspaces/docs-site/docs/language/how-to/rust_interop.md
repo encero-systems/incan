@@ -100,10 +100,10 @@ This is the recommended approach for anything beyond single-file scripts:
 name = "my_app"
 version = "0.1.0"
 
-[dependencies]
+[rust-dependencies]
 tokio = { version = "1.35", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
-my_crate = "2.0"
+my_crate = "2.0"  # assuming this is a rust crate you are referencing
 ```
 
 When a crate is configured in `incan.toml`, inline version annotations for that crate are **not allowed** —
