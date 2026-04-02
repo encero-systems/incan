@@ -1239,6 +1239,17 @@ fn test_trait_bound_inference_more_codegen() {
     insta::assert_snapshot!("trait_bound_inference_more", rust_code);
 }
 
+/// RFC 023: Generic bounds in return types (issue #196).
+///
+/// Verifies that trait bounds from return types (e.g., `impl BoundedDataSet<T>`) are properly inferred and emitted in
+/// the Rust codegen, even when the bounds aren't used in the function body.
+#[test]
+fn test_generic_bounds_return_type_codegen() {
+    let source = load_test_file("generic_bounds_return_type");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("generic_bounds_return_type", rust_code);
+}
+
 // Glob-based test that auto-discovers all .incn files
 // To enable: uncomment the test below and run `cargo test --test codegen_snapshot_tests`
 //
