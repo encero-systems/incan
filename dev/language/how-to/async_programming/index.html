@@ -4798,6 +4798,11 @@ with Rust-level async performance.</p>
     <span class="kt">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">transform</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
     <span class="k">return</span> <span class="kt">result</span>
 </code></pre></div>
+<p><code>await</code> is only valid inside <code>async def</code> bodies and <strong>async</strong> methods Using <code>await</code> in an ordinary <code>def</code> or sync method is a type error.</p>
+<div class="admonition info">
+<p class="admonition-title">Coming from Python?</p>
+<p>Incan's <code>await</code> follows the same rules as in Python: it is disallowed outside an <code>async</code> scope.</p>
+</div>
 <h2 id="time-primitives">Time Primitives<a class="headerlink" href="#time-primitives" title="Permanent link">&para;</a></h2>
 <h3 id="sleep">sleep<a class="headerlink" href="#sleep" title="Permanent link">&para;</a></h3>
 <p>Pause execution for a duration:</p>

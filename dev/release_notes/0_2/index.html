@@ -4414,6 +4414,7 @@ They are not intended as runtime function calls.</p>
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Compiler</strong>: <code>await</code> is rejected when it appears outside an <code>async def</code> or async method body, matching async/await scoping rules (#210).</li>
 <li><strong>Compiler</strong>: <code>for ... in</code> over a variable-bound <code>list</code> of enums now iterates with owned enum values in generated Rust, so comparisons such as <code>item == some_enum</code> compile without comparing <code>&amp;E</code> to <code>E</code> (#195).</li>
 <li><strong>Compiler</strong>: <code>list.pop()</code> no longer lowers to <code>Vec::pop().unwrap_or_default()</code>, so element types do not need <code>Default</code> (e.g. Clone-only models). Popping an empty list now raises <code>IndexError: pop from empty list</code>, matching Python (#194).</li>
 <li><strong>Compiler</strong>: Types with <code>@derive(Clone)</code> now typecheck direct <code>.clone()</code> on concrete receivers (models and enums), matching behavior already allowed through unconstrained generics; builtin trait vocabulary stubs load method signatures from stdlib when needed (#193).</li>
