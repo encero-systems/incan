@@ -214,6 +214,8 @@ pub struct TypeChecker {
     pub(crate) mutable_bindings: HashSet<String>,
     /// Current function's error type for `?` operator compatibility.
     pub(crate) current_return_error_type: Option<ResolvedType>,
+    /// Whether the body currently being checked belongs to an `async def` or async method.
+    pub(crate) in_async_body: bool,
     /// Active trait @requires context for default method bodies.
     pub(crate) current_trait_requires: Option<HashMap<String, ResolvedType>>,
     /// Active trait name for default method diagnostics.
@@ -284,6 +286,7 @@ impl TypeChecker {
             warnings: Vec::new(),
             mutable_bindings: HashSet::new(),
             current_return_error_type: None,
+            in_async_body: false,
             current_trait_requires: None,
             current_trait_name: None,
             current_trait_missing_requires_emitted: None,

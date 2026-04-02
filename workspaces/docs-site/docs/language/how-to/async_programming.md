@@ -55,6 +55,11 @@ async def process() -> str:
     return result
 ```
 
+`await` is only valid inside `async def` bodies and **async** methods Using `await` in an ordinary `def` or sync method is a type error.
+
+!!! info "Coming from Python?"
+    Incan's `await` follows the same rules as in Python: it is disallowed outside an `async` scope.
+
 ## Time Primitives
 
 ### sleep

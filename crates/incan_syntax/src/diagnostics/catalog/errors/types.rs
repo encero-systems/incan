@@ -202,6 +202,17 @@ pub fn try_on_non_result(found: &str, span: Span) -> CompileError {
     })
 }
 
+/// `await` appeared outside an `async def`, outside an async method, or inside a closure body (closures are never
+/// async).
+pub fn await_outside_async(span: Span) -> CompileError {
+    CompileError::type_error(
+        "Cannot use 'await' outside of an async function or async method".to_string(),
+        span,
+    )
+    .with_note("'await' is only valid inside `async def` and async method bodies")
+    .with_hint("Declare the enclosing function or method with the `async` keyword (after importing `std.async`)")
+}
+
 // -- Mutability --------------------------------------------------------------
 
 pub fn mutation_without_mut(name: &str, span: Span) -> CompileError {

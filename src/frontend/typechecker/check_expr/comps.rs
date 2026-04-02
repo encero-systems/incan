@@ -82,6 +82,9 @@ impl TypeChecker {
     ) -> ResolvedType {
         self.symbols.enter_scope(ScopeKind::Function);
 
+        let prev_in_async_body = self.in_async_body;
+        self.in_async_body = false;
+
         let param_types: Vec<_> = params
             .iter()
             .map(|p| {
@@ -101,6 +104,7 @@ impl TypeChecker {
             .collect();
 
         let return_ty = self.check_expr(body);
+        self.in_async_body = prev_in_async_body;
         self.symbols.exit_scope();
 
         ResolvedType::Function(param_types, Box::new(return_ty))

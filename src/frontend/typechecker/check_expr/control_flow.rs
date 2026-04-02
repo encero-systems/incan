@@ -15,12 +15,19 @@ impl TypeChecker {
     /// Type-check an `await` expression.
     ///
     /// By the time we reach this method the registry has already confirmed that the `await` feature is active (via
-    /// `typecheck_surface_expr_action`), so no additional feature-gate check is needed here.
+    /// `typecheck_surface_expr_action`), so no additional feature-gate check is needed here. The enclosing callable
+    /// must be `async` (`in_async_body`). Closure bodies are not async contexts: `check_closure` clears
+    /// `in_async_body` while typechecking the body.
     pub(in crate::frontend::typechecker::check_expr) fn check_await(
         &mut self,
         inner: &Spanned<Expr>,
-        _span: Span,
+        span: Span,
     ) -> ResolvedType {
+        if !self.in_async_body {
+            self.errors.push(errors::await_outside_async(span));
+            return ResolvedType::Unknown;
+        }
+
         let inner_ty = self.check_expr(inner);
 
         if let ResolvedType::Generic(name, args) = &inner_ty

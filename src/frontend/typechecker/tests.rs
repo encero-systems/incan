@@ -946,6 +946,41 @@ async def foo() -> None:
 }
 
 #[test]
+fn test_await_outside_async_function() {
+    let source = r#"
+from std.async.time import sleep
+
+def foo() -> None:
+  await sleep(1.0)
+"#;
+    let errs = check_str(source).expect_err("await in sync function should fail");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("await") && e.message.contains("async")),
+        "expected await-outside-async diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_await_outside_async_method() {
+    let source = r#"
+from std.async.time import sleep
+
+model Widget:
+  id: int
+
+  def work(self) -> None:
+    await sleep(1.0)
+"#;
+    let errs = check_str(source).expect_err("await in sync method should fail");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("await") && e.message.contains("async")),
+        "expected await-outside-async diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
 fn test_await_join_handle_returns_result_task_join_error() {
     let source = r#"
 from std.async.task import JoinHandle, TaskJoinError

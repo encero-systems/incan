@@ -1202,8 +1202,8 @@ impl TypeChecker {
         self.symbols.enter_scope(ScopeKind::Function);
 
         self.validate_decorators(&func.decorators);
-        // TODO(#146): add async-specific validation here (await-outside-async, return-type constraints) via the
-        // surface semantics registry — not hardcoded KeywordId checks.
+        // TODO(#146): add async return-type and related validation here via the surface semantics registry — not
+        // hardcoded KeywordId checks.
 
         // Define type parameters so explicit generic bounds are visible in function-level type resolution.
         for param in &func.type_params {
@@ -1236,11 +1236,15 @@ impl TypeChecker {
         // Set error type for ? checking
         self.current_return_error_type = return_type.result_err_type().cloned();
 
+        let prev_in_async_body = self.in_async_body;
+        self.in_async_body = func.is_async();
+
         // Check body
         for stmt in &func.body {
             self.check_statement(stmt);
         }
 
+        self.in_async_body = prev_in_async_body;
         self.current_return_error_type = None;
         self.symbols.exit_scope();
     }
@@ -1264,7 +1268,7 @@ impl TypeChecker {
         self.symbols.enter_scope(ScopeKind::Method {
             receiver: method.receiver,
         });
-        // TODO(#146): add async-specific validation for methods via the surface semantics registry.
+        // TODO(#146): add async return-type and related validation for methods via the surface semantics registry.
 
         // Define owner type parameters so generic wrappers can use them in bodies and annotations.
         for type_param in owner_type_params {
@@ -1328,9 +1332,12 @@ impl TypeChecker {
 
         // Check body
         if let Some(body) = &method.body {
+            let prev_in_async_body = self.in_async_body;
+            self.in_async_body = method.is_async();
             for stmt in body {
                 self.check_statement(stmt);
             }
+            self.in_async_body = prev_in_async_body;
         }
 
         self.current_return_error_type = None;
