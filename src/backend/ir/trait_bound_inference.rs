@@ -42,14 +42,57 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
     // ---- Pass 1: collect explicit + body-scanned bounds per function ----
     let mut function_bounds: HashMap<String, Vec<IrTypeParam>> = HashMap::new();
     let mut function_params: HashMap<String, Vec<FunctionParam>> = HashMap::new();
+    let trait_decls: HashMap<String, super::decl::IrTrait> = program
+        .declarations
+        .iter()
+        .filter_map(|decl| match &decl.kind {
+            IrDeclKind::Trait(tr) => Some((tr.name.clone(), tr.clone())),
+            _ => None,
+        })
+        .collect();
 
     for decl in &program.declarations {
-        if let IrDeclKind::Function(func) = &decl.kind
-            && !func.type_params.is_empty()
-        {
-            let inferred = infer_function_bounds(func);
-            function_bounds.insert(func.name.clone(), inferred);
-            function_params.insert(func.name.clone(), func.params.clone());
+        match &decl.kind {
+            IrDeclKind::Function(func) => {
+                collect_inferred_bounds_for_callable(
+                    &func.name,
+                    func,
+                    &trait_decls,
+                    &mut function_bounds,
+                    &mut function_params,
+                );
+            }
+            IrDeclKind::Trait(trait_decl) => {
+                for (index, method) in trait_decl.methods.iter().enumerate() {
+                    let key = format!("trait:{}:{}:{}", trait_decl.name, index, method.name);
+                    collect_inferred_bounds_for_callable(
+                        &key,
+                        method,
+                        &trait_decls,
+                        &mut function_bounds,
+                        &mut function_params,
+                    );
+                }
+            }
+            IrDeclKind::Impl(impl_block) => {
+                for (index, method) in impl_block.methods.iter().enumerate() {
+                    let key = format!(
+                        "impl:{}:{}:{}:{}",
+                        impl_block.target_type,
+                        impl_block.trait_name.as_deref().unwrap_or("<inherent>"),
+                        index,
+                        method.name
+                    );
+                    collect_inferred_bounds_for_callable(
+                        &key,
+                        method,
+                        &trait_decls,
+                        &mut function_bounds,
+                        &mut function_params,
+                    );
+                }
+            }
+            _ => {}
         }
     }
 
@@ -62,20 +105,50 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
         let snapshot = function_bounds.clone();
 
         for decl in &program.declarations {
-            if let IrDeclKind::Function(func) = &decl.kind {
-                if func.type_params.is_empty() {
-                    continue;
+            match &decl.kind {
+                IrDeclKind::Function(func) => {
+                    propagate_bounds_for_callable(
+                        &func.name,
+                        func,
+                        &snapshot,
+                        &function_params,
+                        &mut function_bounds,
+                        &mut changed,
+                    );
                 }
-                let called_generics = collect_called_generic_functions(func, &snapshot, &function_params);
-                if let Some(current_bounds) = function_bounds.get_mut(&func.name) {
-                    for (callee_name, type_arg_mapping) in &called_generics {
-                        if let Some(callee_bounds) = snapshot.get(callee_name)
-                            && propagate_transitive_bounds(current_bounds, callee_bounds, type_arg_mapping)
-                        {
-                            changed = true;
-                        }
+                IrDeclKind::Trait(trait_decl) => {
+                    for (index, method) in trait_decl.methods.iter().enumerate() {
+                        let key = format!("trait:{}:{}:{}", trait_decl.name, index, method.name);
+                        propagate_bounds_for_callable(
+                            &key,
+                            method,
+                            &snapshot,
+                            &function_params,
+                            &mut function_bounds,
+                            &mut changed,
+                        );
                     }
                 }
+                IrDeclKind::Impl(impl_block) => {
+                    for (index, method) in impl_block.methods.iter().enumerate() {
+                        let key = format!(
+                            "impl:{}:{}:{}:{}",
+                            impl_block.target_type,
+                            impl_block.trait_name.as_deref().unwrap_or("<inherent>"),
+                            index,
+                            method.name
+                        );
+                        propagate_bounds_for_callable(
+                            &key,
+                            method,
+                            &snapshot,
+                            &function_params,
+                            &mut function_bounds,
+                            &mut changed,
+                        );
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -86,10 +159,88 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
 
     // ---- Pass 3: write inferred bounds back into the IR ----
     for decl in &mut program.declarations {
-        if let IrDeclKind::Function(func) = &mut decl.kind
-            && let Some(inferred) = function_bounds.remove(&func.name)
-        {
-            func.type_params = inferred;
+        match &mut decl.kind {
+            IrDeclKind::Function(func) => {
+                if let Some(inferred) = function_bounds.remove(&func.name) {
+                    func.type_params = inferred;
+                }
+            }
+            IrDeclKind::Trait(trait_decl) => {
+                for (index, method) in trait_decl.methods.iter_mut().enumerate() {
+                    let key = format!("trait:{}:{}:{}", trait_decl.name, index, method.name);
+                    if let Some(inferred) = function_bounds.remove(&key) {
+                        method.type_params = inferred;
+                    }
+                }
+            }
+            IrDeclKind::Impl(impl_block) => {
+                for (index, method) in impl_block.methods.iter_mut().enumerate() {
+                    let key = format!(
+                        "impl:{}:{}:{}:{}",
+                        impl_block.target_type,
+                        impl_block.trait_name.as_deref().unwrap_or("<inherent>"),
+                        index,
+                        method.name
+                    );
+                    if let Some(inferred) = function_bounds.remove(&key) {
+                        method.type_params = inferred;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Collect inferred bounds for a callable (function, trait method, or impl method).
+///
+/// Scans the callable's body to infer trait bounds on its type parameters, including bounds required by the return
+/// type, and stores them in the bounds map for later transitive propagation.
+fn collect_inferred_bounds_for_callable(
+    key: &str,
+    func: &IrFunction,
+    trait_decls: &HashMap<String, super::decl::IrTrait>,
+    function_bounds: &mut HashMap<String, Vec<IrTypeParam>>,
+    function_params: &mut HashMap<String, Vec<FunctionParam>>,
+) {
+    if func.type_params.is_empty() {
+        return;
+    }
+
+    let mut inferred = infer_function_bounds(func);
+
+    // Also check return types like `-> DataSet[T]` / `-> BoundedDataSet[T]`, which lower to `impl Trait` and
+    // must carry through any bounds required by the returned trait's generic arguments.
+    add_bounds_from_return_type(&func.return_type, &func.type_params, trait_decls, &mut inferred);
+
+    function_bounds.insert(key.to_string(), inferred);
+    function_params.insert(key.to_string(), func.params.clone());
+}
+
+/// Propagate bounds for a callable by transitive inference from called generic functions.
+///
+/// Checks if the callable uses any generic functions and propagates their trait bounds to the caller's type
+/// parameters using the type argument mapping.
+fn propagate_bounds_for_callable(
+    key: &str,
+    func: &IrFunction,
+    snapshot: &HashMap<String, Vec<IrTypeParam>>,
+    function_params: &HashMap<String, Vec<FunctionParam>>,
+    function_bounds: &mut HashMap<String, Vec<IrTypeParam>>,
+    changed: &mut bool,
+) {
+    if func.type_params.is_empty() {
+        return;
+    }
+
+    let called_generics = collect_called_generic_functions(func, snapshot, function_params);
+    if let Some(current_bounds) = function_bounds.get_mut(key) {
+        for (callee_name, type_arg_mapping) in &called_generics {
+            if let Some(callee_bounds) = snapshot.get(callee_name)
+                && propagate_transitive_bounds(current_bounds, callee_bounds, type_arg_mapping)
+            {
+                *changed = true;
+            }
         }
     }
 }
@@ -511,6 +662,200 @@ fn deduplicate_bounds(bounds: Vec<IrTraitBound>) -> Vec<IrTraitBound> {
         }
     }
     result
+}
+
+/// Add trait bounds from the return type of a function.
+///
+/// When a function returns a trait type like `impl BoundedDataSet<T>`, the type parameter `T` must satisfy the bounds
+/// required by that trait (e.g., `T: Clone` if `BoundedDataSet` requires `T with Clone`).
+fn add_bounds_from_return_type(
+    return_type: &IrType,
+    type_params: &[IrTypeParam],
+    trait_decls: &HashMap<String, super::decl::IrTrait>,
+    bounds: &mut [IrTypeParam],
+) {
+    let type_param_names: HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
+
+    // Collect bounds from the return type
+    let mut temp_bounds: HashMap<String, Vec<IrTraitBound>> = HashMap::new();
+    let mut visited_traits = HashSet::new();
+    add_bounds_from_type(
+        return_type,
+        &type_param_names,
+        trait_decls,
+        &mut temp_bounds,
+        &mut visited_traits,
+    );
+
+    // Merge into the existing bounds for each type parameter
+    for tp in bounds.iter_mut() {
+        if let Some(new_bounds) = temp_bounds.remove(&tp.name) {
+            for new_bound in new_bounds {
+                if !tp.bounds.contains(&new_bound) {
+                    tp.bounds.push(new_bound);
+                }
+            }
+        }
+    }
+}
+
+/// Recursively add trait bounds from a type for any type parameters in scope.
+fn add_bounds_from_type(
+    ty: &IrType,
+    type_params: &HashSet<&str>,
+    trait_decls: &HashMap<String, super::decl::IrTrait>,
+    bounds_map: &mut HashMap<String, Vec<IrTraitBound>>,
+    visited_traits: &mut HashSet<String>,
+) {
+    match ty {
+        IrType::Generic(_) => {}
+        IrType::NamedGeneric(_, args) => {
+            for arg in args {
+                add_bounds_from_type(arg, type_params, trait_decls, bounds_map, visited_traits);
+            }
+        }
+        IrType::ImplTrait(bound) => {
+            add_bounds_from_trait_bound(bound, type_params, trait_decls, bounds_map, visited_traits);
+        }
+        IrType::List(elem) | IrType::Option(elem) | IrType::Ref(elem) | IrType::RefMut(elem) | IrType::Set(elem) => {
+            add_bounds_from_type(elem, type_params, trait_decls, bounds_map, visited_traits);
+        }
+        IrType::Dict(key, value) | IrType::Result(key, value) => {
+            add_bounds_from_type(key, type_params, trait_decls, bounds_map, visited_traits);
+            add_bounds_from_type(value, type_params, trait_decls, bounds_map, visited_traits);
+        }
+        IrType::Tuple(elems) => {
+            for elem in elems {
+                add_bounds_from_type(elem, type_params, trait_decls, bounds_map, visited_traits);
+            }
+        }
+        IrType::Function { params, ret } => {
+            for param in params {
+                add_bounds_from_type(param, type_params, trait_decls, bounds_map, visited_traits);
+            }
+            add_bounds_from_type(ret, type_params, trait_decls, bounds_map, visited_traits);
+        }
+        // Struct, Enum, Trait, Unit, Bool, Int, Float, String, etc. don't require bounds
+        IrType::Struct(_)
+        | IrType::Enum(_)
+        | IrType::Trait(_)
+        | IrType::Unit
+        | IrType::Bool
+        | IrType::Int
+        | IrType::Float
+        | IrType::String
+        | IrType::StaticStr
+        | IrType::StaticBytes
+        | IrType::FrozenStr
+        | IrType::FrozenBytes
+        | IrType::StrRef
+        | IrType::SelfType
+        | IrType::Unknown => {}
+    }
+}
+
+fn add_bounds_from_trait_bound(
+    bound: &IrTraitBound,
+    type_params: &HashSet<&str>,
+    trait_decls: &HashMap<String, super::decl::IrTrait>,
+    bounds_map: &mut HashMap<String, Vec<IrTraitBound>>,
+    visited_traits: &mut HashSet<String>,
+) {
+    for arg in &bound.type_args {
+        add_bounds_from_type(arg, type_params, trait_decls, bounds_map, visited_traits);
+    }
+
+    let Some(trait_decl) = trait_decls.get(&bound.trait_path) else {
+        return;
+    };
+    if !visited_traits.insert(bound.trait_path.clone()) {
+        return;
+    }
+
+    let type_arg_subst: HashMap<&str, &IrType> = trait_decl
+        .type_params
+        .iter()
+        .zip(bound.type_args.iter())
+        .map(|(param, arg)| (param.name.as_str(), arg))
+        .collect();
+
+    for type_param in &trait_decl.type_params {
+        let Some(actual_arg) = type_arg_subst.get(type_param.name.as_str()) else {
+            continue;
+        };
+
+        if let IrType::Generic(actual_name) = actual_arg
+            && type_params.contains(actual_name.as_str())
+        {
+            for required_bound in &type_param.bounds {
+                add_bound(
+                    bounds_map,
+                    actual_name,
+                    substitute_trait_bound(required_bound, &type_arg_subst),
+                );
+            }
+        }
+    }
+
+    for (supertrait_name, supertrait_args) in &trait_decl.supertraits {
+        let supertrait_bound = IrTraitBound::with_type_args(
+            supertrait_name.clone(),
+            supertrait_args
+                .iter()
+                .map(|arg| substitute_ir_type(arg, &type_arg_subst))
+                .collect(),
+        );
+        add_bounds_from_trait_bound(&supertrait_bound, type_params, trait_decls, bounds_map, visited_traits);
+    }
+
+    visited_traits.remove(&bound.trait_path);
+}
+
+fn substitute_trait_bound(bound: &IrTraitBound, subst: &HashMap<&str, &IrType>) -> IrTraitBound {
+    IrTraitBound {
+        trait_path: bound.trait_path.clone(),
+        type_args: bound
+            .type_args
+            .iter()
+            .map(|arg| substitute_ir_type(arg, subst))
+            .collect(),
+        assoc_types: bound
+            .assoc_types
+            .iter()
+            .map(|(name, ty)| (name.clone(), substitute_ir_type(ty, subst)))
+            .collect(),
+        origin: bound.origin,
+    }
+}
+
+fn substitute_ir_type(ty: &IrType, subst: &HashMap<&str, &IrType>) -> IrType {
+    match ty {
+        IrType::Generic(name) => subst.get(name.as_str()).cloned().cloned().unwrap_or_else(|| ty.clone()),
+        IrType::List(elem) => IrType::List(Box::new(substitute_ir_type(elem, subst))),
+        IrType::Dict(key, value) => IrType::Dict(
+            Box::new(substitute_ir_type(key, subst)),
+            Box::new(substitute_ir_type(value, subst)),
+        ),
+        IrType::Set(elem) => IrType::Set(Box::new(substitute_ir_type(elem, subst))),
+        IrType::Tuple(elems) => IrType::Tuple(elems.iter().map(|elem| substitute_ir_type(elem, subst)).collect()),
+        IrType::Option(elem) => IrType::Option(Box::new(substitute_ir_type(elem, subst))),
+        IrType::Result(ok, err) => IrType::Result(
+            Box::new(substitute_ir_type(ok, subst)),
+            Box::new(substitute_ir_type(err, subst)),
+        ),
+        IrType::NamedGeneric(name, args) => IrType::NamedGeneric(
+            name.clone(),
+            args.iter().map(|arg| substitute_ir_type(arg, subst)).collect(),
+        ),
+        IrType::ImplTrait(bound) => IrType::ImplTrait(substitute_trait_bound(bound, subst)),
+        IrType::Function { params, ret } => IrType::Function {
+            params: params.iter().map(|param| substitute_ir_type(param, subst)).collect(),
+            ret: Box::new(substitute_ir_type(ret, subst)),
+        },
+        IrType::Ref(inner) => IrType::Ref(Box::new(substitute_ir_type(inner, subst))),
+        IrType::RefMut(inner) => IrType::RefMut(Box::new(substitute_ir_type(inner, subst))),
+        _ => ty.clone(),
+    }
 }
 
 /// Collect calls to generic functions and their type argument mappings.
