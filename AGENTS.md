@@ -24,7 +24,7 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 | Writing RFCs             | [`workspaces/docs-site/docs/contributing/how-to/writing_rfcs.md`]                    |
 | Contributor guide        | [`CONTRIBUTING.md`]                                                                  |
 | GitHub issue templates   | [`.github/ISSUE_TEMPLATE/`]                                                          |
-| Implementation learnings | [`.cursor/agents/learnings.md`]                                                      |
+| Implementation learnings | [`.agents/learnings.md`]                                                              |
 
 [`workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md`]: workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md
 [`workspaces/docs-site/docs/contributing/explanation/architecture.md`]: workspaces/docs-site/docs/contributing/explanation/architecture.md
@@ -32,7 +32,9 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 [`workspaces/docs-site/docs/contributing/how-to/writing_rfcs.md`]: workspaces/docs-site/docs/contributing/how-to/writing_rfcs.md
 [`CONTRIBUTING.md`]: CONTRIBUTING.md
 [`.github/ISSUE_TEMPLATE/`]: .github/ISSUE_TEMPLATE/
-[`.cursor/agents/learnings.md`]: .cursor/agents/learnings.md
+[`.agents/learnings.md`]: .agents/learnings.md
+
+Skills, learnings, and agent notes live under **this repository’s** `.agents/` directory (committed here).
 
 ## General Workflow
 
@@ -182,7 +184,7 @@ Key directories:
 
 ### Skills
 
-Skills are reusable workflows in `.cursor/skills/`. Use them by name when the task matches:
+Skills are reusable workflows in `.agents/skills/`. Use them by name when the task matches:
 
 | Skill           | Trigger                           | What it does                                                                                                                            |
 | --------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
@@ -196,7 +198,7 @@ Skills are reusable workflows in `.cursor/skills/`. Use them by name when the ta
 
 ### Agents
 
-Subagents in `.cursor/agents/` run as isolated specialists that can be delegated to:
+Subagents in `.agents/` run as isolated specialists that can be delegated to:
 
 | Agent        | When it's used                                   | What it does                                                  |
 | ------------ | ------------------------------------------------ | ------------------------------------------------------------- |
@@ -204,7 +206,7 @@ Subagents in `.cursor/agents/` run as isolated specialists that can be delegated
 
 ## Implementation Learnings
 
-Past RFC and issue implementations produced reusable insights. These are maintained in [`.cursor/agents/learnings.md`]. **Read the relevant section before starting work on any RFC implementation or any change that touches the parser, typechecker, or lowering stages.**
+Past RFC and issue implementations produced reusable insights. These are maintained in [`.agents/learnings.md`]. **Read the relevant section before starting work on any RFC implementation or any change that touches the parser, typechecker, or lowering stages.**
 
 - **RFC 021** — Field Metadata & Aliases: pipeline flow, typechecker-vs-lowering pitfalls, scope restrictions, reflection helpers
 - **RFC 005** — Rust Interop: parser warnings, LSP/CLI wiring, `Program` struct stability
