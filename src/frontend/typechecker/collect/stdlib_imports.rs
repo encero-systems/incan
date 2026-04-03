@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
 use crate::frontend::library_manifest_index::{LibraryManifestFailureKind, LibraryManifestIndexEntry};
-use crate::frontend::module::ExportedSymbol;
+use crate::frontend::module::{ExportedSymbol, canonicalize_source_module_segments};
 use crate::frontend::symbols::*;
 use crate::frontend::testing_markers::load_testing_marker_semantics;
 use crate::frontend::typechecker::TypeChecker;
@@ -65,7 +65,8 @@ impl TypeChecker {
                 if !same_root {
                     self.validate_root_namespace(&name, span);
                 }
-                self.define_import_symbol(name, path.segments.clone(), false, span);
+                let normalized_path = canonicalize_source_module_segments(&path.segments);
+                self.define_import_symbol(name, normalized_path, false, span);
             }
             ImportKind::From { module, items } => {
                 // Reject unknown stdlib module, e.g. `from std.f64.consts import PI`;
@@ -251,7 +252,7 @@ impl TypeChecker {
                     }
                     let name = item.alias.clone().unwrap_or_else(|| item.name.clone());
                     self.validate_root_namespace(&name, span);
-                    let mut path = module.segments.clone();
+                    let mut path = canonicalize_source_module_segments(&module.segments);
                     path.push(item.name.clone());
                     self.define_import_symbol(name, path, false, span);
                 }
@@ -841,7 +842,7 @@ impl TypeChecker {
         };
 
         // Only check modules that were pre-imported; skip std and unresolved ones.
-        let module_name = module.segments.join("_");
+        let module_name = canonicalize_source_module_segments(&module.segments).join("_");
         let Some(exports) = self.dependency_exports.get(&module_name) else {
             return;
         };

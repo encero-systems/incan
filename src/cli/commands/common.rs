@@ -14,6 +14,7 @@ use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::{DependencyError, InlineRustImport};
 use crate::frontend::ast::{ImportKind, Span};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::module::logical_module_segments_from_file;
 use crate::frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
@@ -488,7 +489,7 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
                     let try_source_root = (!path.is_absolute && path.parent_levels == 0 && source_root != target_dir)
                         .then_some(source_root.as_path());
 
-                    let mut found_path: Option<PathBuf> = None;
+                    let mut found_resolution: Option<(PathBuf, PathBuf)> = None;
                     for base in std::iter::once(target_dir.as_path()).chain(try_source_root) {
                         let mut dep_path = base.to_path_buf();
                         for segment in &module_segments {
@@ -497,22 +498,48 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
 
                         dep_path.set_extension("incn");
                         if dep_path.exists() {
-                            found_path = Some(dep_path);
+                            found_resolution = Some((dep_path, base.to_path_buf()));
                             break;
                         }
 
                         dep_path.set_extension("incan");
                         if dep_path.exists() {
-                            found_path = Some(dep_path);
+                            found_resolution = Some((dep_path, base.to_path_buf()));
+                            break;
+                        }
+
+                        let mod_incn = dep_path.with_extension("").join("mod.incn");
+                        if mod_incn.exists() {
+                            found_resolution = Some((mod_incn, base.to_path_buf()));
+                            break;
+                        }
+
+                        let mod_incan = dep_path.with_extension("").join("mod.incan");
+                        if mod_incan.exists() {
+                            found_resolution = Some((mod_incan, base.to_path_buf()));
+                            break;
+                        }
+
+                        let init_incn = dep_path.with_extension("").join("__init__.incn");
+                        if init_incn.exists() {
+                            found_resolution = Some((init_incn, base.to_path_buf()));
+                            break;
+                        }
+
+                        let init_incan = dep_path.with_extension("").join("__init__.incan");
+                        if init_incan.exists() {
+                            found_resolution = Some((init_incan, base.to_path_buf()));
                             break;
                         }
                     }
 
-                    if let Some(path) = found_path {
+                    if let Some((path, resolved_base)) = found_resolution {
                         let dep_path_str = path.to_string_lossy().to_string();
-                        let module_name = module_segments.join("_");
+                        let logical_segments = logical_module_segments_from_file(&resolved_base, &path)
+                            .unwrap_or_else(|| module_segments.clone());
+                        let module_name = logical_segments.join("_");
                         if !processed.contains(&dep_path_str) {
-                            to_process.push((dep_path_str, module_name, module_segments.clone()));
+                            to_process.push((dep_path_str, module_name, logical_segments));
                         }
                         dependency_edges
                             .entry(file_path.clone())
@@ -994,6 +1021,90 @@ model User:
                 .any(|dep| dep.crate_name == "serde_json"),
             "serde usage should inject serde_json dependency"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn collect_modules_canonicalizes_directory_entrypoints() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+        )?;
+
+        let src_dir = project_root.join("src");
+        std::fs::create_dir_all(src_dir.join("dataset"))?;
+        std::fs::write(
+            src_dir.join("lib.incn"),
+            "from dataset.mod import DataSet\nfrom dataset.ops import filter_ds\n",
+        )?;
+        std::fs::write(
+            src_dir.join("dataset").join("mod.incn"),
+            "pub trait DataSet[T]:\n    pass\n",
+        )?;
+        std::fs::write(
+            src_dir.join("dataset").join("ops.incn"),
+            "from dataset.mod import DataSet\npub def filter_ds[T](ds: DataSet[T]) -> DataSet[T]:\n    return ds\n",
+        )?;
+
+        let entry = src_dir.join("lib.incn");
+        let entry_str = entry
+            .to_str()
+            .ok_or("entry path should be valid utf-8 for collect_modules test")?;
+        let modules = collect_modules(entry_str)?;
+
+        let dataset_mod = modules
+            .iter()
+            .find(|module| module.file_path.ends_with(Path::new("dataset").join("mod.incn")))
+            .ok_or("expected dataset/mod.incn to be collected")?;
+        assert_eq!(dataset_mod.path_segments, vec!["dataset".to_string()]);
+        assert_ne!(
+            dataset_mod.path_segments,
+            vec!["dataset".to_string(), "mod".to_string()]
+        );
+
+        let dataset_ops = modules
+            .iter()
+            .find(|module| module.file_path.ends_with(Path::new("dataset").join("ops.incn")))
+            .ok_or("expected dataset/ops.incn to be collected")?;
+        assert_eq!(
+            dataset_ops.path_segments,
+            vec!["dataset".to_string(), "ops".to_string()]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn collect_modules_supports_init_directory_entrypoints() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+        )?;
+
+        let src_dir = project_root.join("src");
+        std::fs::create_dir_all(src_dir.join("dataset"))?;
+        std::fs::write(src_dir.join("lib.incn"), "from dataset import DataSet\n")?;
+        std::fs::write(
+            src_dir.join("dataset").join("__init__.incn"),
+            "pub trait DataSet[T]:\n    pass\n",
+        )?;
+
+        let entry = src_dir.join("lib.incn");
+        let entry_str = entry
+            .to_str()
+            .ok_or("entry path should be valid utf-8 for collect_modules test")?;
+        let modules = collect_modules(entry_str)?;
+
+        let dataset_init = modules
+            .iter()
+            .find(|module| module.file_path.ends_with(Path::new("dataset").join("__init__.incn")))
+            .ok_or("expected dataset/__init__.incn to be collected")?;
+        assert_eq!(dataset_init.path_segments, vec!["dataset".to_string()]);
+
         Ok(())
     }
 

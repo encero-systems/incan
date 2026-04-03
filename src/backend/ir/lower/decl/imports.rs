@@ -3,13 +3,16 @@
 use super::super::super::decl::IrDeclKind;
 use super::super::AstLowering;
 use crate::frontend::ast;
+use crate::frontend::module::canonicalize_source_module_segments;
 
 impl AstLowering {
     /// Lower an import declaration.
     pub(in crate::backend::ir::lower) fn lower_import(&self, i: &ast::ImportDecl) -> IrDeclKind {
         let (path, ast_items) = match &i.kind {
-            ast::ImportKind::Module(p) => (p.segments.clone(), vec![]),
-            ast::ImportKind::From { module, items } => (module.segments.clone(), items.clone()),
+            ast::ImportKind::Module(p) => (canonicalize_source_module_segments(&p.segments), vec![]),
+            ast::ImportKind::From { module, items } => {
+                (canonicalize_source_module_segments(&module.segments), items.clone())
+            }
             ast::ImportKind::PubLibrary { library } => (vec![library.clone()], vec![]),
             ast::ImportKind::PubFrom { library, items } => (vec![library.clone()], items.clone()),
             ast::ImportKind::RustCrate { crate_name, path, .. } => {
