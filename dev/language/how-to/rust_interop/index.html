@@ -1520,6 +1520,21 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Understanding Rust types (optional)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#matching-on-rust-backed-enums-and-oneofs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Matching on Rust-backed enums and oneofs
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4431,6 +4446,21 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Understanding Rust types (optional)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#matching-on-rust-backed-enums-and-oneofs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Matching on Rust-backed enums and oneofs
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4955,6 +4985,26 @@ compiler automatically passes it as a borrowed <code>&amp;str</code> — the mos
 <p>If you're new to Rust types like <code>Vec</code>, <code>HashMap</code>, <code>String</code>, <code>Option</code>, and <code>Result</code>, see
 <a href="../rust_types_for_python_devs/">Understanding Rust types (coming from Python)</a>.</p>
 </details>
+<h3 id="matching-on-rust-backed-enums-and-oneofs">Matching on Rust-backed enums and oneofs<a class="headerlink" href="#matching-on-rust-backed-enums-and-oneofs" title="Permanent link">&para;</a></h3>
+<p>When you wrap an imported Rust enum (or a prost-style <code>oneof</code>) in a <code>rusttype</code>, <code>match</code> uses the same qualified constructor patterns as for Incan enums (<code>Type.Variant(...)</code> in source; the compiler normalizes this to <code>Type::Variant</code> internally). Names you bind in those patterns are in scope in the arm body, so you can nest <code>Option</code> / <code>Result</code> matches the same way you would for native types.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">PlanRel</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="k">rust</span><span class="p">::</span><span class="n">my_crate</span><span class="p">::</span><span class="n">proto</span><span class="p">::</span><span class="nc">PlanRel</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">noop</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="o">...</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">inspect</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">PlanRel</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">match</span> <span class="n">x</span><span class="p">:</span>
+        <span class="nb">Some</span><span class="p">(</span><span class="n">inner</span><span class="p">)</span> <span class="o">=&gt;</span>
+            <span class="k">match</span> <span class="n">inner</span><span class="p">:</span>
+                <span class="nc">PlanRel</span><span class="o">.</span><span class="nc">Root</span><span class="p">(</span><span class="n">root</span><span class="p">)</span> <span class="o">=&gt;</span>
+                    <span class="c1"># `root` is a normal binding here (payload typed as a composed Rust path)</span>
+                    <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;matched Root&quot;</span><span class="p">)</span>
+                <span class="n">_</span> <span class="o">=&gt;</span>
+                    <span class="k">pass</span>
+        <span class="kc">None</span> <span class="o">=&gt;</span>
+            <span class="k">pass</span>
+</code></pre></div>
+<p>For a single tuple-field variant, the typechecker models the payload as a <code>RustPath</code> of the form <code>{backing_rust_path}::{Variant}</code> (aligned with how member paths are composed for imported ADTs). Multiple positional sub-patterns are accepted but typed permissively until richer Rust metadata is available.</p>
+<p>If the scrutinee is typed as a bare imported Rust path (not a <code>rusttype</code> alias), the type prefix in the pattern is not cross-checked against that path; prefer spelling the <code>rusttype</code> wrapper and matching on <code>PlanRel.Variant(...)</code> so the prefix matches your Incan type name.</p>
 <h2 id="limitations">Limitations<a class="headerlink" href="#limitations" title="Permanent link">&para;</a></h2>
 <ol>
 <li>
@@ -4970,6 +5020,9 @@ compiler automatically passes it as a borrowed <code>&amp;str</code> — the mos
 </li>
 <li>
 <p><strong>Macros</strong>: Rust macros are not directly callable. Use the expanded form or a wrapper function.</p>
+</li>
+<li>
+<p><strong><code>match</code> exhaustiveness on <code>rusttype</code> enums</strong>: Compiler exhaustiveness for <code>match</code> is driven by Incan <code>enum</code> definitions plus <code>Option</code> / <code>Result</code>. A <code>rusttype</code> wrapping a Rust enum does not supply the same variant list, so you will not get “non-exhaustive match” diagnostics for missing Rust variants. Use a catch-all arm (<code>_</code>) when you must accept variants you do not list explicitly.</p>
 </li>
 </ol>
 <h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
