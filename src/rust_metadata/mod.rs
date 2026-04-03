@@ -39,28 +39,6 @@ hashbrown = "0.15"
         Ok(())
     }
 
-    fn write_substrait_probe_crate(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        fs::create_dir_all(root.join("src"))?;
-        fs::write(
-            root.join("Cargo.toml"),
-            r#"[package]
-name = "ra_substrait_probe"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-prost = "0.14"
-prost-types = "0.14"
-substrait = { version = "0.63", features = ["protoc"] }
-"#,
-        )?;
-        fs::write(
-            root.join("src/lib.rs"),
-            "pub fn touch() { let _ = substrait::proto::PlanRel::default(); }\n",
-        )?;
-        Ok(())
-    }
-
     fn method_names(meta: &incan_core::interop::RustItemMetadata) -> Vec<String> {
         match &meta.kind {
             incan_core::interop::RustItemKind::Type(info) => info.methods.iter().map(|m| m.name.clone()).collect(),
