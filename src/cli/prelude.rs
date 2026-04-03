@@ -27,6 +27,7 @@ use crate::frontend::ast::Program;
 use crate::frontend::{diagnostics, lexer, parser};
 
 /// Parsed module with its source (for error reporting)
+#[derive(Clone)]
 pub struct ParsedModule {
     pub name: String,
     /// Path segments for nested modules (e.g., ["db", "models"] for db::models)

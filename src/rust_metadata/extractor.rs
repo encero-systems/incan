@@ -3,12 +3,12 @@
 use std::collections::BTreeMap;
 
 use incan_core::interop::{
-    RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustModuleChild, RustModuleChildKind,
-    RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustVisibility,
+    RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustModuleChild,
+    RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustVisibility,
 };
 use ra_ap_hir::{
-    AssocItem, Crate, DisplayTarget, Function, HasVisibility, HirDisplay, ItemInNs, Module, ModuleDef, Name, ScopeDef,
-    Trait, Type, Visibility, attach_db,
+    Adt, AssocItem, Crate, DisplayTarget, Function, HasVisibility, HirDisplay, ItemInNs, Module, ModuleDef, Name,
+    ScopeDef, Trait, Type, VariantDef, Visibility, attach_db,
 };
 use ra_ap_ide_db::RootDatabase;
 
@@ -62,6 +62,36 @@ fn collect_inherent_methods(ty: Type<'_>, db: &RootDatabase, dt: DisplayTarget) 
         None
     });
     by_name.into_values().collect()
+}
+
+fn collect_public_fields_from_variant_def(
+    variant_def: VariantDef,
+    db: &RootDatabase,
+    dt: DisplayTarget,
+) -> Vec<RustFieldInfo> {
+    let mut fields = Vec::new();
+    for field in variant_def.fields(db) {
+        if !is_exported_rust_api(field.visibility(db)) {
+            continue;
+        }
+        fields.push(RustFieldInfo {
+            name: field.name(db).as_str().to_owned(),
+            type_display: format_ty(&field.ty(db).to_type(db), db, dt),
+        });
+    }
+    fields.sort_by(|a, b| a.name.cmp(&b.name));
+    fields
+}
+
+fn collect_public_fields(ty: Type<'_>, db: &RootDatabase, dt: DisplayTarget) -> Vec<RustFieldInfo> {
+    let Some((adt, _args)) = ty.as_adt_with_args() else {
+        return Vec::new();
+    };
+    match adt {
+        Adt::Struct(s) => collect_public_fields_from_variant_def(VariantDef::Struct(s), db, dt),
+        Adt::Union(u) => collect_public_fields_from_variant_def(VariantDef::Union(u), db, dt),
+        Adt::Enum(_) => Vec::new(),
+    }
 }
 
 fn module_children(module: Module, db: &RootDatabase) -> RustModuleInfo {
@@ -141,16 +171,46 @@ fn find_crate(db: &RootDatabase, crate_name: &str) -> Option<Crate> {
 
 fn resolve_module_def(db: &RootDatabase, krate: Crate, segments: &[Name]) -> Result<ModuleDef, RustMetadataError> {
     let root = krate.root_module(db);
-    let Some(mut it) = root.resolve_mod_path(db, segments.iter().cloned()) else {
-        return Err(RustMetadataError::PathNotResolved(segments_display(segments)));
-    };
-    let Some(first) = it.next() else {
-        return Err(RustMetadataError::PathNotResolved(segments_display(segments)));
-    };
-    match first {
-        ItemInNs::Macros(_) => Err(RustMetadataError::UnsupportedMacro(segments_display(segments))),
-        other => Ok(other.into_module_def()),
+    if let Some(mut it) = root.resolve_mod_path(db, segments.iter().cloned())
+        && let Some(first) = it.next()
+    {
+        return match first {
+            ItemInNs::Macros(_) => Err(RustMetadataError::UnsupportedMacro(segments_display(segments))),
+            other => Ok(other.into_module_def()),
+        };
     }
+
+    let mut module = root;
+    for (idx, segment) in segments.iter().enumerate() {
+        let is_last = idx + 1 == segments.len();
+        let mut matches = module
+            .scope(db, None)
+            .into_iter()
+            .filter(|(name, _)| name.as_str() == segment.as_str());
+
+        if is_last {
+            let Some((_, scope_def)) = matches.next() else {
+                return Err(RustMetadataError::PathNotResolved(segments_display(segments)));
+            };
+            return match scope_def {
+                ScopeDef::ModuleDef(def) => match def {
+                    ModuleDef::Macro(_) => Err(RustMetadataError::UnsupportedMacro(segments_display(segments))),
+                    other => Ok(other),
+                },
+                _ => Err(RustMetadataError::PathNotResolved(segments_display(segments))),
+            };
+        }
+
+        let next_module = matches.find_map(|(_, scope_def)| match scope_def {
+            ScopeDef::ModuleDef(ModuleDef::Module(module)) => Some(module),
+            _ => None,
+        });
+        let Some(found) = next_module else {
+            return Err(RustMetadataError::PathNotResolved(segments_display(segments)));
+        };
+        module = found;
+    }
+    Err(RustMetadataError::PathNotResolved(segments_display(segments)))
 }
 
 fn segments_display(segments: &[Name]) -> String {
@@ -190,13 +250,15 @@ fn extract_rust_item_inner(db: &RootDatabase, canonical_path: &str) -> Result<Ru
         ModuleDef::Adt(adt) => {
             let ty = adt.ty(db);
             RustItemKind::Type(RustTypeInfo {
-                methods: collect_inherent_methods(ty, db, dt),
+                methods: collect_inherent_methods(ty.clone(), db, dt),
+                fields: collect_public_fields(ty, db, dt),
             })
         }
         ModuleDef::BuiltinType(b) => {
             let ty = b.ty(db);
             RustItemKind::Type(RustTypeInfo {
-                methods: collect_inherent_methods(ty, db, dt),
+                methods: collect_inherent_methods(ty.clone(), db, dt),
+                fields: collect_public_fields(ty, db, dt),
             })
         }
         ModuleDef::Const(c) => RustItemKind::Constant {
@@ -209,7 +271,8 @@ fn extract_rust_item_inner(db: &RootDatabase, canonical_path: &str) -> Result<Ru
         ModuleDef::TypeAlias(a) => {
             let ty = a.ty(db);
             RustItemKind::Type(RustTypeInfo {
-                methods: collect_inherent_methods(ty, db, dt),
+                methods: collect_inherent_methods(ty.clone(), db, dt),
+                fields: collect_public_fields(ty, db, dt),
             })
         }
         ModuleDef::Variant(_) => RustItemKind::Unsupported {

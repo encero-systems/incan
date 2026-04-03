@@ -66,10 +66,18 @@ pub struct RustMethodSig {
     pub signature: RustFunctionSig,
 }
 
+/// A public field surfaced on a Rust struct/union-like type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RustFieldInfo {
+    pub name: String,
+    pub type_display: String,
+}
+
 /// Method and associated-fn surface for a Rust ADT or builtin type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RustTypeInfo {
     pub methods: Vec<RustMethodSig>,
+    pub fields: Vec<RustFieldInfo>,
 }
 
 /// One exported name inside a module (lightweight summary for namespace resolution).

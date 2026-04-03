@@ -147,6 +147,15 @@ struct InlineMergedSpec {
     first_site: InlineRustImport,
 }
 
+fn matching_dep_spec<'a>(
+    deps: &'a HashMap<String, DependencySpec>,
+    crate_name: &str,
+) -> Option<(&'a String, &'a DependencySpec)> {
+    deps.get_key_value(crate_name)
+        .or_else(|| deps.get_key_value(&crate_name.replace('_', "-")))
+        .or_else(|| deps.get_key_value(&crate_name.replace('-', "_")))
+}
+
 fn merge_inline_imports(
     inline_imports: &[InlineRustImport],
     manifest_deps: &HashMap<String, DependencySpec>,
@@ -193,9 +202,12 @@ fn merge_inline_imports(
             }
         }
 
+        let manifest_dep_match = matching_dep_spec(manifest_deps, &import.crate_name);
+        let manifest_dev_dep_match = matching_dep_spec(manifest_dev_deps, &import.crate_name);
+
         if library_dep_names.contains(&import.crate_name)
-            && !manifest_deps.contains_key(&import.crate_name)
-            && !manifest_dev_deps.contains_key(&import.crate_name)
+            && manifest_dep_match.is_none()
+            && manifest_dev_dep_match.is_none()
         {
             errors.push(DependencyError {
                 file_path: import.file_path.clone(),
@@ -217,7 +229,7 @@ fn merge_inline_imports(
             continue;
         }
 
-        if manifest_deps.contains_key(&import.crate_name) || manifest_dev_deps.contains_key(&import.crate_name) {
+        if manifest_dep_match.is_some() || manifest_dev_dep_match.is_some() {
             if has_inline_spec {
                 errors.push(DependencyError {
                     file_path: import.file_path.clone(),
@@ -235,10 +247,7 @@ fn merge_inline_imports(
                 });
             }
 
-            if manifest_dev_deps.contains_key(&import.crate_name)
-                && !manifest_deps.contains_key(&import.crate_name)
-                && !import.is_test_context
-            {
+            if manifest_dev_dep_match.is_some() && manifest_dep_match.is_none() && !import.is_test_context {
                 errors.push(DependencyError {
                     file_path: import.file_path.clone(),
                     error: with_rust_import_context(
@@ -444,7 +453,9 @@ fn validate_optional_imports(
     let all_features = cargo_features.cargo_all_features;
 
     for (crate_name, import) in first_sites {
-        let spec = deps.get(&crate_name).or_else(|| dev_deps.get(&crate_name));
+        let spec = matching_dep_spec(deps, &crate_name)
+            .map(|(_, spec)| spec)
+            .or_else(|| matching_dep_spec(dev_deps, &crate_name).map(|(_, spec)| spec));
         let Some(spec) = spec else {
             continue;
         };

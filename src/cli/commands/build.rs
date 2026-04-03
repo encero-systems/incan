@@ -590,6 +590,73 @@ pub fn build_library(
 
     let declared = manifest.declared_rust_crate_names();
     let library_manifest_index = LibraryManifestIndex::from_project_manifest(&manifest);
+    let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
+    let rust_extern_contexts = collect_rust_extern_contexts(&modules);
+    let dep_modules = &modules[..modules.len() - 1];
+
+    let mut inline_imports = collect_inline_rust_imports(lib_module, false);
+    for module in dep_modules {
+        inline_imports.extend(collect_inline_rust_imports(module, false));
+    }
+    let project_name = manifest
+        .project
+        .as_ref()
+        .and_then(|project| project.name.clone())
+        .or_else(|| {
+            manifest
+                .project_root()
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "incan_library".to_string());
+
+    let cargo_features = CargoFeatureSelection {
+        cargo_features: cargo_features.clone(),
+        cargo_no_default_features,
+        cargo_all_features,
+    }
+    .normalized();
+
+    let mut resolved = match resolve_dependencies(Some(&manifest), &inline_imports, true, &cargo_features) {
+        Ok(resolved) => resolved,
+        Err(errors) => {
+            let mut msg = String::new();
+            let sources = build_source_map(&modules);
+            for err in errors {
+                msg.push_str(&format_dependency_error(&err, &sources));
+            }
+            return Err(CliError::failure(msg.trim_end()));
+        }
+    };
+    merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
+
+    let _lock_payload_for_typecheck = resolve_lock_payload(LockResolutionRequest {
+        project_root: &project_root,
+        project_name: project_name.as_str(),
+        manifest: Some(&manifest),
+        resolved: &resolved,
+        project_requirements: &project_requirements,
+        cargo_features: &cargo_features,
+        locked,
+        frozen,
+    })?;
+    #[cfg(feature = "rust-metadata")]
+    let rust_metadata_manifest_dir = project_root.join("target").join("incan_lock");
+    #[cfg(feature = "rust-metadata")]
+    {
+        let mut rust_metadata_generator =
+            ProjectGenerator::new(&rust_metadata_manifest_dir, project_name.as_str(), true);
+        rust_metadata_generator.set_dependencies(resolved.dependencies.clone());
+        rust_metadata_generator.set_dev_dependencies(resolved.dev_dependencies.clone());
+        rust_metadata_generator.set_include_dev_dependencies(true);
+        rust_metadata_generator.set_stdlib_features(project_requirements.stdlib_features.clone());
+        rust_metadata_generator.set_rust_edition(manifest.build.as_ref().and_then(|build| build.rust_edition.clone()));
+        rust_metadata_generator
+            .generate("fn main() {}")
+            .map_err(|e| CliError::failure(format!("Failed to generate rust-metadata lock project: {e}")))?;
+    }
+
     let mut all_errors = String::new();
     let mut checked_exports_by_module: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
 
@@ -599,6 +666,8 @@ pub fn build_library(
         let mut checker = typechecker::TypeChecker::new();
         checker.set_declared_crate_names(declared.clone());
         checker.set_library_manifest_index(library_manifest_index.clone());
+        #[cfg(feature = "rust-metadata")]
+        checker.set_rust_metadata_manifest_dir(rust_metadata_manifest_dir.clone());
 
         match checker.check_with_imports(&module.ast, &deps_for_module) {
             Ok(()) => {
@@ -647,18 +716,6 @@ pub fn build_library(
             CliError::failure(msg.trim_end())
         })?;
 
-    let project_name = manifest
-        .project
-        .as_ref()
-        .and_then(|project| project.name.clone())
-        .or_else(|| {
-            manifest
-                .project_root()
-                .file_name()
-                .and_then(|name| name.to_str())
-                .map(str::to_owned)
-        })
-        .unwrap_or_else(|| "incan_library".to_string());
     let project_version = manifest
         .project
         .as_ref()
@@ -681,10 +738,6 @@ pub fn build_library(
     package_desugarer_artifact(&out_dir, pending_desugarer_artifact.as_ref())?;
     let manifest_path = out_dir.join(format!("{project_name}.incnlib"));
 
-    let dep_modules = &modules[..modules.len() - 1];
-    let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
-    let rust_extern_contexts = collect_rust_extern_contexts(&modules);
-
     let mut codegen = IrCodegen::new();
     codegen.set_declared_crate_names(declared);
     codegen.set_library_manifest_index(library_manifest_index.clone());
@@ -695,31 +748,6 @@ pub fn build_library(
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(false);
     generator.set_rust_edition(manifest.build.as_ref().and_then(|build| build.rust_edition.clone()));
-
-    let mut inline_imports = collect_inline_rust_imports(lib_module, false);
-    for module in dep_modules {
-        inline_imports.extend(collect_inline_rust_imports(module, false));
-    }
-
-    let cargo_features = CargoFeatureSelection {
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
-    }
-    .normalized();
-
-    let mut resolved = match resolve_dependencies(Some(&manifest), &inline_imports, true, &cargo_features) {
-        Ok(resolved) => resolved,
-        Err(errors) => {
-            let mut msg = String::new();
-            let sources = build_source_map(&modules);
-            for err in errors {
-                msg.push_str(&format_dependency_error(&err, &sources));
-            }
-            return Err(CliError::failure(msg.trim_end()));
-        }
-    };
-    merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
 
     let lock_payload = resolve_lock_payload(LockResolutionRequest {
         project_root: &project_root,

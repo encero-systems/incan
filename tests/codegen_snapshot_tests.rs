@@ -18,8 +18,9 @@ fn generate_rust(source: &str) -> String {
     let Ok(ast) = parser::parse(&tokens) else {
         panic!("parser failed");
     };
-    let Ok(code) = IrCodegen::new().try_generate(&ast) else {
-        panic!("codegen snapshot inputs must typecheck");
+    let code = match IrCodegen::new().try_generate(&ast) {
+        Ok(code) => code,
+        Err(e) => panic!("codegen snapshot inputs must typecheck: {e:?}"),
     };
     normalize_codegen_output(&code)
 }
@@ -931,6 +932,13 @@ fn test_rust_interop_field_access_codegen() {
     let source = load_test_file("rust_interop_field_access");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("rust_interop_field_access", rust_code);
+}
+
+#[test]
+fn test_issue217_rust_enum_match_bindings_codegen() {
+    let source = load_test_file("issue217_rust_enum_match_bindings");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("issue217_rust_enum_match_bindings", rust_code);
 }
 
 #[test]

@@ -3,7 +3,7 @@
 //! This module handles struct instantiation with both named and positional fields.
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 
 use super::super::super::conversions::{ConversionContext, determine_conversion};
 use super::super::super::expr::TypedExpr;
@@ -80,7 +80,7 @@ impl<'a> IrEmitter<'a> {
                 let field_tokens: Vec<TokenStream> = fields
                     .iter()
                     .map(|(fname, fval)| {
-                        let fn_ident = format_ident!("{}", fname);
+                        let fn_ident = Self::rust_ident(fname);
                         let emitted = self.emit_expr(fval)?;
                         let target_type = self.struct_field_types.get(&(name.to_string(), fname.clone()));
                         let conversion = determine_conversion(fval, target_type, ConversionContext::StructField);
@@ -97,7 +97,7 @@ impl<'a> IrEmitter<'a> {
 
             let mut out_fields: Vec<TokenStream> = Vec::new();
             for fname in field_names {
-                let fn_ident = format_ident!("{}", fname);
+                let fn_ident = Self::rust_ident(fname);
                 if let Some(fval) = provided.get(fname.as_str()) {
                     let emitted = self.emit_expr(fval)?;
                     let target_type = self.struct_field_types.get(&(name.to_string(), fname.clone()));

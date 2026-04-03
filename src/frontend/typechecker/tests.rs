@@ -12,7 +12,8 @@ use crate::library_manifest::{
 };
 #[cfg(feature = "rust-metadata")]
 use incan_core::interop::{
-    RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTypeInfo, RustVisibility,
+    RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTypeInfo,
+    RustVisibility,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -561,6 +562,99 @@ def push(sender: Sender, value: int) -> Result[None, str]:
     assert_check_ok(source);
 }
 
+/// Issue #217: payload names bound from `rusttype`-backed enum-style patterns must be in scope in the arm body.
+#[test]
+fn test_rusttype_enum_match_binds_payload_in_arm() {
+    let source = r#"
+def id[T](x: T) -> T:
+  return x
+
+from rust::mail import Sender as RustSender
+
+type PlanRel = rusttype RustSender:
+  def noop(self) -> None:
+    ...
+
+def f(x: PlanRel) -> None:
+  match x:
+    PlanRel.Root(root) =>
+      _ = id(root)
+    _ =>
+      _ = x
+
+def g(x: Option[PlanRel]) -> None:
+  match x:
+    Some(inner) =>
+      match inner:
+        PlanRel.Root(root) =>
+          _ = id(root)
+        _ =>
+          _ = inner
+    None =>
+      _ = 0
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rusttype_enum_match_with_mismatched_qualifier_reports_constructor_resolution_error() {
+    let source = r#"
+from rust::mail import Sender as RustSender
+
+type PlanRel = rusttype RustSender:
+  def noop(self) -> None:
+    ...
+
+type OtherEnum = rusttype RustSender:
+  def noop(self) -> None:
+    ...
+
+def f(x: PlanRel) -> None:
+  match x:
+    OtherEnum.Root(root) =>
+      _ = root
+    _ =>
+      _ = x
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors for mismatched rusttype constructor qualifier");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("does not resolve for this match")),
+        "expected unknown_match_constructor_pattern, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_resolved_type_from_fully_qualified_option_display_extracts_option_payload() {
+    let checker = TypeChecker::new();
+    let resolved = checker.resolved_type_from_rust_display("::core::option::Option<demo::Thing>");
+    assert_eq!(
+        resolved,
+        ResolvedType::Generic(
+            "Option".to_string(),
+            vec![ResolvedType::RustPath("demo::Thing".to_string())],
+        )
+    );
+}
+
+#[test]
+fn test_resolved_type_from_fully_qualified_result_display_normalizes() {
+    let checker = TypeChecker::new();
+    let resolved = checker.resolved_type_from_rust_display("::core::result::Result<demo::OkThing, demo::ErrThing>");
+    assert_eq!(
+        resolved,
+        ResolvedType::Generic(
+            "Result".to_string(),
+            vec![
+                ResolvedType::RustPath("demo::OkThing".to_string()),
+                ResolvedType::RustPath("demo::ErrThing".to_string()),
+            ],
+        )
+    );
+}
+
 #[test]
 fn test_duplicate_interop_edges_rejected() {
     let source = r#"
@@ -834,6 +928,7 @@ def render[T](value: Label[T]) -> str:
                             is_unsafe: false,
                         },
                     }],
+                    fields: vec![],
                 }),
             },
         )
@@ -849,6 +944,136 @@ def render[T](value: Label[T]) -> str:
         "expected rust return coercion (&str -> String) for generic rusttype method call, got {:?}",
         info.rust_return_coercions
     );
+    Ok(())
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_rust_field_access_preserves_type_for_nested_match_binding() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def id[T](x: T) -> T:
+  return x
+
+from rust::demo import Envelope as RustEnvelope
+from rust::demo import Kind as RustKind
+
+type Envelope = rusttype RustEnvelope:
+  def noop(self) -> None:
+    ...
+
+type Kind = rusttype RustKind:
+  def noop(self) -> None:
+    ...
+
+def f(x: Envelope) -> None:
+  match x.kind:
+    Some(Kind.A(inner)) =>
+      _ = id(inner)
+    None =>
+      _ = 0
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let manifest_dir = std::env::current_dir()?;
+    checker.set_rust_metadata_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_metadata_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Envelope".to_string(),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![],
+                    fields: vec![RustFieldInfo {
+                        name: "kind".to_string(),
+                        type_display: "Option<demo::Kind>".to_string(),
+                    }],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust metadata envelope: {e}")))?;
+    checker
+        .rust_metadata_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Kind".to_string(),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![],
+                    fields: vec![],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust metadata kind: {e}")))?;
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!(
+            "expected rust field access + nested match binding to typecheck: {errs:?}"
+        ))
+    })?;
+    Ok(())
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_rust_path_field_access_preserves_type_for_nested_match_binding() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def id[T](x: T) -> T:
+  return x
+
+from rust::demo import Envelope
+from rust::demo import Kind as KindPath
+
+def f(x: Envelope) -> None:
+  match x.kind:
+    Some(KindPath.A(inner)) =>
+      _ = id(inner)
+    None =>
+      _ = 0
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let manifest_dir = std::env::current_dir()?;
+    checker.set_rust_metadata_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_metadata_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Envelope".to_string(),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![],
+                    fields: vec![RustFieldInfo {
+                        name: "kind".to_string(),
+                        type_display: "Option<demo::Kind>".to_string(),
+                    }],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust metadata envelope: {e}")))?;
+    checker
+        .rust_metadata_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Kind".to_string(),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![],
+                    fields: vec![],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust metadata kind: {e}")))?;
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!(
+            "expected rust path field access + nested match binding to typecheck: {errs:?}"
+        ))
+    })?;
     Ok(())
 }
 
@@ -3094,6 +3319,28 @@ def foo(x: int) -> str:
     _ => "other"
 "#;
     assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_match_unknown_incan_enum_variant_reports_constructor_resolution_error() {
+    let source = r#"
+enum Traffic:
+  Red
+  Amber
+
+def f(x: Traffic) -> None:
+  match x:
+    Crimson() =>
+      _ = 0
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors for unknown enum constructor pattern");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("does not resolve for this match")),
+        "expected unknown_match_constructor_pattern, got {errs:?}"
+    );
 }
 
 // ========================================

@@ -50,10 +50,10 @@ hashbrown = "0.15"
     fn hashmap_has_expected_public_methods() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         write_probe_crate(tmp.path())?;
-        let ws = RustWorkspace::load(tmp.path(), &|_| ())?;
+        let cache = RustMetadataCache::new();
         // Sysroot `std` is not always registered under the display name `std` in minimal workspaces;
         // `hashbrown::HashMap` is a normal dependency with the same public map surface we care about.
-        let meta = extract_rust_item(ws.db(), "hashbrown::HashMap")?;
+        let meta = cache.get_or_extract(tmp.path(), "hashbrown::HashMap", &|_| ())?;
         let names = method_names(&meta);
         for required in ["insert", "get", "len", "contains_key"] {
             assert!(
@@ -69,8 +69,8 @@ hashbrown = "0.15"
     fn regex_type_exposes_core_methods() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         write_probe_crate(tmp.path())?;
-        let ws = RustWorkspace::load(tmp.path(), &|_| ())?;
-        let meta = extract_rust_item(ws.db(), "regex::Regex")?;
+        let cache = RustMetadataCache::new();
+        let meta = cache.get_or_extract(tmp.path(), "regex::Regex", &|_| ())?;
         let names = method_names(&meta);
         for required in ["new", "is_match", "find"] {
             assert!(

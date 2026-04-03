@@ -3,9 +3,11 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use incan_core::interop::RustItemMetadata;
+use serde::Deserialize;
 
 use super::error::RustMetadataError;
 use super::extractor::extract_rust_item;
@@ -24,8 +26,58 @@ pub struct RustMetadataCache {
 
 #[derive(Default)]
 struct CacheInner {
-    workspaces: HashMap<PathBuf, RustWorkspace>,
+    workspaces: HashMap<(PathBuf, bool), RustWorkspace>,
     items: HashMap<(PathBuf, String), Arc<RustItemMetadata>>,
+}
+
+#[derive(Deserialize)]
+struct CargoMetadata {
+    packages: Vec<CargoPackage>,
+}
+
+#[derive(Deserialize)]
+struct CargoPackage {
+    name: String,
+    manifest_path: PathBuf,
+    targets: Vec<CargoTarget>,
+}
+
+#[derive(Deserialize)]
+struct CargoTarget {
+    name: String,
+}
+
+fn normalize_crate_name(name: &str) -> String {
+    name.replace('-', "_")
+}
+
+fn dependency_manifest_dir_for_crate(root: &Path, crate_name: &str) -> Option<PathBuf> {
+    let manifest_path = root.join("Cargo.toml");
+    let output = Command::new("cargo")
+        .arg("metadata")
+        .arg("--offline")
+        .arg("--manifest-path")
+        .arg(manifest_path.as_os_str())
+        .arg("--format-version")
+        .arg("1")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let parsed: CargoMetadata = serde_json::from_slice(&output.stdout).ok()?;
+    let normalized = normalize_crate_name(crate_name);
+    parsed
+        .packages
+        .into_iter()
+        .find(|pkg| {
+            normalize_crate_name(pkg.name.as_str()) == normalized
+                || pkg
+                    .targets
+                    .iter()
+                    .any(|target| normalize_crate_name(target.name.as_str()) == normalized)
+        })
+        .and_then(|pkg| pkg.manifest_path.parent().map(Path::to_path_buf))
 }
 
 impl RustMetadataCache {
@@ -55,12 +107,33 @@ impl RustMetadataCache {
             return Ok(Arc::clone(hit));
         }
 
-        let workspace = match inner.workspaces.entry(root.clone()) {
+        let workspace = match inner.workspaces.entry((root.clone(), false)) {
             Entry::Occupied(o) => o.into_mut(),
             Entry::Vacant(v) => v.insert(RustWorkspace::load(&root, progress)?),
         };
 
-        let meta = extract_rust_item(workspace.db(), canonical_path)?;
+        let meta = match extract_rust_item(workspace.db(), canonical_path) {
+            Ok(meta) => meta,
+            Err(RustMetadataError::CrateNotFound(crate_name)) => {
+                let root_outdir_workspace = match inner.workspaces.entry((root.clone(), true)) {
+                    Entry::Occupied(o) => o.into_mut(),
+                    Entry::Vacant(v) => v.insert(RustWorkspace::load_with_options(&root, progress, true)?),
+                };
+                if let Ok(meta) = extract_rust_item(root_outdir_workspace.db(), canonical_path) {
+                    meta
+                } else {
+                    let Some(dep_root) = dependency_manifest_dir_for_crate(&root, crate_name.as_str()) else {
+                        return Err(RustMetadataError::CrateNotFound(crate_name));
+                    };
+                    let dep_workspace = match inner.workspaces.entry((dep_root.clone(), true)) {
+                        Entry::Occupied(o) => o.into_mut(),
+                        Entry::Vacant(v) => v.insert(RustWorkspace::load_with_options(&dep_root, progress, true)?),
+                    };
+                    extract_rust_item(dep_workspace.db(), canonical_path)?
+                }
+            }
+            Err(err) => return Err(err),
+        };
         let arc = Arc::new(meta);
         inner.items.insert(key_item, Arc::clone(&arc));
         Ok(arc)
