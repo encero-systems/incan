@@ -10,11 +10,23 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
+#[cfg(feature = "rust-metadata")]
+use crate::backend::ProjectGenerator;
+#[cfg(feature = "rust-metadata")]
+use crate::cli::commands::common::{
+    build_source_map, collect_inline_rust_imports, collect_project_requirements, format_dependency_error,
+    merge_project_requirement_dependencies,
+};
+use crate::cli::prelude::ParsedModule;
+#[cfg(feature = "rust-metadata")]
+use crate::dependency_resolver::{ResolvedDependencies, resolve_dependencies};
 use crate::frontend::ast::{Declaration, Program, Span, Type};
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::resolve_import_path;
 use crate::frontend::{lexer, parser, typechecker, vocab_desugar_pass};
+#[cfg(feature = "rust-metadata")]
+use crate::lockfile::CargoFeatureSelection;
 use crate::lsp::diagnostics::{compile_error_to_diagnostic, position_to_offset, span_to_range};
 use crate::manifest::ProjectManifest;
 use incan_core::interop::{RustItemKind, RustModuleChildKind, RustTraitAssoc};
@@ -87,10 +99,14 @@ impl IncanLanguageServer {
         let mut declared_crates = HashSet::new();
         let mut library_imported_vocab = HashMap::new();
         let mut library_manifest_index = LibraryManifestIndex::default();
+        let mut project_manifest: Option<ProjectManifest> = None;
+        #[cfg(feature = "rust-metadata")]
+        let mut rust_metadata_manifest_dir: Option<PathBuf> = None;
         if let Some(path) = &module_path
             && let Some(start_dir) = path.parent()
             && let Ok(Some(manifest)) = ProjectManifest::discover(start_dir)
         {
+            project_manifest = Some(manifest.clone());
             declared_crates = manifest.declared_rust_crate_names();
             library_manifest_index = LibraryManifestIndex::from_project_manifest(&manifest);
             library_imported_vocab = library_manifest_index.library_imported_vocab();
@@ -140,11 +156,6 @@ impl IncanLanguageServer {
             return;
         }
 
-        // Step 3: Type check (with multi-file import resolution)
-        let mut checker = typechecker::TypeChecker::new();
-        checker.set_declared_crate_names(declared_crates);
-        checker.set_library_manifest_index(library_manifest_index.clone());
-
         let (deps, mut dep_summary_diags) = self
             .collect_dependency_modules(
                 uri,
@@ -155,7 +166,25 @@ impl IncanLanguageServer {
                 Some(&library_manifest_index),
             )
             .await;
-        let dep_refs: Vec<(&str, &Program)> = deps.iter().map(|(name, program)| (name.as_str(), program)).collect();
+        #[cfg(feature = "rust-metadata")]
+        if let (Some(manifest), Some(path)) = (project_manifest.as_ref(), module_path.as_ref()) {
+            let mut metadata_modules = Vec::with_capacity(deps.len() + 1);
+            metadata_modules.push(parsed_module_for_lsp_document(path, source, &ast));
+            metadata_modules.extend(deps.iter().cloned());
+            rust_metadata_manifest_dir =
+                ensure_rust_metadata_workspace(manifest, &metadata_modules, &library_manifest_index).ok();
+        }
+
+        // Step 3: Type check (with multi-file import resolution)
+        let mut checker = typechecker::TypeChecker::new();
+        checker.set_declared_crate_names(declared_crates);
+        checker.set_library_manifest_index(library_manifest_index.clone());
+        #[cfg(feature = "rust-metadata")]
+        if let Some(dir) = rust_metadata_manifest_dir {
+            checker.set_rust_metadata_manifest_dir(dir);
+        }
+
+        let dep_refs: Vec<(&str, &Program)> = deps.iter().map(|module| (module.name.as_str(), &module.ast)).collect();
 
         let check_result = checker.check_with_imports(&ast, &dep_refs);
         let rust_origin_symbols = collect_rust_origin_symbols(&checker);
@@ -238,7 +267,7 @@ impl IncanLanguageServer {
         _entry_version: i32,
         library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
         library_manifest_index: Option<&LibraryManifestIndex>,
-    ) -> (Vec<(String, Program)>, Vec<Diagnostic>) {
+    ) -> (Vec<ParsedModule>, Vec<Diagnostic>) {
         let Ok(entry_path) = uri.to_file_path() else {
             return (Vec::new(), Vec::new());
         };
@@ -246,7 +275,7 @@ impl IncanLanguageServer {
 
         let docs = self.documents.read().await;
 
-        let mut result: Vec<(String, Program)> = Vec::new();
+        let mut result: Vec<ParsedModule> = Vec::new();
         let mut entry_diags: Vec<Diagnostic> = Vec::new();
         let mut seen: HashSet<PathBuf> = HashSet::new();
         let mut stack: Vec<(PathBuf, PathBuf, Span)> = Vec::new(); // (module_path, base_dir_for_that_module, import_span_in_entry)
@@ -402,7 +431,13 @@ impl IncanLanguageServer {
                 .and_then(|s| s.to_str())
                 .unwrap_or("module")
                 .to_string();
-            result.push((module_name, dep_ast));
+            result.push(ParsedModule {
+                name: module_name.clone(),
+                path_segments: vec![module_name],
+                file_path: canonical,
+                source: dep_source,
+                ast: dep_ast,
+            });
         }
 
         (result, entry_diags)
@@ -531,6 +566,128 @@ impl IncanLanguageServer {
             }
         }
         None
+    }
+}
+
+#[cfg(feature = "rust-metadata")]
+fn parsed_module_for_lsp_document(path: &Path, source: &str, ast: &Program) -> ParsedModule {
+    let module_name = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("main")
+        .to_string();
+    ParsedModule {
+        name: module_name.clone(),
+        path_segments: vec![module_name],
+        file_path: path.to_path_buf(),
+        source: source.to_string(),
+        ast: ast.clone(),
+    }
+}
+
+#[cfg(feature = "rust-metadata")]
+fn resolved_rust_metadata_dependencies(
+    manifest: &ProjectManifest,
+    modules: &[ParsedModule],
+    library_manifest_index: &LibraryManifestIndex,
+) -> std::result::Result<ResolvedDependencies, String> {
+    let project_requirements =
+        collect_project_requirements(modules, library_manifest_index).map_err(|err| err.to_string())?;
+    let mut inline_imports = Vec::new();
+    for module in modules {
+        inline_imports.extend(collect_inline_rust_imports(module, false));
+    }
+
+    let cargo_features = CargoFeatureSelection::default();
+    let mut resolved =
+        resolve_dependencies(Some(manifest), &inline_imports, true, &cargo_features).map_err(|errors| {
+            let sources = build_source_map(modules);
+            let mut msg = String::new();
+            for err in errors {
+                msg.push_str(&format_dependency_error(&err, &sources));
+            }
+            msg.trim_end().to_string()
+        })?;
+    merge_project_requirement_dependencies(&mut resolved, &project_requirements).map_err(|err| err.to_string())?;
+    Ok(resolved)
+}
+
+#[cfg(feature = "rust-metadata")]
+fn ensure_rust_metadata_workspace(
+    manifest: &ProjectManifest,
+    modules: &[ParsedModule],
+    library_manifest_index: &LibraryManifestIndex,
+) -> std::result::Result<PathBuf, String> {
+    let project_name = manifest
+        .project
+        .as_ref()
+        .and_then(|project| project.name.clone())
+        .or_else(|| {
+            manifest
+                .project_root()
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "incan_lsp".to_string());
+
+    let resolved = resolved_rust_metadata_dependencies(manifest, modules, library_manifest_index)?;
+    let project_requirements =
+        collect_project_requirements(modules, library_manifest_index).map_err(|err| err.to_string())?;
+    let rust_metadata_manifest_dir = manifest.project_root().join("target").join("incan_lock");
+    let mut generator = ProjectGenerator::new(&rust_metadata_manifest_dir, project_name.as_str(), true);
+    generator.set_dependencies(resolved.dependencies);
+    generator.set_dev_dependencies(resolved.dev_dependencies);
+    generator.set_include_dev_dependencies(true);
+    generator.set_stdlib_features(project_requirements.stdlib_features);
+    generator.set_rust_edition(manifest.build.as_ref().and_then(|build| build.rust_edition.clone()));
+    generator.generate("fn main() {}").map_err(|err| err.to_string())?;
+    Ok(rust_metadata_manifest_dir)
+}
+
+#[cfg(all(test, feature = "rust-metadata"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lsp_rust_metadata_workspace_includes_resolved_inline_and_stdlib_requirements()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let manifest_path = tmp.path().join("incan.toml");
+        std::fs::write(&manifest_path, "[project]\nname = \"demo\"\n")?;
+        let manifest = ProjectManifest::from_str("[project]\nname = \"demo\"\n", &manifest_path)?;
+
+        let source = r#"
+import std.serde.json
+from rust::serde import Serialize
+
+def use_it(x: Serialize) -> None:
+  pass
+"#;
+        let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+        let ast = parser::parse_with_context(&tokens, Some("src/main.incn"), Some(&std::collections::HashMap::new()))
+            .map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+        let module = ParsedModule {
+            name: "main".to_string(),
+            path_segments: vec!["main".to_string()],
+            file_path: tmp.path().join("src").join("main.incn"),
+            source: source.to_string(),
+            ast,
+        };
+
+        let out_dir = ensure_rust_metadata_workspace(&manifest, &[module], &LibraryManifestIndex::default())
+            .map_err(std::io::Error::other)?;
+        let cargo_toml = std::fs::read_to_string(out_dir.join("Cargo.toml"))?;
+
+        assert!(
+            cargo_toml.contains("serde"),
+            "expected inline rust import dependency in generated Cargo.toml, got:\n{cargo_toml}"
+        );
+        assert!(
+            cargo_toml.contains("incan_stdlib") && cargo_toml.contains("json"),
+            "expected stdlib feature propagation in generated Cargo.toml, got:\n{cargo_toml}"
+        );
+        Ok(())
     }
 }
 

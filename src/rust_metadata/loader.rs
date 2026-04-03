@@ -24,12 +24,20 @@ impl RustWorkspace {
     ///
     /// `progress` is forwarded to rust-analyzer while discovering workspace members.
     pub fn load(manifest_dir: &Path, progress: &(dyn Fn(String) + Sync)) -> Result<Self, RustMetadataError> {
+        Self::load_with_options(manifest_dir, progress, false)
+    }
+
+    /// Load the Cargo project rooted at `manifest_dir` with optional build-script OUT_DIR support.
+    pub fn load_with_options(
+        manifest_dir: &Path,
+        progress: &(dyn Fn(String) + Sync),
+        load_out_dirs_from_check: bool,
+    ) -> Result<Self, RustMetadataError> {
         let manifest_dir = manifest_dir.canonicalize()?;
         let cargo_config = CargoConfig::default();
         let load_config = LoadCargoConfig {
-            load_out_dirs_from_check: false,
-            // Proc macros are optional for many crates; `None` keeps CI fast. Callers that need expanded derives can
-            // switch to `Sysroot` later.
+            load_out_dirs_from_check,
+            // Proc macros are optional for many crates; `None` keeps CI fast.
             with_proc_macro_server: ProcMacroServerChoice::None,
             prefill_caches: false,
             num_worker_threads: 1,

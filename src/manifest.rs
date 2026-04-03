@@ -193,12 +193,12 @@ impl ProjectManifest {
 
     /// The set of crate names declared in `[rust-dependencies]` (normal deps only).
     pub fn declared_rust_crate_names(&self) -> HashSet<String> {
-        self.rust_dependencies.keys().cloned().collect()
+        crate_name_alias_set(self.rust_dependencies.keys())
     }
 
     /// The set of crate names declared in `[rust-dev-dependencies]` only.
     pub fn declared_rust_dev_crate_names(&self) -> HashSet<String> {
-        self.rust_dev_dependencies.keys().cloned().collect()
+        crate_name_alias_set(self.rust_dev_dependencies.keys())
     }
 
     /// Incan library dependencies from the manifest.
@@ -235,6 +235,22 @@ impl ProjectManifest {
     pub fn vocab(&self) -> Option<&VocabSection> {
         self.vocab.as_ref()
     }
+}
+
+/// Build a lookup set for **Rust crate names** as written in `incan.toml` and common spellings used in source.
+///
+/// Cargo package names often use **hyphens** (`serde-json`), while `use` paths and `rust::` imports typically use
+/// **underscores** (`serde_json`). For each manifest key we insert the key as-is plus both single-character-style
+/// substitutions so [`ProjectManifest::declared_rust_crate_names`] and dev-deps peers accept either form when
+/// validating the first segment of a `rust::…` path.
+fn crate_name_alias_set<'a>(names: impl Iterator<Item = &'a String>) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for name in names {
+        out.insert(name.clone());
+        out.insert(name.replace('-', "_"));
+        out.insert(name.replace('_', "-"));
+    }
+    out
 }
 
 // ============================================================================

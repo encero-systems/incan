@@ -394,6 +394,12 @@ impl TypeChecker {
     /// RFC 041: intentionally best-effort — only common std-ish spellings and simple `Option`/`Result` wrappers are
     /// recognized. Nested generics, lifetimes, and crate paths otherwise become [`ResolvedType::RustPath`] (or
     /// [`ResolvedType::Unknown`] when empty); lowering relies on rustc for fidelity.
+    ///
+    /// ## `Result<T, E>` parsing
+    ///
+    /// `Result<…>` is split on the **first** top-level comma only. Nested generics that contain commas (for example
+    /// `Result<Vec<(i32, i32)>, String>`) are therefore parsed incorrectly and may degrade to [`ResolvedType::Unknown`]
+    /// for one or both type arguments. Prefer precise typing from Incan surfaces over relying on this heuristic.
     pub(crate) fn resolved_type_from_rust_display(&self, rust_ty: &str) -> ResolvedType {
         let trimmed = rust_ty.trim();
         let no_lifetimes = trimmed
@@ -401,21 +407,38 @@ impl TypeChecker {
             .replace("'_", "")
             .replace("&mut ", "&")
             .replace(' ', "");
-        match no_lifetimes.as_str() {
+        let normalized = no_lifetimes.trim_start_matches("::").to_string();
+        match normalized.as_str() {
             "bool" => ResolvedType::Bool,
             "f32" | "f64" => ResolvedType::Float,
             "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => {
                 ResolvedType::Int
             }
-            "str" | "&str" | "String" | "std::string::String" => ResolvedType::Str,
-            "Vec<u8>" | "std::vec::Vec<u8>" | "&[u8]" => ResolvedType::Bytes,
+            "str" | "&str" | "String" | "std::string::String" | "alloc::string::String" => ResolvedType::Str,
+            "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>" | "&[u8]" => ResolvedType::Bytes,
             "()" => ResolvedType::Unit,
-            _ if no_lifetimes.starts_with("Option<") && no_lifetimes.ends_with('>') => {
-                let inner = no_lifetimes.trim_start_matches("Option<").trim_end_matches('>');
+            _ if (normalized.starts_with("Option<")
+                || normalized.starts_with("std::option::Option<")
+                || normalized.starts_with("core::option::Option<"))
+                && normalized.ends_with('>') =>
+            {
+                let inner = normalized
+                    .trim_start_matches("Option<")
+                    .trim_start_matches("std::option::Option<")
+                    .trim_start_matches("core::option::Option<")
+                    .trim_end_matches('>');
                 ResolvedType::Generic("Option".to_string(), vec![self.resolved_type_from_rust_display(inner)])
             }
-            _ if no_lifetimes.starts_with("Result<") && no_lifetimes.ends_with('>') => {
-                let inner = no_lifetimes.trim_start_matches("Result<").trim_end_matches('>');
+            _ if (normalized.starts_with("Result<")
+                || normalized.starts_with("std::result::Result<")
+                || normalized.starts_with("core::result::Result<"))
+                && normalized.ends_with('>') =>
+            {
+                let inner = normalized
+                    .trim_start_matches("Result<")
+                    .trim_start_matches("std::result::Result<")
+                    .trim_start_matches("core::result::Result<")
+                    .trim_end_matches('>');
                 let mut parts = inner.splitn(2, ',');
                 let ok_ty = parts
                     .next()
@@ -428,11 +451,11 @@ impl TypeChecker {
                     .unwrap_or(ResolvedType::Unknown);
                 ResolvedType::Generic("Result".to_string(), vec![ok_ty, err_ty])
             }
-            _ if !no_lifetimes.is_empty() => {
-                if self.lookup_type_info(no_lifetimes.as_str()).is_some() {
-                    ResolvedType::Named(no_lifetimes)
+            _ if !normalized.is_empty() => {
+                if self.lookup_type_info(normalized.as_str()).is_some() {
+                    ResolvedType::Named(normalized)
                 } else {
-                    ResolvedType::RustPath(no_lifetimes)
+                    ResolvedType::RustPath(normalized)
                 }
             }
             _ => ResolvedType::Unknown,

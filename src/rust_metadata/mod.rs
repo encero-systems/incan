@@ -39,6 +39,28 @@ hashbrown = "0.15"
         Ok(())
     }
 
+    fn write_substrait_probe_crate(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "ra_substrait_probe"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+prost = "0.14"
+prost-types = "0.14"
+substrait = { version = "0.63", features = ["protoc"] }
+"#,
+        )?;
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub fn touch() { let _ = substrait::proto::PlanRel::default(); }\n",
+        )?;
+        Ok(())
+    }
+
     fn method_names(meta: &incan_core::interop::RustItemMetadata) -> Vec<String> {
         match &meta.kind {
             incan_core::interop::RustItemKind::Type(info) => info.methods.iter().map(|m| m.name.clone()).collect(),
@@ -50,10 +72,10 @@ hashbrown = "0.15"
     fn hashmap_has_expected_public_methods() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         write_probe_crate(tmp.path())?;
-        let ws = RustWorkspace::load(tmp.path(), &|_| ())?;
+        let cache = RustMetadataCache::new();
         // Sysroot `std` is not always registered under the display name `std` in minimal workspaces;
         // `hashbrown::HashMap` is a normal dependency with the same public map surface we care about.
-        let meta = extract_rust_item(ws.db(), "hashbrown::HashMap")?;
+        let meta = cache.get_or_extract(tmp.path(), "hashbrown::HashMap", &|_| ())?;
         let names = method_names(&meta);
         for required in ["insert", "get", "len", "contains_key"] {
             assert!(
@@ -69,8 +91,8 @@ hashbrown = "0.15"
     fn regex_type_exposes_core_methods() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         write_probe_crate(tmp.path())?;
-        let ws = RustWorkspace::load(tmp.path(), &|_| ())?;
-        let meta = extract_rust_item(ws.db(), "regex::Regex")?;
+        let cache = RustMetadataCache::new();
+        let meta = cache.get_or_extract(tmp.path(), "regex::Regex", &|_| ())?;
         let names = method_names(&meta);
         for required in ["new", "is_match", "find"] {
             assert!(

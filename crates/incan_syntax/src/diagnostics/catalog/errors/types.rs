@@ -920,6 +920,21 @@ pub fn duplicate_pattern_field(type_name: &str, field: &str, span: Span) -> Comp
     .with_hint("Remove the duplicate field from the pattern")
 }
 
+/// Constructor pattern in a `match` could not be tied to a known variant or payload typing (for example a typo in an
+/// Incan enum variant name).
+pub fn unknown_match_constructor_pattern(pattern: &str, subject_ty_display: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Constructor pattern '{}' does not resolve for this match (scrutinee type: {})",
+            pattern, subject_ty_display
+        ),
+        span,
+    )
+    .with_hint(
+        "Check the variant name and payload. For Rust-backed enums, prefer a `rusttype` wrapper or a catch-all arm (`_`).",
+    )
+}
+
 // -- Indexing & collections --------------------------------------------------
 
 pub fn not_indexable(type_name: &str, span: Span) -> CompileError {

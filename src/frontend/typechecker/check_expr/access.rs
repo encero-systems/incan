@@ -526,8 +526,13 @@ impl TypeChecker {
                     if let Some(sig) = self.rust_associated_function_signature(path, field) {
                         return self.resolved_function_type_from_rust_sig(&sig, false);
                     }
-                    // Metadata only covers inherent methods; field may be a constant, type alias, or trait-provided
-                    // item not yet extracted. Stay permissive.
+                    if let RustItemKind::Type(info) = &meta.kind
+                        && let Some(rust_field) = info.fields.iter().find(|f| f.name == field)
+                    {
+                        return self.resolved_type_from_rust_display(rust_field.type_display.as_str());
+                    }
+                    // Metadata may still be missing constants, type aliases, trait-provided items, or private fields.
+                    // Stay permissive when no exact field surface is available.
                     return ResolvedType::Unknown;
                 }
                 RustItemKind::Unsupported { description } => {
@@ -582,6 +587,20 @@ impl TypeChecker {
                             }
                             TypeInfo::Enum(enum_info) if enum_info.variants.contains(&field.to_string()) => {
                                 return ResolvedType::Named(type_name.clone());
+                            }
+                            TypeInfo::Newtype(nt) if nt.is_rusttype => {
+                                if let ResolvedType::RustPath(path) = &nt.underlying {
+                                    if let Some(sig) = checker.rust_associated_function_signature(path, field) {
+                                        return checker.resolved_function_type_from_rust_sig(&sig, false);
+                                    }
+                                    if let Some(meta) = checker.rust_item_metadata_for_path(path)
+                                        && let RustItemKind::Type(info) = &meta.kind
+                                        && let Some(rust_field) = info.fields.iter().find(|f| f.name == field)
+                                    {
+                                        return checker
+                                            .resolved_type_from_rust_display(rust_field.type_display.as_str());
+                                    }
+                                }
                             }
                             TypeInfo::Newtype(nt) if field == conventions::NEWTYPE_TUPLE_FIELD => {
                                 return nt.underlying.clone();

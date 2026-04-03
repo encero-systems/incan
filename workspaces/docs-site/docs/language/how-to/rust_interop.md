@@ -381,6 +381,32 @@ Incan types map to canonical Rust types:
     If you're new to Rust types like `Vec`, `HashMap`, `String`, `Option`, and `Result`, see
     [Understanding Rust types (coming from Python)](rust_types_for_python_devs.md).
 
+### Matching on Rust-backed enums and oneofs
+
+When you wrap an imported Rust enum (or a prost-style `oneof`) in a `rusttype`, `match` uses the same qualified constructor patterns as for Incan enums (`Type.Variant(...)` in source; the compiler normalizes this to `Type::Variant` internally). Names you bind in those patterns are in scope in the arm body, so you can nest `Option` / `Result` matches the same way you would for native types.
+
+```incan
+type PlanRel = rusttype rust::my_crate::proto::PlanRel:
+    def noop(self) -> None:
+        ...
+
+def inspect(x: Option[PlanRel]) -> None:
+    match x:
+        Some(inner) =>
+            match inner:
+                PlanRel.Root(root) =>
+                    # `root` is a normal binding here (payload typed as a composed Rust path)
+                    println("matched Root")
+                _ =>
+                    pass
+        None =>
+            pass
+```
+
+For a single tuple-field variant, the typechecker models the payload as a `RustPath` of the form `{backing_rust_path}::{Variant}` (aligned with how member paths are composed for imported ADTs). Multiple positional sub-patterns are accepted but typed permissively until richer Rust metadata is available.
+
+If the scrutinee is typed as a bare imported Rust path (not a `rusttype` alias), the type prefix in the pattern is not cross-checked against that path; prefer spelling the `rusttype` wrapper and matching on `PlanRel.Variant(...)` so the prefix matches your Incan type name.
+
 ## Limitations
 
 1. **Lifetime annotations**: Rust's borrow checker and lifetime annotations are not exposed in Incan.
@@ -392,6 +418,8 @@ Incan types map to canonical Rust types:
     If you need unsafe operations, create a safe wrapper in Rust first.
 
 4. **Macros**: Rust macros are not directly callable. Use the expanded form or a wrapper function.
+
+5. **`match` exhaustiveness on `rusttype` enums**: Compiler exhaustiveness for `match` is driven by Incan `enum` definitions plus `Option` / `Result`. A `rusttype` wrapping a Rust enum does not supply the same variant list, so you will not get “non-exhaustive match” diagnostics for missing Rust variants. Use a catch-all arm (`_`) when you must accept variants you do not list explicitly.
 
 ## Best Practices
 
