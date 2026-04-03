@@ -69,7 +69,7 @@ use crate::frontend::symbols::*;
 #[cfg(feature = "rust-metadata")]
 use crate::rust_metadata::RustMetadataCache;
 use helpers::{collection_type_id, stringlike_type_id};
-use incan_core::interop::{CoercionPolicy, RustFunctionSig, RustItemKind, RustItemMetadata, RustParam};
+use incan_core::interop::{CoercionPolicy, RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeShape};
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::SurfaceTypeKind;
 use incan_core::lang::types::collections::CollectionTypeId;
@@ -365,6 +365,83 @@ impl TypeChecker {
             .collect();
         let ret = self.resolved_type_from_rust_display(sig.return_type.as_str());
         ResolvedType::Function(params, Box::new(ret))
+    }
+
+    /// Render `path` with generic arguments as `path<A, B, ...>` for embedding in [`ResolvedType::RustPath`].
+    ///
+    /// When `args` is empty, returns `path` unchanged (no angle brackets).
+    fn render_rust_shape_path(path: &str, args: &[RustTypeShape]) -> String {
+        if args.is_empty() {
+            return path.to_string();
+        }
+        let rendered_args: Vec<String> = args.iter().map(Self::render_rust_shape_type).collect();
+        format!("{path}<{}>", rendered_args.join(", "))
+    }
+
+    /// Pretty-print a [`RustTypeShape`] as a stable Rust-like type string.
+    ///
+    /// Feeds [`ResolvedType::RustPath`] strings. Scalar widths are normalized (`f64`, `i64`, `String`, `Vec<u8>`) to
+    /// match [`Self::resolved_type_from_rust_shape`], not to recover the exact original Rust spelling from metadata.
+    fn render_rust_shape_type(shape: &RustTypeShape) -> String {
+        match shape {
+            RustTypeShape::Bool => "bool".to_string(),
+            RustTypeShape::Float => "f64".to_string(),
+            RustTypeShape::Int => "i64".to_string(),
+            RustTypeShape::Str => "String".to_string(),
+            RustTypeShape::Bytes => "Vec<u8>".to_string(),
+            RustTypeShape::Unit => "()".to_string(),
+            RustTypeShape::Option(inner) => format!("Option<{}>", Self::render_rust_shape_type(inner)),
+            RustTypeShape::Result(ok, err) => {
+                format!(
+                    "Result<{}, {}>",
+                    Self::render_rust_shape_type(ok),
+                    Self::render_rust_shape_type(err)
+                )
+            }
+            RustTypeShape::Tuple(items) => {
+                let rendered: Vec<String> = items.iter().map(Self::render_rust_shape_type).collect();
+                format!("({})", rendered.join(", "))
+            }
+            RustTypeShape::Ref(inner) => format!("&{}", Self::render_rust_shape_type(inner)),
+            RustTypeShape::RustPath { path, args } => Self::render_rust_shape_path(path, args),
+            RustTypeShape::TypeParam(name) => name.clone(),
+            RustTypeShape::Unknown => "?".to_string(),
+        }
+    }
+
+    /// Map structured rust-metadata [`RustTypeShape`] into a [`ResolvedType`] for field access and pattern typing.
+    ///
+    /// `Option`/`Result` become [`ResolvedType::Generic`] with constructor names `Option` and `Result`. Concrete paths
+    /// use [`Self::render_rust_shape_path`] so generic arguments stay attached to [`ResolvedType::RustPath`].
+    pub(crate) fn resolved_type_from_rust_shape(&self, shape: &RustTypeShape) -> ResolvedType {
+        match shape {
+            RustTypeShape::Bool => ResolvedType::Bool,
+            RustTypeShape::Float => ResolvedType::Float,
+            RustTypeShape::Int => ResolvedType::Int,
+            RustTypeShape::Str => ResolvedType::Str,
+            RustTypeShape::Bytes => ResolvedType::Bytes,
+            RustTypeShape::Unit => ResolvedType::Unit,
+            RustTypeShape::Option(inner) => {
+                ResolvedType::Generic("Option".to_string(), vec![self.resolved_type_from_rust_shape(inner)])
+            }
+            RustTypeShape::Result(ok, err) => ResolvedType::Generic(
+                "Result".to_string(),
+                vec![
+                    self.resolved_type_from_rust_shape(ok),
+                    self.resolved_type_from_rust_shape(err),
+                ],
+            ),
+            RustTypeShape::Tuple(items) => ResolvedType::Tuple(
+                items
+                    .iter()
+                    .map(|item| self.resolved_type_from_rust_shape(item))
+                    .collect(),
+            ),
+            RustTypeShape::Ref(inner) => ResolvedType::Ref(Box::new(self.resolved_type_from_rust_shape(inner))),
+            RustTypeShape::RustPath { path, args } => ResolvedType::RustPath(Self::render_rust_shape_path(path, args)),
+            RustTypeShape::TypeParam(name) => ResolvedType::TypeVar(name.clone()),
+            RustTypeShape::Unknown => ResolvedType::Unknown,
+        }
     }
 
     /// Resolve a Rust-origin method signature from cached metadata.

@@ -11,5 +11,6 @@ pub use capabilities::{RUST_CAPABILITY_BOUNDS, is_rust_capability_bound};
 pub use coercions::{CoercionPolicy, admitted_builtin_coercion};
 pub use metadata::{
     RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustModuleChild,
-    RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustVisibility,
+    RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustTypeShape,
+    RustVariantInfo, RustVisibility,
 };

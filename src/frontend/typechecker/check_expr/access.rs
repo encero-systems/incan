@@ -529,7 +529,7 @@ impl TypeChecker {
                     if let RustItemKind::Type(info) = &meta.kind
                         && let Some(rust_field) = info.fields.iter().find(|f| f.name == field)
                     {
-                        return self.resolved_type_from_rust_display(rust_field.type_display.as_str());
+                        return self.resolved_type_from_rust_shape(&rust_field.type_shape);
                     }
                     // Metadata may still be missing constants, type aliases, trait-provided items, or private fields.
                     // Stay permissive when no exact field surface is available.
@@ -597,8 +597,7 @@ impl TypeChecker {
                                         && let RustItemKind::Type(info) = &meta.kind
                                         && let Some(rust_field) = info.fields.iter().find(|f| f.name == field)
                                     {
-                                        return checker
-                                            .resolved_type_from_rust_display(rust_field.type_display.as_str());
+                                        return checker.resolved_type_from_rust_shape(&rust_field.type_shape);
                                     }
                                 }
                             }

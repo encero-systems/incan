@@ -80,6 +80,84 @@ fn dependency_manifest_dir_for_crate(root: &Path, crate_name: &str) -> Option<Pa
         .and_then(|pkg| pkg.manifest_path.parent().map(Path::to_path_buf))
 }
 
+fn canonical_path_aliases(canonical_path: &str) -> Vec<String> {
+    let mut aliases = Vec::new();
+
+    for (prefix, replacement) in [
+        ("std::option::", "core::option::"),
+        ("std::result::", "core::result::"),
+        ("std::string::", "alloc::string::"),
+        ("std::vec::", "alloc::vec::"),
+        ("std::boxed::", "alloc::boxed::"),
+    ] {
+        if let Some(rest) = canonical_path.strip_prefix(prefix) {
+            aliases.push(format!("{replacement}{rest}"));
+        }
+    }
+
+    if canonical_path == "std::collections::HashMap" {
+        aliases.push("hashbrown::HashMap".to_string());
+    } else if let Some(rest) = canonical_path.strip_prefix("std::collections::HashMap::") {
+        aliases.push(format!("hashbrown::HashMap::{rest}"));
+    }
+
+    aliases
+}
+
+fn canonical_path_candidates(canonical_path: &str) -> Vec<String> {
+    let aliases = canonical_path_aliases(canonical_path);
+    if canonical_path.starts_with("std::") && !aliases.is_empty() {
+        aliases
+            .into_iter()
+            .chain(std::iter::once(canonical_path.to_string()))
+            .collect()
+    } else {
+        std::iter::once(canonical_path.to_string()).chain(aliases).collect()
+    }
+}
+
+fn crate_name_for_path(canonical_path: &str) -> &str {
+    canonical_path.split("::").next().unwrap_or(canonical_path)
+}
+
+fn extract_in_workspace_set(
+    inner: &mut CacheInner,
+    root: &Path,
+    canonical_path: &str,
+    progress: &(dyn Fn(String) + Sync),
+) -> Result<RustItemMetadata, RustMetadataError> {
+    let workspace = match inner.workspaces.entry((root.to_path_buf(), false)) {
+        Entry::Occupied(o) => o.into_mut(),
+        Entry::Vacant(v) => v.insert(RustWorkspace::load(root, progress)?),
+    };
+    match extract_rust_item(workspace.db(), canonical_path) {
+        Ok(meta) => return Ok(meta),
+        Err(RustMetadataError::CrateNotFound(_)) | Err(RustMetadataError::PathNotResolved(_)) => {}
+        Err(err) => return Err(err),
+    }
+
+    let root_outdir_workspace = match inner.workspaces.entry((root.to_path_buf(), true)) {
+        Entry::Occupied(o) => o.into_mut(),
+        Entry::Vacant(v) => v.insert(RustWorkspace::load_with_options(root, progress, true)?),
+    };
+    match extract_rust_item(root_outdir_workspace.db(), canonical_path) {
+        Ok(meta) => return Ok(meta),
+        Err(RustMetadataError::CrateNotFound(_)) | Err(RustMetadataError::PathNotResolved(_)) => {}
+        Err(err) => return Err(err),
+    }
+
+    let crate_name = crate_name_for_path(canonical_path);
+    if let Some(dep_root) = dependency_manifest_dir_for_crate(root, crate_name) {
+        let dep_workspace = match inner.workspaces.entry((dep_root.clone(), true)) {
+            Entry::Occupied(o) => o.into_mut(),
+            Entry::Vacant(v) => v.insert(RustWorkspace::load_with_options(&dep_root, progress, true)?),
+        };
+        return extract_rust_item(dep_workspace.db(), canonical_path);
+    }
+
+    Err(RustMetadataError::CrateNotFound(crate_name.to_string()))
+}
+
 impl RustMetadataCache {
     /// Create an empty cache.
     pub fn new() -> Self {
@@ -107,33 +185,22 @@ impl RustMetadataCache {
             return Ok(Arc::clone(hit));
         }
 
-        let workspace = match inner.workspaces.entry((root.clone(), false)) {
-            Entry::Occupied(o) => o.into_mut(),
-            Entry::Vacant(v) => v.insert(RustWorkspace::load(&root, progress)?),
-        };
-
-        let meta = match extract_rust_item(workspace.db(), canonical_path) {
-            Ok(meta) => meta,
-            Err(RustMetadataError::CrateNotFound(crate_name)) => {
-                let root_outdir_workspace = match inner.workspaces.entry((root.clone(), true)) {
-                    Entry::Occupied(o) => o.into_mut(),
-                    Entry::Vacant(v) => v.insert(RustWorkspace::load_with_options(&root, progress, true)?),
-                };
-                if let Ok(meta) = extract_rust_item(root_outdir_workspace.db(), canonical_path) {
-                    meta
-                } else {
-                    let Some(dep_root) = dependency_manifest_dir_for_crate(&root, crate_name.as_str()) else {
-                        return Err(RustMetadataError::CrateNotFound(crate_name));
-                    };
-                    let dep_workspace = match inner.workspaces.entry((dep_root.clone(), true)) {
-                        Entry::Occupied(o) => o.into_mut(),
-                        Entry::Vacant(v) => v.insert(RustWorkspace::load_with_options(&dep_root, progress, true)?),
-                    };
-                    extract_rust_item(dep_workspace.db(), canonical_path)?
+        let mut last_err = None;
+        let mut meta = None;
+        for candidate in canonical_path_candidates(canonical_path) {
+            match extract_in_workspace_set(&mut inner, &root, candidate.as_str(), progress) {
+                Ok(found) => {
+                    meta = Some(found);
+                    break;
                 }
+                Err(err) => last_err = Some(err),
             }
-            Err(err) => return Err(err),
-        };
+        }
+        let mut meta = meta.ok_or_else(|| {
+            last_err
+                .unwrap_or_else(|| RustMetadataError::CrateNotFound(crate_name_for_path(canonical_path).to_string()))
+        })?;
+        meta.canonical_path = canonical_path.to_owned();
         let arc = Arc::new(meta);
         inner.items.insert(key_item, Arc::clone(&arc));
         Ok(arc)

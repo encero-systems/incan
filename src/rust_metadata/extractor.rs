@@ -4,11 +4,12 @@ use std::collections::BTreeMap;
 
 use incan_core::interop::{
     RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustModuleChild,
-    RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustVisibility,
+    RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustTypeShape,
+    RustVariantInfo, RustVisibility,
 };
 use ra_ap_hir::{
-    Adt, AssocItem, Crate, DisplayTarget, Function, HasVisibility, HirDisplay, ItemInNs, Module, ModuleDef, Name,
-    ScopeDef, Trait, Type, VariantDef, Visibility, attach_db,
+    Adt, AssocItem, Crate, DisplayTarget, Enum, FieldSource, Function, HasSource, HasVisibility, HirDisplay, ItemInNs,
+    Module, ModuleDef, Name, ScopeDef, Trait, Type, Variant, VariantDef, Visibility, attach_db,
 };
 use ra_ap_ide_db::RootDatabase;
 
@@ -27,6 +28,336 @@ fn is_exported_rust_api(vis: Visibility) -> bool {
 
 fn format_ty(ty: &Type<'_>, db: &RootDatabase, dt: DisplayTarget) -> String {
     format!("{}", ty.display(db, dt))
+}
+
+fn normalize_display_path(display: &str) -> String {
+    display.trim().trim_start_matches("::").to_string()
+}
+
+fn split_display_base(display: &str) -> &str {
+    display.split('<').next().unwrap_or(display)
+}
+
+fn display_looks_like_type_param(display: &str) -> bool {
+    !display.is_empty()
+        && !display.contains("::")
+        && !display.contains(['<', '>', '(', ')', '[', ']', '&', ' '])
+        && display.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn module_path_segments(module: Module, db: &RootDatabase) -> Vec<String> {
+    module
+        .path_to_root(db)
+        .into_iter()
+        .rev()
+        .filter_map(|module| module.name(db).map(|name| name.as_str().to_owned()))
+        .collect()
+}
+
+fn field_module(field: &ra_ap_hir::Field, db: &RootDatabase) -> Module {
+    match field.parent_def(db) {
+        VariantDef::Struct(strukt) => strukt.module(db),
+        VariantDef::Union(union) => union.module(db),
+        VariantDef::Variant(variant) => variant.module(db),
+    }
+}
+
+fn resolve_relative_source_path(text: &str, crate_name: &str, module: Module, db: &RootDatabase) -> Option<String> {
+    let mut text = text.trim().trim_start_matches("::");
+    if text.is_empty() {
+        return None;
+    }
+
+    let mut module_segments = module_path_segments(module, db);
+    if let Some(rest) = text.strip_prefix("crate::") {
+        text = rest;
+        module_segments.clear();
+    } else if let Some(rest) = text.strip_prefix("self::") {
+        text = rest;
+    } else {
+        while let Some(rest) = text.strip_prefix("super::") {
+            text = rest;
+            module_segments.pop();
+        }
+    }
+
+    let mut canonical = vec![crate_name.to_string()];
+    canonical.extend(module_segments);
+    canonical.extend(
+        text.split("::")
+            .filter(|segment| !segment.is_empty())
+            .map(ToOwned::to_owned),
+    );
+    Some(canonical.join("::"))
+}
+
+fn canonical_module_def_path(def: ModuleDef, db: &RootDatabase) -> Option<String> {
+    let local_path = match def {
+        ModuleDef::BuiltinType(builtin) => builtin.name().as_str().to_owned(),
+        _ => def.canonical_path(db, def.module(db)?.krate(db).edition(db))?,
+    };
+    let crate_name = def
+        .module(db)
+        .and_then(|module| module.krate(db).display_name(db))
+        .map(|name| name.canonical_name().as_str().to_owned());
+
+    match crate_name {
+        Some(crate_name) if !local_path.starts_with(crate_name.as_str()) => Some(format!("{crate_name}::{local_path}")),
+        Some(_) | None => Some(local_path),
+    }
+}
+
+fn resolve_source_path(text: &str, crate_name: &str, module: Module, db: &RootDatabase) -> Option<String> {
+    let text = text.trim().replace(' ', "");
+    if text.is_empty() {
+        return None;
+    }
+
+    if text.starts_with("::")
+        || text.starts_with("crate::")
+        || text.starts_with("self::")
+        || text.starts_with("super::")
+    {
+        return resolve_relative_source_path(text.as_str(), crate_name, module, db);
+    }
+
+    let segments: Vec<Name> = text
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .map(Name::new_root)
+        .collect();
+    if !segments.is_empty()
+        && let Some(mut resolved) = module.resolve_mod_path(db, segments)
+        && let Some(item) = resolved.next()
+        && let Some(path) = canonical_module_def_path(item.into_module_def(), db)
+    {
+        return Some(path);
+    }
+
+    if text.contains("::") {
+        return Some(text);
+    }
+
+    None
+}
+
+fn split_top_level_args(text: &str) -> Vec<&str> {
+    let mut args = Vec::new();
+    let mut start = 0usize;
+    let mut angle = 0usize;
+    let mut paren = 0usize;
+    let mut bracket = 0usize;
+    for (idx, ch) in text.char_indices() {
+        match ch {
+            '<' => angle += 1,
+            '>' => angle = angle.saturating_sub(1),
+            '(' => paren += 1,
+            ')' => paren = paren.saturating_sub(1),
+            '[' => bracket += 1,
+            ']' => bracket = bracket.saturating_sub(1),
+            ',' if angle == 0 && paren == 0 && bracket == 0 => {
+                args.push(text[start..idx].trim());
+                start = idx + 1;
+            }
+            _ => {}
+        }
+    }
+    let tail = text[start..].trim();
+    if !tail.is_empty() {
+        args.push(tail);
+    }
+    args
+}
+
+fn source_type_shape(text: &str, crate_name: &str, module: Module, db: &RootDatabase) -> RustTypeShape {
+    let text = text.trim().replace(' ', "");
+    if text.is_empty() {
+        return RustTypeShape::Unknown;
+    }
+    match text.as_str() {
+        "bool" => return RustTypeShape::Bool,
+        "f32" | "f64" => return RustTypeShape::Float,
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => {
+            return RustTypeShape::Int;
+        }
+        "str" | "String" | "std::string::String" | "alloc::string::String" => return RustTypeShape::Str,
+        "()" => return RustTypeShape::Unit,
+        _ => {}
+    }
+
+    if let Some(inner) = text.strip_prefix('&') {
+        let inner = inner.strip_prefix("mut").unwrap_or(inner).trim();
+        return RustTypeShape::Ref(Box::new(source_type_shape(inner, crate_name, module, db)));
+    }
+
+    if text == "[u8]" || text == "&[u8]" {
+        return RustTypeShape::Bytes;
+    }
+
+    if text.starts_with('(') && text.ends_with(')') {
+        let inner = &text[1..text.len() - 1];
+        if inner.is_empty() {
+            return RustTypeShape::Unit;
+        }
+        return RustTypeShape::Tuple(
+            split_top_level_args(inner)
+                .into_iter()
+                .map(|arg| source_type_shape(arg, crate_name, module, db))
+                .collect(),
+        );
+    }
+
+    if let Some(start) = text.find('<')
+        && text.ends_with('>')
+    {
+        let base =
+            resolve_source_path(&text[..start], crate_name, module, db).unwrap_or_else(|| text[..start].to_string());
+        let inner = &text[start + 1..text.len() - 1];
+        let args: Vec<RustTypeShape> = split_top_level_args(inner)
+            .into_iter()
+            .map(|arg| source_type_shape(arg, crate_name, module, db))
+            .collect();
+        match base.as_str() {
+            "Option" | "std::option::Option" | "core::option::Option" => {
+                return RustTypeShape::Option(Box::new(args.into_iter().next().unwrap_or(RustTypeShape::Unknown)));
+            }
+            "Result" | "std::result::Result" | "core::result::Result" => {
+                let mut it = args.into_iter();
+                return RustTypeShape::Result(
+                    Box::new(it.next().unwrap_or(RustTypeShape::Unknown)),
+                    Box::new(it.next().unwrap_or(RustTypeShape::Unknown)),
+                );
+            }
+            "Vec" | "std::vec::Vec" | "alloc::vec::Vec"
+                if matches!(args.first(), Some(RustTypeShape::Int)) && text.ends_with("<u8>") =>
+            {
+                return RustTypeShape::Bytes;
+            }
+            _ => {}
+        }
+        return RustTypeShape::RustPath { path: base, args };
+    }
+
+    if let Some(path) = resolve_source_path(text.as_str(), crate_name, module, db) {
+        return RustTypeShape::RustPath { path, args: Vec::new() };
+    }
+
+    if display_looks_like_type_param(text.as_str()) {
+        return RustTypeShape::TypeParam(text);
+    }
+
+    RustTypeShape::Unknown
+}
+
+fn source_field_type_shape(field: &ra_ap_hir::Field, db: &RootDatabase, crate_name: &str) -> Option<RustTypeShape> {
+    let source = field.source(db)?;
+    let text = match source.value {
+        FieldSource::Named(field) => field.ty()?.to_string(),
+        FieldSource::Pos(field) => field.ty()?.to_string(),
+    };
+    let module = field_module(field, db);
+    Some(source_type_shape(text.as_str(), crate_name, module, db))
+}
+
+fn normalize_variant_payload_shape(shape: RustTypeShape) -> RustTypeShape {
+    match shape {
+        RustTypeShape::RustPath { path, args }
+            if matches!(path.as_str(), "Box" | "std::boxed::Box" | "alloc::boxed::Box") =>
+        {
+            args.into_iter().next().unwrap_or(RustTypeShape::Unknown)
+        }
+        other => other,
+    }
+}
+
+fn rust_type_shape(ty: &Type<'_>, db: &RootDatabase, dt: DisplayTarget) -> RustTypeShape {
+    if ty.is_bool() {
+        return RustTypeShape::Bool;
+    }
+    if ty.is_float() {
+        return RustTypeShape::Float;
+    }
+    if ty.is_int_or_uint() {
+        return RustTypeShape::Int;
+    }
+    if ty.is_str() {
+        return RustTypeShape::Str;
+    }
+    if ty.is_unit() {
+        return RustTypeShape::Unit;
+    }
+    if let Some((inner, _)) = ty.as_reference() {
+        if let Some(slice_inner) = inner.as_slice() {
+            let slice_display = normalize_display_path(format_ty(&slice_inner, db, dt).as_str());
+            if slice_display == "u8" {
+                return RustTypeShape::Bytes;
+            }
+        }
+        return RustTypeShape::Ref(Box::new(rust_type_shape(&inner, db, dt)));
+    }
+    if let Some(slice_inner) = ty.as_slice() {
+        let slice_display = normalize_display_path(format_ty(&slice_inner, db, dt).as_str());
+        if slice_display == "u8" {
+            return RustTypeShape::Bytes;
+        }
+    }
+    if ty.is_tuple() {
+        return RustTypeShape::Tuple(ty.tuple_fields(db).iter().map(|t| rust_type_shape(t, db, dt)).collect());
+    }
+
+    let display = normalize_display_path(format_ty(ty, db, dt).as_str());
+    if matches!(
+        display.as_str(),
+        "String" | "std::string::String" | "alloc::string::String"
+    ) {
+        return RustTypeShape::Str;
+    }
+
+    if let Some((_adt, args)) = ty.as_adt_with_args() {
+        let base = split_display_base(display.as_str()).to_string();
+        let arg_shapes: Vec<RustTypeShape> = args
+            .into_iter()
+            .map(|arg| {
+                arg.map(|ty| rust_type_shape(&ty, db, dt))
+                    .unwrap_or(RustTypeShape::Unknown)
+            })
+            .collect();
+        match base.as_str() {
+            "Option" | "std::option::Option" | "core::option::Option" => {
+                return RustTypeShape::Option(Box::new(
+                    arg_shapes.into_iter().next().unwrap_or(RustTypeShape::Unknown),
+                ));
+            }
+            "Result" | "std::result::Result" | "core::result::Result" => {
+                let mut it = arg_shapes.into_iter();
+                return RustTypeShape::Result(
+                    Box::new(it.next().unwrap_or(RustTypeShape::Unknown)),
+                    Box::new(it.next().unwrap_or(RustTypeShape::Unknown)),
+                );
+            }
+            "Vec" | "std::vec::Vec" | "alloc::vec::Vec" if display.ends_with("<u8>") => {
+                return RustTypeShape::Bytes;
+            }
+            _ => {}
+        }
+        return RustTypeShape::RustPath {
+            path: base,
+            args: arg_shapes,
+        };
+    }
+
+    if display_looks_like_type_param(display.as_str()) {
+        return RustTypeShape::TypeParam(display);
+    }
+
+    if !display.is_empty() && display.contains("::") {
+        return RustTypeShape::RustPath {
+            path: display,
+            args: Vec::new(),
+        };
+    }
+
+    RustTypeShape::Unknown
 }
 
 fn extract_function_sig(f: Function, db: &RootDatabase, dt: DisplayTarget) -> RustFunctionSig {
@@ -64,34 +395,92 @@ fn collect_inherent_methods(ty: Type<'_>, db: &RootDatabase, dt: DisplayTarget) 
     by_name.into_values().collect()
 }
 
-fn collect_public_fields_from_variant_def(
-    variant_def: VariantDef,
-    db: &RootDatabase,
-    dt: DisplayTarget,
-) -> Vec<RustFieldInfo> {
+fn collect_public_fields(ty: Type<'_>, db: &RootDatabase, dt: DisplayTarget, crate_name: &str) -> Vec<RustFieldInfo> {
+    if let Some(adt) = ty.as_adt() {
+        let type_args: Vec<Type<'_>> = ty.type_arguments().collect();
+        let fields = match adt {
+            Adt::Struct(strukt) => strukt.fields(db),
+            Adt::Union(union) => union.fields(db),
+            Adt::Enum(_) => Vec::new(),
+        };
+        let mut collected = Vec::new();
+        for field in fields {
+            if !is_exported_rust_api(field.visibility(db)) {
+                continue;
+            }
+            let field_ty = field.ty_with_args(db, type_args.iter().cloned());
+            let mut type_shape = rust_type_shape(&field_ty, db, dt);
+            if matches!(type_shape, RustTypeShape::Unknown) || field_ty.contains_unknown() {
+                type_shape = source_field_type_shape(&field, db, crate_name).unwrap_or(type_shape);
+            }
+            collected.push(RustFieldInfo {
+                name: field.name(db).as_str().to_owned(),
+                type_display: format_ty(&field_ty, db, dt),
+                type_shape,
+            });
+        }
+        collected.sort_by(|a, b| a.name.cmp(&b.name));
+        return collected;
+    }
+
     let mut fields = Vec::new();
-    for field in variant_def.fields(db) {
+    for (field, field_ty) in ty.fields(db) {
         if !is_exported_rust_api(field.visibility(db)) {
             continue;
         }
+        let mut type_shape = rust_type_shape(&field_ty, db, dt);
+        if matches!(type_shape, RustTypeShape::Unknown) || field_ty.contains_unknown() {
+            type_shape = source_field_type_shape(&field, db, crate_name).unwrap_or(type_shape);
+        }
         fields.push(RustFieldInfo {
             name: field.name(db).as_str().to_owned(),
-            type_display: format_ty(&field.ty(db).to_type(db), db, dt),
+            type_display: format_ty(&field_ty, db, dt),
+            type_shape,
         });
     }
     fields.sort_by(|a, b| a.name.cmp(&b.name));
     fields
 }
 
-fn collect_public_fields(ty: Type<'_>, db: &RootDatabase, dt: DisplayTarget) -> Vec<RustFieldInfo> {
-    let Some((adt, _args)) = ty.as_adt_with_args() else {
-        return Vec::new();
-    };
-    match adt {
-        Adt::Struct(s) => collect_public_fields_from_variant_def(VariantDef::Struct(s), db, dt),
-        Adt::Union(u) => collect_public_fields_from_variant_def(VariantDef::Union(u), db, dt),
-        Adt::Enum(_) => Vec::new(),
+fn collect_enum_variant_payloads(
+    enum_: Enum,
+    ty: Type<'_>,
+    db: &RootDatabase,
+    dt: DisplayTarget,
+    crate_name: &str,
+) -> Vec<RustVariantInfo> {
+    let type_args: Vec<Type<'_>> = ty.type_arguments().collect();
+    let mut variants = Vec::new();
+    for variant in enum_.variants(db) {
+        variants.push(RustVariantInfo {
+            name: variant.name(db).as_str().to_owned(),
+            fields: collect_variant_payload_shapes(variant, &type_args, db, dt, crate_name),
+        });
     }
+    variants.sort_by(|a, b| a.name.cmp(&b.name));
+    variants
+}
+
+fn collect_variant_payload_shapes(
+    variant: Variant,
+    type_args: &[Type<'_>],
+    db: &RootDatabase,
+    dt: DisplayTarget,
+    crate_name: &str,
+) -> Vec<RustTypeShape> {
+    variant
+        .fields(db)
+        .iter()
+        .filter(|field| is_exported_rust_api(field.visibility(db)))
+        .map(|field| {
+            let field_ty = field.ty_with_args(db, type_args.iter().cloned());
+            let mut shape = rust_type_shape(&field_ty, db, dt);
+            if matches!(shape, RustTypeShape::Unknown) || field_ty.contains_unknown() {
+                shape = source_field_type_shape(field, db, crate_name).unwrap_or(shape);
+            }
+            normalize_variant_payload_shape(shape)
+        })
+        .collect()
 }
 
 fn module_children(module: Module, db: &RootDatabase) -> RustModuleInfo {
@@ -251,14 +640,19 @@ fn extract_rust_item_inner(db: &RootDatabase, canonical_path: &str) -> Result<Ru
             let ty = adt.ty(db);
             RustItemKind::Type(RustTypeInfo {
                 methods: collect_inherent_methods(ty.clone(), db, dt),
-                fields: collect_public_fields(ty, db, dt),
+                fields: collect_public_fields(ty.clone(), db, dt, crate_name),
+                variants: match adt {
+                    Adt::Enum(enum_) => collect_enum_variant_payloads(enum_, ty, db, dt, crate_name),
+                    _ => Vec::new(),
+                },
             })
         }
         ModuleDef::BuiltinType(b) => {
             let ty = b.ty(db);
             RustItemKind::Type(RustTypeInfo {
                 methods: collect_inherent_methods(ty.clone(), db, dt),
-                fields: collect_public_fields(ty, db, dt),
+                fields: collect_public_fields(ty, db, dt, crate_name),
+                variants: Vec::new(),
             })
         }
         ModuleDef::Const(c) => RustItemKind::Constant {
@@ -272,7 +666,8 @@ fn extract_rust_item_inner(db: &RootDatabase, canonical_path: &str) -> Result<Ru
             let ty = a.ty(db);
             RustItemKind::Type(RustTypeInfo {
                 methods: collect_inherent_methods(ty.clone(), db, dt),
-                fields: collect_public_fields(ty, db, dt),
+                fields: collect_public_fields(ty, db, dt, crate_name),
+                variants: Vec::new(),
             })
         }
         ModuleDef::Variant(_) => RustItemKind::Unsupported {

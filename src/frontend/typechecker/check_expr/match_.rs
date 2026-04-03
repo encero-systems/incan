@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::*;
+use incan_core::interop::RustItemKind;
 use incan_core::lang::surface::constructors;
 use incan_core::lang::surface::constructors::ConstructorId;
 use incan_core::lang::types::collections::{self, CollectionTypeId};
@@ -380,6 +381,18 @@ impl TypeChecker {
             ResolvedType::RustPath(p) => p.clone(),
             _ => return None,
         };
+
+        if let Some(meta) = self.rust_item_metadata_for_path(base_rust_path.as_str())
+            && let RustItemKind::Type(info) = meta.kind
+            && let Some(variant) = info.variants.iter().find(|variant| variant.name == variant_segment)
+        {
+            let fields: Vec<ResolvedType> = variant
+                .fields
+                .iter()
+                .map(|field| self.resolved_type_from_rust_shape(field))
+                .collect();
+            return Some(RustEnumPatternResolution::payloads(fields));
+        }
 
         Some(RustEnumPatternResolution::payloads(match positional_count {
             0 => vec![],

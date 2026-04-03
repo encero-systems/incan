@@ -66,18 +66,69 @@ pub struct RustMethodSig {
     pub signature: RustFunctionSig,
 }
 
+/// Structured Rust type information used by Incan interop consumers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RustTypeShape {
+    /// Any Rust `bool`.
+    Bool,
+    /// Any floating-point scalar. Width is intentionally erased at this layer.
+    Float,
+    /// Any signed or unsigned integer scalar. Width is intentionally erased at this layer.
+    Int,
+    /// UTF-8 string data such as `str` or `String`.
+    Str,
+    /// Byte buffers such as `Vec<u8>` or `&[u8]`.
+    Bytes,
+    /// The unit type `()`.
+    Unit,
+    /// An `Option<T>`-like wrapper.
+    Option(Box<RustTypeShape>),
+    /// A `Result<T, E>`-like wrapper.
+    Result(Box<RustTypeShape>, Box<RustTypeShape>),
+    /// A tuple shape with one entry per element.
+    Tuple(Vec<RustTypeShape>),
+    /// A shared or mutable reference.
+    Ref(Box<RustTypeShape>),
+    /// A concrete Rust path plus any generic arguments preserved by the extractor.
+    RustPath { path: String, args: Vec<RustTypeShape> },
+    /// A generic type parameter such as `T`.
+    TypeParam(String),
+    /// Metadata recovery could not determine a stable semantic shape.
+    Unknown,
+}
+
 /// A public field surfaced on a Rust struct/union-like type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RustFieldInfo {
+    /// Field name as it appears in Rust.
     pub name: String,
+    /// Pretty-printed type for diagnostics and debug output.
     pub type_display: String,
+    /// Semantic type shape used by the typechecker for field access and pattern payload binding.
+    pub type_shape: RustTypeShape,
 }
 
-/// Method and associated-fn surface for a Rust ADT or builtin type.
+/// One enum variant and its payload field types.
+///
+/// Payload shapes are normalized for matching. For example, prost-style `Box<T>` payloads are recorded as `T` because
+/// that is what Incan binds in constructor patterns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RustVariantInfo {
+    /// Variant name as it appears in Rust.
+    pub name: String,
+    /// Positional payload field shapes in declaration order.
+    pub fields: Vec<RustTypeShape>,
+}
+
+/// Method, field, and variant surface for a Rust ADT or builtin type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RustTypeInfo {
+    /// Public inherent methods and associated functions.
     pub methods: Vec<RustMethodSig>,
+    /// Public fields for struct/union-like types.
     pub fields: Vec<RustFieldInfo>,
+    /// Enum variants when the type is an enum; empty for non-enums.
+    pub variants: Vec<RustVariantInfo>,
 }
 
 /// One exported name inside a module (lightweight summary for namespace resolution).

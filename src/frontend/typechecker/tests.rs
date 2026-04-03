@@ -11,11 +11,15 @@ use crate::library_manifest::{
     ParamExport, TraitExport, TypeParamExport, TypeRef,
 };
 #[cfg(feature = "rust-metadata")]
+use crate::rust_metadata::write_substrait_probe_crate;
+#[cfg(feature = "rust-metadata")]
 use incan_core::interop::{
     RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTypeInfo,
-    RustVisibility,
+    RustTypeShape, RustVariantInfo, RustVisibility,
 };
 use std::collections::HashMap;
+#[cfg(feature = "rust-metadata")]
+use std::fs;
 use std::path::PathBuf;
 
 fn check_str(source: &str) -> Result<(), Vec<CompileError>> {
@@ -38,6 +42,51 @@ fn synthetic_artifact_root(name: &str) -> PathBuf {
     root.push("target");
     root.push("lib");
     root
+}
+
+#[cfg(feature = "rust-metadata")]
+fn write_rust_metadata_probe_crate(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    fs::create_dir_all(root.join("src"))?;
+    fs::create_dir_all(root.join("demo").join("src"))?;
+    fs::write(
+        root.join("Cargo.toml"),
+        r#"[package]
+name = "ra_frontend_probe"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+demo = { path = "demo" }
+"#,
+    )?;
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub fn touch() { let _ = demo::Builder::new(); }\n",
+    )?;
+    fs::write(
+        root.join("demo").join("Cargo.toml"),
+        r#"[package]
+name = "demo"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        root.join("demo").join("src/lib.rs"),
+        r#"pub struct Builder;
+
+impl Builder {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+pub enum Choice {
+    Some(i32),
+}
+"#,
+    )?;
+    Ok(())
 }
 
 fn assert_check_ok(source: &str) {
@@ -702,15 +751,18 @@ def f() -> None:
 #[test]
 fn test_rust_metadata_resolves_type_associated_function_field_access() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
-from rust::std::collections import HashMap
+from rust::demo import Builder
 
 def f() -> None:
-  make = HashMap.new
+  make = Builder.new
   _ = make
 "#;
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
     let mut checker = TypeChecker::new();
+    let tmp = tempfile::tempdir()?;
+    write_rust_metadata_probe_crate(tmp.path())?;
+    checker.set_rust_metadata_manifest_dir(tmp.path().to_path_buf());
     checker.check_program(&ast).map_err(|errs| {
         std::io::Error::other(format!(
             "expected associated function field access to typecheck: {errs:?}"
@@ -729,33 +781,46 @@ def f() -> None:
 
 #[cfg(feature = "rust-metadata")]
 #[test]
-fn test_rust_metadata_validates_associated_function_arguments() {
+fn test_rust_metadata_validates_associated_function_arguments() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
-from rust::std::string import String
+from rust::demo import Builder
 
 def f() -> None:
-  _ = String.new("x")
+  _ = Builder.new("x")
 "#;
-    let Err(errs) = check_str(source) else {
-        panic!("expected arity error for String.new with an argument");
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let tmp = tempfile::tempdir()?;
+    write_rust_metadata_probe_crate(tmp.path())?;
+    let mut checker = TypeChecker::new();
+    checker.set_rust_metadata_manifest_dir(tmp.path().to_path_buf());
+    let Err(errs) = checker.check_program(&ast) else {
+        panic!("expected arity error for Builder.new with an argument");
     };
     assert!(
         errs.iter()
-            .any(|e| e.message.contains("String.new() expects 0 argument") && e.message.contains("got 1")),
+            .any(|e| e.message.contains("Builder.new() expects 0 argument") && e.message.contains("got 1")),
         "expected associated-function arity diagnostic, got {errs:?}"
     );
+    Ok(())
 }
 
 #[cfg(feature = "rust-metadata")]
 #[test]
-fn test_rust_metadata_reports_unsupported_rust_item_shape() {
+fn test_rust_metadata_reports_unsupported_rust_item_shape() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
-from rust::std::option::Option import Some
+from rust::demo::Choice import Some
 
 def f() -> None:
   _ = Some
 "#;
-    let Err(errs) = check_str(source) else {
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let tmp = tempfile::tempdir()?;
+    write_rust_metadata_probe_crate(tmp.path())?;
+    let mut checker = TypeChecker::new();
+    checker.set_rust_metadata_manifest_dir(tmp.path().to_path_buf());
+    let Err(errs) = checker.check_program(&ast) else {
         panic!("expected unsupported Rust item shape diagnostic");
     };
     assert!(
@@ -763,6 +828,7 @@ def f() -> None:
             .any(|e| e.message.contains("unsupported shape") && e.message.contains("enum variant")),
         "expected unsupported-shape diagnostic, got {errs:?}"
     );
+    Ok(())
 }
 
 /// Field access on a Rust type that isn't a known inherent associated function should be permissive
@@ -929,6 +995,7 @@ def render[T](value: Label[T]) -> str:
                         },
                     }],
                     fields: vec![],
+                    variants: vec![],
                 }),
             },
         )
@@ -989,7 +1056,12 @@ def f(x: Envelope) -> None:
                     fields: vec![RustFieldInfo {
                         name: "kind".to_string(),
                         type_display: "Option<demo::Kind>".to_string(),
+                        type_shape: RustTypeShape::Option(Box::new(RustTypeShape::RustPath {
+                            path: "demo::Kind".to_string(),
+                            args: vec![],
+                        })),
                     }],
+                    variants: vec![],
                 }),
             },
         )
@@ -1004,6 +1076,7 @@ def f(x: Envelope) -> None:
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],
                     fields: vec![],
+                    variants: vec![],
                 }),
             },
         )
@@ -1050,7 +1123,12 @@ def f(x: Envelope) -> None:
                     fields: vec![RustFieldInfo {
                         name: "kind".to_string(),
                         type_display: "Option<demo::Kind>".to_string(),
+                        type_shape: RustTypeShape::Option(Box::new(RustTypeShape::RustPath {
+                            path: "demo::Kind".to_string(),
+                            args: vec![],
+                        })),
                     }],
+                    variants: vec![],
                 }),
             },
         )
@@ -1065,6 +1143,7 @@ def f(x: Envelope) -> None:
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],
                     fields: vec![],
+                    variants: vec![],
                 }),
             },
         )
@@ -1072,6 +1151,158 @@ def f(x: Envelope) -> None:
     checker.check_program(&ast).map_err(|errs| {
         std::io::Error::other(format!(
             "expected rust path field access + nested match binding to typecheck: {errs:?}"
+        ))
+    })?;
+    Ok(())
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_imported_prost_oneof_field_match_uses_concrete_variant_payload_types() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = r#"
+from rust::demo import Rel
+from rust::demo::rel import RelType
+from rust::demo::read_rel import ReadType
+
+def inspect(rel: Rel) -> None:
+  match rel.rel_type:
+    Some(RelType.Read(read)) =>
+      match read.read_type:
+        Some(ReadType.NamedTable(_)) =>
+          _ = 0
+        _ =>
+          _ = 1
+    _ =>
+      _ = 2
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let manifest_dir = std::env::current_dir()?;
+    checker.set_rust_metadata_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_metadata_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Rel".to_string(),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![],
+                    fields: vec![RustFieldInfo {
+                        name: "rel_type".to_string(),
+                        type_display: "Option<demo::rel::RelType>".to_string(),
+                        type_shape: RustTypeShape::Option(Box::new(RustTypeShape::RustPath {
+                            path: "demo::rel::RelType".to_string(),
+                            args: vec![],
+                        })),
+                    }],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust metadata rel: {e}")))?;
+    checker
+        .rust_metadata_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::rel::RelType".to_string(),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![],
+                    fields: vec![],
+                    variants: vec![RustVariantInfo {
+                        name: "Read".to_string(),
+                        fields: vec![RustTypeShape::RustPath {
+                            path: "demo::ReadRel".to_string(),
+                            args: vec![],
+                        }],
+                    }],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust metadata rel type: {e}")))?;
+    checker
+        .rust_metadata_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::ReadRel".to_string(),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![],
+                    fields: vec![RustFieldInfo {
+                        name: "read_type".to_string(),
+                        type_display: "Option<demo::read_rel::ReadType>".to_string(),
+                        type_shape: RustTypeShape::Option(Box::new(RustTypeShape::RustPath {
+                            path: "demo::read_rel::ReadType".to_string(),
+                            args: vec![],
+                        })),
+                    }],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust metadata read rel: {e}")))?;
+    checker
+        .rust_metadata_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::read_rel::ReadType".to_string(),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![],
+                    fields: vec![],
+                    variants: vec![RustVariantInfo {
+                        name: "NamedTable".to_string(),
+                        fields: vec![RustTypeShape::RustPath {
+                            path: "demo::NamedTable".to_string(),
+                            args: vec![],
+                        }],
+                    }],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust metadata read type: {e}")))?;
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!(
+            "expected imported prost oneof field match to typecheck: {errs:?}"
+        ))
+    })?;
+    Ok(())
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_real_rust_metadata_allows_imported_prost_oneof_field_match() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    write_substrait_probe_crate(tmp.path())?;
+    let source = r#"
+from rust::substrait::proto import Rel
+from rust::substrait::proto::rel import RelType
+from rust::substrait::proto::read_rel import ReadType
+
+def inspect(rel: Rel) -> None:
+  match rel.rel_type:
+    Some(RelType.Read(read)) =>
+      match read.read_type:
+        Some(ReadType.NamedTable(_)) =>
+          _ = 0
+        _ =>
+          _ = 1
+    _ =>
+      _ = 2
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker.set_rust_metadata_manifest_dir(tmp.path().to_path_buf());
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!(
+            "expected extracted prost oneof field metadata to typecheck end-to-end: {errs:?}"
         ))
     })?;
     Ok(())

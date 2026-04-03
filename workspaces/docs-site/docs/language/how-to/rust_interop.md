@@ -383,7 +383,7 @@ Incan types map to canonical Rust types:
 
 ### Matching on Rust-backed enums and oneofs
 
-When you wrap an imported Rust enum (or a prost-style `oneof`) in a `rusttype`, `match` uses the same qualified constructor patterns as for Incan enums (`Type.Variant(...)` in source; the compiler normalizes this to `Type::Variant` internally). Names you bind in those patterns are in scope in the arm body, so you can nest `Option` / `Result` matches the same way you would for native types.
+When you wrap an imported Rust enum (or a prost-style `oneof`) in a `rusttype`, `match` uses the same qualified constructor patterns as for Incan enums (`Type.Variant(...)` in source; the compiler normalizes this to `Type::Variant` internally). Names you bind in those patterns are in scope in the arm body, so you can nest `Option` / `Result` matches the same way you would for native types. The same payload typing now applies when you match through imported Rust/prost fields in normal CLI builds and editor/tooling analysis, so helpers like `match rel.rel_type: Some(RelType.Read(read)) => ...` resolve `read` to the concrete payload type instead of degrading to a placeholder `T`.
 
 ```incan
 type PlanRel = rusttype rust::my_crate::proto::PlanRel:
