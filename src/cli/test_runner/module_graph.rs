@@ -6,6 +6,7 @@ use crate::cli::commands::common::resolve_stdlib_module_source_path;
 use crate::cli::prelude::ParsedModule;
 use crate::frontend::ast::{Declaration, ImportKind, Program};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::module::resolve_source_module_from_base;
 use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{diagnostics, lexer, parser};
 use incan_core::lang::stdlib;
@@ -118,24 +119,13 @@ pub(super) fn collect_source_modules_for_test(
             continue;
         }
 
-        // Resolve against the source root.
-        let mut file_path = source_root.to_path_buf();
-        for seg in &module_segments {
-            file_path = file_path.join(seg);
-        }
-        file_path.set_extension("incn");
+        let Some((file_path, logical_segments)) = resolve_source_module_from_base(source_root, &module_segments) else {
+            continue;
+        };
 
-        if !file_path.exists() {
-            // Try .incan extension as fallback.
-            file_path.set_extension("incan");
-            if !file_path.exists() {
-                continue; // Not a source module — might be a built-in or typo.
-            }
-        }
-
-        let module_name = module_segments.join("_");
+        let module_name = logical_segments.join("_");
         if !processed.contains(&file_path) {
-            to_process.push((file_path, module_name, module_segments));
+            to_process.push((file_path, module_name, logical_segments));
         }
     }
 
@@ -237,21 +227,13 @@ pub(super) fn collect_source_modules_for_test(
                 continue;
             }
 
-            let mut dep_file = source_root.to_path_buf();
-            for seg in &dep_segments {
-                dep_file = dep_file.join(seg);
-            }
-            dep_file.set_extension("incn");
-            if !dep_file.exists() {
-                dep_file.set_extension("incan");
-                if !dep_file.exists() {
-                    continue;
-                }
-            }
+            let Some((dep_file, logical_segments)) = resolve_source_module_from_base(source_root, &dep_segments) else {
+                continue;
+            };
 
-            let dep_name = dep_segments.join("_");
+            let dep_name = logical_segments.join("_");
             if !processed.contains(&dep_file) {
-                to_process.push((dep_file, dep_name, dep_segments));
+                to_process.push((dep_file, dep_name, logical_segments));
             }
         }
 
@@ -265,4 +247,53 @@ pub(super) fn collect_source_modules_for_test(
     }
 
     Ok(modules)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_source_modules_for_test;
+    use crate::frontend::{lexer, parser};
+    use std::path::Path;
+
+    #[test]
+    fn test_runner_collects_nested_package_modules() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let src_dir = project_root.join("src");
+        let tests_dir = project_root.join("tests");
+        std::fs::create_dir_all(src_dir.join("dataset"))?;
+        std::fs::create_dir_all(&tests_dir)?;
+
+        std::fs::write(
+            src_dir.join("dataset").join("mod.incn"),
+            "pub trait DataSet[T]:\n    pass\n",
+        )?;
+        std::fs::write(
+            src_dir.join("dataset").join("ops.incn"),
+            "from dataset.mod import DataSet\npub def filter_ds[T](ds: DataSet[T]) -> DataSet[T]:\n    return ds\n",
+        )?;
+        let test_source = "from dataset.mod import DataSet\nfrom dataset.ops import filter_ds\n";
+        let tokens = lexer::lex(test_source).map_err(|errs| errs[0].message.clone())?;
+        let ast = parser::parse_with_context(&tokens, Some("tests/test_dataset.incn"), None)
+            .map_err(|errs| errs[0].message.clone())?;
+
+        let modules = collect_source_modules_for_test(&ast, &src_dir, None, None)?;
+
+        let dataset_mod = modules
+            .iter()
+            .find(|module| module.file_path.ends_with(Path::new("dataset").join("mod.incn")))
+            .ok_or("expected dataset/mod.incn to be collected")?;
+        assert_eq!(dataset_mod.path_segments, vec!["dataset".to_string()]);
+
+        let dataset_ops = modules
+            .iter()
+            .find(|module| module.file_path.ends_with(Path::new("dataset").join("ops.incn")))
+            .ok_or("expected dataset/ops.incn to be collected")?;
+        assert_eq!(
+            dataset_ops.path_segments,
+            vec!["dataset".to_string(), "ops".to_string()]
+        );
+
+        Ok(())
+    }
 }

@@ -1227,6 +1227,68 @@ def test_addition() -> None:
     }
 
     #[test]
+    fn e2e_nested_package_modules_in_tests_succeed() {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "nested_test"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        let tests_dir = dir.join("tests");
+
+        if let Err(err) = std::fs::create_dir_all(src_dir.join("dataset")) {
+            panic!("failed to create nested src dirs: {}", err);
+        }
+        if let Err(err) = std::fs::create_dir_all(&tests_dir) {
+            panic!("failed to create tests dir: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            src_dir.join("dataset").join("mod.incn"),
+            "pub const DATASET_VERSION: int = 1\n",
+        ) {
+            panic!("failed to write dataset mod source: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            src_dir.join("dataset").join("ops.incn"),
+            "from dataset import DATASET_VERSION\npub def filter_ds(value: int) -> int:\n    return value + DATASET_VERSION\n",
+        ) {
+            panic!("failed to write dataset ops source: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            tests_dir.join("test_dataset.incn"),
+            r#"
+from std.testing import assert_eq
+from dataset import DATASET_VERSION
+from dataset.ops import filter_ds
+
+def test_nested_dataset_modules() -> None:
+    assert_eq(DATASET_VERSION, 1)
+    assert_eq(filter_ds(41), 42)
+"#,
+        ) {
+            panic!("failed to write nested dataset test: {}", err);
+        }
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected nested package module test to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            !stderr.contains("file for module `dataset` found at both"),
+            "expected no stale flat-vs-nested module collision.\nstderr:\n{}",
+            stderr,
+        );
+    }
+
+    #[test]
     fn e2e_assert_statement_with_module_import_succeeds() {
         let dir = write_test_project(
             "test_assert_stmt.incn",

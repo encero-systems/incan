@@ -24,7 +24,7 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 | Writing RFCs             | [`workspaces/docs-site/docs/contributing/how-to/writing_rfcs.md`]                    |
 | Contributor guide        | [`CONTRIBUTING.md`]                                                                  |
 | GitHub issue templates   | [`.github/ISSUE_TEMPLATE/`]                                                          |
-| Implementation learnings | [`.agents/learnings.md`]                                                              |
+| Implementation learnings | [`.agents/learnings.md`]                                                             |
 
 [`workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md`]: workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md
 [`workspaces/docs-site/docs/contributing/explanation/architecture.md`]: workspaces/docs-site/docs/contributing/explanation/architecture.md

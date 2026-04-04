@@ -14,7 +14,7 @@ use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::{DependencyError, InlineRustImport};
 use crate::frontend::ast::{ImportKind, Span};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
-use crate::frontend::module::logical_module_segments_from_file;
+use crate::frontend::module::resolve_source_module_from_base;
 use crate::frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
@@ -489,54 +489,18 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
                     let try_source_root = (!path.is_absolute && path.parent_levels == 0 && source_root != target_dir)
                         .then_some(source_root.as_path());
 
-                    let mut found_resolution: Option<(PathBuf, PathBuf)> = None;
+                    let mut found_resolution: Option<(PathBuf, Vec<String>)> = None;
                     for base in std::iter::once(target_dir.as_path()).chain(try_source_root) {
-                        let mut dep_path = base.to_path_buf();
-                        for segment in &module_segments {
-                            dep_path.push(segment);
-                        }
-
-                        dep_path.set_extension("incn");
-                        if dep_path.exists() {
-                            found_resolution = Some((dep_path, base.to_path_buf()));
-                            break;
-                        }
-
-                        dep_path.set_extension("incan");
-                        if dep_path.exists() {
-                            found_resolution = Some((dep_path, base.to_path_buf()));
-                            break;
-                        }
-
-                        let mod_incn = dep_path.with_extension("").join("mod.incn");
-                        if mod_incn.exists() {
-                            found_resolution = Some((mod_incn, base.to_path_buf()));
-                            break;
-                        }
-
-                        let mod_incan = dep_path.with_extension("").join("mod.incan");
-                        if mod_incan.exists() {
-                            found_resolution = Some((mod_incan, base.to_path_buf()));
-                            break;
-                        }
-
-                        let init_incn = dep_path.with_extension("").join("__init__.incn");
-                        if init_incn.exists() {
-                            found_resolution = Some((init_incn, base.to_path_buf()));
-                            break;
-                        }
-
-                        let init_incan = dep_path.with_extension("").join("__init__.incan");
-                        if init_incan.exists() {
-                            found_resolution = Some((init_incan, base.to_path_buf()));
+                        if let Some((resolved_path, logical_segments)) =
+                            resolve_source_module_from_base(base, &module_segments)
+                        {
+                            found_resolution = Some((resolved_path, logical_segments));
                             break;
                         }
                     }
 
-                    if let Some((path, resolved_base)) = found_resolution {
+                    if let Some((path, logical_segments)) = found_resolution {
                         let dep_path_str = path.to_string_lossy().to_string();
-                        let logical_segments = logical_module_segments_from_file(&resolved_base, &path)
-                            .unwrap_or_else(|| module_segments.clone());
                         let module_name = logical_segments.join("_");
                         if !processed.contains(&dep_path_str) {
                             to_process.push((dep_path_str, module_name, logical_segments));

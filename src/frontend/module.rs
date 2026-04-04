@@ -215,7 +215,13 @@ pub(crate) fn canonicalize_source_module_segments(segments: &[String]) -> Vec<St
 /// - `src/foo/mod.incn` => `["foo"]`
 /// - `src/foo/bar/mod.incn` => `["foo", "bar"]`
 pub(crate) fn logical_module_segments_from_file(base: &Path, module_file: &Path) -> Option<Vec<String>> {
-    let relative = module_file.strip_prefix(base).ok()?;
+    let relative = if let Ok(relative) = module_file.strip_prefix(base) {
+        relative.to_path_buf()
+    } else {
+        let canonical_base = base.canonicalize().ok()?;
+        let canonical_file = module_file.canonicalize().ok()?;
+        canonical_file.strip_prefix(&canonical_base).ok()?.to_path_buf()
+    };
     let mut segments = Vec::new();
 
     for component in relative.components() {
@@ -226,6 +232,19 @@ pub(crate) fn logical_module_segments_from_file(base: &Path, module_file: &Path)
     }
 
     Some(canonicalize_source_module_segments(&segments))
+}
+
+/// Resolve a source-backed module path under `base` and return both its on-disk path and logical
+/// module segments.
+///
+/// This is the shared source-module identity helper for compiler orchestration paths that need to go from an import
+/// path like `dataset.ops` to both:
+/// - the concrete source file to load
+/// - the canonical logical module ID used by downstream stages
+pub(crate) fn resolve_source_module_from_base(base: &Path, path: &[String]) -> Option<(PathBuf, Vec<String>)> {
+    let resolved = resolve_module_path_from_base(base, path)?;
+    let logical_segments = logical_module_segments_from_file(base, &resolved).unwrap_or_else(|| path.to_vec());
+    Some((resolved, logical_segments))
 }
 
 /// Resolves an Incan module file under `base` from import path segments (e.g. `foo.bar` → `foo/bar`).
