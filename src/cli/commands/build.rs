@@ -14,6 +14,7 @@ use crate::frontend::ast::Program;
 use crate::frontend::ast::{Declaration, Decorator, ImportKind, Span, Spanned};
 use crate::frontend::library_exports::{CheckedExportKind, CheckedNamedExport, collect_checked_public_exports};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::{diagnostics, typechecker};
 use crate::library_manifest::LibraryManifest;
 use crate::lockfile::CargoFeatureSelection;
@@ -237,7 +238,7 @@ fn validate_library_entrypoint(manifest: &ProjectManifest) -> CliResult<PathBuf>
 }
 
 fn module_key(path_segments: &[String]) -> String {
-    path_segments.join("_")
+    canonicalize_source_module_segments(path_segments).join("_")
 }
 
 fn rename_checked_export(export: &CheckedNamedExport, exported_name: &str) -> CheckedNamedExport {
@@ -880,6 +881,7 @@ mod tests {
     use crate::frontend::lexer;
     use crate::frontend::parser;
     use crate::frontend::symbols::ResolvedType;
+    use crate::lockfile::{IncanLock, compute_deps_fingerprint};
     use crate::manifest::ProjectManifest;
     use std::fs;
 
@@ -1035,6 +1037,233 @@ mod tests {
 
         let result = LibraryReexportResolver::new(&module_exports).resolve(&lib_module);
         assert!(result.is_err(), "expected duplicate export to fail");
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_library_reexports_accepts_directory_entrypoint_spelling() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "pub from dataset.mod import DataSet\npub from dataset.ops import filter_ds\n";
+        let tokens = lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+        let ast = parser::parse_with_module_path(&tokens, Some("project/src/lib.incn"))
+            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let lib_module = ParsedModule {
+            name: "main".to_string(),
+            path_segments: vec!["main".to_string()],
+            file_path: PathBuf::from("project/src/lib.incn"),
+            source: source.to_string(),
+            ast,
+        };
+
+        let dataset_export = CheckedNamedExport {
+            name: "DataSet".to_string(),
+            kind: CheckedExportKind::TypeAlias(crate::frontend::library_exports::CheckedTypeAliasExport {
+                name: "DataSet".to_string(),
+                type_params: Vec::new(),
+                target: ResolvedType::Named("DataSet".to_string()),
+            }),
+        };
+        let filter_export = CheckedNamedExport {
+            name: "filter_ds".to_string(),
+            kind: CheckedExportKind::Function(crate::frontend::library_exports::CheckedFunctionExport {
+                name: "filter_ds".to_string(),
+                type_params: Vec::new(),
+                params: Vec::new(),
+                return_type: ResolvedType::Named("DataSet".to_string()),
+                is_async: false,
+            }),
+        };
+        let mut module_exports: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
+        module_exports.insert(
+            "dataset".to_string(),
+            HashMap::from([(dataset_export.name.clone(), dataset_export)]),
+        );
+        module_exports.insert(
+            "dataset_ops".to_string(),
+            HashMap::from([(filter_export.name.clone(), filter_export)]),
+        );
+
+        let resolved = LibraryReexportResolver::new(&module_exports)
+            .resolve(&lib_module)
+            .map_err(|errs| format!("{errs:?}"))?;
+        assert_eq!(resolved.len(), 2);
+        assert!(resolved.iter().any(|export| export.name == "DataSet"));
+        assert!(resolved.iter().any(|export| export.name == "filter_ds"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_library_reexports_accepts_canonical_nested_module_spelling() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "pub from dataset import DataSet\npub from dataset.ops import filter_ds\n";
+        let tokens = lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+        let ast = parser::parse_with_module_path(&tokens, Some("project/src/lib.incn"))
+            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let lib_module = ParsedModule {
+            name: "main".to_string(),
+            path_segments: vec!["main".to_string()],
+            file_path: PathBuf::from("project/src/lib.incn"),
+            source: source.to_string(),
+            ast,
+        };
+
+        let dataset_export = CheckedNamedExport {
+            name: "DataSet".to_string(),
+            kind: CheckedExportKind::TypeAlias(crate::frontend::library_exports::CheckedTypeAliasExport {
+                name: "DataSet".to_string(),
+                type_params: Vec::new(),
+                target: ResolvedType::Named("DataSet".to_string()),
+            }),
+        };
+        let filter_export = CheckedNamedExport {
+            name: "filter_ds".to_string(),
+            kind: CheckedExportKind::Function(crate::frontend::library_exports::CheckedFunctionExport {
+                name: "filter_ds".to_string(),
+                type_params: Vec::new(),
+                params: Vec::new(),
+                return_type: ResolvedType::Named("DataSet".to_string()),
+                is_async: false,
+            }),
+        };
+        let mut module_exports: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
+        module_exports.insert(
+            "dataset".to_string(),
+            HashMap::from([(dataset_export.name.clone(), dataset_export)]),
+        );
+        module_exports.insert(
+            "dataset_ops".to_string(),
+            HashMap::from([(filter_export.name.clone(), filter_export)]),
+        );
+
+        let resolved = LibraryReexportResolver::new(&module_exports)
+            .resolve(&lib_module)
+            .map_err(|errs| format!("{errs:?}"))?;
+        assert_eq!(resolved.len(), 2);
+        assert!(resolved.iter().any(|export| export.name == "DataSet"));
+        assert!(resolved.iter().any(|export| export.name == "filter_ds"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_library_accepts_nested_directory_modules() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let src_dir = project_root.join("src");
+        std::fs::create_dir_all(src_dir.join("dataset"))?;
+
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"nestedlib\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            src_dir.join("lib.incn"),
+            "pub from dataset.mod import DataSet\npub from dataset.ops import filter_ds\n",
+        )?;
+        std::fs::write(
+            src_dir.join("dataset").join("mod.incn"),
+            "pub trait DataSet[T]:\n    pass\n",
+        )?;
+        std::fs::write(
+            src_dir.join("dataset").join("ops.incn"),
+            "from dataset.mod import DataSet\npub def filter_ds[T](ds: DataSet[T]) -> DataSet[T]:\n    return ds\n",
+        )?;
+
+        let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
+        let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
+        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
+        incan_lock.write(&project_root.join("incan.lock"))?;
+
+        let lib_path = src_dir.join("lib.incn");
+        let lib_path_str = lib_path
+            .to_str()
+            .ok_or("lib path should be valid utf-8 for build_library test")?;
+        let exit = build_library(Some(lib_path_str), None, false, false, Vec::new(), false, false)?;
+        assert_eq!(exit, ExitCode::SUCCESS);
+
+        let generated_lib = project_root.join("target").join("lib").join("src").join("lib.rs");
+        let generated_dataset = project_root
+            .join("target")
+            .join("lib")
+            .join("src")
+            .join("dataset")
+            .join("mod.rs");
+        let generated_flat_dataset = project_root.join("target").join("lib").join("src").join("dataset.rs");
+
+        let generated_lib_source = std::fs::read_to_string(&generated_lib)?;
+        let generated_dataset_source = std::fs::read_to_string(&generated_dataset)?;
+
+        assert!(
+            !generated_lib_source.contains("crate::dataset::r#mod"),
+            "generated lib.rs should not reference crate::dataset::r#mod"
+        );
+        assert!(
+            !generated_dataset_source.contains("crate::dataset::r#mod"),
+            "generated dataset/mod.rs should not reference crate::dataset::r#mod"
+        );
+        assert!(
+            !generated_flat_dataset.exists(),
+            "stale flat dataset.rs should not exist after nested library build"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_library_accepts_canonical_nested_module_imports() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let src_dir = project_root.join("src");
+        std::fs::create_dir_all(src_dir.join("dataset"))?;
+
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"nestedlib\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            src_dir.join("lib.incn"),
+            "pub from dataset import DataSet\npub from dataset.ops import filter_ds\n",
+        )?;
+        std::fs::write(
+            src_dir.join("dataset").join("mod.incn"),
+            "pub trait DataSet[T]:\n    pass\n",
+        )?;
+        std::fs::write(
+            src_dir.join("dataset").join("ops.incn"),
+            "from dataset import DataSet\npub def filter_ds[T](ds: DataSet[T]) -> DataSet[T]:\n    return ds\n",
+        )?;
+
+        let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
+        let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
+        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
+        incan_lock.write(&project_root.join("incan.lock"))?;
+
+        let lib_path = src_dir.join("lib.incn");
+        let lib_path_str = lib_path
+            .to_str()
+            .ok_or("lib path should be valid utf-8 for build_library test")?;
+        let exit = build_library(Some(lib_path_str), None, false, false, Vec::new(), false, false)?;
+        assert_eq!(exit, ExitCode::SUCCESS);
+
+        let generated_lib = project_root.join("target").join("lib").join("src").join("lib.rs");
+        let generated_dataset = project_root
+            .join("target")
+            .join("lib")
+            .join("src")
+            .join("dataset")
+            .join("mod.rs");
+
+        let generated_lib_source = std::fs::read_to_string(&generated_lib)?;
+        let generated_dataset_source = std::fs::read_to_string(&generated_dataset)?;
+
+        assert!(
+            !generated_lib_source.contains("crate::dataset::r#mod"),
+            "generated lib.rs should not reference crate::dataset::r#mod"
+        );
+        assert!(
+            !generated_dataset_source.contains("crate::dataset::r#mod"),
+            "generated dataset/mod.rs should not reference crate::dataset::r#mod"
+        );
+
         Ok(())
     }
 }

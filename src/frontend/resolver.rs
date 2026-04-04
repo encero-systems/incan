@@ -261,6 +261,17 @@ impl ModuleResolver {
             return Some(mod_path);
         }
 
+        // Try as directory with mod.incan (legacy/alternate)
+        let mut mod_path_legacy = target_dir.to_path_buf();
+        for segment in segments {
+            mod_path_legacy = mod_path_legacy.join(segment);
+        }
+        mod_path_legacy = mod_path_legacy.join("mod.incan");
+        if mod_path_legacy.exists() {
+            return Some(mod_path_legacy);
+        }
+
+        // TODO: determine if we want to support __init__.incn style imports at all...
         // Try with __init__.incn (Python style)
         let mut init_path = target_dir.to_path_buf();
         for segment in segments {
@@ -269,6 +280,16 @@ impl ModuleResolver {
         init_path = init_path.join("__init__.incn");
         if init_path.exists() {
             return Some(init_path);
+        }
+
+        // Try with __init__.incan (legacy/alternate)
+        let mut init_path_legacy = target_dir.to_path_buf();
+        for segment in segments {
+            init_path_legacy = init_path_legacy.join(segment);
+        }
+        init_path_legacy = init_path_legacy.join("__init__.incan");
+        if init_path_legacy.exists() {
+            return Some(init_path_legacy);
         }
 
         None

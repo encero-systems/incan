@@ -124,10 +124,29 @@ impl ProjectGenerator {
         self.rust_edition = edition;
     }
 
-    /// Generate the project structure (single-file mode).
-    pub fn generate(&self, rust_code: &str) -> io::Result<()> {
+    /// Ensure the generated `src/` directory exists.
+    fn ensure_generated_src_dir(&self) -> io::Result<PathBuf> {
         let src_dir = self.output_dir.join("src");
         fs::create_dir_all(&src_dir)?;
+        Ok(src_dir)
+    }
+
+    /// Remove a conflicting module artifact if it exists.
+    ///
+    /// This deliberately removes only the generated Rust file-or-directory path that conflicts with the layout we are
+    /// about to emit, rather than deleting the entire `src/` tree.
+    fn remove_conflicting_module_artifact(path: &Path) -> io::Result<()> {
+        if path.is_dir() {
+            fs::remove_dir_all(path)?;
+        } else if path.exists() {
+            fs::remove_file(path)?;
+        }
+        Ok(())
+    }
+
+    /// Generate the project structure (single-file mode).
+    pub fn generate(&self, rust_code: &str) -> io::Result<()> {
+        let src_dir = self.ensure_generated_src_dir()?;
 
         // Write Cargo.toml
         let cargo_toml = self.generate_cargo_toml()?;
@@ -151,8 +170,11 @@ impl ProjectGenerator {
     /// * `main_code` - The main.rs code (without mod declarations, they will be prepended)
     /// * `modules` - HashMap of module name to module code (e.g., "models" -> "pub struct User { ... }")
     pub fn generate_multi(&self, main_code: &str, modules: &HashMap<String, String>) -> io::Result<()> {
-        let src_dir = self.output_dir.join("src");
-        fs::create_dir_all(&src_dir)?;
+        let src_dir = self.ensure_generated_src_dir()?;
+
+        for module_name in modules.keys() {
+            Self::remove_conflicting_module_artifact(&src_dir.join(module_name))?;
+        }
 
         // Write Cargo.toml
         let cargo_toml = self.generate_cargo_toml()?;
@@ -217,8 +239,7 @@ impl ProjectGenerator {
     /// * `main_code` - The main.rs code (without mod declarations, they will be prepended)
     /// * `modules` - HashMap of path segments to module code (e.g., ["db", "models"] -> "pub struct User { ... }")
     pub fn generate_nested(&self, main_code: &str, modules: &HashMap<Vec<String>, String>) -> io::Result<()> {
-        let src_dir = self.output_dir.join("src");
-        fs::create_dir_all(&src_dir)?;
+        let src_dir = self.ensure_generated_src_dir()?;
 
         // Write Cargo.toml
         let cargo_toml = self.generate_cargo_toml()?;
@@ -263,6 +284,20 @@ impl ProjectGenerator {
         // Modules that have submodules need their code in mod.rs, not a separate .rs file
         let modules_with_submodules: std::collections::HashSet<Vec<String>> =
             dir_submodules.keys().filter(|path| !path.is_empty()).cloned().collect();
+
+        // Remove only the stale Rust paths that conflict with the layout we are about to generate.
+        for path_segments in transformed_modules.keys() {
+            let mut module_path = src_dir.clone();
+            for segment in path_segments {
+                module_path = module_path.join(segment);
+            }
+
+            if modules_with_submodules.contains(path_segments) {
+                Self::remove_conflicting_module_artifact(&module_path.with_extension("rs"))?;
+            } else {
+                Self::remove_conflicting_module_artifact(&module_path)?;
+            }
+        }
 
         // ---- Create directories and mod.rs files for modules with submodules ----
         for (dir_path, submodules) in &dir_submodules {
@@ -530,6 +565,72 @@ mod tests {
         let main_content = fs::read_to_string(temp_dir.join("src/main.rs"))?;
         // Should just be the main code, no mod declarations
         assert_eq!(main_content, "fn main() {}");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_nested_removes_stale_flat_module_file() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("incan_test_nested_cleanup");
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        let generator = ProjectGenerator::new(&temp_dir, "test_cleanup", false);
+
+        let mut flat_modules = HashMap::new();
+        flat_modules.insert("dataset".to_string(), "pub trait DataSet<T> {}".to_string());
+        generator.generate_multi("pub fn root() {}", &flat_modules)?;
+        assert!(
+            temp_dir.join("src/dataset.rs").exists(),
+            "flat module should exist after flat generation"
+        );
+
+        let mut nested_modules = HashMap::new();
+        nested_modules.insert(vec!["dataset".to_string()], "pub trait DataSet<T> {}".to_string());
+        nested_modules.insert(
+            vec!["dataset".to_string(), "ops".to_string()],
+            "pub fn filter_ds<T>(ds: T) -> T { ds }".to_string(),
+        );
+        generator.generate_nested("pub fn root() {}", &nested_modules)?;
+
+        assert!(
+            !temp_dir.join("src/dataset.rs").exists(),
+            "stale flat module file should be removed before nested generation"
+        );
+        assert!(
+            temp_dir.join("src/dataset/mod.rs").exists(),
+            "nested module entrypoint should exist"
+        );
+        assert!(
+            temp_dir.join("src/dataset/ops.rs").exists(),
+            "nested leaf module should exist"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_nested_preserves_unrelated_src_files() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("incan_test_nested_preserve_unrelated");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(temp_dir.join("src"))?;
+        fs::write(temp_dir.join("src").join("manual.rs"), "pub fn keep_me() {}\n")?;
+
+        let generator = ProjectGenerator::new(&temp_dir, "test_cleanup", false);
+        let mut nested_modules = HashMap::new();
+        nested_modules.insert(vec!["dataset".to_string()], "pub trait DataSet<T> {}".to_string());
+        nested_modules.insert(
+            vec!["dataset".to_string(), "ops".to_string()],
+            "pub fn filter_ds<T>(ds: T) -> T { ds }".to_string(),
+        );
+
+        generator.generate_nested("pub fn root() {}", &nested_modules)?;
+
+        assert!(
+            temp_dir.join("src/manual.rs").exists(),
+            "unrelated source files should not be removed by nested generation"
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())

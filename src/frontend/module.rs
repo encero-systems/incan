@@ -195,10 +195,63 @@ pub fn resolve_import_path(base_dir: &Path, import: &ImportDecl) -> Option<PathB
     None
 }
 
+/// Canonicalize source-module path segments.
+///
+/// `mod` and `__init__` are file-layout entrypoints for directory-backed modules, not semantic module names. Normalize
+/// them away so the logical module identity stays consistent anywhere the compiler converts source-backed module paths
+/// into logical module IDs.
+pub(crate) fn canonicalize_source_module_segments(segments: &[String]) -> Vec<String> {
+    match segments.last().map(String::as_str) {
+        Some("mod" | "__init__") => segments[..segments.len().saturating_sub(1)].to_vec(),
+        _ => segments.to_vec(),
+    }
+}
+
+/// Derive the logical module path segments for an on-disk source module relative to `base`.
+///
+/// Examples:
+/// - `src/foo.incn` => `["foo"]`
+/// - `src/foo/bar.incn` => `["foo", "bar"]`
+/// - `src/foo/mod.incn` => `["foo"]`
+/// - `src/foo/bar/mod.incn` => `["foo", "bar"]`
+pub(crate) fn logical_module_segments_from_file(base: &Path, module_file: &Path) -> Option<Vec<String>> {
+    let relative = if let Ok(relative) = module_file.strip_prefix(base) {
+        relative.to_path_buf()
+    } else {
+        let canonical_base = base.canonicalize().ok()?;
+        let canonical_file = module_file.canonicalize().ok()?;
+        canonical_file.strip_prefix(&canonical_base).ok()?.to_path_buf()
+    };
+    let mut segments = Vec::new();
+
+    for component in relative.components() {
+        let part = component.as_os_str().to_str()?;
+        let path = Path::new(part);
+        let stem = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or(part);
+        segments.push(stem.to_string());
+    }
+
+    Some(canonicalize_source_module_segments(&segments))
+}
+
+/// Resolve a source-backed module path under `base` and return both its on-disk path and logical
+/// module segments.
+///
+/// This is the shared source-module identity helper for compiler orchestration paths that need to go from an import
+/// path like `dataset.ops` to both:
+/// - the concrete source file to load
+/// - the canonical logical module ID used by downstream stages
+pub(crate) fn resolve_source_module_from_base(base: &Path, path: &[String]) -> Option<(PathBuf, Vec<String>)> {
+    let resolved = resolve_module_path_from_base(base, path)?;
+    let logical_segments = logical_module_segments_from_file(base, &resolved).unwrap_or_else(|| path.to_vec());
+    Some((resolved, logical_segments))
+}
+
 /// Resolves an Incan module file under `base` from import path segments (e.g. `foo.bar` → `foo/bar`).
 ///
-/// Tries, in order: `segments.incn`, `segments.incan`, `segments/mod.incn`, `segments/mod.incan`. Returns the first
-/// path that exists on disk, canonicalized when possible. Returns `None` if none match.
+/// Tries, in order: `segments.incn`, `segments.incan`, `segments/mod.incn`, `segments/mod.incan`,
+/// `segments/__init__.incn`, `segments/__init__.incan`. Returns the first path that exists on disk, canonicalized when
+/// possible. Returns `None` if none match.
 fn resolve_module_path_from_base(base: &Path, path: &[String]) -> Option<PathBuf> {
     // Build file path from segments
     let mut file_path = base.to_path_buf();
@@ -229,6 +282,18 @@ fn resolve_module_path_from_base(base: &Path, path: &[String]) -> Option<PathBuf
     let mod_file_legacy = file_path.join("mod.incan");
     if mod_file_legacy.exists() {
         return Some(mod_file_legacy.canonicalize().unwrap_or(mod_file_legacy));
+    }
+
+    // Try as directory with __init__.incn (Python-style entrypoint)
+    let init_file = file_path.join("__init__.incn");
+    if init_file.exists() {
+        return Some(init_file.canonicalize().unwrap_or(init_file));
+    }
+
+    // Try as directory with __init__.incan (legacy/alternate)
+    let init_file_legacy = file_path.join("__init__.incan");
+    if init_file_legacy.exists() {
+        return Some(init_file_legacy.canonicalize().unwrap_or(init_file_legacy));
     }
 
     None
@@ -468,6 +533,25 @@ source-root = "library"
 
         let resolved = resolve_import_path(&tests_dir, &relative_from_import("dataset"));
         assert_eq!(resolved, Some(dataset.canonicalize().unwrap_or(dataset)));
+        Ok(())
+    }
+
+    #[test]
+    fn logical_module_segments_strip_directory_entrypoint_suffixes() -> Result<(), Box<dyn std::error::Error>> {
+        let base = PathBuf::from("src");
+
+        let dataset = logical_module_segments_from_file(&base, &base.join("dataset").join("mod.incn"))
+            .ok_or("dataset/mod.incn should resolve logical path")?;
+        assert_eq!(dataset, vec!["dataset".to_string()]);
+
+        let nested = logical_module_segments_from_file(&base, &base.join("dataset").join("ops").join("mod.incn"))
+            .ok_or("dataset/ops/mod.incn should resolve logical path")?;
+        assert_eq!(nested, vec!["dataset".to_string(), "ops".to_string()]);
+
+        let leaf = logical_module_segments_from_file(&base, &base.join("dataset").join("ops.incn"))
+            .ok_or("dataset/ops.incn should resolve logical path")?;
+        assert_eq!(leaf, vec!["dataset".to_string(), "ops".to_string()]);
+
         Ok(())
     }
 
