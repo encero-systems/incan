@@ -4324,12 +4324,12 @@ touches multiple stages.</p>
 <p>Incan has enum-dispatched methods in IR (<code>MethodKind</code>) and emission logic in <code>emit/expressions/methods.rs</code>.</p>
 <p><strong>End-to-end checklist:</strong></p>
 <ul>
-<li><strong>IR method enum</strong>: add a new variant and name mapping<ul>
-<li><code>src/backend/ir/expr.rs</code> → <code>enum MethodKind</code> + <code>MethodKind::from_name()</code></li>
+<li><strong>IR method enum</strong>: add a variant to the appropriate method family and classify it for supported receiver types<ul>
+<li><code>src/backend/ir/expr.rs</code> → <code>enum MethodKind</code> + <code>MethodKind::for_receiver()</code></li>
 </ul>
 </li>
-<li><strong>Lowering</strong>: automatic (uses <code>MethodKind::from_name(name)</code> for all method calls)<ul>
-<li><code>src/backend/ir/lower/expr.rs</code> already handles this</li>
+<li><strong>Lowering</strong>: receiver-aware classification for builtin-family receivers<ul>
+<li><code>src/backend/ir/lower/expr.rs</code> calls <code>MethodKind::for_receiver(&amp;receiver.ty, name)</code> for method calls</li>
 </ul>
 </li>
 <li><strong>Emission</strong>: emit the Rust code for the new method<ul>
