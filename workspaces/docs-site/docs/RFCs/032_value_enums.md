@@ -3,7 +3,7 @@
 - **Status:** Draft
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
-- **Related:** RFC 012 (Enum Methods & Trait Adoption), RFC 033 (`ctx` Keyword)
+- **Related:** RFC 050 (Enum Methods & Trait Adoption), RFC 033 (`ctx` Keyword)
 - **Issue:** —
 - **RFC PR:** —
 - **Target version:** TBD
@@ -205,8 +205,8 @@ Where `<value_type>` is either `str` or `int`.
 - `value()` returns the value type: `self.value() -> str` for `StrEnum`, `self.value() -> int` for `IntEnum`.
 - `from_value()` is a static method: `Env.from_value(s: str) -> Option[Env]` / `HttpStatus.from_value(n: int) -> Option[HttpStatus]`.
 - Value enums participate in pattern matching exactly like regular unit-variant enums.
-- Value enums can have methods (per RFC 012, once implemented).
-- Value enums can adopt traits (per RFC 012, once implemented).
+- Value enums can have methods (per RFC 050, once implemented).
+- Value enums can adopt traits (per RFC 050, once implemented).
 
 ### Auto-generated implementations
 
@@ -331,7 +331,7 @@ enum Name:          # Regular ADT enum (unchanged)
 
 **Pattern matching**: Value enums match by variant, not by value. `case Env.Dev:` matches the variant, regardless of the associated value. To match on the raw value, use `match env_string: case "production": ...`.
 
-**Traits (RFC 012)**: Once enum methods and trait adoption land, value enums can have additional methods. The auto-generated `value()`, `from_value()`, and `message()` methods will coexist with user-defined methods.
+**Traits (RFC 050)**: Once enum methods and trait adoption land, value enums can have additional methods. The auto-generated `value()`, `from_value()`, and `message()` methods will coexist with user-defined methods.
 
 **Serde**: Value enums integrate with the existing serde derive scanning in `IrCodegen`. The `#[serde(rename)]` attributes are added per-variant.
 
@@ -435,4 +435,4 @@ Rejected: breaks Incan's type safety philosophy. A `str` and an `Env` should not
 
 4. **Should there be a `from_name()` companion to `from_value()`?** `Env.from_name("Dev")` for when you want to match on variant names programmatically (rather than values). Currently `message()` gives you name→string, but there's no string→variant by name. The `ctx` axis resolver handles this internally, but exposing it as API might be useful.
 
-5. **Relationship with RFC 012 enum methods**: Once RFC 012 lands, value enums should be able to have user-defined methods alongside the auto-generated ones. Need to ensure no naming conflicts (e.g., user defines their own `value()` method on a value enum — should this be an error?).
+5. **Relationship with RFC 050 enum methods**: Once RFC 050 lands, value enums should be able to have user-defined methods alongside the auto-generated ones. Need to ensure no naming conflicts (e.g., user defines their own `value()` method on a value enum — should this be an error?).
