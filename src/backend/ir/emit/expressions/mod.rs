@@ -12,7 +12,7 @@
 //! The expression emitter is split into focused submodules:
 //!
 //! - [`builtins`]: Built-in function calls (`print`, `len`, `range`, etc.)
-//! - [`methods`]: Method calls (both known methods via `MethodKind` and string-based fallback)
+//! - [`methods`]: Method calls (both known methods via `MethodKind` and regular Rust method-call emission)
 //! - [`calls`]: Regular function calls and binary operations
 //! - [`indexing`]: Index, slice, and field access expressions
 //! - [`comprehensions`]: List and dict comprehensions
@@ -137,7 +137,12 @@ impl<'a> IrEmitter<'a> {
                 canonical_path,
             } => self.emit_call_expr(func, args, canonical_path.as_deref()),
             IrExprKind::BuiltinCall { func, args } => self.emit_builtin_call(func, args),
-            IrExprKind::MethodCall { receiver, method, args } => self.emit_method_call_expr(receiver, method, args),
+            IrExprKind::MethodCall {
+                receiver,
+                method,
+                args,
+                arg_policy,
+            } => self.emit_method_call_expr(receiver, method, args, *arg_policy),
             IrExprKind::KnownMethodCall { receiver, kind, args } => self.emit_known_method_call(receiver, kind, args),
 
             IrExprKind::Field { object, field } => self.emit_field_expr(object, field),
@@ -369,7 +374,7 @@ impl<'a> IrEmitter<'a> {
 mod tests {
     use super::*;
     use crate::backend::ir::FunctionRegistry;
-    use crate::backend::ir::expr::VarAccess;
+    use crate::backend::ir::expr::{CollectionMethodKind, IrCallArg, MethodCallArgPolicy, MethodKind, VarAccess};
 
     #[test]
     fn interop_try_adapter_emits_question_mark() -> Result<(), String> {
@@ -409,6 +414,215 @@ mod tests {
             emitted.to_string().contains('?'),
             "expected try-adapter emission to include `?`, got `{}`",
             emitted
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn non_string_method_call_join_stays_regular_method_call() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "dataset".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("Dataset".to_string()),
+                )),
+                method: "join".to_string(),
+                args: vec![
+                    IrCallArg {
+                        name: None,
+                        expr: TypedExpr::new(
+                            IrExprKind::Var {
+                                name: "other".to_string(),
+                                access: VarAccess::Read,
+                                ref_kind: VarRefKind::Value,
+                            },
+                            IrType::Struct("Dataset".to_string()),
+                        ),
+                    },
+                    IrCallArg {
+                        name: None,
+                        expr: TypedExpr::new(IrExprKind::Bool(true), IrType::Bool),
+                    },
+                ],
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Struct("Dataset".to_string()),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("dataset . join"),
+            "expected regular method-call emission, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("str_join"),
+            "plain MethodCall must not be reclassified as string join, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dict_get_with_borrowed_key_does_not_double_borrow() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::KnownMethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "counts".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Dict(Box::new(IrType::String), Box::new(IrType::Int)),
+                )),
+                kind: MethodKind::Collection(CollectionMethodKind::Get),
+                args: vec![IrCallArg {
+                    name: None,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "word".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::StrRef,
+                    ),
+                }],
+            },
+            IrType::Option(Box::new(IrType::Int)),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("counts . get (word)"),
+            "expected borrowed dict key to stay singly borrowed, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("counts . get (& word)"),
+            "dict get must not double-borrow borrowed keys, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn regular_method_call_policy_preserves_lookup_arg_shape() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "counts".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("std::collections::HashMap".to_string()),
+                )),
+                method: "get".to_string(),
+                args: vec![IrCallArg {
+                    name: None,
+                    expr: TypedExpr::new(IrExprKind::String("the".to_string()), IrType::String),
+                }],
+                arg_policy: MethodCallArgPolicy::PreserveShape,
+            },
+            IrType::Option(Box::new(IrType::Int)),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("counts . get (\"the\")"),
+            "expected preserved method-call lookup shape, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains(". into ()"),
+            "preserved method-call lookup shape must not apply external string coercion, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn known_dict_get_with_string_literal_uses_str_lookup_shape() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::KnownMethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "counts".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Dict(Box::new(IrType::String), Box::new(IrType::Int)),
+                )),
+                kind: MethodKind::Collection(CollectionMethodKind::Get),
+                args: vec![IrCallArg {
+                    name: None,
+                    expr: TypedExpr::new(IrExprKind::String("the".to_string()), IrType::String),
+                }],
+            },
+            IrType::Option(Box::new(IrType::Int)),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("counts . get (< _ as AsRef < str >> :: as_ref (& \"the\"))"),
+            "expected string-key dict lookup to normalize via fully-qualified `AsRef<str>`, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_nominal_method_call_keeps_external_string_conversion() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "builder".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("ExternalBuilder".to_string()),
+                )),
+                method: "rename".to_string(),
+                args: vec![IrCallArg {
+                    name: None,
+                    expr: TypedExpr::new(IrExprKind::String("logs".to_string()), IrType::String),
+                }],
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("builder . rename (\"logs\" . into ())"),
+            "expected external nominal method call to preserve `.into()` coercion, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("\"logs\" . to_string ()"),
+            "external nominal method call must not use Incan-owned string coercion, got `{rendered}`"
         );
         Ok(())
     }

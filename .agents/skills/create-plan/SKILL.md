@@ -19,6 +19,7 @@ Produce a **single markdown plan** (paste into Plan mode or a `.plan.md` file):
 - **TDD** (red → green → refine) when behavior is testable.
 - **Concrete file paths** as markdown links to real paths in that repo.
 - **Documentation** subsection when the change is user-visible (see below).
+- **Code docs / rustdocs** subsection when the change introduces or reshapes public/shared APIs, compiler snapshot bridges, or subtle boundary helpers.
 - **Gate** subsection with **exact commands** from this skill’s [Verification](#verification) section, adapted to the repo.
 - **Success criteria** checklist.
 - Optional **mermaid** only when a small diagram clarifies a pipeline or data flow.
@@ -35,6 +36,10 @@ Do **not** edit the plan file after the user asks to **execute** the plan unless
 
 **Pitfall**: Typecheck-only green is not enough for codegen pipelines; plan tests that exercise **lowering/emission** or end-to-end output when relevant.
 
+**Rust interop pitfall**: `rust-metadata` is optional in Incan. If the task touches `import rust::...`, `rusttype`, or Rust-boundary method/call lowering, the plan should explicitly cover both:
+- the metadata-enhanced path (focused unit/integration coverage when that feature matters), and
+- a default-build path (for example a real example/program build) so the fix does not only work with metadata enabled.
+
 ## Documentation
 
 When users or release notes should see the change:
@@ -44,6 +49,14 @@ When users or release notes should see the change:
 - **Tutorials / reference**: smallest update under that repo’s `docs/` tree; for MkDocs sites, run **`mkdocs build --strict`** from the configured docs root when prose or nav changes.
 
 If there is **no** user-visible delta, state **`docs: none`** in the plan.
+
+## Code docs / rustdocs
+
+When the implementation adds or changes public items, shared interop vocabulary, compiler snapshot helpers, or other subtle cross-stage boundaries:
+
+- Plan the required **rustdoc/doc comment updates** alongside the code change instead of treating them as optional cleanup.
+- Be explicit about which files need API/boundary docs refreshed.
+- If nothing public or boundary-shaped changed, state **`rustdocs: none`** in the plan.
 
 ## Verification
 

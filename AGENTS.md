@@ -105,8 +105,11 @@ Agents must treat documentation updates as part of implementation, not optional 
 
 - **Public API docs are required**: Any new/changed `pub` module, type, enum variant intent, struct field intent (when not obvious), and function/method must have rustdoc that explains purpose and contract.
 - **Error types need variant-level docs**: For `thiserror` enums and diagnostic types, document what each variant represents and when it is emitted.
-- **Non-obvious internal helpers need concise docs**: If a private function encodes protocol/runtime/bridge behavior, add a short rustdoc or precise inline comment describing invariants and expected inputs/outputs.
+- **Non-trivial functions and methods need docs**: New or changed functions/methods should carry rustdoc/doc comments unless they are genuinely tiny and self-evident local helpers. Prefer documenting all touched functions over debating edge cases.
+- **Cross-stage and boundary helpers always need docs**: Parser/typechecker/lowering/emission/interop/conversion helpers must document purpose, invariants, and why the boundary exists, even when they are private.
+- **Tiny obvious helpers are the only exception**: A very small private helper may skip rustdoc only when its name and body make the intent completely obvious and there are no invariants, fallback paths, ownership assumptions, or feature-gated behaviors to explain.
 - **Behavioral boundaries must be explicit**: For pipeline boundaries (parser -> desugar -> typecheck -> lowering), docs should state what must and must not cross the boundary.
+- **Docs should explain why, not narrate syntax**: Explain purpose, contracts, fallbacks, ownership/borrowing assumptions, and misuse risks. Avoid comments that merely restate the code line-by-line.
 - **Done criterion**: Do not mark work complete until this rustdoc audit is done for all touched files.
 
 ## Rust Anti-Patterns to Avoid

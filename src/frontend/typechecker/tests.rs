@@ -779,6 +779,32 @@ def f() -> None:
     Ok(())
 }
 
+#[test]
+fn test_hashset_lookup_records_preserved_arg_shape_for_imported_generic_receiver()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::std::collections import HashSet
+
+def f(words: HashSet[str]) -> None:
+  _ = words.contains("the")
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("expected imported HashMap lookup to typecheck: {errs:?}")))?;
+    let info = checker.type_info();
+    assert!(
+        info.regular_method_arg_shape_preserving_calls
+            .iter()
+            .any(|(_, _, method)| method == "contains"),
+        "expected HashSet.contains lookup to record preserved method arg shape, got {:?}",
+        info.regular_method_arg_shape_preserving_calls
+    );
+    Ok(())
+}
+
 #[cfg(feature = "rust-metadata")]
 #[test]
 fn test_rust_metadata_validates_associated_function_arguments() -> Result<(), Box<dyn std::error::Error>> {

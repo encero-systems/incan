@@ -801,6 +801,13 @@ fn test_string_operations_codegen() {
     insta::assert_snapshot!("string_operations", rust_code);
 }
 
+#[test]
+fn test_issue236_non_string_join_codegen() {
+    let source = load_test_file("issue236_non_string_join");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("issue236_non_string_join", rust_code);
+}
+
 // ============================================================================
 // Tests for declarations (functions, classes, models, traits, enums)
 // ============================================================================

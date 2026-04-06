@@ -816,6 +816,8 @@ impl Default for AstLowering {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::ir::expr::{CollectionMethodKind, IrExprKind, MethodKind, StringMethodKind, UnaryOp};
+    use crate::backend::ir::stmt::IrStmtKind;
     use crate::frontend::{lexer, parser};
     use incan_core::lang::derives::{self, DeriveId};
 
@@ -1043,5 +1045,104 @@ type UserId = newtype int
         assert!(!tag_derives.contains(&deserialize));
         assert!(user_id_derives.contains(&serialize));
         assert!(!user_id_derives.contains(&deserialize));
+    }
+
+    #[test]
+    fn method_kind_for_receiver() {
+        assert_eq!(
+            MethodKind::for_receiver(&IrType::String, "join"),
+            Some(MethodKind::String(StringMethodKind::Join))
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&IrType::Struct("Dataset".to_string()), "join"),
+            None
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&IrType::String, "split"),
+            Some(MethodKind::String(StringMethodKind::Split))
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&IrType::String, "replace"),
+            Some(MethodKind::String(StringMethodKind::Replace))
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&IrType::Struct("Dataset".to_string()), "split"),
+            None
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&IrType::Struct("Dataset".to_string()), "replace"),
+            None
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&IrType::RefMut(Box::new(IrType::List(Box::new(IrType::Int)))), "swap"),
+            Some(MethodKind::Collection(CollectionMethodKind::Swap))
+        );
+    }
+
+    #[test]
+    fn membership_operators_lower_with_receiver_aware_known_methods() {
+        let ir = must_ok(lower_source(
+            r#"
+def in_list(items: List[int]) -> bool:
+    return 1 in items
+
+def in_set(items: Set[str]) -> bool:
+    return "a" in items
+
+def in_dict(items: Dict[str, int]) -> bool:
+    return "key" in items
+
+def in_text(text: str) -> bool:
+    return "e" in text
+
+def not_in_list(items: List[int]) -> bool:
+    return 2 not in items
+"#,
+        ));
+
+        let returned_expr = |name: &str| -> &crate::backend::ir::expr::TypedExpr {
+            let function = ir
+                .declarations
+                .iter()
+                .find_map(|decl| match &decl.kind {
+                    IrDeclKind::Function(f) if f.name == name => Some(f),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("missing function `{name}`"));
+            match function.body.last() {
+                Some(crate::backend::ir::stmt::IrStmt {
+                    kind: IrStmtKind::Return(Some(expr)),
+                    ..
+                }) => expr,
+                other => panic!("expected trailing return expression for `{name}`, got {other:?}"),
+            }
+        };
+
+        for (name, expected_kind) in [
+            ("in_list", MethodKind::Collection(CollectionMethodKind::Contains)),
+            ("in_set", MethodKind::Collection(CollectionMethodKind::Contains)),
+            ("in_dict", MethodKind::Collection(CollectionMethodKind::Contains)),
+            ("in_text", MethodKind::String(StringMethodKind::Contains)),
+        ] {
+            match &returned_expr(name).kind {
+                IrExprKind::KnownMethodCall { kind, .. } => {
+                    assert_eq!(*kind, expected_kind, "unexpected known method kind for `{name}`");
+                }
+                other => panic!("expected known-method lowering for `{name}`, got {other:?}"),
+            }
+        }
+
+        match &returned_expr("not_in_list").kind {
+            IrExprKind::UnaryOp {
+                op: UnaryOp::Not,
+                operand,
+            } => match &operand.kind {
+                IrExprKind::KnownMethodCall { kind, .. } => {
+                    assert_eq!(*kind, MethodKind::Collection(CollectionMethodKind::Contains));
+                }
+                other => panic!("expected negated known-method call for `not_in_list`, got {other:?}"),
+            },
+            other => panic!("expected unary negation for `not_in_list`, got {other:?}"),
+        }
     }
 }

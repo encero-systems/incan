@@ -13,6 +13,8 @@ description: Review an Incan RFC document for formatting, structural, and conten
 4. Work through the universal checklists (1–5), then the status-specific checklist for the RFC's current status.
 5. **Fix issues directly** (edit the file); RFC review is an editing task, not just a report.
 6. If no GitHub issue exists yet, ask the user before creating one (see **Issue creation**). Once created, record the issue URL in the RFC header's `Issue:` field.
+7. If review materially changes RFC filenames, numbers, or status/location (for example superseding or splitting an RFC), update RFC cross-references and regenerate the docs-site RFC snippets/index.
+8. **Ask before semantic restructures.** Mechanical fixes, formatting cleanup, section-order repairs, and obvious lifecycle-field corrections should be applied directly. But if review suggests splitting an RFC, superseding it, renumbering it, or materially changing its scope/central design claim, stop and get explicit user confirmation before making that restructuring edit.
 
 ---
 
@@ -70,6 +72,7 @@ The RFC lifecycle has four statuses. Different sections are required — or forb
 - [ ] "Alternatives considered" includes a rationale for rejection for each alternative.
 - [ ] **No prescriptive implementation prose in the design sections.** The RFC must not reference specific internal files, function names, struct fields, or data structures in the design sections. Those belong in the Implementation Plan / GitHub issues. If found in design sections, rewrite as a normative contract statement or remove.
 - [ ] **Ambition check.** RFCs should be end-to-end and favor complete solutions over incremental stubs. Flag if the RFC is too dismissive or handwavy about hard parts. Equally, if the RFC is ambitious, verify that the ambition is well-motivated, clearly explained, and not excessive.
+- [ ] **Coupling check.** If an RFC bundles a general language feature with a specific stdlib or product surface, challenge whether those concerns should stay together. If the coupling is not clearly justified in the document, flag it or recommend a split/supersession path.
 
 ---
 
@@ -77,6 +80,14 @@ The RFC lifecycle has four statuses. Different sections are required — or forb
 
 - [ ] No internal or unreleased project names. Replace with generic descriptions: "future query language surfaces", "purpose-built libraries", etc.
 - [ ] No links or citations to internal paths (`__strategy__/`, research notes, pre-RFC documents, or any folder outside the public repository). Describe the concept inline instead.
+
+---
+
+## Checklist 5b — RFC graph hygiene (all statuses)
+
+- [ ] If an RFC is renamed, renumbered, split, or superseded, update inbound references in active RFCs and docs so they point at the new target rather than the stale file.
+- [ ] If an RFC moves between active and `closed/` folders, regenerate `workspaces/docs-site/docs/_snippets/rfcs_refs.md` and `workspaces/docs-site/docs/_snippets/tables/rfcs_index.md`.
+- [ ] If the RFC index generator fails locally, fix the generator or note the blocker; do not leave the docs index knowingly stale after RFC lifecycle edits.
 
 ---
 
@@ -130,6 +141,8 @@ The RFC lifecycle has four statuses. Different sections are required — or forb
 | Internal project name mentioned                                                 | Replace with a generic description                                                            |
 | Link to internal path (`__strategy__/`, research notes)                         | Remove the link; describe the concept inline                                                  |
 | Code blocks untagged or wrongly tagged                                          | Add `incan` language tag                                                                      |
+| One RFC mixes a general feature and a specific library proposal                 | Recommend split/supersession or justify the coupling explicitly                               |
+| RFC file moved or status changed but docs index still points at old path        | Update references and regenerate RFC snippets/index                                           |
 
 ---
 

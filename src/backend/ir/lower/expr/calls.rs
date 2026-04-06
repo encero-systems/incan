@@ -2,7 +2,9 @@
 //! calls.
 
 use super::super::super::TypedExpr;
-use super::super::super::expr::{BuiltinFn, IrCallArg, IrExprKind, IrInteropCoercionKind, VarAccess, VarRefKind};
+use super::super::super::expr::{
+    BuiltinFn, IrCallArg, IrExprKind, IrInteropCoercionKind, MethodCallArgPolicy, VarAccess, VarRefKind,
+};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
@@ -247,6 +249,7 @@ impl AstLowering {
                         name: None,
                         expr: lowered_value,
                     }],
+                    arg_policy: MethodCallArgPolicy::Default,
                 },
                 IrType::Result(Box::new(struct_ty.clone()), Box::new(IrType::Unknown)),
             );
@@ -263,6 +266,7 @@ impl AstLowering {
                     receiver: Box::new(from_underlying_call),
                     method: "expect".to_string(),
                     args: vec![IrCallArg { name: None, expr: msg }],
+                    arg_policy: MethodCallArgPolicy::Default,
                 },
                 struct_ty,
             ));
@@ -322,7 +326,7 @@ impl AstLowering {
 #[cfg(test)]
 mod tests {
     use super::AstLowering;
-    use crate::backend::ir::expr::IrExprKind;
+    use crate::backend::ir::expr::{IrExprKind, MethodCallArgPolicy};
     use crate::backend::ir::types::IrType;
     use crate::frontend::ast::{
         CallArg, Expr, InteropAdapterKind, InteropDirection, InteropEdgeDecl, Literal, Span, Spanned, Type,
@@ -423,6 +427,35 @@ mod tests {
                     ),
                     "expected first method arg to be wrapped in InteropCoerce, got {args:?}"
                 );
+            }
+            other => return Err(format!("expected MethodCall lowering, got {other:?}")),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lower_method_call_threads_arg_shape_hint_from_typechecker() -> Result<(), String> {
+        let receiver_span = Span::new(0, 5);
+        let mut type_info = TypeCheckInfo::default();
+        type_info.record_regular_method_arg_shape(receiver_span, "get");
+
+        let mut lowering = AstLowering::new_with_type_info(type_info);
+        let expr = Expr::MethodCall(
+            Box::new(Spanned::new(Expr::Ident("value".to_string()), receiver_span)),
+            "get".to_string(),
+            vec![CallArg::Positional(Spanned::new(
+                Expr::Literal(Literal::String("hello".to_string())),
+                Span::new(10, 17),
+            ))],
+        );
+
+        let lowered = lowering
+            .lower_expr(&expr)
+            .map_err(|err| format!("expected successful lowering, got {err:?}"))?;
+
+        match lowered.kind {
+            IrExprKind::MethodCall { arg_policy, .. } => {
+                assert_eq!(arg_policy, MethodCallArgPolicy::PreserveShape);
             }
             other => return Err(format!("expected MethodCall lowering, got {other:?}")),
         }

@@ -322,9 +322,7 @@ fn main() {
         String > = vec![format!("{}", stack.size())]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
     );
-    let top = stack
-        .pop()
-        .unwrap_or_else(|| incan_stdlib::errors::raise_list_pop_empty());
+    let top = stack.pop();
     println!(
         "{}", { let __parts : [& str; 2usize] = ["Popped: ", ""]; let __args : Vec <
         String > = vec![format!("{}", top)]; incan_stdlib::strings::fstring(& __parts, &

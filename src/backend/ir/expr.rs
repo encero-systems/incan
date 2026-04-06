@@ -70,6 +70,16 @@ pub struct IrCallArg {
     pub expr: IrExpr,
 }
 
+/// Lowering hint for ordinary method-call argument conversions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MethodCallArgPolicy {
+    /// Use the emitter's default receiver-based conversion behavior.
+    #[default]
+    Default,
+    /// Preserve Rust method-call lookup shape for borrow-sensitive APIs such as `HashMap::get`.
+    PreserveShape,
+}
+
 /// Expression kinds in IR
 #[derive(Debug, Clone)]
 pub enum IrExprKind {
@@ -129,6 +139,7 @@ pub enum IrExprKind {
         receiver: Box<IrExpr>,
         method: String,
         args: Vec<IrCallArg>,
+        arg_policy: MethodCallArgPolicy,
     },
 
     /// Known method call (enum-dispatched).
@@ -487,16 +498,27 @@ impl BuiltinFn {
 /// Known method kinds recognized by the Incan compiler.
 ///
 /// These are methods that have special lowering or emit behavior. The emitter matches on this enum instead of string
-/// names.
+/// names. Classification is receiver-aware so ambiguous names like `join` and `contains` only become known methods
+/// when the receiver type is one of the builtin families handled by the compiler.
 ///
 /// ## Adding a new method
 ///
-/// 1. Add a variant here
-/// 2. Update `MethodKind::from_name()` to map the string name
+/// 1. Add a variant to the appropriate method-family enum
+/// 2. Update `MethodKind::for_receiver()` to classify the method for supported receiver types
 /// 3. Update `emit_known_method_call()` in `expressions/methods.rs` to emit the Rust code
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MethodKind {
-    // ---- String methods ----
+    /// String and frozen-string methods that route through the string emitter.
+    String(StringMethodKind),
+    /// Collection methods recognized for builtin list/dict/set receivers.
+    Collection(CollectionMethodKind),
+    /// Internal helper methods that lower to dedicated runtime support.
+    Internal(InternalMethodKind),
+}
+
+/// Known string-method variants handled by the compiler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StringMethodKind {
     /// `s.upper()` → `s.to_uppercase()`
     Upper,
     /// `s.lower()` → `s.to_lowercase()`
@@ -513,9 +535,14 @@ pub enum MethodKind {
     StartsWith,
     /// `s.endswith(suffix)` → `s.ends_with(suffix)`
     EndsWith,
+    /// `s.contains(needle)` → `str_contains(s, needle)`
+    Contains,
+}
 
-    // ---- Collection methods ----
-    /// `x.contains(item)` → varies by type
+/// Known collection-method variants handled by the compiler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CollectionMethodKind {
+    /// `x.contains(item)` → varies by collection type
     Contains,
     /// `x.get(key)` → `x.get(key)`
     Get,
@@ -523,8 +550,6 @@ pub enum MethodKind {
     Insert,
     /// `x.remove(key)` → `x.remove(key)`
     Remove,
-
-    // ---- List methods ----
     /// `list.append(item)` → `list.push(item)`
     Append,
     /// `list.pop()` lowers via `Vec::pop()` without requiring `T: Default`. An empty list raises
@@ -536,74 +561,82 @@ pub enum MethodKind {
     Reserve,
     /// `list.reserve_exact(n)` → `list.reserve_exact(n as usize)`
     ReserveExact,
+}
 
-    // ---- Internal/special methods ----
+/// Internal compiler-only method variants handled during emission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InternalMethodKind {
     /// `x.__slice__(start, end)` → `x[start..end]`
     Slice,
 }
 
 impl MethodKind {
-    /// Try to resolve a method name to a known method kind.
+    /// Try to resolve a method name to a known method kind for the given receiver type.
     ///
     /// Returns `None` for unknown methods (which pass through as regular method calls).
-    pub fn from_name(name: &str) -> Option<Self> {
+    pub fn for_receiver(receiver_ty: &IrType, name: &str) -> Option<Self> {
+        let mut receiver_ty = receiver_ty;
+        while let IrType::Ref(inner) | IrType::RefMut(inner) = receiver_ty {
+            receiver_ty = inner.as_ref();
+        }
+
         // Internal
         if incan_core::lang::magic_methods::from_str(name)
             == Some(incan_core::lang::magic_methods::MagicMethodId::Slice)
         {
-            return Some(Self::Slice);
+            return Some(Self::Internal(InternalMethodKind::Slice));
         }
 
-        // List methods (includes a couple of generic collection methods we model explicitly).
-        if let Some(id) = list_methods::from_str(name) {
-            use list_methods::ListMethodId as L;
-            return Some(match id {
-                L::Append => Self::Append,
-                L::Pop => Self::Pop,
-                L::Swap => Self::Swap,
-                L::Reserve => Self::Reserve,
-                L::ReserveExact => Self::ReserveExact,
-                L::Contains => Self::Contains,
-                L::Remove => Self::Remove,
-                // Not modeled as known IR methods yet:
-                L::Count | L::Index => return None,
-            });
+        match receiver_ty {
+            IrType::String | IrType::FrozenStr | IrType::StaticStr | IrType::StrRef => {
+                let id = string_methods::from_str(name)?;
+                use string_methods::StringMethodId as S;
+                Some(Self::String(match id {
+                    S::Upper => StringMethodKind::Upper,
+                    S::Lower => StringMethodKind::Lower,
+                    S::Strip => StringMethodKind::Strip,
+                    S::Split => StringMethodKind::Split,
+                    S::Replace => StringMethodKind::Replace,
+                    S::Join => StringMethodKind::Join,
+                    S::StartsWith => StringMethodKind::StartsWith,
+                    S::EndsWith => StringMethodKind::EndsWith,
+                    S::Contains => StringMethodKind::Contains,
+                    // The rest are either typechecker-only (return types) or normal method calls:
+                    _ => return None,
+                }))
+            }
+            IrType::List(_) => {
+                let id = list_methods::from_str(name)?;
+                use list_methods::ListMethodId as L;
+                Some(Self::Collection(match id {
+                    L::Append => CollectionMethodKind::Append,
+                    L::Pop => CollectionMethodKind::Pop,
+                    L::Swap => CollectionMethodKind::Swap,
+                    L::Reserve => CollectionMethodKind::Reserve,
+                    L::ReserveExact => CollectionMethodKind::ReserveExact,
+                    L::Contains => CollectionMethodKind::Contains,
+                    L::Remove => CollectionMethodKind::Remove,
+                    // Not modeled as known IR methods yet:
+                    L::Count | L::Index => return None,
+                }))
+            }
+            IrType::Dict(_, _) => {
+                let id = dict_methods::from_str(name)?;
+                use dict_methods::DictMethodId as D;
+                Some(Self::Collection(match id {
+                    D::Get => CollectionMethodKind::Get,
+                    D::Insert => CollectionMethodKind::Insert,
+                    // keys/values are emitted as normal method calls.
+                    D::Keys | D::Values => return None,
+                }))
+            }
+            IrType::Set(_) => {
+                if set_methods::from_str(name).is_some() {
+                    return Some(Self::Collection(CollectionMethodKind::Contains));
+                }
+                None
+            }
+            _ => None,
         }
-
-        // Dict methods.
-        if let Some(id) = dict_methods::from_str(name) {
-            use dict_methods::DictMethodId as D;
-            return Some(match id {
-                D::Get => Self::Get,
-                D::Insert => Self::Insert,
-                // keys/values are emitted as normal method calls.
-                D::Keys | D::Values => return None,
-            });
-        }
-
-        // Set methods.
-        if set_methods::from_str(name).is_some() {
-            return Some(Self::Contains);
-        }
-
-        // String methods.
-        if let Some(id) = string_methods::from_str(name) {
-            use string_methods::StringMethodId as S;
-            return match id {
-                S::Upper => Some(Self::Upper),
-                S::Lower => Some(Self::Lower),
-                S::Strip => Some(Self::Strip),
-                S::Split => Some(Self::Split),
-                S::Replace => Some(Self::Replace),
-                S::Join => Some(Self::Join),
-                S::StartsWith => Some(Self::StartsWith),
-                S::EndsWith => Some(Self::EndsWith),
-                S::Contains => Some(Self::Contains),
-                // The rest are either typechecker-only (return types) or normal method calls:
-                _ => None,
-            };
-        }
-
-        None
     }
 }

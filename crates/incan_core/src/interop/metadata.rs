@@ -41,6 +41,52 @@ pub struct RustItemMetadata {
     pub kind: RustItemKind,
 }
 
+/// Rust std/alloc collection families whose lookup methods rely on Rust borrow semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RustCollectionFamily {
+    /// Hash-map families keyed by borrowed lookup probes (`get`, `contains_key`).
+    HashMap,
+    /// Ordered map families keyed by borrowed lookup probes (`get`, `contains_key`).
+    BTreeMap,
+    /// Hash-set families queried by borrowed element probes (`contains`).
+    HashSet,
+    /// Ordered set families queried by borrowed element probes (`contains`).
+    BTreeSet,
+}
+
+impl RustCollectionFamily {
+    /// Classify a canonical Rust path into a supported collection family.
+    #[must_use]
+    pub fn for_canonical_path(path: &str) -> Option<Self> {
+        match path {
+            "std::collections::HashMap" | "std::collections::hash_map::HashMap" | "hashbrown::HashMap" => {
+                Some(Self::HashMap)
+            }
+            "std::collections::BTreeMap" | "alloc::collections::btree_map::BTreeMap" => Some(Self::BTreeMap),
+            "std::collections::HashSet" | "std::collections::hash_set::HashSet" => Some(Self::HashSet),
+            "std::collections::BTreeSet" | "alloc::collections::btree_set::BTreeSet" => Some(Self::BTreeSet),
+            _ => None,
+        }
+    }
+
+    /// Whether `method` is a borrow-sensitive lookup on this collection family.
+    #[must_use]
+    pub fn preserves_lookup_arg_shape(self, method: &str) -> bool {
+        match self {
+            Self::HashMap | Self::BTreeMap => matches!(method, "get" | "contains_key"),
+            Self::HashSet | Self::BTreeSet => method == "contains",
+        }
+    }
+}
+
+impl RustItemMetadata {
+    /// Classify this metadata item as a supported std/alloc collection family when applicable.
+    #[must_use]
+    pub fn collection_family(&self) -> Option<RustCollectionFamily> {
+        RustCollectionFamily::for_canonical_path(&self.canonical_path)
+    }
+}
+
 /// A single parameter in a Rust function signature (display strings only for Phase 1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RustParam {
@@ -165,4 +211,44 @@ pub enum RustTraitAssoc {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RustTraitInfo {
     pub items: Vec<RustTraitAssoc>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy_type_metadata(path: &str) -> RustItemMetadata {
+        RustItemMetadata {
+            canonical_path: path.to_string(),
+            visibility: RustVisibility::Public,
+            kind: RustItemKind::Type(RustTypeInfo {
+                methods: Vec::new(),
+                fields: Vec::new(),
+                variants: Vec::new(),
+            }),
+        }
+    }
+
+    #[test]
+    fn collection_family_matches_supported_map_and_set_paths() {
+        for (path, expected) in [
+            ("std::collections::HashMap", RustCollectionFamily::HashMap),
+            ("hashbrown::HashMap", RustCollectionFamily::HashMap),
+            ("std::collections::BTreeMap", RustCollectionFamily::BTreeMap),
+            ("std::collections::HashSet", RustCollectionFamily::HashSet),
+            ("std::collections::BTreeSet", RustCollectionFamily::BTreeSet),
+        ] {
+            let meta = dummy_type_metadata(path);
+            assert_eq!(meta.collection_family(), Some(expected), "path `{path}`");
+        }
+    }
+
+    #[test]
+    fn collection_family_reports_lookup_methods_that_preserve_arg_shape() {
+        assert!(RustCollectionFamily::HashMap.preserves_lookup_arg_shape("get"));
+        assert!(RustCollectionFamily::HashMap.preserves_lookup_arg_shape("contains_key"));
+        assert!(!RustCollectionFamily::HashMap.preserves_lookup_arg_shape("insert"));
+        assert!(RustCollectionFamily::HashSet.preserves_lookup_arg_shape("contains"));
+        assert!(!RustCollectionFamily::HashSet.preserves_lookup_arg_shape("insert"));
+    }
 }

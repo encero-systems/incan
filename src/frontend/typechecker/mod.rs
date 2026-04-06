@@ -132,6 +132,11 @@ pub struct TypeCheckInfo {
     /// Populated when metadata shows a `rusttype` method's actual Rust return type requires coercion to the
     /// Incan-declared type (e.g. `&str` → `String` for a method declared `-> str`).
     pub rust_return_coercions: HashMap<(usize, usize), RustArgCoercionInfo>,
+    /// Regular method calls whose arguments must keep Rust method-call lookup shape.
+    ///
+    /// Keyed by `(receiver_span.start, receiver_span.end, method_name)` so lowering can preserve borrow-sensitive
+    /// lookup calls like `HashMap.get(key)` without re-querying rust metadata in the backend.
+    pub regular_method_arg_shape_preserving_calls: HashSet<(usize, usize, String)>,
 }
 
 /// How an identifier expression resolved in the symbol table.
@@ -174,18 +179,22 @@ pub struct RustArgCoercionInfo {
 }
 
 impl TypeCheckInfo {
+    /// Return the resolved type recorded for the expression at `span`, if any.
     pub fn expr_type(&self, span: Span) -> Option<&ResolvedType> {
         self.expr_types.get(&(span.start, span.end))
     }
 
+    /// Return how the identifier expression at `span` resolved in the symbol table.
     pub fn ident_kind(&self, span: Span) -> Option<IdentKind> {
         self.ident_kinds.get(&(span.start, span.end)).copied()
     }
 
+    /// Return the computed const value for `name`, when const evaluation succeeded.
     pub fn const_value(&self, name: &str) -> Option<&ConstValue> {
         self.const_values.get(name)
     }
 
+    /// Return the recorded Rust-boundary argument coercion for the expression at `span`, if any.
     pub fn rust_arg_coercion(&self, span: Span) -> Option<&RustArgCoercionInfo> {
         self.rust_arg_coercions.get(&(span.start, span.end))
     }
@@ -193,6 +202,24 @@ impl TypeCheckInfo {
     /// Return the recorded return coercion for the call expression at `span`, if any.
     pub fn rust_return_coercion(&self, span: Span) -> Option<&RustArgCoercionInfo> {
         self.rust_return_coercions.get(&(span.start, span.end))
+    }
+
+    /// Whether lowering should preserve Rust method-call lookup argument shape for this receiver/method pair.
+    pub fn preserves_regular_method_arg_shape(&self, receiver_span: Span, method: &str) -> bool {
+        self.regular_method_arg_shape_preserving_calls.contains(&(
+            receiver_span.start,
+            receiver_span.end,
+            method.to_string(),
+        ))
+    }
+
+    /// Record that lowering should preserve Rust method-call lookup argument shape for this receiver/method pair.
+    pub(crate) fn record_regular_method_arg_shape(&mut self, receiver_span: Span, method: &str) {
+        self.regular_method_arg_shape_preserving_calls.insert((
+            receiver_span.start,
+            receiver_span.end,
+            method.to_string(),
+        ));
     }
 }
 

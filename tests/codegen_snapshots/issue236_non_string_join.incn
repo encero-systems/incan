@@ -1,0 +1,11 @@
+from rust::mail import Dataset as RustDataset
+
+type Dataset = rusttype RustDataset:
+    def join(self, other: Dataset, keep_outer: bool) -> Dataset:
+        ...
+
+def join_datasets(left: Dataset, right: Dataset) -> Dataset:
+    return left.join(right, true)
+
+def main() -> None:
+    pass

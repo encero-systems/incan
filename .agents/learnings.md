@@ -42,6 +42,10 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 - **LSP wiring for warnings**: after `parser::parse()` succeeds, loop `ast.warnings` and push each through `compile_error_to_diagnostic()` before typechecking.
 - **LSP is feature-gated**: `cargo build --features lsp` (or `make build`, which enables it) produces `incan-lsp`. For local dev, `make build` symlinks `~/.cargo/bin/incan-lsp` to `target/debug/incan-lsp` unless CI / `INCAN_SKIP_CARGO_BIN_LINK=1`; use `make install-lsp` or `cargo install --path . --features lsp --bin incan-lsp --force` when you need a crates.io-style install instead.
 
+## Docs and RFC tooling
+
+- **RFC lifecycle edits need graph updates**: When an RFC is renamed, moved, split, or superseded, update inbound RFC references and regenerate `workspaces/docs-site/docs/_snippets/rfcs_refs.md` plus `workspaces/docs-site/docs/_snippets/tables/rfcs_index.md`; otherwise the docs graph silently points at stale RFC paths and statuses. (RFC 012/050/051 split)
+
 ## Builtin trait stubs and stdlib method lookup (#193)
 
 - **Vocabulary-only builtin traits ship with empty `methods` maps** in the symbol table. For instance method resolution, `trait_method_info_resolved` can fall back to `StdlibAstCache::lookup_trait` after `stdlib_module_segments_for_trait_methods` in `src/frontend/typechecker/check_decl.rs` maps the trait name to a stdlib module path.
@@ -58,4 +62,5 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 
 - **Guardrail tests reject hardcoded builtin trait literals in compiler layers**: even in tests, avoid exact string literals like `"Clone"` in assertions; use `incan_core::lang::traits::as_str(TraitId::Clone)` (or equivalent canonical vocabulary helpers).
 - **Examples runner can pick a stale repo-local release binary when `CARGO_TARGET_DIR` is redirected**: in Cursor/CI-like environments, Cargo may build to a non-default target dir while `scripts/run_examples.sh` prefers `./target/release/incan`. If this mismatch appears, pass `INCAN_BIN="$CARGO_TARGET_DIR/release/incan"` or make the script fallback aware.
+- **Metadata-backed interop needs default-path coverage**: `rust-metadata` is optional, so Rust interop fixes that rely on canonical metadata must also preserve the default build path when receiver provenance degrades or the feature is off. For method lowering/coercion bugs, test both the metadata-enhanced path and a plain default build of a real interop example. (Issue #236)
 - **`rusttype` example checks should be feature-aware**: `examples/rust_interop_rusttype/main.incn` can fail default smoke checks when relying on metadata-backed/static rebinding behavior that is only validated under `rust-metadata` feature paths. Keep a clear skip reason in `scripts/run_examples.sh` until that path is fully on by default.

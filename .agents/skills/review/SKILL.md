@@ -78,6 +78,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 - [ ] **Section headers** (`// ---- Context: ... ----`) in functions ≥ 30 lines or ≥ 3 logical blocks.
 - [ ] **Rustdoc line length ≤ 120 chars** for `///` and `//!` comments. Prose in `.md` files is never hard-wrapped.
 - [ ] **Changed public APIs have updated docs** — doc comments/rustdoc should still match behavior, invariants, and examples after the change.
+- [ ] **Touched non-trivial functions/methods are documented** — not just public APIs. Private helpers may skip rustdoc only when they are genuinely tiny and self-evident.
 - [ ] **Docs explain intent and constraints** — especially for public types, traits, derives, runtime adapters, and non-obvious lowering/emission behavior.
 - [ ] **Docs-site changes follow repo rules** — no hard wrap under `workspaces/docs-site/`; if docs are touched, consider whether `mkdocs build --strict` should pass.
 - [ ] **Boy Scout Rule** — did the author leave touched code at least as clean as they found it? Flag stale TODOs, misleading variable names, missing doc comments, or unused imports that could have been fixed in-scope.
@@ -148,7 +149,7 @@ One or two sentences on overall quality and merge-readiness.
 ```
 
 - **Blocker 🔴** — must fix before merge (clippy deny, `.unwrap()`, pipeline gap, missing test for new feature).
-- **Warning 🟡** — should fix (anti-pattern, style violation, missing doc comment on public item).
+- **Warning 🟡** — should fix (anti-pattern, style violation, missing doc comment on a touched public or non-trivial item).
 - **Suggestion 🟢** — nice to have (minor readability, opportunistic Boy Scout improvement).
 - **Note 💡** — observation, question, or context (no change required).
 

@@ -101,13 +101,13 @@ If the branch already exists locally or on the remote, ask the user whether to:
 
 ### Step 4: Check learnings
 
-Read `.cursor/agents/learnings.md` and check whether any section is relevant to the task. Specifically:
+Read `.agents/learnings.md` and check whether any section is relevant to the task. Specifically:
 
-- If the task involves **field metadata, aliases, or model features** -> read the RFC 021 section
-- If the task involves **Rust interop, `import rust.*`, or extern functions** -> read the RFC 005 section
-- If the task involves **stdlib, soft keywords, or `std.*` imports** -> read the RFC 022 section
-- If the task involves **imports, parser bracket handling, or formatter** -> read the Issue #116 section
-- If the task involves **generics, trait bounds, or extern diagnostics** -> read the RFC 023 section
+- If the task involves **lowering, emission, or codegen regressions** -> read `General pipeline pitfalls` and `Testing strategy`
+- If the task involves **Rust interop, `import rust.*`, `rusttype`, or extern functions** -> read `RFC 041 (first-class Rust interop) implementation notes` and `Generic bounds and extern functions`
+- If the task involves **stdlib, soft keywords, or `std.*` imports** -> read `Stdlib and registry patterns`
+- If the task involves **imports, parser bracket handling, warnings, or formatter** -> read `Parser and lexer patterns` and `Wiring: CLI and LSP`
+- If the task involves **docs, release notes, or RFC movement/renames** -> read `Docs and RFC tooling`
 
 If a relevant section exists, summarize the key takeaways for the user.
 

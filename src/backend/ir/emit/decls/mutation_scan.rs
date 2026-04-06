@@ -143,7 +143,9 @@ impl<'a> IrEmitter<'a> {
                     self.scan_expr_for_param_writes(arg, param_names, mutated);
                 }
             }
-            IrExprKind::MethodCall { receiver, method, args } => {
+            IrExprKind::MethodCall {
+                receiver, method, args, ..
+            } => {
                 if let Some(name) = self.expr_is_param_var(receiver, param_names)
                     && Self::is_mutating_method_name(method)
                 {
@@ -317,13 +319,15 @@ impl<'a> IrEmitter<'a> {
     fn is_mutating_method_kind(kind: &MethodKind) -> bool {
         matches!(
             kind,
-            MethodKind::Append
-                | MethodKind::Pop
-                | MethodKind::Insert
-                | MethodKind::Remove
-                | MethodKind::Swap
-                | MethodKind::Reserve
-                | MethodKind::ReserveExact
+            MethodKind::Collection(
+                crate::backend::ir::expr::CollectionMethodKind::Append
+                    | crate::backend::ir::expr::CollectionMethodKind::Pop
+                    | crate::backend::ir::expr::CollectionMethodKind::Insert
+                    | crate::backend::ir::expr::CollectionMethodKind::Remove
+                    | crate::backend::ir::expr::CollectionMethodKind::Swap
+                    | crate::backend::ir::expr::CollectionMethodKind::Reserve
+                    | crate::backend::ir::expr::CollectionMethodKind::ReserveExact
+            )
         )
     }
 }

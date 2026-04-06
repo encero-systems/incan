@@ -12,7 +12,10 @@ mod helpers;
 mod patterns;
 
 use super::super::TypedExpr;
-use super::super::expr::{IrCallArg, IrExpr, IrExprKind, MethodKind, UnaryOp, VarAccess, VarRefKind};
+use super::super::expr::{
+    CollectionMethodKind, IrCallArg, IrExpr, IrExprKind, MethodCallArgPolicy, MethodKind, UnaryOp, VarAccess,
+    VarRefKind,
+};
 use super::super::types::IrType;
 use super::AstLowering;
 use super::errors::LoweringError;
@@ -21,6 +24,39 @@ use crate::frontend::typechecker::IdentKind;
 use incan_semantics_core::SurfaceExprLoweringAction;
 
 impl AstLowering {
+    fn regular_method_call_arg_policy(
+        &self,
+        receiver_span: crate::frontend::ast::Span,
+        receiver: &TypedExpr,
+        method: &str,
+        args: &[IrCallArg],
+    ) -> MethodCallArgPolicy {
+        if self
+            .type_info
+            .as_ref()
+            .is_some_and(|info| info.preserves_regular_method_arg_shape(receiver_span, method))
+        {
+            return MethodCallArgPolicy::PreserveShape;
+        }
+
+        // Fallback for unresolved Rust-interop receivers when optional rust metadata is unavailable or local type
+        // inference did not retain the receiver family. Keep lookup calls like `counts.get(word)` borrow-shaped rather
+        // than forcing an extra `&`/`.into()` conversion on already string-like probe values.
+        if matches!(receiver.ty, IrType::Unknown)
+            && matches!(method, "get" | "contains" | "contains_key")
+            && args.first().is_some_and(|arg| {
+                matches!(
+                    arg.expr.ty,
+                    IrType::String | IrType::StrRef | IrType::StaticStr | IrType::FrozenStr
+                )
+            })
+        {
+            return MethodCallArgPolicy::PreserveShape;
+        }
+
+        MethodCallArgPolicy::Default
+    }
+
     /// Lower an expression using the available typechecker output (if present).
     ///
     /// This wraps [`lower_expr`] and then overrides the inferred IR type using the typechecker  span-to-type map.
@@ -110,18 +146,40 @@ impl AstLowering {
             // ---- Binary operations ----
             ast::Expr::Binary(l, op, r) => {
                 // Special handling for `in` and `not in` operators
-                // `x in collection` → `collection.contains(&x)`
-                // `x not in collection` → `!collection.contains(&x)`
+                // - `x in collection` → builtin-aware `collection.contains(x)`
+                // - `x not in collection` → `!collection.contains(x)`
                 match op {
                     ast::BinaryOp::In | ast::BinaryOp::NotIn => {
                         let item = self.lower_expr(&l.node)?;
                         let collection = self.lower_expr(&r.node)?;
 
-                        // Generate collection.contains(&item)
-                        let contains_call = IrExprKind::MethodCall {
-                            receiver: Box::new(collection),
-                            method: "contains".to_string(),
-                            args: vec![IrCallArg { name: None, expr: item }],
+                        // Generate `collection.contains(item)` using the same receiver-aware classification path as
+                        // ordinary method syntax so containment keeps builtin semantics for strings, lists, sets, and
+                        // dicts without emitter-side name guessing.
+                        let contains_args = vec![IrCallArg { name: None, expr: item }];
+                        let contains_kind = MethodKind::for_receiver(&collection.ty, "contains").or_else(|| {
+                            let mut receiver_ty = &collection.ty;
+                            while let IrType::Ref(inner) | IrType::RefMut(inner) = receiver_ty {
+                                receiver_ty = inner.as_ref();
+                            }
+                            matches!(receiver_ty, IrType::Dict(_, _))
+                                .then_some(MethodKind::Collection(CollectionMethodKind::Contains))
+                        });
+                        let contains_call = if let Some(kind) = contains_kind {
+                            IrExprKind::KnownMethodCall {
+                                receiver: Box::new(collection),
+                                kind,
+                                args: contains_args,
+                            }
+                        } else {
+                            let arg_policy =
+                                self.regular_method_call_arg_policy(r.span, &collection, "contains", &contains_args);
+                            IrExprKind::MethodCall {
+                                receiver: Box::new(collection),
+                                method: "contains".to_string(),
+                                args: contains_args,
+                                arg_policy,
+                            }
                         };
 
                         if matches!(op, ast::BinaryOp::NotIn) {
@@ -191,7 +249,7 @@ impl AstLowering {
                 let method_name = self.resolve_method_rebinding(&receiver.ty, m);
 
                 // Check for known methods (enum-based dispatch)
-                if let Some(kind) = MethodKind::from_name(&method_name) {
+                if let Some(kind) = MethodKind::for_receiver(&receiver.ty, &method_name) {
                     (
                         IrExprKind::KnownMethodCall {
                             receiver: Box::new(receiver),
@@ -201,12 +259,14 @@ impl AstLowering {
                         IrType::Unknown,
                     )
                 } else {
+                    let arg_policy = self.regular_method_call_arg_policy(o.span, &receiver, &method_name, &args_ir);
                     // Unknown method - keep as string-based call
                     (
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),
                             method: method_name,
                             args: args_ir,
+                            arg_policy,
                         },
                         IrType::Unknown,
                     )

@@ -49,7 +49,7 @@ def _extract_rfc_metadata(md_path: Path, need_status: bool) -> tuple[str, str]:
         
         # Extract status (only if needed for open RFCs)
         if need_status:
-            if m := re.match(r"^\s*\*\*Status:\*\*\s*(.+?)\s*$", line):
+            if m := re.match(r"^\s*(?:-\s*)?\*\*Status(?::)?\*\*:?\s*(.+?)\s*$", line):
                 status = m.group(1).strip()
                 break
             if m := re.match(r"^\s*-\s*Status:\s*(.+?)\s*$", line):

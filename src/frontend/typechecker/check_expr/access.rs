@@ -11,7 +11,7 @@ use crate::frontend::typechecker::helpers::{
     collection_name, collection_type_id, is_frozen_bytes, is_frozen_str, is_intlike_for_index, list_ty, option_ty,
     string_method_return,
 };
-use incan_core::interop::{CoercionPolicy, RustItemKind};
+use incan_core::interop::{CoercionPolicy, RustCollectionFamily, RustItemKind};
 use incan_core::lang::conventions;
 use incan_core::lang::magic_methods;
 use incan_core::lang::surface::types as surface_types;
@@ -31,6 +31,24 @@ fn rust_receiver_display(path: &str) -> String {
 }
 
 impl TypeChecker {
+    fn rust_canonical_path_for_receiver_type(&self, ty: &ResolvedType) -> Option<String> {
+        match ty {
+            ResolvedType::RustPath(path) => Some(path.clone()),
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => {
+                let id = self.symbols.lookup(name)?;
+                let sym = self.symbols.get(id)?;
+                let SymbolKind::RustItem(info) = &sym.kind else {
+                    return None;
+                };
+                match info.binding {
+                    RustImportBindingKind::CrateRoot => None,
+                    RustImportBindingKind::RootedPath | RustImportBindingKind::FromImport => Some(info.path.clone()),
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Resolve a declared field on a nominal user-defined type, applying generic substitutions when available.
     ///
     /// This keeps field access on `Named(Type)` and `Generic(Type[...])` owners on the same path instead of letting
@@ -112,8 +130,14 @@ impl TypeChecker {
         method: &str,
         args: &[CallArg],
         arg_types: &[ResolvedType],
+        receiver_span: Span,
         span: Span,
     ) -> Option<ResolvedType> {
+        if RustCollectionFamily::for_canonical_path(rust_path)
+            .is_some_and(|family| family.preserves_lookup_arg_shape(method))
+        {
+            self.type_info.record_regular_method_arg_shape(receiver_span, method);
+        }
         let metadata = self.rust_item_metadata_for_path(rust_path)?;
         match &metadata.kind {
             RustItemKind::Type(_) => {
@@ -693,8 +717,8 @@ impl TypeChecker {
         if matches!(base_ty, ResolvedType::Unknown) {
             return ResolvedType::Unknown;
         }
-        if let ResolvedType::RustPath(path) = &base_ty {
-            let Some(ret) = self.resolve_rust_path_method_call(path, method, args, &arg_types, span) else {
+        if let Some(path) = self.rust_canonical_path_for_receiver_type(&base_ty) {
+            let Some(ret) = self.resolve_rust_path_method_call(&path, method, args, &arg_types, base.span, span) else {
                 // Metadata backend disabled/unavailable: preserve permissive RFC 005 behavior.
                 return ResolvedType::Unknown;
             };
@@ -984,7 +1008,7 @@ impl TypeChecker {
                     if newtype.is_rusttype
                         && let ResolvedType::RustPath(path) = &newtype.underlying
                         && let Some(ret) =
-                            self.resolve_rust_path_method_call(path, resolved_method, args, &arg_types, span)
+                            self.resolve_rust_path_method_call(path, resolved_method, args, &arg_types, base.span, span)
                     {
                         return ret;
                     }
@@ -1068,8 +1092,14 @@ impl TypeChecker {
                         }
                         if nt.is_rusttype
                             && let ResolvedType::RustPath(path) = &nt.underlying
-                            && let Some(ret) =
-                                self.resolve_rust_path_method_call(path, resolved_method, args, &arg_types, span)
+                            && let Some(ret) = self.resolve_rust_path_method_call(
+                                path,
+                                resolved_method,
+                                args,
+                                &arg_types,
+                                base.span,
+                                span,
+                            )
                         {
                             return ret;
                         }
