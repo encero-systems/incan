@@ -226,6 +226,14 @@ impl<'a> IrEmitter<'a> {
                         .insert((e.name.clone(), v.name.clone()), v.fields.clone());
                 }
             }
+            if let IrDeclKind::TypeAlias {
+                name,
+                is_rusttype: true,
+                ..
+            } = &decl.kind
+            {
+                self.rusttype_alias_names.insert(name.clone());
+            }
             // Collect static-str const initializer expressions for later resolution.
             if let IrDeclKind::Const { name, ty, value, .. } = &decl.kind
                 && matches!(ty, IrType::StaticStr)

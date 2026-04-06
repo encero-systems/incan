@@ -626,4 +626,94 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn external_name_namespace_call_uses_incan_function_arg_conversion() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "widgets".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::ExternalName,
+                    },
+                    IrType::Struct("widgets".to_string()),
+                )),
+                method: "make_widget".to_string(),
+                args: vec![IrCallArg {
+                    name: None,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "DEFAULT_NAME".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::String,
+                    ),
+                }],
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("widgets :: make_widget (DEFAULT_NAME"),
+            "expected namespace call to stay on the ordinary function-conversion path, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("& DEFAULT_NAME"),
+            "namespace call must not borrow owned string args like an external Rust receiver, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains(". into ()"),
+            "namespace call must not apply external-Rust `.into()` coercions, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rusttype_surface_associated_function_uses_incan_string_conversion() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.rusttype_alias_names.insert("Name".to_string());
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "Name".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::TypeName,
+                    },
+                    IrType::Struct("Name".to_string()),
+                )),
+                method: "parse".to_string(),
+                args: vec![IrCallArg {
+                    name: None,
+                    expr: TypedExpr::new(IrExprKind::String("alice@example.com".to_string()), IrType::String),
+                }],
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Struct("Name".to_string()),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("Name :: parse (\"alice@example.com\" . to_string ())"),
+            "expected rusttype surface associated function to use Incan string conversion, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains(". into ()"),
+            "rusttype surface associated function must not use external-Rust `.into()` conversion, got `{rendered}`"
+        );
+        Ok(())
+    }
 }

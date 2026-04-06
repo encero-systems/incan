@@ -60,11 +60,14 @@ impl<'a> IrEmitter<'a> {
 
     /// Whether a receiver is a nominal type owned by this compilation unit rather than an external Rust surface.
     ///
-    /// Incan-owned structs, enums, and traits use compiler-controlled argument conversion rules. External nominal
-    /// types may share the same IR shape (`Struct(name)`) but must usually preserve Rust call semantics instead.
+    /// Incan-owned structs, enums, traits, and `rusttype` surface aliases use compiler-controlled argument conversion
+    /// rules. External nominal types may share the same IR shape (`Struct(name)`) but must usually preserve Rust call
+    /// semantics instead.
     fn is_incan_owned_nominal_receiver(&self, receiver_ty: &IrType) -> bool {
         match Self::receiver_type_for_method_dispatch(receiver_ty) {
-            IrType::Struct(name) => self.struct_field_names.contains_key(name),
+            IrType::Struct(name) => {
+                self.struct_field_names.contains_key(name) || self.rusttype_alias_names.contains(name)
+            }
             IrType::Enum(name) => self.enum_variant_fields.keys().any(|(enum_name, _)| enum_name == name),
             IrType::Trait(_) => true,
             _ => false,
@@ -138,6 +141,11 @@ impl<'a> IrEmitter<'a> {
             if Self::expr_is_type_like(receiver) {
                 let type_ident = format_ident!("{}", name);
                 let m = format_ident!("{}", method);
+                let in_return = *self.in_return_context.borrow();
+                let receiver_ref_kind = match &receiver.kind {
+                    IrExprKind::Var { ref_kind, .. } => Some(*ref_kind),
+                    _ => None,
+                };
                 // Apply Incan-style argument conversions when calling associated functions on Incan-owned types
                 // (structs/enums/traits). This is important for `str` literals which are emitted as `&'static str`,
                 // but many Incan-level signatures expect owned `String` in Rust (e.g., newtype `from_underlying(v:
@@ -146,21 +154,29 @@ impl<'a> IrEmitter<'a> {
                 // For external Rust types (VarRefKind::ExternalRustName), use ExternalFunctionArg conversions so that
                 // string literals get `.into()` — this lets the Rust compiler resolve the target type via the Into
                 // trait (e.g., Polars' PlSmallStr, sqlx identifiers, etc.).
-                let is_external = matches!(
-                    receiver.kind,
-                    IrExprKind::Var {
-                        ref_kind: VarRefKind::ExternalRustName,
-                        ..
+                let conversion_context = if receiver_ref_kind != Some(VarRefKind::ExternalRustName)
+                    && self.is_incan_owned_nominal_receiver(&receiver.ty)
+                {
+                    ConversionContext::IncanFunctionArg
+                } else if receiver_ref_kind == Some(VarRefKind::ExternalName) {
+                    if in_return {
+                        ConversionContext::IncanFunctionArgInReturn
+                    } else {
+                        ConversionContext::IncanFunctionArg
                     }
-                );
-                let apply_incan_arg_conversions = !is_external && self.is_incan_owned_nominal_receiver(&receiver.ty);
+                } else {
+                    ConversionContext::ExternalFunctionArg
+                };
 
-                let arg_tokens: Vec<TokenStream> = if apply_incan_arg_conversions {
+                let arg_tokens: Vec<TokenStream> = if matches!(
+                    conversion_context,
+                    ConversionContext::IncanFunctionArg | ConversionContext::IncanFunctionArgInReturn
+                ) {
                     arg_exprs
                         .iter()
                         .map(|a| {
                             let emitted = self.emit_expr(a)?;
-                            let conv = determine_conversion(a, None, ConversionContext::IncanFunctionArg);
+                            let conv = determine_conversion(a, None, conversion_context);
                             Ok(conv.apply(emitted))
                         })
                         .collect::<Result<_, _>>()?
@@ -172,7 +188,7 @@ impl<'a> IrEmitter<'a> {
                         .iter()
                         .map(|a| {
                             let emitted = self.emit_expr(a)?;
-                            let conv = determine_conversion(a, None, ConversionContext::ExternalFunctionArg);
+                            let conv = determine_conversion(a, None, conversion_context);
                             Ok(conv.apply(emitted))
                         })
                         .collect::<Result<_, _>>()?
@@ -189,15 +205,23 @@ impl<'a> IrEmitter<'a> {
         //
         // Do not key this off `IrType::Struct` alone: Rust interop types such as `HashMap` also lower to nominal IR
         // types, but they should still use Rust call semantics rather than compiler-owned cloning/to_string policies.
-        let is_external_receiver = matches!(
-            receiver.kind,
-            IrExprKind::Var {
-                ref_kind: VarRefKind::ExternalRustName,
-                ..
-            }
-        );
-        let conversion_context = if !is_external_receiver && self.is_incan_owned_nominal_receiver(&receiver.ty) {
+        let in_return = *self.in_return_context.borrow();
+        let receiver_ref_kind = match &receiver.kind {
+            IrExprKind::Var { ref_kind, .. } => Some(*ref_kind),
+            _ => None,
+        };
+        let conversion_context = if receiver_ref_kind != Some(VarRefKind::ExternalRustName)
+            && self.is_incan_owned_nominal_receiver(&receiver.ty)
+        {
             ConversionContext::IncanFunctionArg
+        } else if receiver_ref_kind == Some(VarRefKind::ExternalName) {
+            // Module-qualified calls like `widgets.make_widget(...)` are function namespace lookups, not external Rust
+            // methods. They should keep ordinary Incan/public-function conversions instead of Rust interop coercions.
+            if in_return {
+                ConversionContext::IncanFunctionArgInReturn
+            } else {
+                ConversionContext::IncanFunctionArg
+            }
         } else if matches!(arg_policy, MethodCallArgPolicy::PreserveShape) {
             // Lowering recorded that this ordinary Rust method call must keep borrow-sensitive lookup semantics, so do
             // not apply function-style coercions such as `.to_string()` / `.into()`.

@@ -72,6 +72,8 @@ pub struct IrEmitter<'a> {
     struct_field_descriptions: std::collections::HashMap<(String, String), Option<String>>,
     /// Struct field default expressions: (StructName, FieldName) -> default expr
     struct_field_defaults: std::collections::HashMap<(String, String), super::IrExpr>,
+    /// Incan `rusttype` aliases that should use compiler-owned call conversion rules at the surface boundary.
+    rusttype_alias_names: HashSet<String>,
     /// Whether we're currently emitting a return expression (allows moves instead of clones)
     in_return_context: RefCell<bool>,
     /// Map of const string bindings to their literal values (for const folding of string adds)
@@ -119,6 +121,7 @@ impl<'a> IrEmitter<'a> {
             struct_field_aliases: std::collections::HashMap::new(),
             struct_field_descriptions: std::collections::HashMap::new(),
             struct_field_defaults: std::collections::HashMap::new(),
+            rusttype_alias_names: HashSet::new(),
             in_return_context: RefCell::new(false),
             const_string_literals: std::collections::HashMap::new(),
             type_module_paths: HashMap::new(),
