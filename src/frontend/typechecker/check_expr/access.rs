@@ -305,6 +305,11 @@ impl TypeChecker {
         }
     }
 
+    /// Replace every [`ResolvedType::SelfType`] in `ty` using the **call-site** receiver.
+    ///
+    /// For method **bodies**, `TypeChecker::concretize_self_type_in_annotation` in `check_decl.rs` maps `Self` to the
+    /// owner's `self_ty` while checking the implementation. At a **call site**, `Self` means the instantiated
+    /// receiver (for example `DataFrame[Order]` when calling on `x: DataFrame[Order]`).
     fn substitute_self_in_resolved_type(&self, ty: ResolvedType, receiver: &ResolvedType) -> ResolvedType {
         match ty {
             ResolvedType::SelfType => self.concrete_type_for_trait_self(receiver),
@@ -337,7 +342,33 @@ impl TypeChecker {
         }
     }
 
+    /// Build formal parameter types and return type for a call, replacing `Self` with `receiver_ty`.
+    ///
+    /// [`MethodInfo`] from collection stores `Self` literally; both inherent and trait dispatch must substitute using
+    /// the **instantiated** receiver before argument checking and before reporting the callee's result type.
+    fn method_types_substituting_call_site_self(
+        &self,
+        method_info: &MethodInfo,
+        receiver_ty: &ResolvedType,
+    ) -> (Vec<(String, ResolvedType)>, ResolvedType) {
+        let params = method_info
+            .params
+            .iter()
+            .map(|(name, ty)| {
+                (
+                    name.clone(),
+                    self.substitute_self_in_resolved_type(ty.clone(), receiver_ty),
+                )
+            })
+            .collect();
+        let return_type = self.substitute_self_in_resolved_type(method_info.return_type.clone(), receiver_ty);
+        (params, return_type)
+    }
+
     /// Resolve a method on a type's own methods or trait-adopted methods.
+    ///
+    /// Inherent methods and trait-provided methods both substitute `Self` in formal parameters and the return type
+    /// using the call-site receiver so generic carriers typecheck consistently (#237).
     #[allow(clippy::too_many_arguments)]
     fn resolve_named_method(
         &mut self,
@@ -350,17 +381,15 @@ impl TypeChecker {
         receiver_ty: &ResolvedType,
     ) -> Option<ResolvedType> {
         if let Some(method_info) = methods.get(method) {
-            let params = method_info.params.clone();
-            let return_type = method_info.return_type.clone();
+            let (params, return_type) = self.method_types_substituting_call_site_self(method_info, receiver_ty);
             self.validate_method_call_args(&params, args, arg_types);
             return Some(return_type);
         }
         if let Some(traits) = traits {
             for trait_name in traits {
                 if let Some(method_info) = self.trait_method_info_resolved(trait_name, method, call_site_span) {
-                    let params = method_info.params.clone();
-                    let return_type =
-                        self.substitute_self_in_resolved_type(method_info.return_type.clone(), receiver_ty);
+                    let (params, return_type) =
+                        self.method_types_substituting_call_site_self(&method_info, receiver_ty);
                     self.validate_method_call_args(&params, args, arg_types);
                     return Some(return_type);
                 }

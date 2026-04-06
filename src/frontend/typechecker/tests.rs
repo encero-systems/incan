@@ -2822,6 +2822,109 @@ model Order:
     Ok(())
 }
 
+/// Regression for #237: `-> Self` on a generic class method must type as the instantiated receiver at the call site,
+/// not bare `Self`, so annotations and chaining against `Carrier[Order]` succeed.
+#[test]
+fn test_issue_237_self_return_substituted_at_call_site() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+class Carrier[T]:
+  _m: T
+
+  def filter(self, _p: bool) -> Self:
+    return self
+
+model Order:
+  id: int
+
+def use_filter(x: Carrier[Order]) -> Carrier[Order]:
+  return x.filter(true)
+
+def use_annotated_local(x: Carrier[Order]) -> Carrier[Order]:
+  y: Carrier[Order] = x.filter(true)
+  return y
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    Ok(())
+}
+
+/// `Self` in non-receiver parameters must use the same call-site substitution as the return type (#237 follow-up).
+#[test]
+fn test_self_param_substituted_at_call_site_for_method_args() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+class Carrier[T]:
+  _m: T
+
+  def join(self, other: Self, cond: bool) -> Self:
+    return self
+
+model Order:
+  id: int
+
+def use_join(left: Carrier[Order], right: Carrier[Order]) -> Carrier[Order]:
+  return left.join(right, true)
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    Ok(())
+}
+
+/// Trait **default** methods are not copied into `ClassInfo.methods`; dispatch goes through the trait branch of
+/// `resolve_named_method`. Call-site `Self` substitution must still apply (#237).
+#[test]
+fn test_issue_237_self_substitution_trait_default_methods_not_on_class_map() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait DataSet[T]:
+  def filter(self, _p: bool) -> Self:
+    return self
+
+  def join(self, other: Self, cond: bool) -> Self:
+    return self
+
+class Carrier[T] with DataSet:
+  _m: T
+
+model Order:
+  id: int
+
+def use_filter(x: Carrier[Order]) -> Carrier[Order]:
+  return x.filter(true)
+
+def use_annotated_local(x: Carrier[Order]) -> Carrier[Order]:
+  y: Carrier[Order] = x.filter(true)
+  return y
+
+def use_join(left: Carrier[Order], right: Carrier[Order]) -> Carrier[Order]:
+  return left.join(right, true)
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    Ok(())
+}
+
+/// `rusttype` inherent methods declared with `-> Self` must type as the surface newtype at the call site so
+/// `maybe_record_rusttype_return_coercion` and downstream checks see the substituted return (no bare `Self`).
+#[test]
+fn test_rusttype_method_returning_self_substitutes_at_call_site_without_metadata() {
+    let source = r#"
+from rust::acme import Widget as RustWidget
+
+type Widget = rusttype RustWidget:
+    def myself(self) -> Self:
+        ...
+
+def f(w: Widget) -> Widget:
+    return w.myself()
+"#;
+    assert_check_ok(source);
+}
+
 #[test]
 fn test_check_with_imports_concrete_and_supertrait_upcasts() -> Result<(), Box<dyn std::error::Error>> {
     let dependency_source = r#"

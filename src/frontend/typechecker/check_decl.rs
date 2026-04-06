@@ -78,6 +78,9 @@ impl TypeChecker {
     ///
     /// Method return validation runs against the concrete owning type, not the abstract declaration surface, so
     /// containers like `List[Self]` must be concretized recursively before compatibility checks.
+    ///
+    /// **Call sites** use `substitute_self_in_resolved_type` in `check_expr/access.rs` instead: there `Self` is
+    /// resolved from the **instantiated** receiver expression (e.g. `Carrier[Order]` for `x.filter(...)`).
     fn concretize_self_type_in_annotation(ty: &ResolvedType, self_ty: &ResolvedType) -> ResolvedType {
         match ty {
             ResolvedType::SelfType => self_ty.clone(),
