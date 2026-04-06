@@ -3921,13 +3921,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#proposed-syntax" class="md-nav__link">
+  <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
     <span class="md-ellipsis">
-      Proposed syntax
+      Guide-level explanation (how users think about it)
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Proposed syntax">
+    <nav class="md-nav" aria-label="Guide-level explanation (how users think about it)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -3948,19 +3948,55 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#compute-a-value-without-external-mutation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compute a value without external mutation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#search-until-found" class="md-nav__link">
+    <span class="md-ellipsis">
+      Search until found
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#break-without-a-value" class="md-nav__link">
+    <span class="md-ellipsis">
+      break without a value
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#async-and-await" class="md-nav__link">
+    <span class="md-ellipsis">
+      Async and await
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#semantics" class="md-nav__link">
+  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
     <span class="md-ellipsis">
-      Semantics
+      Reference-level explanation (precise rules)
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Semantics">
+    <nav class="md-nav" aria-label="Reference-level explanation (precise rules)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -3991,18 +4027,18 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#interaction-with-generators-yield" class="md-nav__link">
+  <a href="#generators-yield" class="md-nav__link">
     <span class="md-ellipsis">
-      Interaction with generators (yield)
+      Generators (yield)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#interaction-with-asyncawait" class="md-nav__link">
+  <a href="#backend-alignment" class="md-nav__link">
     <span class="md-ellipsis">
-      Interaction with async/await
+      Backend alignment
     </span>
   </a>
   
@@ -4014,37 +4050,28 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#examples" class="md-nav__link">
+  <a href="#design-details" class="md-nav__link">
     <span class="md-ellipsis">
-      Examples
+      Design details
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Examples">
+    <nav class="md-nav" aria-label="Design details">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#example-1-compute-a-value-without-external-mutation" class="md-nav__link">
+  <a href="#why-keep-loop-break-value-when-while-exists" class="md-nav__link">
     <span class="md-ellipsis">
-      Example 1: Compute a value without external mutation
+      Why keep loop: / break &lt;value&gt; when while exists
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#example-2-search-until-found" class="md-nav__link">
+  <a href="#example-conditional-while-alternative" class="md-nav__link">
     <span class="md-ellipsis">
-      Example 2: Search until found
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#example-3-break-without-value" class="md-nav__link">
-    <span class="md-ellipsis">
-      Example 3: break without value
+      Example: conditional while alternative
     </span>
   </a>
   
@@ -4052,48 +4079,6 @@
         
       </ul>
     </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#lowering-codegen-strategy-rust-backend" class="md-nav__link">
-    <span class="md-ellipsis">
-      Lowering / codegen strategy (Rust backend)
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Lowering / codegen strategy (Rust backend)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#desugaring-options" class="md-nav__link">
-    <span class="md-ellipsis">
-      Desugaring options
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#ir-changes" class="md-nav__link">
-    <span class="md-ellipsis">
-      IR changes
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#backwards-compatibility" class="md-nav__link">
-    <span class="md-ellipsis">
-      Backwards compatibility
-    </span>
-  </a>
   
 </li>
       
@@ -4107,59 +4092,38 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-notes-current-crate-layout" class="md-nav__link">
+  <a href="#drawbacks" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation notes (current crate layout)
+      Drawbacks
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Implementation notes (current crate layout)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#alternative-a-only-keep-while-true" class="md-nav__link">
-    <span class="md-ellipsis">
-      Alternative A: Only keep while True:
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#alternative-b-make-while-an-expression-too" class="md-nav__link">
-    <span class="md-ellipsis">
-      Alternative B: Make while an expression too
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#open-questions" class="md-nav__link">
+  <a href="#layers-affected" class="md-nav__link">
     <span class="md-ellipsis">
-      Open questions
+      Layers affected
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Open questions">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design Decisions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#possible-future-syntax-sugar-loop-until" class="md-nav__link">
     <span class="md-ellipsis">
       Possible future syntax sugar: loop ... until ...
     </span>
   </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -4182,36 +4146,35 @@
 
 
 <h1 id="rfc-016-loop-and-break-value-loop-expressions">RFC 016: <code>loop</code> and <code>break &lt;value&gt;</code> (Loop Expressions)<a class="headerlink" href="#rfc-016-loop-and-break-value-loop-expressions" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> Planned
-<strong>Created:</strong> 2025-12-24  </p>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Add a <code>loop:</code> keyword for explicit infinite loops, and extend <code>break</code> to optionally carry a value: <code>break &lt;expr&gt;</code>.</p>
-<p>This enables treating <code>loop:</code> as an <strong>expression</strong> that can produce a value (similar to Rust’s <code>loop { ... }</code>), while
-keeping <code>while</code> as the general conditional loop construct.</p>
-<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Today, users express infinite loops as <code>while True:</code>. The compiler may emit Rust <code>loop {}</code> for this pattern, but the
-source language has no explicit infinite-loop construct and cannot express “break with a value”.</p>
-<p>Adding <code>loop:</code> and <code>break &lt;value&gt;</code> provides:</p>
 <ul>
-<li>Clearer intent in source (<code>loop:</code> reads as “infinite loop”).</li>
-<li>A foundation for expression-oriented control flow without “initialize then mutate” patterns.</li>
-<li>A natural home for “search until found” patterns that return a value.</li>
+<li><strong>Status:</strong> Planned</li>
+<li><strong>Created:</strong> 2025-12-24</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong> RFC 006 (generators)</li>
+<li><strong>Issue:</strong> —</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.1</li>
+<li><strong>Shipped in:</strong> —</li>
 </ul>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>Add a <code>loop:</code> keyword for explicit infinite loops and extend <code>break</code> to optionally carry a value (<code>break &lt;expr&gt;</code>), so <code>loop:</code> can be an expression that produces a value (like Rust’s <code>loop { ... }</code>) while <code>while</code> remains the general conditional loop construct.</p>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>Today, users express infinite loops as <code>while True:</code>. The compiler may emit Rust <code>loop {}</code> for that pattern, but the source language has no explicit infinite-loop construct and cannot express “break with a value.” Adding <code>loop:</code> and <code>break &lt;value&gt;</code> gives clearer intent (<code>loop:</code> reads as an infinite loop), a foundation for expression-oriented control flow without “initialize then mutate” patterns, and a natural shape for “search until found” loops that return a value.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Introduce <code>loop:</code> as an explicit infinite loop construct.</li>
 <li>Allow <code>break</code> to optionally carry a value: <code>break &lt;expr&gt;</code>.</li>
-<li>Allow <code>loop:</code> to be used in expression position (e.g., assignment RHS).</li>
+<li>Allow <code>loop:</code> in expression position (e.g., assignment RHS).</li>
 <li>Keep existing <code>break</code> (no value) valid and well-defined.</li>
-<li>Keep <code>while True:</code> valid (and optionally desugar <code>loop:</code> to <code>while True:</code> or vice-versa).</li>
+<li>Keep <code>while True:</code> valid (and optionally desugar between <code>loop:</code> and <code>while True:</code> in the implementation).</li>
 </ul>
 <h2 id="non-goals">Non-goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Labeled <code>break</code> / <code>continue</code> syntax changes (may be addressed in a follow-up RFC).</li>
-<li><code>break</code> with multiple values / tuple sugar (users can return tuples explicitly).</li>
-<li>Making <code>while</code> an expression (this RFC keeps “value-yielding loops” scoped to <code>loop:</code>).</li>
+<li>Labeled <code>break</code> / <code>continue</code> syntax (follow-up RFC).</li>
+<li><code>break</code> with multiple values or tuple sugar (callers return tuples explicitly).</li>
+<li>Making <code>while</code> an expression (value-yielding loops stay scoped to <code>loop:</code>).</li>
 </ul>
-<h2 id="proposed-syntax">Proposed syntax<a class="headerlink" href="#proposed-syntax" title="Permanent link">&para;</a></h2>
+<h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
 <h3 id="loop"><code>loop:</code><a class="headerlink" href="#loop" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">loop</span><span class="p">:</span>
     <span class="c1"># body</span>
@@ -4221,52 +4184,25 @@ source language has no explicit infinite-loop construct and cannot express “br
 <div class="language-incan highlight"><pre><span></span><code><span class="k">break</span>
 <span class="k">break</span> <span class="n">some_expr</span>
 </code></pre></div>
-<h2 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h2>
-<h3 id="loop-execution">Loop execution<a class="headerlink" href="#loop-execution" title="Permanent link">&para;</a></h3>
-<ul>
-<li><code>loop:</code> executes its body repeatedly until it is exited via <code>break</code> (or an error/abort).</li>
-<li><code>continue</code> skips to the next iteration (existing behavior).</li>
-</ul>
-<h3 id="break-values"><code>break</code> values<a class="headerlink" href="#break-values" title="Permanent link">&para;</a></h3>
-<ul>
-<li><code>break</code> exits the innermost <code>loop:</code>. If it includes a value, that value becomes the value produced by the <code>loop:</code> expression.</li>
-<li><code>break</code> without a value is equivalent to <code>break ()</code> (i.e., produces <code>Unit</code>).</li>
-</ul>
-<h3 id="expression-result-type">Expression result type<a class="headerlink" href="#expression-result-type" title="Permanent link">&para;</a></h3>
-<p><code>loop:</code> is an expression with a single result type:</p>
-<ul>
-<li>If every reachable <code>break</code> in the loop is <code>break</code> (no value), the loop’s type is <code>Unit</code>.</li>
-<li>If one or more <code>break</code> statements include values, the loop’s type is the <strong>least upper bound</strong> (LUB) / unification
-  result of all <code>break</code> value types.<ul>
-<li>If the compiler cannot unify the break value types, it is a type error.</li>
-</ul>
-</li>
-<li>If a <code>loop:</code> has no reachable <code>break</code>, it is considered non-terminating.<ul>
-<li>Initial implementation may treat this as a type error unless we also introduce a <code>Never</code>/<code>!</code> type.</li>
-</ul>
-</li>
-</ul>
-<h3 id="interaction-with-generators-yield">Interaction with generators (<code>yield</code>)<a class="headerlink" href="#interaction-with-generators-yield" title="Permanent link">&para;</a></h3>
-<p><code>break</code> and <code>yield</code> are different control-flow concepts:</p>
-<ul>
-<li><code>break</code> exits a loop.</li>
-<li><code>yield</code> produces one element of an <code>Iterator[T]</code> and suspends execution (RFC 006).</li>
-</ul>
-<p>Inside a generator function, <code>loop:</code> behaves like any other loop construct:</p>
-<ul>
-<li><code>yield expr</code> produces a value and suspends the generator.</li>
-<li><code>break</code> exits the loop; the generator may continue after the loop, or terminate if nothing follows.</li>
-</ul>
-<p>Open design question:</p>
-<ul>
-<li>If <code>loop:</code> is allowed as an expression inside generator bodies, <code>break &lt;value&gt;</code> would produce a value for the <code>loop:</code>
-  expression, but this value is distinct from generator output (which is produced only by <code>yield</code>).
-  We can either allow this (it is orthogonal), or restrict “loop-as-expression” in generators initially for simplicity.</li>
-</ul>
-<h3 id="interaction-with-asyncawait">Interaction with async/await<a class="headerlink" href="#interaction-with-asyncawait" title="Permanent link">&para;</a></h3>
-<p><code>await</code> is an async suspension point: it pauses an <code>async def</code> until a <code>Future</code> is ready.
-It does not replace loops.</p>
-<p>You typically combine them:</p>
+<h3 id="compute-a-value-without-external-mutation">Compute a value without external mutation<a class="headerlink" href="#compute-a-value-without-external-mutation" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">answer</span> <span class="o">=</span> <span class="n">loop</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">some_condition</span><span class="p">():</span>
+        <span class="k">break</span> <span class="mi">42</span>
+</code></pre></div>
+<p>Equivalent with <code>while True:</code> without <code>break &lt;value&gt;</code> typically uses a <code>mut</code> accumulator and <code>break</code> after assignment.</p>
+<h3 id="search-until-found">Search until found<a class="headerlink" href="#search-until-found" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">found</span> <span class="o">=</span> <span class="n">loop</span><span class="p">:</span>
+    <span class="n">item</span> <span class="o">=</span> <span class="n">next_item</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">item</span><span class="o">.</span><span class="n">is_ok</span><span class="p">():</span>
+        <span class="k">break</span> <span class="n">item</span>
+</code></pre></div>
+<h3 id="break-without-a-value"><code>break</code> without a value<a class="headerlink" href="#break-without-a-value" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">loop</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">done</span><span class="p">():</span>
+        <span class="k">break</span>
+</code></pre></div>
+<h3 id="async-and-await">Async and <code>await</code><a class="headerlink" href="#async-and-await" title="Permanent link">&para;</a></h3>
+<p><code>await</code> pauses an <code>async def</code> until a <code>Future</code> is ready; it does not replace loops. They compose naturally:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">wait_until_done</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -4274,7 +4210,6 @@ It does not replace loops.</p>
         <span class="k">if</span> <span class="k">await</span> <span class="n">done</span><span class="p">():</span>
             <span class="k">break</span>
 </code></pre></div>
-<p>If you need polling/backoff, <code>await</code> controls waiting between iterations:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">wait_with_backoff</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -4285,132 +4220,100 @@ It does not replace loops.</p>
 
     <span class="k">return</span>
 </code></pre></div>
-<h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
-<h3 id="example-1-compute-a-value-without-external-mutation">Example 1: Compute a value without external mutation<a class="headerlink" href="#example-1-compute-a-value-without-external-mutation" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">answer</span> <span class="o">=</span> <span class="n">loop</span><span class="p">:</span>
-    <span class="k">if</span> <span class="n">some_condition</span><span class="p">():</span>
-        <span class="k">break</span> <span class="mi">42</span>
-</code></pre></div>
-<p>Equivalent with <code>while True:</code> (today):</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">mut</span> <span class="n">answer</span> <span class="o">=</span> <span class="mi">0</span>
-<span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
-    <span class="c1"># Without `break &lt;value&gt;`, you typically compute a result via external mutation.</span>
-    <span class="k">if</span> <span class="n">some_condition</span><span class="p">():</span>
-        <span class="n">answer</span> <span class="o">=</span> <span class="mi">42</span>
-        <span class="k">break</span>
-</code></pre></div>
-<h3 id="example-2-search-until-found">Example 2: Search until found<a class="headerlink" href="#example-2-search-until-found" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">found</span> <span class="o">=</span> <span class="n">loop</span><span class="p">:</span>
-    <span class="n">item</span> <span class="o">=</span> <span class="n">next_item</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">item</span><span class="o">.</span><span class="n">is_ok</span><span class="p">():</span>
-        <span class="k">break</span> <span class="n">item</span>
-</code></pre></div>
-<p>Equivalent with <code>while True:</code> (today):</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">mut</span> <span class="n">found</span> <span class="o">=</span> <span class="kc">None</span>
-<span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
-    <span class="n">item</span> <span class="o">=</span> <span class="n">next_item</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">item</span><span class="o">.</span><span class="n">is_ok</span><span class="p">():</span>
-        <span class="n">found</span> <span class="o">=</span> <span class="n">item</span>
-        <span class="k">break</span>
-</code></pre></div>
-<p>Alternative with a conditional <code>while</code> (works when you can express the loop as “repeat until condition”):</p>
+<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
+<h3 id="loop-execution">Loop execution<a class="headerlink" href="#loop-execution" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>loop:</code> runs its body repeatedly until it exits via <code>break</code> (or an error/abort).</li>
+<li><code>continue</code> skips to the next iteration (existing behavior).</li>
+</ul>
+<h3 id="break-values"><code>break</code> values<a class="headerlink" href="#break-values" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>break</code> exits the innermost enclosing <code>loop:</code>.</li>
+<li>If <code>break</code> includes a value, that value is the value of the <code>loop:</code> expression.</li>
+<li><code>break</code> without a value is equivalent to <code>break ()</code> (the loop’s value is <code>Unit</code>).</li>
+</ul>
+<h3 id="expression-result-type">Expression result type<a class="headerlink" href="#expression-result-type" title="Permanent link">&para;</a></h3>
+<p><code>loop:</code> is an expression with a single result type:</p>
+<ul>
+<li>If every reachable <code>break</code> omits a value, the loop’s type is <code>Unit</code>.</li>
+<li>If any reachable <code>break</code> carries a value, the loop’s type is the least upper bound (unification) of all break value types; if the compiler cannot unify them, it must report a type error.</li>
+<li>If a <code>loop:</code> has no reachable <code>break</code>, the loop is non-terminating on those paths. Until the language defines a bottom (<code>Never</code> / <code>!</code>) type, the typechecker must reject such <code>loop:</code> expressions where a concrete type is required (see Design Decisions).</li>
+</ul>
+<h3 id="generators-yield">Generators (<code>yield</code>)<a class="headerlink" href="#generators-yield" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>break</code> exits a loop; <code>yield</code> produces one element of an <code>Iterator</code> and suspends (RFC 006).</li>
+<li>Inside a generator, <code>loop:</code> behaves like any other loop: <code>yield</code> suspends; <code>break</code> exits the loop and may leave the generator running after the loop or finishing, depending on control flow after the loop.</li>
+<li>When <code>loop:</code> appears as an expression in a generator body, <code>break &lt;value&gt;</code> completes the loop expression only; it does not contribute to the iterator’s yielded sequence (only <code>yield</code> does). This is allowed and orthogonal to generator output (see Design Decisions).</li>
+</ul>
+<h3 id="backend-alignment">Backend alignment<a class="headerlink" href="#backend-alignment" title="Permanent link">&para;</a></h3>
+<p>The language must be able to lower value-carrying <code>break</code> together with <code>loop:</code> to the host pattern where an infinite loop is the construct that yields a value via <code>break</code> (as in Rust). A lowering that only has conditional <code>while</code> loops may need a dedicated representation for “infinite loop with value-carrying break” so the backend can emit the correct shape.</p>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="why-keep-loop-break-value-when-while-exists">Why keep <code>loop:</code> / <code>break &lt;value&gt;</code> when <code>while</code> exists<a class="headerlink" href="#why-keep-loop-break-value-when-while-exists" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>loop:</code> supports multiple exit points (success, timeout, error) without extra state variables.</li>
+<li><code>break &lt;value&gt;</code> makes the loop expression-oriented: <code>found = loop: ... break value</code> without a pre-declared <code>mut</code> holder.</li>
+<li>A purely conditional <code>while</code> often forces pre-initialization or a “run once then test” shape that <code>loop:</code> avoids.</li>
+</ul>
+<h3 id="example-conditional-while-alternative">Example: conditional <code>while</code> alternative<a class="headerlink" href="#example-conditional-while-alternative" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">item</span> <span class="o">=</span> <span class="n">next_item</span><span class="p">()</span>
 <span class="k">while</span> <span class="ow">not</span> <span class="n">item</span><span class="o">.</span><span class="n">is_ok</span><span class="p">():</span>
     <span class="n">item</span> <span class="o">=</span> <span class="n">next_item</span><span class="p">()</span>
 
-<span class="c1"># Here: item.is_ok() == true</span>
 <span class="n">found</span> <span class="o">=</span> <span class="n">item</span>
 </code></pre></div>
-<p>Why keep <code>loop:</code> / <code>break &lt;value&gt;</code> anyway?</p>
-<ul>
-<li><code>loop:</code> supports <strong>multiple exit points</strong> naturally (success, timeout, error), without extra state variables.</li>
-<li><code>break &lt;value&gt;</code> makes the loop <strong>expression-oriented</strong>, so you can write <code>found = loop: ... break value</code> directly.</li>
-<li>A conditional <code>while</code> often forces <strong>pre-initialization</strong> (or a <code>do-while</code> construct) to compute the first value.</li>
-</ul>
-<h3 id="example-3-break-without-value">Example 3: <code>break</code> without value<a class="headerlink" href="#example-3-break-without-value" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">loop</span><span class="p">:</span>
-    <span class="k">if</span> <span class="n">done</span><span class="p">():</span>
-        <span class="k">break</span>
-</code></pre></div>
-<h2 id="lowering-codegen-strategy-rust-backend">Lowering / codegen strategy (Rust backend)<a class="headerlink" href="#lowering-codegen-strategy-rust-backend" title="Permanent link">&para;</a></h2>
-<h3 id="desugaring-options">Desugaring options<a class="headerlink" href="#desugaring-options" title="Permanent link">&para;</a></h3>
-<p>The compiler may implement <code>loop:</code> in one of two ways:</p>
-<ol>
-<li><strong>AST-level sugar</strong>: desugar <code>loop:</code> to <code>while True:</code> early, and keep codegen optimizations.</li>
-<li><strong>Dedicated IR node</strong>: lower <code>loop:</code> directly to an IR <code>Loop</code> statement/expression, and emit Rust <code>loop {}</code>.</li>
-</ol>
-<p>If <code>break &lt;value&gt;</code> is introduced, a dedicated IR representation is recommended, because Rust requires:</p>
-<ul>
-<li><code>loop { ... break expr; }</code> for value-yielding loops, and</li>
-<li>the <code>loop</code> construct (not <code>while</code>) to yield a value.</li>
-</ul>
-<h3 id="ir-changes">IR changes<a class="headerlink" href="#ir-changes" title="Permanent link">&para;</a></h3>
-<p>If we treat <code>loop:</code> as an expression, IR likely needs:</p>
-<ul>
-<li>An expression form (e.g., <code>IrExprKind::Loop { body: Vec&lt;IrStmt&gt;, result_ty: IrType }</code>), or</li>
-<li>A block-expression convention where a <code>Loop</code> statement plus <code>break value</code> composes into an expression value.</li>
-</ul>
-<p>Additionally, <code>IrStmtKind::Break</code> should be extended to carry an optional value expression
-(and still optionally support labels in the future).</p>
-<h2 id="backwards-compatibility">Backwards compatibility<a class="headerlink" href="#backwards-compatibility" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Existing programs remain valid.</li>
-<li><code>while True:</code> remains valid and may continue to codegen to Rust <code>loop {}</code>.</li>
-<li><code>break</code> without value remains valid.</li>
-</ul>
+<p>This works when the loop is “repeat until condition,” but not always when the first iteration shape differs or there are multiple exits.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<h2 id="implementation-notes-current-crate-layout">Implementation notes (current crate layout)<a class="headerlink" href="#implementation-notes-current-crate-layout" title="Permanent link">&para;</a></h2>
-<p>This RFC introduces new syntax and vocabulary:</p>
+<ol>
+<li><strong>Only <code>while True:</code></strong></li>
+<li>
+<p>Rejected: harder to justify <code>break &lt;value&gt;</code> on <code>while</code>, and less clear intent for infinite loops.</p>
+</li>
+<li>
+<p><strong>Make <code>while</code> an expression too</strong></p>
+</li>
+<li>Rejected: larger semantic surface and surprise (“<code>while</code> yields a value?”); weaker alignment with common backend shapes for value-carrying breaks.</li>
+</ol>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>A new keyword: <code>loop</code></li>
-<li>An extended form of <code>break</code> (<code>break &lt;value&gt;</code>)</li>
+<li>Adds a new keyword and parsing surface.</li>
+<li>Unifying all <code>break</code> value types can produce dense type errors when branches disagree.</li>
+<li>Generator and async bodies add control-flow combinations that implementers and tests must cover.</li>
 </ul>
-<p>In the current workspace, those changes should be implemented in:</p>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>crates/incan_core/src/lang/keywords.rs</code>: add <code>loop</code> to the keyword registry (with correct RFC provenance)</li>
-<li><code>crates/incan_syntax</code>: lexer emits <code>TokenKind::Keyword(KeywordId::Loop)</code> and parser handles <code>loop:</code> and <code>break &lt;expr&gt;</code></li>
-<li><code>crates/incan_core</code> docgen/tests: update reference docs + add parity/guardrail tests so registry ↔ lexer stay aligned</li>
+<li><strong>Lexer / parser:</strong> <code>loop</code> keyword, <code>loop:</code> blocks, optional expression after <code>break</code>.</li>
+<li><strong>Typechecker:</strong> treat <code>loop:</code> as an expression; unify break value types; rules for non-terminating loops until a bottom type exists.</li>
+<li><strong>Lowering / IR / emission:</strong> represent infinite loops and value-carrying <code>break</code> so the backend can emit the correct infinite-loop + break-value pattern.</li>
+<li><strong>Formatter / LSP (as applicable):</strong> formatting and keyword-aware tooling for <code>loop</code> and extended <code>break</code>.</li>
 </ul>
-<h3 id="alternative-a-only-keep-while-true">Alternative A: Only keep <code>while True:</code><a class="headerlink" href="#alternative-a-only-keep-while-true" title="Permanent link">&para;</a></h3>
-<p>Pros:</p>
-<ul>
-<li>No new keyword.</li>
-</ul>
-<p>Cons:</p>
-<ul>
-<li>Harder to justify <code>break &lt;value&gt;</code> on <code>while</code>.</li>
-<li>Less clear intent in source.</li>
-</ul>
-<h3 id="alternative-b-make-while-an-expression-too">Alternative B: Make <code>while</code> an expression too<a class="headerlink" href="#alternative-b-make-while-an-expression-too" title="Permanent link">&para;</a></h3>
-<p>Pros:</p>
-<ul>
-<li>Fewer constructs.</li>
-</ul>
-<p>Cons:</p>
-<ul>
-<li>More semantic surface and surprises (“<code>while</code> yields a value?”).</li>
-<li>Less aligned with Rust codegen constraints.</li>
-</ul>
-<h2 id="open-questions">Open questions<a class="headerlink" href="#open-questions" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Do we want a <code>Never</code>/<code>!</code> type for non-terminating <code>loop:</code> expressions?</li>
-<li>Do we want labeled loops (and labeled <code>break</code>/<code>continue</code>) in the same RFC or separately?</li>
-<li>Should <code>loop:</code> be allowed in statement position only initially, with expression usage added later?</li>
-</ul>
-<h3 id="possible-future-syntax-sugar-loop-until">Possible future syntax sugar: <code>loop ... until ...</code><a class="headerlink" href="#possible-future-syntax-sugar-loop-until" title="Permanent link">&para;</a></h3>
-<p>We may add a compact, statement-level sugar for “repeat an action until a condition holds”:</p>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>
+<p><strong>Non-terminating <code>loop:</code> (no reachable <code>break</code>)</strong> — Until the language defines a bottom (<code>Never</code> / <code>!</code>) type, a <code>loop:</code> used as an expression where a concrete type is required must be rejected if there is no reachable <code>break</code>. Introducing <code>Never</code> is explicitly out of scope for this RFC’s minimum bar; a follow-up may add it and relax this rule.</p>
+</li>
+<li>
+<p><strong>Labeled <code>break</code> / <code>continue</code></strong> — Deferred to a separate RFC (see Non-goals).</p>
+</li>
+<li>
+<p><strong>Statement-only vs expression <code>loop:</code></strong> — Both forms are in scope: <code>loop:</code> may appear as a statement or as an expression (per Goals), not phased as statement-only first.</p>
+</li>
+<li>
+<p><strong><code>loop:</code> as an expression inside generator bodies</strong> — Allowed. <code>break &lt;value&gt;</code> only completes the inner <code>loop:</code> expression; iterator consumers still observe output only through <code>yield</code>.</p>
+</li>
+</ol>
+<h2 id="possible-future-syntax-sugar-loop-until">Possible future syntax sugar: <code>loop ... until ...</code><a class="headerlink" href="#possible-future-syntax-sugar-loop-until" title="Permanent link">&para;</a></h2>
+<p>A compact statement-level sugar for “repeat an action until a condition holds” may be added later:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">loop</span> <span class="n">item</span><span class="o">.</span><span class="n">next</span><span class="p">()</span> <span class="n">until</span> <span class="n">item</span><span class="o">.</span><span class="n">is_ok</span><span class="p">()</span>
 </code></pre></div>
-<p>Desugaring (action first, then test, then break):</p>
+<p>Conceptual desugaring:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">loop</span><span class="p">:</span>
     <span class="n">item</span><span class="o">.</span><span class="n">next</span><span class="p">()</span>
     <span class="k">if</span> <span class="n">item</span><span class="o">.</span><span class="n">is_ok</span><span class="p">():</span>
         <span class="k">break</span>
 </code></pre></div>
-<p>Notes:</p>
 <ul>
 <li><code>until &lt;expr&gt;</code> must typecheck to <code>bool</code>.</li>
-<li>This form is intended as a <strong>statement</strong> (it does not yield a value by itself).</li>
+<li>This form is intended as a <strong>statement</strong> and does not yield a value by itself.</li>
 </ul>
 
 

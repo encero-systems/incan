@@ -4418,6 +4418,7 @@ They are not intended as runtime function calls.</p>
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Tooling</strong>: <code>incan fmt</code> keeps qualified enum/constructor match patterns in the dot form (<code>Type.Variant</code>), instead of rewriting them to <code>Type::Variant</code>, which the parser does not accept in pattern position (#235).</li>
 <li><strong>Compiler</strong>: Method dispatch on generic classes and models now substitutes <code>Self</code> in formal parameters and return types using the <strong>instantiated</strong> receiver at the call site, so carriers like <code>LazyFrame[Order]</code> no longer mis-type chained calls as bare <code>Self</code> (#237).</li>
 <li><strong>Compiler</strong>: Receiver-sensitive known-method lowering prevents non-string <code>.join(...)</code> calls from mis-emitting as <code>incan_stdlib::strings::str_join</code> (#236).</li>
 <li><strong>Compiler</strong>: <code>match</code> on <code>rusttype</code>-wrapped Rust enums and oneof-shaped values now binds variant payload names inside the arm body (same scoping rules as Incan enums), fixing unknown-symbol errors when inspecting imported protobuf-style types (<a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a>, <a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a>, #217).</li>

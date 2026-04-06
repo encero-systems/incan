@@ -3885,24 +3885,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#01-vs-02-whats-implemented-when" class="md-nav__link">
-    <span class="md-ellipsis">
-      0.1 vs 0.2 (what’s implemented when)
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#area" class="md-nav__link">
-    <span class="md-ellipsis">
-      Area
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#summary" class="md-nav__link">
     <span class="md-ellipsis">
       Summary
@@ -3918,16 +3900,49 @@
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#proposal-sketch" class="md-nav__link">
+    <nav class="md-nav" aria-label="Motivation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#versioning-note-v01-vs-v02" class="md-nav__link">
     <span class="md-ellipsis">
-      Proposal sketch
+      Versioning note (v0.1 vs v0.2)
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Proposal sketch">
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation (how users think about it)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Guide-level explanation (how users think about it)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -3940,9 +3955,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#constrained-underlying-type-syntax-nice-surface-form" class="md-nav__link">
+  <a href="#constrained-underlying-type-syntax" class="md-nav__link">
     <span class="md-ellipsis">
-      Constrained underlying type syntax (nice surface form)
+      Constrained underlying type syntax
     </span>
   </a>
   
@@ -3957,20 +3972,70 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#implicit-coercion-sites-compiler-rewriting" class="md-nav__link">
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
     <span class="md-ellipsis">
-      Implicit coercion sites (compiler rewriting)
+      Reference-level explanation (precise rules)
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Implicit coercion sites (compiler rewriting)">
+    <nav class="md-nav" aria-label="Reference-level explanation (precise rules)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#proposed-contexts" class="md-nav__link">
+  <a href="#from_underlying-compiler-recognized-hook" class="md-nav__link">
     <span class="md-ellipsis">
-      Proposed contexts
+      from_underlying (compiler-recognized hook)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relationship-to-tryfromt-stdlib" class="md-nav__link">
+    <span class="md-ellipsis">
+      Relationship to TryFrom[T] (stdlib)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#constrained-primitive-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Constrained primitive types
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#implicit-coercion-sites" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implicit coercion sites
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#failure-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      Failure behavior
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#controls-and-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      Controls and policy
     </span>
   </a>
   
@@ -3980,20 +4045,30 @@
     </nav>
   
 </li>
+      
+        <li class="md-nav__item">
+  <a href="#design-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
+      <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#controls-policy-avoid-hidden-panics" class="md-nav__link">
+  <a href="#why-bracket-syntax-for-constraints" class="md-nav__link">
     <span class="md-ellipsis">
-      Controls &amp; policy (avoid hidden panics)
+      Why bracket syntax for constraints
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#failure-behavior-pydantic-like" class="md-nav__link">
+  <a href="#why-keep-implicit-coercion-when-explicit-result-exists" class="md-nav__link">
     <span class="md-ellipsis">
-      Failure behavior (pydantic-like)
+      Why keep implicit coercion when explicit Result exists
     </span>
   </a>
   
@@ -4005,40 +4080,91 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#impact-compatibility" class="md-nav__link">
+  <a href="#alternatives-considered" class="md-nav__link">
     <span class="md-ellipsis">
-      Impact / compatibility
+      Alternatives considered
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-notes-high-level" class="md-nav__link">
+  <a href="#drawbacks" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation notes (high-level)
+      Drawbacks
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#layers-affected" class="md-nav__link">
     <span class="md-ellipsis">
-      Unresolved questions
+      Layers affected
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#checklist-comprehensive" class="md-nav__link">
+  <a href="#implementation-plan" class="md-nav__link">
     <span class="md-ellipsis">
-      Checklist (comprehensive)
+      Implementation Plan
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Checklist (comprehensive)">
+    <nav class="md-nav" aria-label="Implementation Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-stepping-stone-partial" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 1 — Stepping-stone (partial)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-type-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 2 — Type surface
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-coercion-expansion" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 3 — Coercion expansion
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-runtime-and-diagnostics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 4 — Runtime and diagnostics
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#progress-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      Progress Checklist
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Progress Checklist">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4118,6 +4244,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#design-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design Decisions
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4140,198 +4275,152 @@
 <ul>
 <li><strong>Status:</strong> In Progress</li>
 <li><strong>Created:</strong> 2026-01-12</li>
-<li><strong>Author:</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Issue:</strong> #75</li>
-<li><strong>Target:</strong> v0.2  </li>
-</ul>
-<h2 id="01-vs-02-whats-implemented-when">0.1 vs 0.2 (what’s implemented when)<a class="headerlink" href="#01-vs-02-whats-implemented-when" title="Permanent link">&para;</a></h2>
-<p>This RFC describes the intended <strong>v0.2 direction</strong>.</p>
-<p>For <strong>v0.1 stabilization</strong>, we may land only the minimum foundations needed so newtype construction and model/class
-construction semantics “make sense” (e.g., reserved hook recognition, no validation bypass paths, better diagnostics).</p>
-<h2 id="area">Area<a class="headerlink" href="#area" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Incan Language (syntax/semantics)</li>
-<li>Runtime / Core crates (stdlib/core/derive)</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong> RFC 021 (model field metadata and aliases)</li>
+<li><strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/75">#75</a></li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Introduce a pydantic-like “validated boundary” for <code>newtype</code> by standardizing a canonical validation/conversion hook on
-every newtype and allowing the compiler to perform implicit coercion from the underlying type in well-defined contexts
-(function arguments, typed initializers, and model/class field initialization). Invalid input fails fast with a
-<code>ValidationError</code> panic by default to preserve “pydantic feel”.</p>
-<p>Because panics can be a poor fit for reusable library code and long-running services, the proposal also keeps an explicit
-<code>Result</code>-returning constructor for recoverable flows, and introduces opt-out controls (e.g. <code>@no_implicit_coercion</code>) plus
-structured/aggregated validation errors for model/class initialization.</p>
+<p>Introduce a pydantic-like validated boundary for <code>newtype</code> by standardizing a canonical validation/conversion hook on every newtype and allowing the compiler to perform implicit coercion from the underlying type in well-defined contexts (function arguments, typed initializers, and model/class field initialization). Invalid input fails fast with a validation panic by default to preserve “pydantic feel.” Because panics are a poor fit for reusable library code and long-running services, the design keeps an explicit <code>Result</code>-returning constructor for recoverable flows, introduces opt-out controls (e.g. <code>@no_implicit_coercion</code>), and structured/aggregated validation errors for model/class initialization.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>We want guardrails for common primitives (especially numerics) without forcing boilerplate everywhere. In practice, many
-values originate from boundaries (CLI/config/env/API), and teams want “it just works”-ergonomics with strong invariants
-and high-quality error messages.</p>
-<p>Today, users can implement validation manually (e.g. helper constructors returning <code>Result</code>), but this requires explicit
-calls at every use site. The desired “pydantic feel” is:</p>
+<p>We want guardrails for common primitives (especially numerics) without boilerplate at every use site. Many values originate at boundaries (CLI, config, env, API), and teams want strong invariants with clear errors while raw values “just work” at those boundaries.</p>
+<p>Today, authors can validate manually (e.g. helpers returning <code>Result</code>), but that requires explicit calls everywhere. The desired ergonomics are: pass raw values at boundaries, coerce and validate automatically, and get a clear validation failure on invalid input.</p>
+<p>Concrete shapes this model can express in v1:</p>
 <ul>
-<li>pass raw values at boundaries</li>
-<li>have them coerced + validated automatically</li>
-<li>get a clear <code>ValidationError</code> on invalid inputs</li>
+<li>Constrained numerics (pure): <code>PositiveInt</code>, <code>NonNegativeInt</code>, finite float, etc.</li>
+<li>Parsing/normalization types (pure): e.g. URL/UUID/IP types as parse + normalize without DNS/network I/O.</li>
+<li>Human-friendly boundary parsing stays explicit: e.g. <code>BytesCount = newtype int[ge=0]</code> plus explicit <code>parse_byte_size(str) -&gt; Result[BytesCount, ...]</code> (v1 does not introduce implicit <code>str -&gt; int</code> parsing).</li>
+<li>Redaction/masking types: e.g. <code>SecretStr</code> as a normal <code>newtype str</code>; masking stays a formatter/serializer concern outside this RFC’s compiler changes.</li>
 </ul>
-<p>Concrete “pydantic-like” types this model can express (v1 targets):</p>
+<p>Types that depend on non-determinism (filesystem existence, wall-clock time, network) are out of scope for v1 implicit coercion; they remain explicit constructors or a future “impure validation” extension.</p>
+<h3 id="versioning-note-v01-vs-v02">Versioning note (v0.1 vs v0.2)<a class="headerlink" href="#versioning-note-v01-vs-v02" title="Permanent link">&para;</a></h3>
+<p>This RFC describes the intended <strong>v0.2</strong> direction. For <strong>v0.1</strong> stabilization, only minimum foundations may land so newtype and model/class construction stay coherent (e.g. reserved hook recognition, no validation bypass paths, better diagnostics).</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Constrained numerics (pure): <code>PositiveInt</code>, <code>NonNegativeInt</code>, “finite float”, etc.</li>
-<li>Parsing/normalization types (pure): e.g. <code>HttpUrl</code>, <code>UUID4</code>, <code>IPvAnyAddress</code> implemented as parse + normalize (no DNS/network
-  IO).</li>
-<li>Human-friendly boundary parsing stays explicit: e.g. <code>BytesCount = newtype int[ge=0]</code> plus an explicit
-  <code>parse_byte_size(str) -&gt; Result[BytesCount, ValidationError]</code> (v1 does not introduce implicit <code>str -&gt; int</code> parsing).</li>
-<li>Redaction/masking types: e.g. <code>SecretStr</code> can be a normal <code>newtype str</code>; masking is a formatter/serializer concern (outside
-  this RFC’s compiler changes).</li>
+<li>Standardize a canonical <code>from_underlying</code>-style hook on newtypes for validated conversion from the underlying type.</li>
+<li>Allow implicit coercion from the underlying type (and transitive newtype chains) at explicit, listed language sites.</li>
+<li>Support constrained underlying primitives via type-level bracket syntax (e.g. <code>int[ge=0]</code>).</li>
+<li>Preserve explicit, non-panicking construction for library and service code.</li>
+<li>Provide opt-out controls and aggregated errors for model/class initialization where appropriate.</li>
 </ul>
-<p>Conversely, some pydantic types are intentionally out-of-scope for v1 implicit coercion because they are non-deterministic
-(filesystem existence checks like <code>FilePath</code>, clock-based checks like <code>PastDate</code>, etc.). Those can still exist as explicit
-constructors, or via a future “impure validation” extension.</p>
-<h2 id="proposal-sketch">Proposal sketch<a class="headerlink" href="#proposal-sketch" title="Permanent link">&para;</a></h2>
+<h2 id="non-goals">Non-goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Implicit ambient primitive conversions (<code>str -&gt; int</code>, <code>int -&gt; float</code>, etc.) as part of coercion rewriting.</li>
+<li>Non-deterministic or effectful validation inside the implicit-coercion contract for v1.</li>
+<li>Labeled control flow or other unrelated language features.</li>
+</ul>
+<h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
 <h3 id="newtype-validationconversion-hook-canonical">Newtype validation/conversion hook (canonical)<a class="headerlink" href="#newtype-validationconversion-hook-canonical" title="Permanent link">&para;</a></h3>
-<p>For a newtype:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Attempts</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_underlying</span><span class="p">(</span><span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Attempts</span><span class="p">,</span> <span class="nc">ValidationError</span><span class="p">]:</span>
         <span class="k">if</span> <span class="n">n</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
             <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">ValidationError</span><span class="p">(</span><span class="s2">&quot;attempts must be &gt;= 1&quot;</span><span class="p">))</span>
         <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nc">Attempts</span><span class="p">(</span><span class="n">n</span><span class="p">))</span>
 </code></pre></div>
-<p><strong>Notes</strong>:</p>
-<ul>
-<li><code>from_underlying</code> is the canonical “validated conversion” from the newtype’s underlying type.</li>
-<li>It is defined in the newtype body (supported today by parser); there is no separate <code>impl</code> block in Incan.</li>
-<li>If a newtype does not define <code>from_underlying</code>, the compiler auto-generates a default implementation:<ul>
-<li><code>from_underlying(x) = Ok(T(x))</code> (no extra validation).</li>
-<li>If the underlying type includes constraints (e.g. <code>int[gt=0]</code>), the generated <code>from_underlying</code> enforces those constraints.</li>
-</ul>
-</li>
-<li><code>from_underlying</code> is treated as a reserved hook name for newtypes (compiler-recognized for coercion/validation).</li>
-<li>Contract (important for predictability and tooling):<ul>
-<li><code>from_underlying</code> must be deterministic and side-effect free (no IO, no global mutation, no time/random dependence,
-  no randomized hashing dependence).</li>
-<li><code>from_underlying</code> must not panic; it returns <code>Err(ValidationError)</code> on invalid input.</li>
-<li>On <code>Ok(...)</code>, it must return exactly the validated newtype instance corresponding to the input (no “partial” values).</li>
-<li>This intentionally rules out validators that consult the filesystem, the clock, randomness, or the network; those
-  require explicit validation, or a future opt-in extension with tighter guardrails.</li>
-</ul>
-</li>
-</ul>
-<p>Relationship to <code>TryFrom[T]</code> (stdlib):</p>
-<ul>
-<li>Incan already has a <code>TryFrom[T]</code> trait with <code>@classmethod def try_from(cls, value: T) -&gt; Result[Self, str]</code>.</li>
-<li>This RFC introduces <code>from_underlying(...) -&gt; Result[T, ValidationError]</code> as a dedicated hook because:<ul>
-<li>we want a structured <code>ValidationError</code> (paths, chains, constraint metadata) rather than a plain <code>str</code>, and</li>
-<li>Incan does not yet have <code>impl</code> blocks for newtypes, so a compiler-recognized hook inside the newtype body keeps the
-  surface area minimal.</li>
-</ul>
-</li>
-<li>Future-friendly: the compiler could auto-provide <code>TryFrom[U]</code> for a newtype by delegating to <code>from_underlying</code> and
-  stringifying the error, but <code>from_underlying</code> remains the canonical validation contract.</li>
-</ul>
-<h3 id="constrained-underlying-type-syntax-nice-surface-form">Constrained underlying type syntax (nice surface form)<a class="headerlink" href="#constrained-underlying-type-syntax-nice-surface-form" title="Permanent link">&para;</a></h3>
-<p>To avoid the semantic implication that <code>int(...)</code> accepts constraint keyword arguments at runtime, represent constraints
-as type-level parameters using bracket syntax:</p>
-<p>(Inspiration: this is similar in spirit to Python's <code>typing.Annotated[...]</code> constraints and pydantic's constrained types.
-The goal is “feel”, not copying pydantic syntax.)</p>
+<h3 id="constrained-underlying-type-syntax">Constrained underlying type syntax<a class="headerlink" href="#constrained-underlying-type-syntax" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">NonNegativeInt</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">]</span>
 <span class="nb">type</span> <span class="nc">PositiveInt</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">gt</span><span class="o">=</span><span class="mi">0</span><span class="p">]</span>
 </code></pre></div>
-<p><strong>Semantics</strong>:</p>
-<ul>
-<li><code>int("5")</code> remains a plain conversion to <code>int</code> (no constraints).</li>
-<li>The constraints live on the constrained type (<code>int[ge=0]</code>) and are enforced by the newtype’s validation hook (<code>from_underlying</code>)
-  and by implicit coercion sites.</li>
-<li>This keeps constraint syntax in the “type parameter” family (similar to <code>list[T]</code>, <code>Result[T, E]</code>) rather than looking
-  like a runtime call with keyword arguments.</li>
-<li>For v1, constrained primitive types are intended to be used as the underlying type of a <code>newtype</code> (not as a general
-  “drop-in replacement” for <code>int</code>/<code>float</code> everywhere). This keeps the surface area small while preserving the feel.</li>
-</ul>
-<p>Constraint vocabulary (v1, proposal):</p>
-<ul>
-<li><code>int[...]</code>: <code>ge</code>, <code>gt</code>, <code>le</code>, <code>lt</code> (values must be compile-time constants: literals or named <code>const</code>s)</li>
-<li><code>float[...]</code> (optional for v1): <code>ge</code>, <code>gt</code>, <code>le</code>, <code>lt</code> (values must be compile-time constants: literals or named <code>const</code>s)<ul>
-<li>IEEE note: comparisons with NaN are always false, so NaN should fail all constraints by default.</li>
-</ul>
-</li>
-</ul>
-<p>Constraint semantics:</p>
-<ul>
-<li><code>ge</code>: greater than or equal (<span class="arithmatex">\(\ge\)</span>)</li>
-<li><code>gt</code>: greater than (<span class="arithmatex">\(&gt;\)</span>)</li>
-<li><code>le</code>: less than or equal (<span class="arithmatex">\(\le\)</span>)</li>
-<li><code>lt</code>: less than (<span class="arithmatex">\(&lt;\)</span>)</li>
-</ul>
-<p>Syntax notes:</p>
-<ul>
-<li>Multiple constraints are allowed: <code>int[ge=0, lt=10]</code> (order-insensitive; all constraints must hold).</li>
-<li>Constraint parameters are compile-time constants (not arbitrary expressions).</li>
-<li>Only a single constraint block is permitted on a primitive type (e.g. <code>int[...]</code> cannot be followed by another <code>[...]</code>).</li>
-<li>Duplicate keys are rejected (e.g. <code>int[gt=0, gt=1]</code> is an error).</li>
-</ul>
 <h3 id="newtype-on-newtype-transitive-coercion">Newtype-on-newtype (transitive coercion)<a class="headerlink" href="#newtype-on-newtype-transitive-coercion" title="Permanent link">&para;</a></h3>
-<p>Newtypes should be able to wrap other newtypes:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">PositiveInt</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">gt</span><span class="o">=</span><span class="mi">0</span><span class="p">]</span>
 <span class="nb">type</span> <span class="nc">RetryAttempts</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">PositiveInt</span>
 </code></pre></div>
-<p>In this case, implicit coercion should be transitive:</p>
+<p>Implicit coercion from <code>int</code> to <code>RetryAttempts</code> follows the chain <code>int -&gt; PositiveInt -&gt; RetryAttempts</code> when the compiler accepts the coercion sites.</p>
+<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
+<h3 id="from_underlying-compiler-recognized-hook"><code>from_underlying</code> (compiler-recognized hook)<a class="headerlink" href="#from_underlying-compiler-recognized-hook" title="Permanent link">&para;</a></h3>
 <ul>
-<li>expected <code>RetryAttempts</code>, got <code>int</code><ul>
-<li>coerce <code>int -&gt; PositiveInt</code> (validate <code>gt=0</code>)</li>
-<li>then coerce <code>PositiveInt -&gt; RetryAttempts</code></li>
+<li><code>from_underlying</code> is the canonical validated conversion from the newtype’s underlying type, defined in the newtype body (no separate <code>impl</code> block in Incan today).</li>
+<li>If a newtype does not define <code>from_underlying</code>, the compiler may auto-generate a default: <code>from_underlying(x) = Ok(T(x))</code> when there are no constraints; when the underlying type carries constraints (e.g. <code>int[gt=0]</code>), the generated hook must enforce those constraints.</li>
+<li><code>from_underlying</code> is a reserved hook name for newtypes for coercion and validation.</li>
+<li><strong>Contract:</strong> <code>from_underlying</code> must be deterministic and side-effect free (no I/O, no global mutation, no time/random dependence, no randomized hashing dependence). It must not panic; invalid input is expressed as <code>Err(ValidationError)</code>. On <code>Ok</code>, the result must be the fully validated newtype value for the input (no partial values). Validators that consult the filesystem, clock, randomness, or network require explicit validation or a future opt-in extension.</li>
 </ul>
-</li>
+<h3 id="relationship-to-tryfromt-stdlib">Relationship to <code>TryFrom[T]</code> (stdlib)<a class="headerlink" href="#relationship-to-tryfromt-stdlib" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Incan has <code>TryFrom[T]</code> with <code>@classmethod def try_from(cls, value: T) -&gt; Result[Self, str]</code>.</li>
+<li>This RFC uses <code>from_underlying(...) -&gt; Result[T, ValidationError]</code> as the dedicated hook for structured validation errors and path metadata, and to avoid requiring <code>impl</code> blocks on newtypes. A future compiler could derive <code>TryFrom</code> from <code>from_underlying</code>; the hook remains canonical.</li>
 </ul>
-<p>Because each newtype has exactly one underlying type, the coercion chain is deterministic. The compiler should reject cycles
-(if they can be formed) with a clear diagnostic.</p>
-<h3 id="implicit-coercion-sites-compiler-rewriting">Implicit coercion sites (compiler rewriting)<a class="headerlink" href="#implicit-coercion-sites-compiler-rewriting" title="Permanent link">&para;</a></h3>
-<p>When a context expects a validated newtype <code>T_target</code> but receives a value of some type <code>S0</code>, the compiler may insert
-implicit coercions consisting <strong>only</strong> of validated newtype conversions (<code>from_underlying</code>), potentially chained across
-nested newtypes.</p>
-<p>Critically, the compiler <strong>does not</strong> insert ambient primitive conversions (e.g. <code>str -&gt; int</code>, <code>int -&gt; float</code>) as part of
-implicit coercion. If you want parsing/coercion between primitives, write it explicitly at the call site (e.g. <code>int("5")</code>).</p>
-<h4 id="proposed-contexts">Proposed contexts<a class="headerlink" href="#proposed-contexts" title="Permanent link">&para;</a></h4>
+<h3 id="constrained-primitive-types">Constrained primitive types<a class="headerlink" href="#constrained-primitive-types" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>int("5")</code> remains a plain conversion to <code>int</code> (no constraint keyword arguments at runtime).</li>
+<li>Constraints live on the constrained type (<code>int[ge=0]</code>) and are enforced by <code>from_underlying</code> and by implicit coercion sites.</li>
+<li>For v1, constrained primitives are intended as newtype underlyings, not as universal drop-in replacements for bare <code>int</code>/<code>float</code> everywhere.</li>
+</ul>
+<p><strong>Constraint vocabulary (v1 proposal):</strong></p>
+<ul>
+<li><code>int[...]</code>: <code>ge</code>, <code>gt</code>, <code>le</code>, <code>lt</code> (values must be compile-time constants: literals or named <code>const</code>s).</li>
+<li><code>float[...]</code> (optional for v1): same keys; values compile-time constants. IEEE: comparisons with NaN are false, so NaN must fail all such constraints by default.</li>
+</ul>
+<p><strong>Constraint semantics:</strong> <code>ge</code> / <code>gt</code> / <code>le</code> / <code>lt</code> have the usual ordered comparisons. Multiple constraints may appear in one bracket list (<code>int[ge=0, lt=10]</code>); order is irrelevant and all must hold. Constraint parameters are compile-time constants, not arbitrary expressions. Only one constraint block is permitted on a primitive. Duplicate keys are rejected.</p>
+<h3 id="implicit-coercion-sites">Implicit coercion sites<a class="headerlink" href="#implicit-coercion-sites" title="Permanent link">&para;</a></h3>
+<p>When a context expects validated newtype <code>T_target</code> but a value has type <code>S0</code>, the compiler may insert implicit coercions consisting <strong>only</strong> of validated newtype conversions (<code>from_underlying</code>), possibly chained across nested newtypes. The compiler <strong>must not</strong> insert ambient primitive conversions (e.g. <code>str -&gt; int</code>, <code>int -&gt; float</code>).</p>
+<p><strong>Proposed contexts:</strong></p>
 <ol>
 <li>Function arguments</li>
 <li>Typed initializers</li>
 <li>Model/class field initialization</li>
-<li>Newtype construction (checked by default; <code>T(x)</code> treated as a coercion/validation site)</li>
+<li>Newtype construction <code>T(x)</code> (checked by default at that site)</li>
 </ol>
-<h3 id="controls-policy-avoid-hidden-panics">Controls &amp; policy (avoid hidden panics)<a class="headerlink" href="#controls-policy-avoid-hidden-panics" title="Permanent link">&para;</a></h3>
-<p>Implicit coercion is intended as a boundary ergonomics feature, but it can introduce hidden panics in reusable library
-code (especially when used via function arguments). Provide opt-out controls so library/service authors can make call
-sites explicit.</p>
-<h3 id="failure-behavior-pydantic-like">Failure behavior (pydantic-like)<a class="headerlink" href="#failure-behavior-pydantic-like" title="Permanent link">&para;</a></h3>
-<p>If <code>from_underlying(...)</code> returns <code>Err(e)</code> during implicit coercion, panic with a <code>ValidationError</code> (or wrap the returned
-<code>e</code> into a <code>ValidationError</code>), similar to pydantic raising/throwing a validation exception.</p>
-<p>Aggregation policy:</p>
+<p>The coercion graph must be acyclic; cycles are rejected with a clear diagnostic.</p>
+<h3 id="failure-behavior">Failure behavior<a class="headerlink" href="#failure-behavior" title="Permanent link">&para;</a></h3>
+<p>If <code>from_underlying</code> returns <code>Err</code> during implicit coercion, the runtime behavior is a validation failure (panic carrying validation diagnostics), analogous to pydantic raising on invalid input.</p>
 <ul>
-<li>Function arguments and typed initializers: fail fast (panic on first invalid coercion).</li>
-<li>Model/class field initialization: aggregate all field coercion errors and panic once with a multi-error
-  <code>ValidationError</code> for better diagnostics.</li>
+<li>Function arguments and typed initializers: fail fast (first invalid coercion).</li>
+<li>Model/class field initialization: aggregate field coercion errors and fail once with a multi-error report where specified.</li>
 </ul>
-<h2 id="impact-compatibility">Impact / compatibility<a class="headerlink" href="#impact-compatibility" title="Permanent link">&para;</a></h2>
+<h3 id="controls-and-policy">Controls and policy<a class="headerlink" href="#controls-and-policy" title="Permanent link">&para;</a></h3>
+<p>Implicit coercion is for boundary ergonomics; it can hide panics in library APIs. Authors must be able to opt out (e.g. <code>@no_implicit_coercion</code> at type level and/or per-site controls) and to use explicit <code>Result</code>-returning construction where panics are unacceptable.</p>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="why-bracket-syntax-for-constraints">Why bracket syntax for constraints<a class="headerlink" href="#why-bracket-syntax-for-constraints" title="Permanent link">&para;</a></h3>
+<p>Bracket syntax keeps constraints in the type-parameter family (like <code>list[T]</code>) instead of looking like a runtime call with keyword arguments on <code>int(...)</code>.</p>
+<h3 id="why-keep-implicit-coercion-when-explicit-result-exists">Why keep implicit coercion when explicit <code>Result</code> exists<a class="headerlink" href="#why-keep-implicit-coercion-when-explicit-result-exists" title="Permanent link">&para;</a></h3>
+<p>Multiple exit shapes (success, timeout, error) and call-site noise are reduced at boundaries; explicit hooks remain for recoverable paths.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<ol>
+<li>
+<p><strong>Explicit constructors only</strong> — Rejected: does not deliver boundary ergonomics this RFC targets.</p>
+</li>
+<li>
+<p><strong><code>TryFrom</code> only, no reserved hook</strong> — Rejected: error type and metadata requirements favor a dedicated <code>ValidationError</code>-oriented hook without forcing newtype <code>impl</code> blocks today.</p>
+</li>
+<li>
+<p><strong>Implicit primitive parsing (<code>str -&gt; int</code>)</strong> — Rejected: too much hidden work and failure surface; parsing stays explicit at call sites.</p>
+</li>
+</ol>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Behavioral: introduces implicit conversions at specific boundaries; must be carefully scoped to avoid “magic everywhere”.</li>
-<li>Runtime: implicit coercion failure panics; this must be clearly documented as a boundary feature.</li>
-<li>Performance: newtypes should remain zero-cost wrappers in generated code; validation cost is paid only at coercion sites
-  and should not allocate/box unless the user’s <code>from_underlying</code> does so.</li>
+<li>Validation panics at implicit sites can surprise readers of call sites unless conventions and docs are clear.</li>
+<li>Unifying coercion chains and diagnostics adds compiler and runtime complexity.</li>
+<li>Constrained types and aggregation must be tuned to avoid confusing error volumes.</li>
 </ul>
-<h2 id="implementation-notes-high-level">Implementation notes (high-level)<a class="headerlink" href="#implementation-notes-high-level" title="Permanent link">&para;</a></h2>
-<p>Likely layers:</p>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Syntax/parser: support constrained primitive type syntax like <code>int[gt=0]</code> as a type-level annotation.</li>
-<li>Frontend/typechecker: detect coercion sites and insert validated coercion nodes.</li>
-<li>Lowering/codegen: emit calls to <code>from_underlying</code> and panic with rich errors on failure.</li>
-<li>Stdlib/core: define <code>ValidationError</code> shape and formatting.</li>
-<li>Docs: document coercion behavior and explicit alternatives.</li>
-<li>Tests: parser + typechecker + codegen + runtime behavior.</li>
+<li><strong>Lexer/parser/AST/formatter:</strong> constrained primitive syntax in type position; structured representation; stable formatting.</li>
+<li><strong>Typechecker:</strong> reserved hook shape, coercion insertion at approved sites, cycle detection, diagnostics.</li>
+<li><strong>Lowering/IR/emission:</strong> validated coercion representation; deterministic evaluation order; panic paths for failed coercion.</li>
+<li><strong>Runtime/stdlib:</strong> <code>ValidationError</code> shape, aggregation helpers, stable formatting.</li>
+<li><strong>Docs/tooling:</strong> teach hooks, coercion sites, opt-outs, and explicit alternatives.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-stepping-stone-partial">Phase 1 — Stepping-stone (partial)<a class="headerlink" href="#phase-1-stepping-stone-partial" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Panic strategy: unwind vs abort for <code>ValidationError</code> panics.</li>
-<li>Constraint catalog scope for v1.</li>
-<li>Non-panicking coercion mode (<code>Result</code> mode).</li>
-<li>Serialization/FFI boundaries.</li>
+<li>Lower newtype direct constructor <code>T(x)</code> (single positional argument) through a selected static <code>from_*</code> hook when eligible (prefer <code>from_underlying</code>; otherwise a single well-shaped <code>from_*</code>), with failure surfaced at the boundary.</li>
+<li>Document current behavior versus full RFC in the language guides.</li>
 </ul>
-<h2 id="checklist-comprehensive">Checklist (comprehensive)<a class="headerlink" href="#checklist-comprehensive" title="Permanent link">&para;</a></h2>
+<h3 id="phase-2-type-surface">Phase 2 — Type surface<a class="headerlink" href="#phase-2-type-surface" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Constrained <code>int[...]</code> / <code>float[...]</code> in type positions, AST modeling, formatter behavior, duplicate-key and incompatibility diagnostics.</li>
+</ul>
+<h3 id="phase-3-coercion-expansion">Phase 3 — Coercion expansion<a class="headerlink" href="#phase-3-coercion-expansion" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Implicit coercion at function arguments, typed initializers, model/class field initialization; transitive newtype chains; opt-out attributes.</li>
+</ul>
+<h3 id="phase-4-runtime-and-diagnostics">Phase 4 — Runtime and diagnostics<a class="headerlink" href="#phase-4-runtime-and-diagnostics" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Canonical <code>ValidationError</code>, aggregated model/class failures, span-accurate diagnostics and hints (explicit <code>from_underlying</code>, try-style APIs).</li>
+</ul>
+<h2 id="progress-checklist">Progress Checklist<a class="headerlink" href="#progress-checklist" title="Permanent link">&para;</a></h2>
 <h3 id="spec-semantics">Spec / semantics<a class="headerlink" href="#spec-semantics" title="Permanent link">&para;</a></h3>
 <ul>
 <li>[ ] Lock down the <strong>canonical hook</strong> name and signature:<ul>
@@ -4393,20 +4482,22 @@ sites explicit.</p>
 </ul>
 <h3 id="lowering-ir">Lowering / IR<a class="headerlink" href="#lowering-ir" title="Permanent link">&para;</a></h3>
 <ul>
-<li>[ ] Introduce an explicit IR representation for “validated coercion” (preferred) <strong>or</strong> document the exact rewriting strategy.</li>
-<li>[ ] Ensure lowering avoids recursion traps (e.g. <code>T(x)</code> inside <code>impl T</code> / inside the hook itself).</li>
+<li>[x] Initial rewriting for newtype <code>T(x)</code> → selected validated static hook when eligible (stepping-stone; does not cover all RFC coercion sites).</li>
+<li>[ ] Introduce an explicit IR representation for general “validated coercion” <strong>or</strong> document the full rewriting strategy for all sites.</li>
+<li>[ ] Ensure lowering avoids recursion traps (e.g. <code>T(x)</code> inside the hook implementation for <code>T</code>).</li>
 <li>[ ] Preserve deterministic evaluation order for default values and coercion calls.</li>
 </ul>
 <h3 id="codegen-rust-emission">Codegen (Rust emission)<a class="headerlink" href="#codegen-rust-emission" title="Permanent link">&para;</a></h3>
 <ul>
-<li>[ ] Emit <code>from_underlying(...)</code> calls at coercion sites.</li>
+<li>[x] Emit validated hook invocation + failure path for stepping-stone newtype <code>T(x)</code> construction.</li>
+<li>[ ] Emit <code>from_underlying(...)</code> calls at all remaining coercion sites.</li>
 <li>[ ] Emit failure behavior:<ul>
-<li>[ ] fail-fast sites: panic with <code>ValidationError</code> (include message + path context)</li>
-<li>[ ] aggregated sites: collect multiple errors and panic once</li>
+<li>[ ] fail-fast sites: panic with rich validation context</li>
+<li>[ ] aggregated sites: collect multiple errors and fail once</li>
 </ul>
 </li>
 <li>[ ] Keep generated code <strong>zero-cost</strong> outside coercion sites (no extra allocations on happy path beyond user code).</li>
-<li>[ ] Decide and document when generated code may use <code>.expect(...)</code> / <code>.unwrap(...)</code> vs structured error helpers.</li>
+<li>[ ] Document the generated-code panic path for failed coercion (message shape, caller context); compiler Rust sources remain subject to the project’s own error-handling rules.</li>
 </ul>
 <h3 id="runtime-core-crates">Runtime / core crates<a class="headerlink" href="#runtime-core-crates" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4418,13 +4509,14 @@ sites explicit.</p>
 <li>[ ] Provide helper APIs for:<ul>
 <li>[ ] creating per-field errors</li>
 <li>[ ] aggregating multiple errors</li>
-<li>[ ] panic/raise helpers with <code>#[track_caller]</code></li>
+<li>[ ] panic helpers with useful caller attribution</li>
 </ul>
 </li>
 </ul>
 <h3 id="tooling-docs">Tooling / docs<a class="headerlink" href="#tooling-docs" title="Permanent link">&para;</a></h3>
 <ul>
-<li>[ ] Update Book + Reference docs:<ul>
+<li>[x] Document stepping-stone newtype construction behavior in the Book / reference (current vs full RFC).</li>
+<li>[ ] Update Book + Reference for full RFC:<ul>
 <li>[ ] explain <code>from_underlying</code></li>
 <li>[ ] document implicit coercion sites and opt-out controls</li>
 <li>[ ] show explicit alternatives (<code>Result</code>-returning flows)</li>
@@ -4458,6 +4550,21 @@ sites explicit.</p>
 </ul>
 </li>
 </ul>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>
+<p><strong>Panic strategy (unwind vs abort)</strong> — Validation failures from implicit coercion use the language runtime’s normal panic mechanism (typically unwinding). A distinct abort-only policy is out of scope unless specified separately.</p>
+</li>
+<li>
+<p><strong>Constraint catalog for v1</strong> — Start with <code>ge</code> / <code>gt</code> / <code>le</code> / <code>lt</code> on <code>int</code>, with optional extension to <code>float</code> under the same keys; additional constraints or types ship via follow-up RFCs or releases.</p>
+</li>
+<li>
+<p><strong>Non-panicking mode</strong> — Explicit <code>Type.from_underlying(value)</code> (and related explicit APIs) remains the supported recoverable path. Implicit coercion stays panic-on-invalid for v1 until a dedicated opt-in “Result mode” is specified and implemented.</p>
+</li>
+<li>
+<p><strong>Serialization and FFI</strong> — Implicit coercion applies only at the Incan-language sites listed in this RFC. Serialization codecs and FFI boundaries must use explicit constructors or adapters; no implicit coercion across foreign boundaries in v1.</p>
+</li>
+</ol>
 
 
 
