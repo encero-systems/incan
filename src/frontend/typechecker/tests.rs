@@ -3212,6 +3212,30 @@ def foo() -> int:
 }
 
 #[test]
+fn test_generic_model_field_access_returns_substituted_type() {
+    let source = r#"
+pub model Boxed[T]:
+  pub value: T
+
+pub def get_value[T](boxed: Boxed[T]) -> T:
+  return boxed.value
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_generic_class_field_access_substitutes_nested_field_type() {
+    let source = r#"
+pub class Boxed[T]:
+  pub values: List[T]
+
+pub def get_values[T](boxed: Boxed[T]) -> List[T]:
+  return boxed.values
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
 fn test_list_self_accepts_explicit_owner_instances() {
     let source = r#"
 pub class Boxed[T]:

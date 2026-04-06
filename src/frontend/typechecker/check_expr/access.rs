@@ -5,6 +5,7 @@
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
+use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::*;
 use crate::frontend::typechecker::helpers::{
     collection_name, collection_type_id, is_frozen_bytes, is_frozen_str, is_intlike_for_index, list_ty, option_ty,
@@ -30,6 +31,76 @@ fn rust_receiver_display(path: &str) -> String {
 }
 
 impl TypeChecker {
+    /// Resolve a declared field on a nominal user-defined type, applying generic substitutions when available.
+    ///
+    /// This keeps field access on `Named(Type)` and `Generic(Type[...])` owners on the same path instead of letting
+    /// generic owners fall through to "missing field" diagnostics despite having declared fields.
+    fn resolve_nominal_field_type(
+        &mut self,
+        type_name: &str,
+        type_args: Option<&[ResolvedType]>,
+        field: &str,
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let type_info = self.lookup_type_info(type_name)?;
+
+        let field_info = match type_info {
+            TypeInfo::Model(model) => {
+                // `.0`, `.1`, ... is tuple-index syntax in the language surface.
+                // RFC 021: Non-identifier aliases like `alias="1"` are valid as wire names, but are not usable via
+                // member access / named-arg / pattern syntax.
+                //
+                // Therefore numeric field spellings do NOT participate in alias lookup on models.
+                if field.parse::<usize>().is_ok() {
+                    self.errors.push(errors::missing_field(type_name, field, span));
+                    return Some(ResolvedType::Unknown);
+                }
+                let (_, info) = self.resolve_field_info(&model.fields, field, true, false)?;
+                if let Some(args) = type_args {
+                    let subst = type_param_subst_map(&model.type_params, args);
+                    return Some(substitute_resolved_type(&info.ty, &subst));
+                }
+                info.ty.clone()
+            }
+            TypeInfo::Class(class) => {
+                // RFC 021: No alias-aware resolution for classes (models only)
+                let (_, info) = self.resolve_field_info(&class.fields, field, false, true)?;
+                if let Some(args) = type_args {
+                    let subst = type_param_subst_map(&class.type_params, args);
+                    return Some(substitute_resolved_type(&info.ty, &subst));
+                }
+                info.ty.clone()
+            }
+            TypeInfo::Enum(enum_info) if enum_info.variants.contains(&field.to_string()) => {
+                return Some(if let Some(args) = type_args {
+                    ResolvedType::Generic(type_name.to_string(), args.to_vec())
+                } else {
+                    ResolvedType::Named(type_name.to_string())
+                });
+            }
+            TypeInfo::Newtype(nt) if nt.is_rusttype => {
+                if let ResolvedType::RustPath(path) = &nt.underlying {
+                    if let Some(sig) = self.rust_associated_function_signature(path, field) {
+                        return Some(self.resolved_function_type_from_rust_sig(&sig, false));
+                    }
+                    if let Some(meta) = self.rust_item_metadata_for_path(path)
+                        && let RustItemKind::Type(info) = &meta.kind
+                        && let Some(rust_field) = info.fields.iter().find(|f| f.name == field)
+                    {
+                        return Some(self.resolved_type_from_rust_shape(&rust_field.type_shape));
+                    }
+                }
+                return None;
+            }
+            TypeInfo::Newtype(nt) if field == conventions::NEWTYPE_TUPLE_FIELD => {
+                return Some(nt.underlying.clone());
+            }
+            _ => return None,
+        };
+
+        Some(field_info)
+    }
+
     /// Resolve and validate a method call on a Rust metadata-backed path.
     ///
     /// Returns:
@@ -563,49 +634,17 @@ impl TypeChecker {
                     ResolvedType::Unknown
                 }
                 ResolvedType::Named(type_name) => {
-                    if let Some(type_info) = checker.lookup_type_info(type_name) {
-                        match type_info {
-                            TypeInfo::Model(model) => {
-                                // `.0`, `.1`, ... is tuple-index syntax in the language surface.
-                                // RFC 021: Non-identifier aliases like `alias="1"` are valid as wire names,
-                                // but are not usable via member access / named-arg / pattern syntax.
-                                //
-                                // Therefore numeric field spellings do NOT participate in alias lookup on models.
-                                if field.parse::<usize>().is_ok() {
-                                    checker.errors.push(errors::missing_field(type_name, field, span));
-                                    return ResolvedType::Unknown;
-                                }
-                                if let Some((_, info)) = checker.resolve_field_info(&model.fields, field, true, false) {
-                                    return info.ty.clone();
-                                }
-                            }
-                            TypeInfo::Class(class) => {
-                                // RFC 021: No alias-aware resolution for classes (models only)
-                                if let Some((_, info)) = checker.resolve_field_info(&class.fields, field, false, true) {
-                                    return info.ty.clone();
-                                }
-                            }
-                            TypeInfo::Enum(enum_info) if enum_info.variants.contains(&field.to_string()) => {
-                                return ResolvedType::Named(type_name.clone());
-                            }
-                            TypeInfo::Newtype(nt) if nt.is_rusttype => {
-                                if let ResolvedType::RustPath(path) = &nt.underlying {
-                                    if let Some(sig) = checker.rust_associated_function_signature(path, field) {
-                                        return checker.resolved_function_type_from_rust_sig(&sig, false);
-                                    }
-                                    if let Some(meta) = checker.rust_item_metadata_for_path(path)
-                                        && let RustItemKind::Type(info) = &meta.kind
-                                        && let Some(rust_field) = info.fields.iter().find(|f| f.name == field)
-                                    {
-                                        return checker.resolved_type_from_rust_shape(&rust_field.type_shape);
-                                    }
-                                }
-                            }
-                            TypeInfo::Newtype(nt) if field == conventions::NEWTYPE_TUPLE_FIELD => {
-                                return nt.underlying.clone();
-                            }
-                            _ => {}
-                        }
+                    if let Some(field_ty) = checker.resolve_nominal_field_type(type_name, None, field, span) {
+                        return field_ty;
+                    }
+                    checker.errors.push(errors::missing_field(type_name, field, span));
+                    ResolvedType::Unknown
+                }
+                ResolvedType::Generic(type_name, type_args) => {
+                    if let Some(field_ty) =
+                        checker.resolve_nominal_field_type(type_name, Some(type_args.as_slice()), field, span)
+                    {
+                        return field_ty;
                     }
                     checker.errors.push(errors::missing_field(type_name, field, span));
                     ResolvedType::Unknown

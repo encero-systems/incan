@@ -728,6 +728,20 @@ fn test_collections_codegen() {
 }
 
 #[test]
+fn test_empty_list_string_arg_codegen() {
+    let source = load_test_file("empty_list_string_arg");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("empty_list_string_arg", rust_code);
+}
+
+#[test]
+fn test_generic_model_field_access_codegen() {
+    let source = load_test_file("generic_model_field_access");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("generic_model_field_access", rust_code);
+}
+
+#[test]
 fn test_lowercase_types_codegen() {
     let source = load_test_file("lowercase_types");
     let rust_code = generate_rust(&source);

@@ -1289,7 +1289,7 @@ def test_nested_dataset_modules() -> None:
     }
 
     #[test]
-    fn e2e_empty_list_arguments_in_tests_preserve_string_element_type() {
+    fn e2e_empty_list_arguments_in_tests_preserve_string_element_type() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
             "incan.toml",
             r#"[project]
@@ -1300,22 +1300,16 @@ version = "0.1.0"
         let src_dir = dir.join("src");
         let tests_dir = dir.join("tests");
 
-        if let Err(err) = std::fs::create_dir_all(&src_dir) {
-            panic!("failed to create src dir: {}", err);
-        }
-        if let Err(err) = std::fs::create_dir_all(&tests_dir) {
-            panic!("failed to create tests dir: {}", err);
-        }
-        if let Err(err) = std::fs::write(
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::create_dir_all(&tests_dir)?;
+        std::fs::write(
             src_dir.join("helpers.incn"),
             r#"
 pub def count_names(names: List[str]) -> int:
     return len(names)
 "#,
-        ) {
-            panic!("failed to write helper source: {}", err);
-        }
-        if let Err(err) = std::fs::write(
+        )?;
+        std::fs::write(
             tests_dir.join("test_empty_names.incn"),
             r#"
 from std.testing import assert_eq
@@ -1324,9 +1318,7 @@ from helpers import count_names
 def test_empty_names() -> None:
     assert_eq(count_names([]), 0)
 "#,
-        ) {
-            panic!("failed to write test source: {}", err);
-        }
+        )?;
 
         let output = run_incan_test(&dir);
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1348,6 +1340,8 @@ def test_empty_names() -> None:
             "expected no untyped empty string-list conversion in generated Rust.\nstderr:\n{}",
             stderr,
         );
+
+        Ok(())
     }
 
     #[test]
