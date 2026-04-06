@@ -374,7 +374,55 @@ impl<'a> IrEmitter<'a> {
 mod tests {
     use super::*;
     use crate::backend::ir::FunctionRegistry;
-    use crate::backend::ir::expr::{CollectionMethodKind, IrCallArg, MethodCallArgPolicy, MethodKind, VarAccess};
+    use crate::backend::ir::expr::{
+        CollectionMethodKind, IrCallArg, MethodCallArgPolicy, MethodKind, VarAccess, VarRefKind,
+    };
+
+    #[test]
+    fn type_name_associated_call_does_not_borrow_string_arguments() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "Response".to_string(),
+                        access: VarAccess::Move,
+                        ref_kind: VarRefKind::TypeName,
+                    },
+                    IrType::Struct("Response".to_string()),
+                )),
+                method: "html".to_string(),
+                args: vec![IrCallArg {
+                    name: None,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "html".to_string(),
+                            access: VarAccess::Move,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::String,
+                    ),
+                }],
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Struct("Response".to_string()),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("Response") && rendered.contains("html"),
+            "expected associated call emission, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("& html") && !rendered.contains("&html"),
+            "TypeName associated calls use Incan arg rules (owned String), got `{rendered}`"
+        );
+        Ok(())
+    }
 
     #[test]
     fn interop_try_adapter_emits_question_mark() -> Result<(), String> {

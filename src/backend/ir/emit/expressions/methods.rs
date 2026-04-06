@@ -151,6 +151,11 @@ impl<'a> IrEmitter<'a> {
                 // but many Incan-level signatures expect owned `String` in Rust (e.g., newtype `from_underlying(v:
                 // str)`).
                 //
+                // `VarRefKind::TypeName` covers imported Incan types like `std.web.Response` (typechecker
+                // `IdentKind::TypeName`). Those calls must use Incan arg rules — `ExternalFunctionArg`
+                // would borrow `String` as `&String` and break signatures such as
+                // `Response::html(content: String)` in generated stdlib.
+                //
                 // For external Rust types (VarRefKind::ExternalRustName), use ExternalFunctionArg conversions so that
                 // string literals get `.into()` — this lets the Rust compiler resolve the target type via the Into
                 // trait (e.g., Polars' PlSmallStr, sqlx identifiers, etc.).
@@ -158,7 +163,7 @@ impl<'a> IrEmitter<'a> {
                     && self.is_incan_owned_nominal_receiver(&receiver.ty)
                 {
                     ConversionContext::IncanFunctionArg
-                } else if receiver_ref_kind == Some(VarRefKind::ExternalName) {
+                } else if matches!(receiver_ref_kind, Some(VarRefKind::ExternalName | VarRefKind::TypeName)) {
                     if in_return {
                         ConversionContext::IncanFunctionArgInReturn
                     } else {
