@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 012: JsonValue Type, Enum Methods, and Enum Trait Adoption - Incan Documentation</title>
+        <title>RFC 049: if let single-arm conditional match - Incan Documentation</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-012-jsonvalue-type-enum-methods-and-enum-trait-adoption" class="md-skip">
+        <a href="#rfc-049-if-let-single-arm-conditional-match" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 012: JsonValue Type, Enum Methods, and Enum Trait Adoption
+              RFC 049: if let single-arm conditional match
             
           </span>
         </div>
@@ -3894,44 +3894,29 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#core-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#motivation" class="md-nav__link">
     <span class="md-ellipsis">
       Motivation
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Motivation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#enums-cant-have-methods" class="md-nav__link">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
     <span class="md-ellipsis">
-      Enums can't have methods
+      Goals
     </span>
   </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#enums-cant-adopt-traits" class="md-nav__link">
-    <span class="md-ellipsis">
-      Enums can't adopt traits
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#dynamic-json-has-no-solution" class="md-nav__link">
-    <span class="md-ellipsis">
-      Dynamic JSON has no solution
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -3945,46 +3930,46 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
+  <a href="#guide-level-explanation" class="md-nav__link">
     <span class="md-ellipsis">
-      Guide-level explanation (how users think about it)
+      Guide-level explanation
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Guide-level explanation (how users think about it)">
+    <nav class="md-nav" aria-label="Guide-level explanation">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#enum-methods-general-feature" class="md-nav__link">
+  <a href="#basic-form" class="md-nav__link">
     <span class="md-ellipsis">
-      Enum methods (general feature)
+      Basic form
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#enum-trait-adoption-general-feature" class="md-nav__link">
+  <a href="#more-examples" class="md-nav__link">
     <span class="md-ellipsis">
-      Enum trait adoption (general feature)
+      More examples
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#jsonvalue-dynamic-json" class="md-nav__link">
+  <a href="#what-this-is-for" class="md-nav__link">
     <span class="md-ellipsis">
-      JsonValue — dynamic JSON
+      What this is for
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#mixing-typed-and-dynamic" class="md-nav__link">
+  <a href="#what-this-is-not-for" class="md-nav__link">
     <span class="md-ellipsis">
-      Mixing typed and dynamic
+      What this is not for
     </span>
   </a>
   
@@ -3996,130 +3981,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
+  <a href="#reference-level-explanation" class="md-nav__link">
     <span class="md-ellipsis">
-      Reference-level explanation (precise rules)
+      Reference-level explanation
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Reference-level explanation (precise rules)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#enum-methods" class="md-nav__link">
-    <span class="md-ellipsis">
-      Enum methods
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Enum methods">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#enum-declaration-syntax" class="md-nav__link">
-    <span class="md-ellipsis">
-      Enum declaration syntax
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#ast-changes" class="md-nav__link">
-    <span class="md-ellipsis">
-      AST changes
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#typechecking" class="md-nav__link">
-    <span class="md-ellipsis">
-      Typechecking
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#lowering-and-emission" class="md-nav__link">
-    <span class="md-ellipsis">
-      Lowering and emission
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#stdjsonjsonvalue" class="md-nav__link">
-    <span class="md-ellipsis">
-      std.json.JsonValue
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="std.json.JsonValue">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#type-definition" class="md-nav__link">
-    <span class="md-ellipsis">
-      Type definition
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rust-backing" class="md-nav__link">
-    <span class="md-ellipsis">
-      Rust backing
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#indexing-semantics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Indexing semantics
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#numeric-handling" class="md-nav__link">
-    <span class="md-ellipsis">
-      Numeric handling
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#design-details" class="md-nav__link">
-    <span class="md-ellipsis">
-      Design details
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Design details">
+    <nav class="md-nav" aria-label="Reference-level explanation">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4141,37 +4009,27 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#interaction-with-existing-features" class="md-nav__link">
+  <a href="#scope-and-binding" class="md-nav__link">
     <span class="md-ellipsis">
-      Interaction with existing features
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Interaction with existing features">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#match-expressions" class="md-nav__link">
-    <span class="md-ellipsis">
-      match expressions
+      Scope and binding
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#rustextern-on-enum-methods" class="md-nav__link">
+  <a href="#typing" class="md-nav__link">
     <span class="md-ellipsis">
-      @rust.extern on enum methods
+      Typing
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#jsonvalue-as-a-model-field-type" class="md-nav__link">
+  <a href="#errors-and-diagnostics" class="md-nav__link">
     <span class="md-ellipsis">
-      JsonValue as a model field type
+      Errors and diagnostics
     </span>
   </a>
   
@@ -4181,11 +4039,75 @@
     </nav>
   
 </li>
+      
+        <li class="md-nav__item">
+  <a href="#design-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
+      <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#compatibility-migration" class="md-nav__link">
+  <a href="#why-if-let" class="md-nav__link">
     <span class="md-ellipsis">
-      Compatibility / migration
+      Why if let
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-this-is-not-raw-rust-passthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why this is not "raw Rust passthrough"
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-not-general-let-inside-any-if" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why not general let inside any if
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#supported-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      Supported usage
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction-with-full-match" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interaction with full match
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction-with-option-and-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interaction with Option and Result
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction-with-rfc-018-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interaction with RFC 018 is
     </span>
   </a>
   
@@ -4203,39 +4125,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Alternatives considered">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-jsonvalue-as-a-model-with-opaque-rust-interior" class="md-nav__link">
-    <span class="md-ellipsis">
-      1. JsonValue as a model with opaque Rust interior
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-module-level-functions-instead-of-methods" class="md-nav__link">
-    <span class="md-ellipsis">
-      2. Module-level functions instead of methods
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-dictstr-any-for-dynamic-json" class="md-nav__link">
-    <span class="md-ellipsis">
-      3. Dict[str, Any] for dynamic JSON
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -4248,87 +4137,27 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-plan" class="md-nav__link">
+  <a href="#implementation-architecture" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation plan
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Implementation plan">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#phase-1-enum-methods-and-trait-adoption-language-feature" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 1: Enum methods and trait adoption (language feature)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-2-stdjsonjsonvalue-type" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 2: std.json.JsonValue type
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-3-indexing-support" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 3: Indexing support
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-4-jsonvalue-as-a-model-field-type" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 4: JsonValue as a model field type
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-5-documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 5: Documentation
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#design-decisions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Design decisions
+      Implementation architecture
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#deferred-questions" class="md-nav__link">
+  <a href="#layers-affected" class="md-nav__link">
     <span class="md-ellipsis">
-      Deferred questions
+      Layers affected
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#references" class="md-nav__link">
+  <a href="#unresolved-questions" class="md-nav__link">
     <span class="md-ellipsis">
-      References
+      Unresolved questions
     </span>
   </a>
   
@@ -4352,456 +4181,268 @@
   
 
 
-<h1 id="rfc-012-jsonvalue-type-enum-methods-and-enum-trait-adoption">RFC 012: <code>JsonValue</code> Type, Enum Methods, and Enum Trait Adoption<a class="headerlink" href="#rfc-012-jsonvalue-type-enum-methods-and-enum-trait-adoption" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-049-if-let-single-arm-conditional-match">RFC 049: <code>if let</code> single-arm conditional match<a class="headerlink" href="#rfc-049-if-let-single-arm-conditional-match" title="Permanent link">&para;</a></h1>
 <ul>
-<li>Status: Planned</li>
-<li>Author(s): Danny Meijer (@dannymeijer)</li>
-<li>Issue: #80</li>
-<li>RFC PR: —</li>
-<li>Created: 2025-11-15 (draft), 2026-02-17 (final)</li>
-<li>Related: <ul>
-<li><a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a> (Rust interop)</li>
-<li><a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a> (compilable stdlib &amp; rust.module binding)</li>
-<li><a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a> (multi-instantiation trait dispatch)</li>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2026-04-02</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong><ul>
+<li>RFC 000 (core language surface)</li>
+<li>RFC 018 (testing)</li>
 </ul>
 </li>
+<li><strong>Issue:</strong> —</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC introduces three things:</p>
+<p>This RFC introduces <code>if let</code> as a first-class Incan control-flow construct for single-arm conditional pattern matching. It is intended for cases where authors care about exactly one successful pattern and want the non-match case to do nothing, such as replacing boilerplate like <code>Some(x) =&gt; ...</code> paired with <code>None =&gt; pass</code> with <code>if let Some(child) = filter.input:</code>. This RFC does not replace full <code>match</code>; full <code>match</code> remains the canonical construct for multi-arm branching, exhaustive reasoning, and cases where the non-match path is semantically meaningful. The design is intentionally closer to Rust than Python because the motivating cases in Incan are primarily explicit <code>Option</code> and <code>Result</code> management, so Rust-style destructuring control flow is a better fit than Python-style truthiness.</p>
+<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <ol>
-<li><strong>Enum methods</strong> — extend Incan enums to support method declarations, bringing them to parity with models and
-   classes.</li>
-<li><strong>Enum trait adoption</strong> — extend Incan enums to support <code>with Trait</code> syntax, enabling enums to adopt traits like
-   <code>Index[K, V]</code> for subscript access.</li>
-<li><strong><code>std.json.JsonValue</code></strong> — an enum with methods and trait adoption for handling JSON with unknown or varying
-   structure at runtime. <code>JsonValue</code> is the motivating use case for both enum features and the first stdlib type to
-   use them.</li>
+<li><code>if let PATTERN = VALUE:</code> attempts to match <code>VALUE</code> against <code>PATTERN</code>.</li>
+<li>If the match succeeds, the body executes and any names bound by the pattern are available inside that body.</li>
+<li>If the match fails, the body is skipped and no names are bound.</li>
+<li>Full <code>match</code> remains the preferred construct when more than one arm matters.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<h3 id="enums-cant-have-methods">Enums can't have methods<a class="headerlink" href="#enums-cant-have-methods" title="Permanent link">&para;</a></h3>
-<p>Today, Incan enums can only declare variants. They cannot have methods:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Current: enums are variant-only</span>
-<span class="k">enum</span> <span class="nc">Color</span><span class="p">:</span>
-    <span class="nc">Red</span>
-    <span class="nc">Green</span>
-    <span class="nc">Blue</span>
-
-<span class="c1"># No way to add methods — this doesn&#39;t parse:</span>
-<span class="c1">#   def is_warm(self) -&gt; bool: ...</span>
+<p>In Incan today, it is common to inspect an <code>Option[T]</code>, <code>Result[T, E]</code>, or enum payload, perform a small action when one shape is present, and otherwise do nothing.</p>
+<p>That often produces code like:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">match</span> <span class="nb">filter</span><span class="o">.</span><span class="n">input</span><span class="p">:</span>
+    <span class="nb">Some</span><span class="p">(</span><span class="n">child</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="p">[</span><span class="n">child</span><span class="p">]</span>
+    <span class="kc">None</span> <span class="o">=&gt;</span> <span class="k">pass</span>
 </code></pre></div>
-<p>This is a significant gap. Models and classes both support methods. Enums — which in Incan are algebraic data types
-with tuple variants — are the only declaration type without them. This limits their usefulness for any type that needs
-both variants and behavior.</p>
-<h3 id="enums-cant-adopt-traits">Enums can't adopt traits<a class="headerlink" href="#enums-cant-adopt-traits" title="Permanent link">&para;</a></h3>
-<p>Models and classes support <code>with Trait</code> to adopt traits (e.g., <code>model Matrix with Index[Tuple[int, int], float]</code>).
-Enums cannot. This means enums can't implement protocols like <code>Index</code> for subscript access, which is essential for
-<code>JsonValue["key"]</code> to work. Without enum trait adoption, <code>JsonValue</code> indexing would require special-case compiler
-support rather than using the existing <code>Index</code> trait from <code>std.traits.indexing</code>.</p>
-<h3 id="dynamic-json-has-no-solution">Dynamic JSON has no solution<a class="headerlink" href="#dynamic-json-has-no-solution" title="Permanent link">&para;</a></h3>
-<p>Incan currently requires defining models for all JSON handling. This falls short for:</p>
-<ol>
-<li><strong>Dynamic APIs</strong> — APIs that return varying structures depending on context</li>
-<li><strong>Exploration</strong> — prototyping without defining full models upfront</li>
-<li><strong>Partial parsing</strong> — extracting specific fields from large JSON without modeling everything</li>
-<li><strong>Mixed schemas</strong> — JSON where some parts are typed and others are dynamic</li>
-</ol>
-<p>A <code>JsonValue</code> type needs to be an enum (it represents one of: null, bool, int, float, string, array, object) <strong>and</strong> it
-needs methods (<code>.as_str()</code>, <code>.is_null()</code>, <code>.parse()</code>, etc.). Without enum methods, <code>JsonValue</code> would require clunky
-module-level functions instead of natural method-call syntax.</p>
+<p>or:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">match</span> <span class="kt">result</span><span class="p">:</span>
+    <span class="nb">Err</span><span class="p">(</span><span class="n">err</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">log</span><span class="p">(</span><span class="n">err</span><span class="p">)</span>
+    <span class="nb">Ok</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">pass</span>
+</code></pre></div>
+<p>These are explicit, but they are also repetitive. The unmatched arm often adds no meaning beyond "do nothing."</p>
+<p>This RFC introduces a surface that says exactly that: perform one pattern match, execute one body on success, and implicitly skip the non-match path.</p>
+<p>That choice is deliberate. Incan's problem here is not "how do we make conditionals feel more Pythonic." It is "how do we reduce boilerplate around explicit <code>Option</code> and <code>Result</code> handling without weakening the language's pattern-matching model." Rust has already established that <code>if let</code> is an effective answer for that specific problem shape, and this RFC follows that direction.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Add a concise, explicit single-arm conditional pattern-match form.</li>
+<li>Reuse existing pattern semantics rather than introducing truthiness-based control flow.</li>
+<li>Allow successful matches to bind names with normal lexical scope inside the success branch.</li>
+<li>Keep full <code>match</code> as the primary construct for multi-arm or exhaustive branching.</li>
+<li>Align the surface with a familiar and proven construct where that improves readability.</li>
+</ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Typed JSON serialization</strong> (<code>@derive(json)</code>, <code>.to_json()</code>, <code>.from_json()</code>). That is covered by <a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a> Phase 4,
-  which provides the <code>std.serde.json</code> derivable module.</li>
-<li><strong>Enum pattern matching enhancements.</strong> This RFC adds methods and trait adoption to enums; it does not change <code>match</code>
-  semantics.</li>
+<li>Replacing full <code>match</code>.</li>
+<li>Introducing Python-style truthiness such as <code>if child:</code>.</li>
+<li>Adding multi-arm shorthand, match guards, or expression-level pattern-match sugar in this RFC.</li>
+<li>Defining raw Rust passthrough syntax as a language feature.</li>
+<li>Changing existing constructor syntax in value position.</li>
 </ul>
-<h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
-<h3 id="enum-methods-general-feature">Enum methods (general feature)<a class="headerlink" href="#enum-methods-general-feature" title="Permanent link">&para;</a></h3>
-<p>Enums can now have methods, just like models and classes:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Direction</span><span class="p">:</span>
-    <span class="nc">North</span>
-    <span class="nc">South</span>
-    <span class="nc">East</span>
-    <span class="nc">West</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">is_horizontal</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
-            <span class="nc">East</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="k">true</span>
-            <span class="nc">West</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="k">true</span>
-            <span class="n">_</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="k">false</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">opposite</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Direction</span><span class="p">:</span>
-        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
-            <span class="nc">North</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">South</span>
-            <span class="nc">South</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">North</span>
-            <span class="nc">East</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">West</span>
-            <span class="nc">West</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">East</span>
+<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
+<h3 id="basic-form">Basic form<a class="headerlink" href="#basic-form" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">first_child</span><span class="p">(</span><span class="nb">filter</span><span class="p">:</span> <span class="nc">Filter</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">List</span><span class="p">[</span><span class="nc">Rel</span><span class="p">]:</span>
+    <span class="k">if</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">child</span><span class="p">)</span> <span class="o">=</span> <span class="nb">filter</span><span class="o">.</span><span class="n">input</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">child</span><span class="p">]</span>
+    <span class="k">return</span> <span class="p">[]</span>
 </code></pre></div>
-<p>Methods on enums follow the same rules as methods on models/classes:</p>
+<p>This means:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">first_child</span><span class="p">(</span><span class="nb">filter</span><span class="p">:</span> <span class="nc">Filter</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">List</span><span class="p">[</span><span class="nc">Rel</span><span class="p">]:</span>
+    <span class="k">match</span> <span class="nb">filter</span><span class="o">.</span><span class="n">input</span><span class="p">:</span>
+        <span class="nb">Some</span><span class="p">(</span><span class="n">child</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="p">[</span><span class="n">child</span><span class="p">]</span>
+        <span class="kc">None</span> <span class="o">=&gt;</span> <span class="k">pass</span>
+    <span class="k">return</span> <span class="p">[]</span>
+</code></pre></div>
+<h3 id="more-examples">More examples<a class="headerlink" href="#more-examples" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">log_failure</span><span class="p">(</span><span class="kt">result</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">if</span> <span class="k">let</span> <span class="nb">Err</span><span class="p">(</span><span class="n">err</span><span class="p">)</span> <span class="o">=</span> <span class="kt">result</span><span class="p">:</span>
+        <span class="n">log</span><span class="p">(</span><span class="n">err</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">first_join_child</span><span class="p">(</span><span class="n">rel</span><span class="p">:</span> <span class="nc">Rel</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">List</span><span class="p">[</span><span class="nc">Rel</span><span class="p">]:</span>
+    <span class="k">if</span> <span class="k">let</span> <span class="nc">RelType</span><span class="o">.</span><span class="nc">Join</span><span class="p">(</span><span class="nb">join</span><span class="p">)</span> <span class="o">=</span> <span class="n">rel</span><span class="o">.</span><span class="n">rel_type</span><span class="p">:</span>
+        <span class="k">if</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">left</span><span class="p">)</span> <span class="o">=</span> <span class="nb">join</span><span class="o">.</span><span class="n">left</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">[</span><span class="n">left</span><span class="p">]</span>
+    <span class="k">return</span> <span class="p">[]</span>
+</code></pre></div>
+<h3 id="what-this-is-for">What this is for<a class="headerlink" href="#what-this-is-for" title="Permanent link">&para;</a></h3>
+<p>Use <code>if let</code> when:</p>
 <ul>
-<li><code>self</code> receiver for instance methods</li>
-<li>No receiver for associated functions</li>
-<li>Can be <code>@rust.extern</code> for Rust-backed implementations</li>
-<li>Support type parameters on the enum and on individual methods</li>
+<li>exactly one pattern matters;</li>
+<li>the non-match case should do nothing;</li>
+<li>the code reads more clearly as opportunistic extraction than as branching.</li>
 </ul>
-<h3 id="enum-trait-adoption-general-feature">Enum trait adoption (general feature)<a class="headerlink" href="#enum-trait-adoption-general-feature" title="Permanent link">&para;</a></h3>
-<p>Enums can now adopt traits with <code>with</code>, just like models and classes:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.indexing</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Index</span>
-
-<span class="k">enum</span> <span class="nc">Lookup</span> <span class="k">with</span> <span class="nc">Index</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
-    <span class="nc">Mapping</span><span class="p">(</span><span class="kt">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">])</span>
-    <span class="nc">Empty</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
-            <span class="nc">Lookup</span><span class="o">.</span><span class="nc">Mapping</span><span class="p">(</span><span class="n">d</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="n">d</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
-            <span class="nc">Lookup</span><span class="o">.</span><span class="nc">Empty</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="mi">0</span>
+<h3 id="what-this-is-not-for">What this is not for<a class="headerlink" href="#what-this-is-not-for" title="Permanent link">&para;</a></h3>
+<p>When both outcomes matter, use full <code>match</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">match</span> <span class="kt">result</span><span class="p">:</span>
+    <span class="nb">Ok</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">cache</span><span class="o">.</span><span class="n">store</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+    <span class="nb">Err</span><span class="p">(</span><span class="n">err</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="n">err</span><span class="p">)</span>
 </code></pre></div>
-<p>This brings enums to full parity with models and classes for trait adoption. The <code>with</code> clause appears after the enum
-name (and optional type parameters), before the colon.</p>
-<h3 id="jsonvalue-dynamic-json"><code>JsonValue</code> — dynamic JSON<a class="headerlink" href="#jsonvalue-dynamic-json" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonValue</span>
-
-<span class="c1"># Parse unknown JSON</span>
-<span class="n">data</span> <span class="o">=</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">response_body</span><span class="p">)</span><span class="o">?</span>
-
-<span class="c1"># Navigate dynamically</span>
-<span class="n">name</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;user&quot;</span><span class="p">][</span><span class="s2">&quot;name&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">as_str</span><span class="p">()</span>
-<span class="nb">count</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;items&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">as_int</span><span class="p">()</span>
-
-<span class="c1"># Type inspection</span>
-<span class="k">if</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;payload&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">is_object</span><span class="p">():</span>
-    <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;payload is an object&quot;</span><span class="p">)</span>
-
-<span class="c1"># Serialize back to string</span>
-<span class="n">json_str</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">to_json</span><span class="p">()</span>
+<p>This RFC also does not introduce truthiness:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Not part of this RFC</span>
+<span class="k">if</span> <span class="n">child</span><span class="p">:</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">child</span><span class="p">]</span>
 </code></pre></div>
-<h3 id="mixing-typed-and-dynamic">Mixing typed and dynamic<a class="headerlink" href="#mixing-typed-and-dynamic" title="Permanent link">&para;</a></h3>
-<p>With <a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a>'s <code>@derive(json)</code>, a model can have <code>JsonValue</code> fields for partially-dynamic schemas:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonValue</span>
-
-<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">ApiResponse</span><span class="p">:</span>
-    <span class="n">status</span><span class="p">:</span> <span class="nb">int</span>
-    <span class="n">message</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">data</span><span class="p">:</span> <span class="nc">JsonValue</span>  <span class="c1"># Dynamic payload — structure varies per endpoint</span>
-
-<span class="n">response</span> <span class="o">=</span> <span class="nc">ApiResponse</span><span class="o">.</span><span class="n">from_json</span><span class="p">(</span><span class="n">body</span><span class="p">)</span><span class="o">?</span>
-<span class="n">user_name</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;user&quot;</span><span class="p">][</span><span class="s2">&quot;name&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">as_str</span><span class="p">()</span>
-</code></pre></div>
-<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
-<h3 id="enum-methods">Enum methods<a class="headerlink" href="#enum-methods" title="Permanent link">&para;</a></h3>
-<h4 id="enum-declaration-syntax">Enum declaration syntax<a class="headerlink" href="#enum-declaration-syntax" title="Permanent link">&para;</a></h4>
-<p>Enum declarations are extended to allow method declarations after the variant list:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">TypeName</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-    <span class="nc">Variant1</span>
-    <span class="nc">Variant2</span><span class="p">(</span><span class="n">field_type</span><span class="p">)</span>
-    <span class="nc">Variant3</span><span class="p">(</span><span class="n">type1</span><span class="p">,</span> <span class="n">type2</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">method_name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">ReturnType</span><span class="p">:</span>
-        <span class="c1"># method body</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">associated_function</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">ReturnType</span><span class="p">:</span>
-        <span class="c1"># no self — associated function</span>
-</code></pre></div>
-<p>Methods are separated from variants by a blank line (by convention, not enforced). The parser continues to parse
-variants until it encounters <code>def</code> (or a decorator followed by <code>def</code>), then switches to parsing methods.</p>
-<h4 id="ast-changes">AST changes<a class="headerlink" href="#ast-changes" title="Permanent link">&para;</a></h4>
-<p><code>EnumDecl</code> gains <code>traits</code> and <code>methods</code> fields:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="n">EnumDecl</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">visibility</span><span class="p">:</span><span class="w"> </span><span class="nc">Visibility</span><span class="p">,</span>
-<span class="w">    </span><span class="n">decorators</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Spanned</span><span class="o">&lt;</span><span class="n">Decorator</span><span class="o">&gt;&gt;</span><span class="p">,</span>
-<span class="w">    </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="nc">Ident</span><span class="p">,</span>
-<span class="w">    </span><span class="n">type_params</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">TypeParam</span><span class="o">&gt;</span><span class="p">,</span>
-<span class="w">    </span><span class="n">traits</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Spanned</span><span class="o">&lt;</span><span class="n">Ident</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w">            </span><span class="c1">// NEW — adopted traits</span>
-<span class="w">    </span><span class="n">variants</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Spanned</span><span class="o">&lt;</span><span class="n">VariantDecl</span><span class="o">&gt;&gt;</span><span class="p">,</span>
-<span class="w">    </span><span class="n">methods</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Spanned</span><span class="o">&lt;</span><span class="n">MethodDecl</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w">      </span><span class="c1">// NEW — enum methods</span>
-<span class="p">}</span>
-</code></pre></div>
-<p><code>EnumInfo</code> in the symbol table gains <code>traits</code> and <code>methods</code> fields:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="n">EnumInfo</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">type_params</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">,</span>
-<span class="w">    </span><span class="n">traits</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">,</span><span class="w">                    </span><span class="c1">// NEW</span>
-<span class="w">    </span><span class="n">variants</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">,</span>
-<span class="w">    </span><span class="n">methods</span><span class="p">:</span><span class="w"> </span><span class="nc">HashMap</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="n">MethodInfo</span><span class="o">&gt;</span><span class="p">,</span><span class="w">   </span><span class="c1">// NEW</span>
-<span class="p">}</span>
-</code></pre></div>
-<h4 id="typechecking">Typechecking<a class="headerlink" href="#typechecking" title="Permanent link">&para;</a></h4>
-<ul>
-<li>Enum methods are collected in the first pass (<code>collect_enum</code>), same as model/class methods.</li>
-<li>Method bodies can reference <code>self</code> and use <code>match self</code> to dispatch on variants.</li>
-<li>The enum's type parameters are in scope within method bodies.</li>
-</ul>
-<h4 id="lowering-and-emission">Lowering and emission<a class="headerlink" href="#lowering-and-emission" title="Permanent link">&para;</a></h4>
-<ul>
-<li>Enum methods lower to <code>IrFunction</code> entries associated with the enum type, same as model/class methods.</li>
-<li>Emitted as <code>impl TypeName { fn method_name(&amp;self, ...) { ... } }</code> in Rust.</li>
-</ul>
-<h3 id="stdjsonjsonvalue"><code>std.json.JsonValue</code><a class="headerlink" href="#stdjsonjsonvalue" title="Permanent link">&para;</a></h3>
-<h4 id="type-definition">Type definition<a class="headerlink" href="#type-definition" title="Permanent link">&para;</a></h4>
-<blockquote>
-<p>Note: this is a pseudo-code example showing the shape of the type. It is not a complete implementation.</p>
-</blockquote>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># stdlib/json.incn</span>
-<span class="k">rust</span><span class="o">.</span><span class="k">module</span><span class="p">(</span><span class="s2">&quot;incan_stdlib::json&quot;</span><span class="p">)</span>
-
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.indexing</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Index</span>
-
-<span class="k">enum</span> <span class="nc">JsonValue</span> <span class="k">with</span> <span class="nc">Index</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">JsonValue</span><span class="p">],</span> <span class="nc">Index</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">JsonValue</span><span class="p">]:</span>
-    <span class="nc">Null</span>
-    <span class="nc">Bool</span><span class="p">(</span><span class="nb">bool</span><span class="p">)</span>
-    <span class="nc">Int</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
-    <span class="nc">Float</span><span class="p">(</span><span class="nb">float</span><span class="p">)</span>
-    <span class="nc">String</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
-    <span class="nc">Array</span><span class="p">(</span><span class="kt">List</span><span class="p">[</span><span class="nc">JsonValue</span><span class="p">])</span>
-    <span class="nc">Object</span><span class="p">(</span><span class="kt">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">JsonValue</span><span class="p">])</span>
-
-    <span class="c1"># ---- Rust-backed primitives ----</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">parse</span><span class="p">(</span><span class="n">json_str</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">JsonValue</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">to_json</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
-
-    <span class="c1"># ---- Constructors ----</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">null</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_bool</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_int</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_float</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_string</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_array</span><span class="p">(</span><span class="n">items</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nc">JsonValue</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_object</span><span class="p">(</span><span class="n">entries</span><span class="p">:</span> <span class="kt">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">JsonValue</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
-
-    <span class="c1"># ---- Type inspection ----</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">is_null</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">is_bool</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">is_int</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">is_float</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">is_string</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">is_array</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">is_object</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
-
-    <span class="c1"># ---- Value extraction ----</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">as_bool</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">bool</span><span class="p">]:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">as_int</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">as_float</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">as_str</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">as_array</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="kt">List</span><span class="p">[</span><span class="nc">JsonValue</span><span class="p">]]:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">as_object</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="kt">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">JsonValue</span><span class="p">]]:</span> <span class="o">...</span>
-
-    <span class="c1"># ---- Indexing (from Index trait adoption, see RFC 025) ----</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
-</code></pre></div>
-<h4 id="rust-backing">Rust backing<a class="headerlink" href="#rust-backing" title="Permanent link">&para;</a></h4>
-<p><code>JsonValue</code> is backed by <code>serde_json::Value</code> at the Rust level. The implementation will use <code>rust.module()</code> and/or
-<code>rust::</code> interop to bridge the two — the specifics are left to the implementer. Users who need direct access to the
-underlying Rust type can use <code>rust::</code> interop:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">serde_json</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Value</span>
-</code></pre></div>
-<h4 id="indexing-semantics">Indexing semantics<a class="headerlink" href="#indexing-semantics" title="Permanent link">&para;</a></h4>
-<p><code>JsonValue</code> supports subscript access with both <code>str</code> keys (object field access) and <code>int</code> keys (array element access):</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Object field access — returns JsonValue.Null if key is missing</span>
-<span class="n">value</span><span class="p">[</span><span class="s2">&quot;key&quot;</span><span class="p">]</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span>
-
-<span class="c1"># Array index access — returns JsonValue.Null if out of bounds</span>
-<span class="n">value</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span>
-
-<span class="c1"># Chained access</span>
-<span class="n">value</span><span class="p">[</span><span class="s2">&quot;users&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;name&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">as_str</span><span class="p">()</span>
-</code></pre></div>
-<p>Indexing returns <code>JsonValue</code> (not <code>Option[JsonValue]</code>), with missing keys / out-of-bounds indices returning
-<code>JsonValue.Null</code>. This enables ergonomic chaining without intermediate unwrapping.</p>
-<p>The intended design is trait-based: <code>JsonValue</code> adopts both <code>Index[str, JsonValue]</code> and <code>Index[int, JsonValue]</code>, with
-two <code>__getitem__</code> implementations disambiguated by argument type. This requires multi-instantiation trait dispatch,
-proposed in <a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a>. Until RFC 025 is implemented, indexing may use compiler-level support as an interim fallback
-(the same way <code>List</code> and <code>Dict</code> indexing works today).</p>
-<h4 id="numeric-handling">Numeric handling<a class="headerlink" href="#numeric-handling" title="Permanent link">&para;</a></h4>
-<p>JSON has a single number type. Incan has <code>int</code> and <code>float</code>. The mapping:</p>
-<ul>
-<li>JSON integers (no decimal point) → <code>JsonValue.Int(int)</code></li>
-<li>JSON floats (with decimal point or exponent) → <code>JsonValue.Float(float)</code></li>
-<li><code>.as_int()</code> on a <code>Float</code> value returns <code>None</code> (no silent truncation)</li>
-<li><code>.as_float()</code> on an <code>Int</code> value returns <code>Some(value as float)</code> (widening is safe)</li>
-</ul>
-<p>The implementer might want to add a generic helper function to convert numerical strings to their correct type.
-For example:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">parse_number</span><span class="p">(</span><span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span>
-    <span class="k">if</span> <span class="n">s</span><span class="o">.</span><span class="nb">contains</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">):</span>
-        <span class="k">return</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="nc">Float</span><span class="p">(</span><span class="nb">float</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">s</span><span class="p">))</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="nc">Int</span><span class="p">(</span><span class="nb">int</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">s</span><span class="p">))</span>
-</code></pre></div>
-<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
-<p>Two new syntactic elements for enums:</p>
-<ol>
-<li><strong><code>with Trait</code> clause</strong> — optional, after the enum name and type parameters, before the colon. Parsed identically to
-   the existing <code>with</code> clause on models and classes (this means that <code>@derive(...)</code>-decorator will also be supported).</li>
-<li><strong>Method declarations inside enum bodies</strong> — after all variants, the parser looks for <code>def</code> (or decorators followed
-   by <code>def</code>) and parses method declarations using the same <code>method_decl</code> parser already used for models and classes.</li>
-</ol>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Name</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="k">with</span> <span class="nc">Trait1</span><span class="p">,</span> <span class="nc">Trait2</span><span class="p">:</span>
-    <span class="nc">Variant1</span>
-    <span class="nc">Variant2</span><span class="p">(</span><span class="nc">T</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">method</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span> <span class="o">...</span>
+<p>This RFC introduces an <code>if let</code> statement form:</p>
+<div class="language-text highlight"><pre><span></span><code>if_stmt ::= &quot;if&quot; if_test &quot;:&quot; block
+if_test ::= expr | if_let_test
+if_let_test ::= &quot;let&quot; pattern &quot;=&quot; expr
 </code></pre></div>
+<p>The <code>pattern</code> grammar is the same pattern grammar already used by <code>match</code> arms.</p>
+<p>This RFC only introduces <code>if let</code> in statement position. It does not introduce <code>let</code> patterns in arbitrary boolean expression positions.</p>
 <h3 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h3>
-<p>Enum methods behave identically to model/class methods:</p>
 <ul>
-<li>Instance methods receive <code>self</code> (immutable) or <code>mut self</code> (mutable)</li>
-<li>Associated functions have no receiver</li>
-<li>Methods can use <code>match self</code> to dispatch on variants</li>
-<li>Type parameters from the enum declaration are in scope</li>
+<li><code>VALUE</code> must be evaluated exactly once.</li>
+<li>The pattern match must use the same matching rules as a <code>match</code> arm.</li>
+<li>If the pattern matches, the <code>if let</code> body executes.</li>
+<li>If the pattern does not match, the body is skipped.</li>
+<li>A failed match must not bind any names.</li>
 </ul>
-<h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
-<h4 id="match-expressions"><code>match</code> expressions<a class="headerlink" href="#match-expressions" title="Permanent link">&para;</a></h4>
-<p>Enum methods complement <code>match</code> — they don't replace it. Pattern matching remains the primary way to destructure enum
-variants from outside the type. Methods provide behavior that the enum encapsulates internally.</p>
-<h4 id="rustextern-on-enum-methods"><code>@rust.extern</code> on enum methods<a class="headerlink" href="#rustextern-on-enum-methods" title="Permanent link">&para;</a></h4>
-<p><code>@rust.extern</code> works on enum methods the same way it works on model/class methods — delegates to the Rust backing
-module declared by <code>rust.module()</code>. This is how <code>JsonValue</code>'s <code>parse()</code> and <code>to_json()</code> primitives are backed.</p>
-<h4 id="jsonvalue-as-a-model-field-type"><code>JsonValue</code> as a model field type<a class="headerlink" href="#jsonvalue-as-a-model-field-type" title="Permanent link">&para;</a></h4>
-<p><code>JsonValue</code> can be used as a field type in models. When the model derives JSON serialization (<a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a>), <code>JsonValue</code>
-fields serialize as their JSON representation:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonValue</span>
-
-<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">Event</span><span class="p">:</span>
-    <span class="n">event_type</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">payload</span><span class="p">:</span> <span class="nc">JsonValue</span>  <span class="c1"># Serializes as whatever JSON structure it holds</span>
+<p>The following:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">if</span> <span class="k">let</span> <span class="nc">PATTERN</span> <span class="o">=</span> <span class="nc">VALUE</span><span class="p">:</span>
+    <span class="nc">BODY</span>
 </code></pre></div>
-<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<p><strong>Enum methods</strong>: fully additive. Existing enums without methods continue to work unchanged. The parser only looks for
-methods after all variants are parsed.</p>
-<p><strong><code>JsonValue</code></strong>: entirely new. No migration needed.</p>
+<p>is semantically equivalent to:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">match</span> <span class="nc">VALUE</span><span class="p">:</span>
+    <span class="nc">PATTERN</span> <span class="o">=&gt;</span> <span class="nc">BODY</span>
+    <span class="n">_</span> <span class="o">=&gt;</span> <span class="k">pass</span>
+</code></pre></div>
+<h3 id="scope-and-binding">Scope and binding<a class="headerlink" href="#scope-and-binding" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Names bound by the pattern are in scope only within the <code>if let</code> success branch.</li>
+<li>Those names are not in scope after the <code>if let</code> completes.</li>
+<li>Shadowing behavior follows the same rules as bindings introduced by <code>match</code> arms.</li>
+</ul>
+<h3 id="typing">Typing<a class="headerlink" href="#typing" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>VALUE</code> must be type-checkable against <code>PATTERN</code> under the same rules as a <code>match</code> arm.</li>
+<li>Impossible patterns must produce the same kind of type errors as <code>match</code>.</li>
+<li>Bound names receive the same types they would receive in the equivalent <code>match</code> arm.</li>
+</ul>
+<h3 id="errors-and-diagnostics">Errors and diagnostics<a class="headerlink" href="#errors-and-diagnostics" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Diagnostics should describe this construct as pattern matching, not assignment.</li>
+<li>Unused pattern bindings should follow normal lint behavior.</li>
+<li>Tooling should explain <code>if let</code> in terms of its equivalent single-arm <code>match</code> when helpful.</li>
+</ul>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="why-if-let">Why <code>if let</code><a class="headerlink" href="#why-if-let" title="Permanent link">&para;</a></h3>
+<p>This RFC deliberately chooses <code>if let</code> as the primary surface instead of <code>PATTERN match VALUE</code>, <code>value is Pattern</code>, or walrus-style syntax.</p>
+<p>The reasons are:</p>
+<ul>
+<li>it is immediately recognizable to users familiar with Rust-style destructuring control flow;</li>
+<li>it clearly communicates that the construct is pattern-matching-oriented;</li>
+<li>it reads naturally in single-arm extraction cases;</li>
+<li>it scales cleanly from <code>Option</code> and <code>Result</code> to enum payloads and other destructuring patterns.</li>
+</ul>
+<p>Most importantly, it does not require inventing a new control-flow spelling for a problem already well served by an established shape.</p>
+<p>It is also a better fit for Incan than a Python-flavored shorthand such as <code>if child:</code>. Incan's motivating examples are about matching structured values like <code>Some(...)</code>, <code>Ok(...)</code>, and <code>Err(...)</code>, not about truthiness. Choosing a Rust-aligned surface keeps the semantics explicit and keeps the feature centered on shape-based control flow.</p>
+<h3 id="why-this-is-not-raw-rust-passthrough">Why this is not "raw Rust passthrough"<a class="headerlink" href="#why-this-is-not-raw-rust-passthrough" title="Permanent link">&para;</a></h3>
+<p>The syntax is Rust-aligned, but this RFC does <strong>not</strong> define <code>if let</code> as "whatever Rust accepts."</p>
+<p>Incan owns the construct. That means:</p>
+<ul>
+<li>the grammar is specified in Incan terms;</li>
+<li>the semantics are specified in Incan terms;</li>
+<li>lowering to Rust <code>if let</code> is an implementation strategy, not the language definition.</li>
+</ul>
+<p>That distinction matters because Incan should remain free to evolve its own pattern grammar, diagnostics, and lowering strategy without accidentally turning backend quirks into language law.</p>
+<h3 id="why-not-general-let-inside-any-if">Why not general <code>let</code> inside any <code>if</code><a class="headerlink" href="#why-not-general-let-inside-any-if" title="Permanent link">&para;</a></h3>
+<p>This RFC does not propose a general rule like "if the parser sees <code>let</code> in an <code>if</code> condition, forward it to Rust."</p>
+<p>That approach is too broad for a young language because it:</p>
+<ul>
+<li>blurs the boundary between Incan syntax and backend syntax;</li>
+<li>risks surprising edge cases if Rust accepts shapes Incan does not want to standardize;</li>
+<li>makes future non-Rust lowering harder.</li>
+</ul>
+<p>This RFC instead standardizes one narrow construct: <code>if let PATTERN = VALUE:</code>.</p>
+<h3 id="supported-usage">Supported usage<a class="headerlink" href="#supported-usage" title="Permanent link">&para;</a></h3>
+<p>The intended sweet spot is shallow, single-arm extraction:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">if</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">child</span><span class="p">)</span> <span class="o">=</span> <span class="nb">filter</span><span class="o">.</span><span class="n">input</span><span class="p">:</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">child</span><span class="p">]</span>
+
+<span class="k">if</span> <span class="k">let</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=</span> <span class="kt">result</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">value</span>
+
+<span class="k">if</span> <span class="k">let</span> <span class="nc">RelType</span><span class="o">.</span><span class="nc">Cross</span><span class="p">(</span><span class="n">cross</span><span class="p">)</span> <span class="o">=</span> <span class="n">rel</span><span class="o">.</span><span class="n">rel_type</span><span class="p">:</span>
+    <span class="n">process</span><span class="p">(</span><span class="n">cross</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="interaction-with-full-match">Interaction with full <code>match</code><a class="headerlink" href="#interaction-with-full-match" title="Permanent link">&para;</a></h3>
+<p>Use full <code>match</code> when:</p>
+<ul>
+<li>more than one arm is meaningful;</li>
+<li>the unmatched path matters to the reader;</li>
+<li>exhaustiveness matters;</li>
+<li>nesting would make <code>if let</code> chains harder to read than a single <code>match</code>.</li>
+</ul>
+<p>This RFC therefore reinforces a style rule:</p>
+<ul>
+<li>use <code>if let</code> for opportunistic extraction with implicit no-op on failure;</li>
+<li>use <code>match</code> for true branching.</li>
+</ul>
+<h3 id="interaction-with-option-and-result">Interaction with <code>Option</code> and <code>Result</code><a class="headerlink" href="#interaction-with-option-and-result" title="Permanent link">&para;</a></h3>
+<p><code>if let</code> is especially useful for:</p>
+<ul>
+<li><code>Option[T]</code> via <code>Some(...)</code>;</li>
+<li><code>Result[T, E]</code> via <code>Ok(...)</code> and <code>Err(...)</code>.</li>
+</ul>
+<p>This RFC does not change the meaning of <code>?</code>. The <code>?</code> operator remains the preferred construct for propagation. <code>if let</code> is for side effects, local extraction, and control flow that intentionally continues after non-match.</p>
+<h3 id="interaction-with-rfc-018-is">Interaction with RFC 018 <code>is</code><a class="headerlink" href="#interaction-with-rfc-018-is" title="Permanent link">&para;</a></h3>
+<p>RFC 018 already uses <code>is</code> in pattern-oriented assertions. That remains valid and useful in assertion contexts.</p>
+<p>This RFC does not extend <code>is</code> into single-arm conditional control flow. The reason is conceptual clarity:</p>
+<ul>
+<li><code>is</code> reads as a boolean pattern test;</li>
+<li><code>if let</code> reads as a destructuring control-flow construct.</li>
+</ul>
+<p>For this RFC's narrow goal, <code>if let</code> is the better fit.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<h3 id="1-jsonvalue-as-a-model-with-opaque-rust-interior">1. <code>JsonValue</code> as a model with opaque Rust interior<a class="headerlink" href="#1-jsonvalue-as-a-model-with-opaque-rust-interior" title="Permanent link">&para;</a></h3>
-<p>Use a model (not an enum) backed by <code>serde_json::Value</code>, with all methods on the model. This works with current Incan
-but loses the ability to pattern match on JSON variants:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Can&#39;t do this without an enum:</span>
-<span class="k">match</span> <span class="n">data</span><span class="p">:</span>
-    <span class="nc">JsonValue</span><span class="o">.</span><span class="nc">String</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;got string: </span><span class="si">{</span><span class="n">s</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="nc">JsonValue</span><span class="o">.</span><span class="nc">Int</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;got int: </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="n">_</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;other&quot;</span><span class="p">)</span>
-</code></pre></div>
-<p>Pattern matching is a natural fit for JSON type dispatch. An enum with methods is the right abstraction.</p>
-<h3 id="2-module-level-functions-instead-of-methods">2. Module-level functions instead of methods<a class="headerlink" href="#2-module-level-functions-instead-of-methods" title="Permanent link">&para;</a></h3>
-<p>Keep enums method-free, put <code>JsonValue</code> functions at module level:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonValue</span><span class="p">,</span> <span class="n">parse</span><span class="p">,</span> <span class="n">as_str</span><span class="p">,</span> <span class="n">is_null</span>
-
-<span class="n">data</span> <span class="o">=</span> <span class="n">parse</span><span class="p">(</span><span class="n">body</span><span class="p">)</span><span class="o">?</span>
-<span class="n">name</span> <span class="o">=</span> <span class="n">as_str</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;user&quot;</span><span class="p">][</span><span class="s2">&quot;name&quot;</span><span class="p">])</span>
-</code></pre></div>
-<p>Functional but clunky — no method chaining, no <code>.</code> syntax, poor discoverability via IDE completion.</p>
-<h3 id="3-dictstr-any-for-dynamic-json">3. <code>Dict[str, Any]</code> for dynamic JSON<a class="headerlink" href="#3-dictstr-any-for-dynamic-json" title="Permanent link">&para;</a></h3>
-<p>Rust doesn't have <code>Any</code> like Python. Would require boxing and type erasure, losing the ability to distinguish JSON
-types (null vs missing, int vs float, etc.).</p>
+<ol>
+<li>
+<p>Keep using full <code>match</code> everywhere.
+   This preserves one construct but keeps the repetitive <code>None =&gt; pass</code> / <code>Err(_) =&gt; pass</code> boilerplate that motivated this RFC.</p>
+</li>
+<li>
+<p><code>PATTERN match VALUE</code>.
+   This is explicit, but it introduces a new dedicated control-flow spelling where a well-understood construct already exists.</p>
+</li>
+<li>
+<p>Extend <code>is</code>, as in <code>if value is Some(child):</code>.
+   This is plausible, especially given RFC 018, but it frames the feature more as a boolean pattern test than as a single-arm destructuring branch.</p>
+</li>
+<li>
+<p>Walrus-style binding.
+   This is awkward for pattern-matching constructs, especially around <code>Some(...)</code>, <code>Ok(...)</code>, and other constructors. It obscures the fact that the operation is a pattern match rather than assignment.</p>
+</li>
+<li>
+<p>General Rust passthrough for <code>let</code> inside <code>if</code>.
+   This was rejected because it weakens Incan's ownership of its own syntax and semantics.</p>
+</li>
+</ol>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Enum methods are a language change</strong>: extends the parser, AST, typechecker, lowering, and emission. However, the
-  mechanism is a straightforward extension of existing model/class method support — no new concepts are introduced.</li>
-<li><strong><code>JsonValue</code> is dynamically typed</strong>: introduces runtime type inspection into a language that emphasizes static
-  typing. This is intentional and scoped — <code>JsonValue</code> is opt-in for specific use cases, not a general-purpose <code>Any</code>.</li>
-<li><strong>Rust dependency</strong>: <code>JsonValue</code> maps to <code>serde_json::Value</code>, adding a hard dependency on <code>serde_json</code>. This crate
-  is already a dependency for model serialization.</li>
+<li>The language gains another control-flow surface.</li>
+<li>Users must learn when to prefer <code>if let</code> over full <code>match</code>.</li>
+<li>Formatter and linter guidance will matter to prevent overly dense nested <code>if let</code> chains.</li>
 </ul>
-<h2 id="implementation-plan">Implementation plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
-<h3 id="phase-1-enum-methods-and-trait-adoption-language-feature">Phase 1: Enum methods and trait adoption (language feature)<a class="headerlink" href="#phase-1-enum-methods-and-trait-adoption-language-feature" title="Permanent link">&para;</a></h3>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
+<p>The preferred implementation strategy is to lower <code>if let</code> through the same pattern-matching machinery already used by full <code>match</code>.</p>
+<p>That can be done either by:</p>
 <ul>
-<li>[ ] Extend the AST and symbol table to support methods and <code>with</code> trait adoption on enums</li>
-<li>[ ] Update the parser to accept <code>with</code> clauses and method declarations in enum bodies</li>
-<li>[ ] Update the typechecker to collect and validate enum traits and methods</li>
-<li>[ ] Update lowering and emission to generate Rust <code>impl</code> blocks for enum methods and trait implementations</li>
-<li>[ ] Add codegen snapshot and integration tests for enums with methods and trait adoption</li>
+<li>desugaring <code>if let</code> into a single-arm <code>match</code> plus implicit <code>_ =&gt; pass</code>, or</li>
+<li>introducing a dedicated AST node that later lowers to the same internal match core.</li>
 </ul>
-<h3 id="phase-2-stdjsonjsonvalue-type">Phase 2: <code>std.json.JsonValue</code> type<a class="headerlink" href="#phase-2-stdjsonjsonvalue-type" title="Permanent link">&para;</a></h3>
+<p>This section is non-normative. Any implementation strategy is acceptable if it preserves the semantics above.</p>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li>[ ] Define the <code>JsonValue</code> enum in <code>stdlib/json.incn</code> with the surface described in this RFC</li>
-<li>[ ] Implement the Rust backing module wrapping <code>serde_json::Value</code></li>
-<li>[ ] Implement all methods (constructors, type inspection, value extraction, <code>parse</code>, <code>to_json</code>)</li>
-<li>[ ] Add codegen snapshot tests</li>
+<li><strong>Parser / AST</strong>: parse <code>if let PATTERN = VALUE:</code> in <code>if</code> statement position.</li>
+<li><strong>Typechecker / Symbol resolution</strong>: type-check the pattern exactly like a <code>match</code> arm and scope bindings to the success branch.</li>
+<li><strong>IR Lowering</strong>: lower through existing pattern-match machinery.</li>
+<li><strong>Emission</strong>: may lower to Rust <code>if let</code> where appropriate.</li>
+<li><strong>Formatter</strong>: format <code>if let</code> predictably and avoid unreadable nested chains.</li>
+<li><strong>LSP / Tooling</strong>: provide hover, completion, and diagnostics for branch-local pattern bindings.</li>
 </ul>
-<h3 id="phase-3-indexing-support">Phase 3: Indexing support<a class="headerlink" href="#phase-3-indexing-support" title="Permanent link">&para;</a></h3>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ul>
-<li>[ ] Implement <code>Index[str, JsonValue]</code> and <code>Index[int, JsonValue]</code> via <code>__getitem__</code> (depends on <a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a>)</li>
-<li>[ ] Alternatively, add compiler-level subscript support as an interim fallback</li>
-<li>[ ] Verify chained access works: <code>value["users"][0]["name"].as_str()</code></li>
-<li>[ ] Add codegen snapshot tests for indexing and chained access</li>
+<li>Should RFC 049 be limited to <code>if let</code> in statement position for v1, or should <code>while let</code> be considered in a follow-up RFC once the core shape lands?</li>
 </ul>
-<h3 id="phase-4-jsonvalue-as-a-model-field-type">Phase 4: <code>JsonValue</code> as a model field type<a class="headerlink" href="#phase-4-jsonvalue-as-a-model-field-type" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[ ] Ensure <code>JsonValue</code> fields in <code>@derive(json)</code> models (<a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a>) serialize/deserialize correctly</li>
-<li>[ ] Add codegen snapshot tests for hybrid models (typed + dynamic fields)</li>
-</ul>
-<h3 id="phase-5-documentation">Phase 5: Documentation<a class="headerlink" href="#phase-5-documentation" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[ ] User guide: enum methods and trait adoption</li>
-<li>[ ] User guide: dynamic JSON with <code>JsonValue</code></li>
-<li>[ ] API reference for <code>std.json</code></li>
-</ul>
-<h2 id="design-decisions">Design decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
-<ol>
-<li>
-<p><strong>Enum methods and trait adoption are general-purpose</strong>: although <code>JsonValue</code> motivates these features, they are not
-   <code>JsonValue</code>-specific. Any enum benefits. The implementation follows the same pattern as model/class methods and
-   trait adoption.</p>
-</li>
-<li>
-<p><strong>Null fallback for indexing</strong>: <code>value["missing_key"]</code> returns <code>JsonValue.Null</code> rather than <code>Option[JsonValue]</code>.
-   This matches <code>serde_json::Value</code> behavior and enables ergonomic chaining. Users who need explicit missing-key
-   detection use <code>.as_object()</code> and check the dict.</p>
-</li>
-<li>
-<p><strong>Safe numeric widening</strong>: <code>.as_float()</code> on an <code>Int</code> value returns <code>Some(value as float)</code> because widening is
-   lossless. <code>.as_int()</code> on a <code>Float</code> returns <code>None</code> because truncation is lossy and should be explicit.</p>
-</li>
-<li>
-<p><strong>Minimal <code>@rust.extern</code> surface</strong>: only <code>parse()</code> and <code>to_json()</code> are <code>@rust.extern</code> — they call <code>serde_json</code>
-   functions that cannot be expressed in Incan. All other methods (constructors, type inspection, value extraction) are
-   pure Incan using enum variant constructors and pattern matching.</p>
-</li>
-</ol>
-<h2 id="deferred-questions">Deferred questions<a class="headerlink" href="#deferred-questions" title="Permanent link">&para;</a></h2>
-<ol>
-<li>
-<p><strong><code>value.key</code> sugar</strong>: should <code>value.key</code> be syntactic sugar for <code>value["key"]</code> on <code>JsonValue</code>? Convenient for
-   exploration but adds typechecker complexity. Deferred to a future RFC.</p>
-</li>
-<li>
-<p><strong>Pretty printing</strong>: should <code>.to_json()</code> accept formatting options, or should pretty printing be a separate
-   function?</p>
-</li>
-<li>
-<p><strong>Streaming / incremental parsing</strong>: large JSON documents may benefit from streaming parsers. Out of scope —
-   <code>JsonValue.parse()</code> is eager (loads entire document into memory).</p>
-</li>
-<li>
-<p><strong>Module-level convenience functions</strong>: the implementation may add module-level aliases like <code>json.parse(s)</code> and
-   <code>json.dumps(value)</code> mirroring Python's <code>json.loads()</code> / <code>json.dumps()</code> convention, as syntactic sugar over
-   <code>JsonValue.parse()</code> and <code>value.to_json()</code>.</p>
-</li>
-<li>
-<p><strong>Trait-based indexing</strong>: <code>JsonValue</code> indexing depends on multi-instantiation trait dispatch (<a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a>) to adopt
-   both <code>Index[str, JsonValue]</code> and <code>Index[int, JsonValue]</code>. Until RFC 025 is implemented, the compiler may use
-   built-in indexing support as a fallback.</p>
-</li>
-</ol>
-<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
-<ul>
-<li><a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a> — Extensible Derive Protocol</li>
-<li><a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a> — Multi-Instantiation Trait Dispatch</li>
-<li>Rust <code>serde_json</code> crate — <code>serde_json::Value</code></li>
-<li>Python <code>json</code> module — <code>json.loads()</code>, <code>json.dumps()</code></li>
-</ul>
-<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
-
-<!-- RFC reference links for reuse: '[RFC 018]' or '[RFC 018: Title][RFC 018]' -->
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

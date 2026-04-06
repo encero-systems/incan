@@ -4249,7 +4249,7 @@
 <li><strong>Status:</strong> Draft</li>
 <li><strong>Created:</strong> 2026-03-06</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Related:</strong> RFC 012 (Enum Methods &amp; Trait Adoption), RFC 033 (<code>ctx</code> Keyword)</li>
+<li><strong>Related:</strong> RFC 050 (Enum Methods &amp; Trait Adoption), RFC 033 (<code>ctx</code> Keyword)</li>
 <li><strong>Issue:</strong> —</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Target version:</strong> TBD</li>
@@ -4407,8 +4407,8 @@
 <li><code>value()</code> returns the value type: <code>self.value() -&gt; str</code> for <code>StrEnum</code>, <code>self.value() -&gt; int</code> for <code>IntEnum</code>.</li>
 <li><code>from_value()</code> is a static method: <code>Env.from_value(s: str) -&gt; Option[Env]</code> / <code>HttpStatus.from_value(n: int) -&gt; Option[HttpStatus]</code>.</li>
 <li>Value enums participate in pattern matching exactly like regular unit-variant enums.</li>
-<li>Value enums can have methods (per RFC 012, once implemented).</li>
-<li>Value enums can adopt traits (per RFC 012, once implemented).</li>
+<li>Value enums can have methods (per RFC 050, once implemented).</li>
+<li>Value enums can adopt traits (per RFC 050, once implemented).</li>
 </ul>
 <h3 id="auto-generated-implementations">Auto-generated implementations<a class="headerlink" href="#auto-generated-implementations" title="Permanent link">&para;</a></h3>
 <p>For <code>enum Foo(str)</code> with variants <code>A = "alpha"</code>, <code>B = "beta"</code>:</p>
@@ -4540,7 +4540,7 @@ enum Name:          # Regular ADT enum (unchanged)
 </ul>
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <p><strong>Pattern matching</strong>: Value enums match by variant, not by value. <code>case Env.Dev:</code> matches the variant, regardless of the associated value. To match on the raw value, use <code>match env_string: case "production": ...</code>.</p>
-<p><strong>Traits (RFC 012)</strong>: Once enum methods and trait adoption land, value enums can have additional methods. The auto-generated <code>value()</code>, <code>from_value()</code>, and <code>message()</code> methods will coexist with user-defined methods.</p>
+<p><strong>Traits (RFC 050)</strong>: Once enum methods and trait adoption land, value enums can have additional methods. The auto-generated <code>value()</code>, <code>from_value()</code>, and <code>message()</code> methods will coexist with user-defined methods.</p>
 <p><strong>Serde</strong>: Value enums integrate with the existing serde derive scanning in <code>IrCodegen</code>. The <code>#[serde(rename)]</code> attributes are added per-variant.</p>
 <p><strong><code>ctx</code> (RFC 033)</strong>: Axis resolution gains a two-step lookup: (1) try <code>from_value()</code> for exact value match, (2) fall back to case-insensitive variant name match. This means <code>PIPELINE_ENV=production</code> resolves via value, and <code>PIPELINE_ENV=Prod</code> resolves via name.</p>
 <p><strong>Generics</strong>: Value enums cannot have type parameters. <code>enum Foo[T](str):</code> is a compile error — value enums are inherently concrete.</p>
@@ -4630,7 +4630,7 @@ enum Name:          # Regular ADT enum (unchanged)
 <p><strong>Should there be a <code>from_name()</code> companion to <code>from_value()</code>?</strong> <code>Env.from_name("Dev")</code> for when you want to match on variant names programmatically (rather than values). Currently <code>message()</code> gives you name→string, but there's no string→variant by name. The <code>ctx</code> axis resolver handles this internally, but exposing it as API might be useful.</p>
 </li>
 <li>
-<p><strong>Relationship with RFC 012 enum methods</strong>: Once RFC 012 lands, value enums should be able to have user-defined methods alongside the auto-generated ones. Need to ensure no naming conflicts (e.g., user defines their own <code>value()</code> method on a value enum — should this be an error?).</p>
+<p><strong>Relationship with RFC 050 enum methods</strong>: Once RFC 050 lands, value enums should be able to have user-defined methods alongside the auto-generated ones. Need to ensure no naming conflicts (e.g., user defines their own <code>value()</code> method on a value enum — should this be an error?).</p>
 </li>
 </ol>
 

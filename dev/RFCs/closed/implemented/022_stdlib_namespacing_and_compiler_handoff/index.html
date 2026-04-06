@@ -4284,7 +4284,7 @@
 <p><strong>Status:</strong> Implemented<br />
 <strong>Created:</strong> 2026-02-06<br />
 <strong>Author(s):</strong> Danny Meijer (@dannymeijer)<br />
-<strong>Related:</strong> RFC 000 (core imports/modules), RFC 005 (Rust interop), RFC 012 (JsonValue),<br />
+<strong>Related:</strong> RFC 000 (core imports/modules), RFC 005 (Rust interop), RFC 051 (<code>JsonValue</code>),<br />
 RFC 013 (Rust crate dependencies), RFC 020 (offline/locked policy)
 <strong>Issues:</strong> <a href="https://github.com/incan-lang/incan/issues/120">#120</a></p>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
@@ -4332,7 +4332,7 @@ colliding in a single global vocabulary.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">time</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Instant</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.datetime</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DateTime</span>
 </code></pre></div>
-<p>Note: JSON is intentionally treated as a cross-cutting stdlib concern via <code>std.json</code> (see RFC 012).</p>
+<p>Note: JSON is intentionally treated as a cross-cutting stdlib concern via <code>std.json</code>.</p>
 <h3 id="namespaced-decorators">Namespaced decorators<a class="headerlink" href="#namespaced-decorators" title="Permanent link">&para;</a></h3>
 <p>Decorators can be qualified:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.web</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Response</span>
@@ -4468,9 +4468,8 @@ framework glue belongs in <code>incan_stdlib</code>.</p>
 <li><strong>RFC 013 / RFC 020 (dependency policy)</strong>: stdlib handoff should reduce generated-project dependency sprawl by making
   the generated project depend primarily on <code>incan_stdlib</code> (with features), while user <code>rust::...</code> imports continue to
   be governed by <code>incan.toml</code> and lock policy.</li>
-<li><strong>RFC 012 (JsonValue)</strong>: a dedicated <code>std.json</code> module provides a natural home for the dynamic SON value type and JSON
-  parsing/serialization APIs, while keeping web wrappers (<code>std.web.Json[T]</code>) separate (specifics to be determined in
-  RFC 012).</li>
+<li><strong>RFC 051 (<code>JsonValue</code>)</strong>: a dedicated <code>std.json</code> module provides a natural home for a future dynamic JSON value
+  type and JSON parsing/serialization APIs, while keeping web wrappers (<code>std.web.Json[T]</code>) separate.</li>
 <li><strong>Testing RFCs (018/019)</strong>: namespaced <code>@std.testing.fixture</code> etc can follow the same pattern as web routing.</li>
 </ul>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>

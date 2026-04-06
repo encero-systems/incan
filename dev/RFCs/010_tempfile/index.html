@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 010: Temporary Files and Directories - Incan Documentation</title>
+        <title>RFC 010: Python-style tempfile standard library - Incan Documentation</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-010-temporary-files-and-directories" class="md-skip">
+        <a href="#rfc-010-python-style-tempfile-standard-library" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 010: Temporary Files and Directories
+              RFC 010: Python-style tempfile standard library
             
           </span>
         </div>
@@ -3900,73 +3900,58 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Motivation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#python-comparison" class="md-nav__link">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
     <span class="md-ellipsis">
-      Python Comparison
+      Goals
     </span>
   </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#design" class="md-nav__link">
+  <a href="#non-goals" class="md-nav__link">
     <span class="md-ellipsis">
-      Design
+      Non-Goals
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Design">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation (how users think about it)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Guide-level explanation (how users think about it)">
       <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#tempfile" class="md-nav__link">
-    <span class="md-ellipsis">
-      TempFile
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tempdir" class="md-nav__link">
-    <span class="md-ellipsis">
-      TempDir
-    </span>
-  </a>
-  
-</li>
         
           <li class="md-nav__item">
   <a href="#named-temporary-files" class="md-nav__link">
     <span class="md-ellipsis">
-      Named Temporary Files
+      Named temporary files
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#persistence-keep-on-drop" class="md-nav__link">
+  <a href="#temporary-directories" class="md-nav__link">
     <span class="md-ellipsis">
-      Persistence (Keep on Drop)
+      Temporary directories
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#explicit-location" class="md-nav__link">
+  <a href="#keeping-a-result" class="md-nav__link">
     <span class="md-ellipsis">
-      Explicit Location
+      Keeping a result
     </span>
   </a>
   
@@ -3978,28 +3963,46 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#api-reference" class="md-nav__link">
+  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
     <span class="md-ellipsis">
-      API Reference
+      Reference-level explanation (precise rules)
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="API Reference">
+    <nav class="md-nav" aria-label="Reference-level explanation (precise rules)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#tempfile-methods" class="md-nav__link">
+  <a href="#surface" class="md-nav__link">
     <span class="md-ellipsis">
-      TempFile Methods
+      Surface
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#tempdir-methods" class="md-nav__link">
+  <a href="#required-capabilities" class="md-nav__link">
     <span class="md-ellipsis">
-      TempDir Methods
+      Required capabilities
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cleanup-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cleanup semantics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#filesystem-interaction" class="md-nav__link">
+    <span class="md-ellipsis">
+      Filesystem interaction
     </span>
   </a>
   
@@ -4011,79 +4014,46 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation" class="md-nav__link">
+  <a href="#design-details" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation
+      Design details
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Implementation">
+    <nav class="md-nav" aria-label="Design details">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#vocabulary-crate-layout-note" class="md-nav__link">
+  <a href="#why-python-style-naming" class="md-nav__link">
     <span class="md-ellipsis">
-      Vocabulary / crate layout note
+      Why Python-style naming
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#backend" class="md-nav__link">
+  <a href="#why-types-instead-of-bare-helper-functions" class="md-nav__link">
     <span class="md-ellipsis">
-      Backend
+      Why types instead of bare helper functions
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#generated-code" class="md-nav__link">
+  <a href="#interaction-with-existing-features" class="md-nav__link">
     <span class="md-ellipsis">
-      Generated Code
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#use-cases" class="md-nav__link">
-    <span class="md-ellipsis">
-      Use Cases
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Use Cases">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#testing" class="md-nav__link">
-    <span class="md-ellipsis">
-      Testing
+      Interaction with existing features
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#safe-file-updates" class="md-nav__link">
+  <a href="#compatibility-migration" class="md-nav__link">
     <span class="md-ellipsis">
-      Safe File Updates
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#download-with-cleanup" class="md-nav__link">
-    <span class="md-ellipsis">
-      Download with Cleanup
+      Compatibility / migration
     </span>
   </a>
   
@@ -4097,49 +4067,34 @@
         <li class="md-nav__item">
   <a href="#alternatives-considered" class="md-nav__link">
     <span class="md-ellipsis">
-      Alternatives Considered
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Alternatives Considered">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-functions-instead-of-types" class="md-nav__link">
-    <span class="md-ellipsis">
-      1. Functions Instead of Types
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-context-manager-syntax" class="md-nav__link">
-    <span class="md-ellipsis">
-      2. Context Manager Syntax
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#open-questions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Open Questions
+      Alternatives considered
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#references" class="md-nav__link">
+  <a href="#drawbacks" class="md-nav__link">
     <span class="md-ellipsis">
-      References
+      Drawbacks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unresolved-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unresolved questions
     </span>
   </a>
   
@@ -4163,286 +4118,155 @@
   
 
 
-<h1 id="rfc-010-temporary-files-and-directories">RFC 010: Temporary Files and Directories<a class="headerlink" href="#rfc-010-temporary-files-and-directories" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> Draft<br />
-<strong>Created:</strong> 2024-12-11</p>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Add <code>TempFile</code> and <code>TempDir</code> types for creating temporary files and directories that are automatically cleaned up when
-they go out of scope.</p>
-<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Temporary files are essential for:</p>
+<h1 id="rfc-010-python-style-tempfile-standard-library">RFC 010: Python-style <code>tempfile</code> standard library<a class="headerlink" href="#rfc-010-python-style-tempfile-standard-library" title="Permanent link">&para;</a></h1>
 <ul>
-<li>Testing (create fixtures, verify file operations)</li>
-<li>Safe file updates (write to temp, then rename)</li>
-<li>Processing pipelines (intermediate results)</li>
-<li>Caching and scratch space</li>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2024-12-11</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong> RFC 019 (runner testing), RFC 023 (stdlib namespacing and compiler handoff)</li>
+<li><strong>Issue:</strong> —</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.1</li>
+<li><strong>Shipped in:</strong> —</li>
 </ul>
-<p>Python provides <code>tempfile.NamedTemporaryFile</code> and <code>tempfile.TemporaryDirectory</code>.
-Rust has the widely-used <code>tempfile</code> crate.
-Incan should provide similar ergonomic temporary file handling.</p>
-<h3 id="python-comparison">Python Comparison<a class="headerlink" href="#python-comparison" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">tempfile</span>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>This RFC adds a Python-style <code>std.tempfile</code> module to the Incan standard library so programs can create scratch files, staging directories, and short-lived test fixtures that are cleaned up automatically unless explicitly persisted. The naming direction is settled: the public surface follows Python's <code>tempfile</code> family rather than abbreviated Rust-style type names.</p>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>Temporary filesystem objects are a basic systems-programming need:</p>
+<ul>
+<li>tests need isolated scratch space;</li>
+<li>safe file updates often write to a temporary path and rename into place;</li>
+<li>data-processing pipelines frequently need short-lived intermediate files;</li>
+<li>cleanup should happen reliably even on early returns or errors.</li>
+</ul>
+<p>Python solves this with <code>tempfile</code>, while Rust commonly uses the <code>tempfile</code> crate. Incan should provide an equally explicit story rather than forcing users into manual <code>create -&gt; remember path -&gt; remember cleanup</code> patterns.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Provide first-class temporary files and directories with automatic cleanup.</li>
+<li>Use Python-style <code>tempfile</code> naming for the public surface.</li>
+<li>Make persistence explicit so authors can keep a temp artifact intentionally.</li>
+<li>Support both default system temp locations and caller-provided parent directories.</li>
+<li>Keep the feature ergonomic for tests and ordinary application code.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Requiring an exact one-to-one clone of every Python <code>tempfile</code> behavior in the first version.</li>
+<li>Context-manager syntax just for temporary resources.</li>
+<li>Defining every possible OS-specific temporary-file flag or security knob in the initial RFC.</li>
+<li>Replacing ordinary <code>Path</code> and filesystem APIs.</li>
+</ul>
+<h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
+<h3 id="named-temporary-files">Named temporary files<a class="headerlink" href="#named-temporary-files" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.tempfile</span><span class="w"> </span><span class="kn">import</span> <span class="nc">NamedTemporaryFile</span>
 
-<span class="c1"># Python - context manager pattern</span>
-<span class="k">with</span> <span class="n">tempfile</span><span class="o">.</span><span class="n">NamedTemporaryFile</span><span class="p">(</span><span class="n">delete</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-    <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;data&quot;</span><span class="p">)</span>
-    <span class="c1"># use f.name to get path</span>
-<span class="c1"># file deleted here</span>
-
-<span class="k">with</span> <span class="n">tempfile</span><span class="o">.</span><span class="n">TemporaryDirectory</span><span class="p">()</span> <span class="k">as</span> <span class="n">d</span><span class="p">:</span>
-    <span class="n">path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">d</span><span class="p">)</span> <span class="o">/</span> <span class="s2">&quot;config.toml&quot;</span>
-    <span class="n">path</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s2">&quot;...&quot;</span><span class="p">)</span>
-<span class="c1"># directory deleted here</span>
-</code></pre></div>
-<p>Incan should provide this with RAII instead of context managers.</p>
-<h2 id="design">Design<a class="headerlink" href="#design" title="Permanent link">&para;</a></h2>
-<h3 id="tempfile">TempFile<a class="headerlink" href="#tempfile" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Create a temporary file</span>
-<span class="n">temp</span> <span class="o">=</span> <span class="nc">TempFile</span><span class="o">.</span><span class="n">new</span><span class="p">()</span><span class="o">?</span>
-
-<span class="c1"># Write to it</span>
+<span class="n">temp</span> <span class="o">=</span> <span class="nc">NamedTemporaryFile</span><span class="o">.</span><span class="n">new</span><span class="p">()</span><span class="o">?</span>
 <span class="n">temp</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s2">&quot;some data&quot;</span><span class="p">)</span><span class="o">?</span>
 
-<span class="c1"># Get the path (for passing to other functions)</span>
-<span class="n">path</span> <span class="o">=</span> <span class="n">temp</span><span class="o">.</span><span class="n">path</span><span class="p">()</span>
-<span class="n">process_file</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
-
-<span class="c1"># File is automatically deleted when `temp` goes out of scope</span>
+<span class="n">process_file</span><span class="p">(</span><span class="n">temp</span><span class="o">.</span><span class="n">path</span><span class="p">())</span>
+<span class="c1"># file is deleted when `temp` goes out of scope unless it is persisted</span>
 </code></pre></div>
-<h3 id="tempdir">TempDir<a class="headerlink" href="#tempdir" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Create a temporary directory</span>
-<span class="n">temp_dir</span> <span class="o">=</span> <span class="nc">TempDir</span><span class="o">.</span><span class="n">new</span><span class="p">()</span><span class="o">?</span>
+<h3 id="temporary-directories">Temporary directories<a class="headerlink" href="#temporary-directories" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.tempfile</span><span class="w"> </span><span class="kn">import</span> <span class="nc">TemporaryDirectory</span>
 
-<span class="c1"># Create files inside it</span>
+<span class="n">temp_dir</span> <span class="o">=</span> <span class="nc">TemporaryDirectory</span><span class="o">.</span><span class="n">new</span><span class="p">()</span><span class="o">?</span>
+
 <span class="n">config</span> <span class="o">=</span> <span class="n">temp_dir</span><span class="o">.</span><span class="n">path</span><span class="p">()</span> <span class="o">/</span> <span class="s2">&quot;config.toml&quot;</span>
 <span class="n">config</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">default_config</span><span class="p">)</span><span class="o">?</span>
 
 <span class="n">data_dir</span> <span class="o">=</span> <span class="n">temp_dir</span><span class="o">.</span><span class="n">path</span><span class="p">()</span> <span class="o">/</span> <span class="s2">&quot;data&quot;</span>
 <span class="n">data_dir</span><span class="o">.</span><span class="n">mkdir</span><span class="p">()</span><span class="o">?</span>
-
-<span class="c1"># Entire directory tree deleted when `temp_dir` goes out of scope</span>
 </code></pre></div>
-<h3 id="named-temporary-files">Named Temporary Files<a class="headerlink" href="#named-temporary-files" title="Permanent link">&para;</a></h3>
-<p>For cases where you need a specific suffix/prefix:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># With custom suffix</span>
-<span class="n">temp</span> <span class="o">=</span> <span class="nc">TempFile</span><span class="o">.</span><span class="n">with_suffix</span><span class="p">(</span><span class="s2">&quot;.json&quot;</span><span class="p">)</span><span class="o">?</span>
+<p>When the <code>TemporaryDirectory</code> value is dropped, the temporary directory tree is removed.</p>
+<h3 id="keeping-a-result">Keeping a result<a class="headerlink" href="#keeping-a-result" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.tempfile</span><span class="w"> </span><span class="kn">import</span> <span class="nc">NamedTemporaryFile</span>
 
-<span class="c1"># With custom prefix</span>
-<span class="n">temp</span> <span class="o">=</span> <span class="nc">TempFile</span><span class="o">.</span><span class="n">with_prefix</span><span class="p">(</span><span class="s2">&quot;download_&quot;</span><span class="p">)</span><span class="o">?</span>
-
-<span class="c1"># With both</span>
-<span class="n">temp</span> <span class="o">=</span> <span class="nc">TempFile</span><span class="o">.</span><span class="n">builder</span><span class="p">()</span>
-    <span class="o">.</span><span class="n">prefix</span><span class="p">(</span><span class="s2">&quot;report_&quot;</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">suffix</span><span class="p">(</span><span class="s2">&quot;.pdf&quot;</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">build</span><span class="p">()</span><span class="o">?</span>
-</code></pre></div>
-<h3 id="persistence-keep-on-drop">Persistence (Keep on Drop)<a class="headerlink" href="#persistence-keep-on-drop" title="Permanent link">&para;</a></h3>
-<p>Sometimes you want to create a temp file but keep it:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">temp</span> <span class="o">=</span> <span class="nc">TempFile</span><span class="o">.</span><span class="n">new</span><span class="p">()</span><span class="o">?</span>
+<span class="n">temp</span> <span class="o">=</span> <span class="nc">NamedTemporaryFile</span><span class="o">.</span><span class="n">with_suffix</span><span class="p">(</span><span class="s2">&quot;.json&quot;</span><span class="p">)</span><span class="o">?</span>
 <span class="n">temp</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="o">?</span>
 
-<span class="c1"># Keep the file - returns the Path and prevents deletion</span>
 <span class="n">final_path</span> <span class="o">=</span> <span class="n">temp</span><span class="o">.</span><span class="n">persist</span><span class="p">()</span><span class="o">?</span>
-<span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Saved to: </span><span class="si">{</span><span class="n">final_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;saved to </span><span class="si">{</span><span class="n">final_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
-<h3 id="explicit-location">Explicit Location<a class="headerlink" href="#explicit-location" title="Permanent link">&para;</a></h3>
-<p>Create temp files in a specific directory:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># In a specific directory</span>
-<span class="n">temp</span> <span class="o">=</span> <span class="nc">TempFile</span><span class="o">.</span><span class="n">in_dir</span><span class="p">(</span><span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;/var/cache/myapp&quot;</span><span class="p">))</span><span class="o">?</span>
-
-<span class="c1"># In system temp directory (default)</span>
-<span class="n">temp</span> <span class="o">=</span> <span class="nc">TempFile</span><span class="o">.</span><span class="n">new</span><span class="p">()</span><span class="o">?</span>  <span class="c1"># Uses system temp dir</span>
-</code></pre></div>
-<h2 id="api-reference">API Reference<a class="headerlink" href="#api-reference" title="Permanent link">&para;</a></h2>
-<h3 id="tempfile-methods">TempFile Methods<a class="headerlink" href="#tempfile-methods" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Returns</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>TempFile.new()</code></td>
-<td><code>Result[TempFile, IoError]</code></td>
-<td>Create temp file in system temp dir</td>
-</tr>
-<tr>
-<td><code>TempFile.with_suffix(s)</code></td>
-<td><code>Result[TempFile, IoError]</code></td>
-<td>Create with file extension</td>
-</tr>
-<tr>
-<td><code>TempFile.with_prefix(s)</code></td>
-<td><code>Result[TempFile, IoError]</code></td>
-<td>Create with filename prefix</td>
-</tr>
-<tr>
-<td><code>TempFile.in_dir(p)</code></td>
-<td><code>Result[TempFile, IoError]</code></td>
-<td>Create in specific directory</td>
-</tr>
-<tr>
-<td><code>t.path()</code></td>
-<td><code>Path</code></td>
-<td>Get the file's path</td>
-</tr>
-<tr>
-<td><code>t.write_text(s)</code></td>
-<td><code>Result[None, IoError]</code></td>
-<td>Write string</td>
-</tr>
-<tr>
-<td><code>t.write_bytes(b)</code></td>
-<td><code>Result[None, IoError]</code></td>
-<td>Write bytes</td>
-</tr>
-<tr>
-<td><code>t.read_text()</code></td>
-<td><code>Result[str, IoError]</code></td>
-<td>Read as string</td>
-</tr>
-<tr>
-<td><code>t.persist()</code></td>
-<td><code>Result[Path, IoError]</code></td>
-<td>Keep file, return path</td>
-</tr>
-</tbody>
-</table>
-<h3 id="tempdir-methods">TempDir Methods<a class="headerlink" href="#tempdir-methods" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Returns</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>TempDir.new()</code></td>
-<td><code>Result[TempDir, IoError]</code></td>
-<td>Create temp directory</td>
-</tr>
-<tr>
-<td><code>TempDir.with_prefix(s)</code></td>
-<td><code>Result[TempDir, IoError]</code></td>
-<td>Create with name prefix</td>
-</tr>
-<tr>
-<td><code>TempDir.in_dir(p)</code></td>
-<td><code>Result[TempDir, IoError]</code></td>
-<td>Create in specific parent</td>
-</tr>
-<tr>
-<td><code>d.path()</code></td>
-<td><code>Path</code></td>
-<td>Get the directory's path</td>
-</tr>
-<tr>
-<td><code>d.persist()</code></td>
-<td><code>Result[Path, IoError]</code></td>
-<td>Keep directory, return path</td>
-</tr>
-</tbody>
-</table>
-<h2 id="implementation">Implementation<a class="headerlink" href="#implementation" title="Permanent link">&para;</a></h2>
-<h3 id="vocabulary-crate-layout-note">Vocabulary / crate layout note<a class="headerlink" href="#vocabulary-crate-layout-note" title="Permanent link">&para;</a></h3>
-<p>In the current workspace, user-facing vocabulary is centralized in <code>incan_core</code>.
-This RFC introduces new surface types and methods, so the canonical spellings should be registered in:</p>
+<p><code>persist()</code> converts a temporary resource into an ordinary path that will no longer be auto-deleted by the temp handle.</p>
+<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
+<h3 id="surface">Surface<a class="headerlink" href="#surface" title="Permanent link">&para;</a></h3>
+<p>The stdlib provides temporary filesystem types through <code>std.tempfile</code>. The naming direction is part of the contract:</p>
 <ul>
-<li><code>crates/incan_core/src/lang/surface/types.rs</code> (add <code>TempFile</code>, <code>TempDir</code>)</li>
-<li>Add method names to <code>crates/incan_core/src/lang/surface/methods.rs</code> (consolidated surface method registries),
-    e.g. a <code>tempfile_methods</code> registry for <code>TempFile</code>/<code>TempDir</code> methods like <code>new</code>, <code>with_suffix</code>, <code>persist</code>, etc.</li>
+<li><code>NamedTemporaryFile</code></li>
+<li><code>TemporaryDirectory</code></li>
+<li><code>TemporaryFile</code></li>
+<li><code>SpooledTemporaryFile</code></li>
 </ul>
-<h3 id="backend">Backend<a class="headerlink" href="#backend" title="Permanent link">&para;</a></h3>
-<p>Map to the Rust <code>tempfile</code> crate:</p>
+<p>Not every member of that family must land with identical maturity on day one, but the public naming should align with that Python-style vocabulary.</p>
+<h3 id="required-capabilities">Required capabilities<a class="headerlink" href="#required-capabilities" title="Permanent link">&para;</a></h3>
 <ul>
-<li><code>TempFile</code> → <code>tempfile::NamedTempFile</code></li>
-<li><code>TempDir</code> → <code>tempfile::TempDir</code></li>
+<li>Create a named temporary file in the system temp directory.</li>
+<li>Create a temporary directory in the system temp directory.</li>
+<li>Create either one under a caller-provided parent directory.</li>
+<li>Expose the realized <code>Path</code> where applicable.</li>
+<li>Persist the resource so automatic cleanup no longer runs.</li>
 </ul>
-<p>Add <code>tempfile</code> to generated <code>Cargo.toml</code> when these types are used.</p>
-<h3 id="generated-code">Generated Code<a class="headerlink" href="#generated-code" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">temp</span> <span class="o">=</span> <span class="nc">TempFile</span><span class="o">.</span><span class="n">new</span><span class="p">()</span><span class="o">?</span>
-<span class="n">temp</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s2">&quot;data&quot;</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
-<p>Generates:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="kd">let</span><span class="w"> </span><span class="n">temp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">tempfile</span><span class="p">::</span><span class="n">NamedTempFile</span><span class="p">::</span><span class="n">new</span><span class="p">()</span><span class="o">?</span><span class="p">;</span>
-<span class="n">std</span><span class="p">::</span><span class="n">fs</span><span class="p">::</span><span class="n">write</span><span class="p">(</span><span class="n">temp</span><span class="p">.</span><span class="n">path</span><span class="p">(),</span><span class="w"> </span><span class="s">&quot;data&quot;</span><span class="p">)</span><span class="o">?</span><span class="p">;</span>
-</code></pre></div>
-<h2 id="use-cases">Use Cases<a class="headerlink" href="#use-cases" title="Permanent link">&para;</a></h2>
-<h3 id="testing">Testing<a class="headerlink" href="#testing" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_config_loading</span><span class="p">():</span>
-    <span class="n">temp</span> <span class="o">=</span> <span class="nc">TempFile</span><span class="o">.</span><span class="n">with_suffix</span><span class="p">(</span><span class="s2">&quot;.toml&quot;</span><span class="p">)</span><span class="o">?</span>
-    <span class="n">temp</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
-<span class="s2">        [server]</span>
-<span class="s2">        host = &quot;localhost&quot;</span>
-<span class="s2">        port = 8080</span>
-<span class="s2">    &quot;&quot;&quot;</span><span class="p">)</span><span class="o">?</span>
-
-    <span class="n">config</span> <span class="o">=</span> <span class="n">load_config</span><span class="p">(</span><span class="n">temp</span><span class="o">.</span><span class="n">path</span><span class="p">())</span><span class="o">?</span>
-    <span class="k">assert</span> <span class="n">config</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">port</span> <span class="o">==</span> <span class="mi">8080</span>
-    <span class="c1"># temp file cleaned up after test</span>
-</code></pre></div>
-<h3 id="safe-file-updates">Safe File Updates<a class="headerlink" href="#safe-file-updates" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">safe_save</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">,</span> <span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
-    <span class="c1"># Write to temp file first</span>
-    <span class="n">temp</span> <span class="o">=</span> <span class="nc">TempFile</span><span class="o">.</span><span class="n">in_dir</span><span class="p">(</span><span class="n">path</span><span class="o">.</span><span class="n">parent</span><span class="p">())</span><span class="o">?</span>
-    <span class="n">temp</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">content</span><span class="p">)</span><span class="o">?</span>
-
-    <span class="c1"># Atomic rename (same filesystem)</span>
-    <span class="n">temp</span><span class="o">.</span><span class="n">persist</span><span class="p">()</span><span class="o">?.</span><span class="n">rename</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="o">?</span>
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="download-with-cleanup">Download with Cleanup<a class="headerlink" href="#download-with-cleanup" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
-
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">process_download</span><span class="p">(</span><span class="n">url</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Data</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
-    <span class="n">temp</span> <span class="o">=</span> <span class="nc">TempFile</span><span class="o">.</span><span class="n">with_suffix</span><span class="p">(</span><span class="s2">&quot;.zip&quot;</span><span class="p">)</span><span class="o">?</span>
-
-    <span class="c1"># Download to temp file</span>
-    <span class="k">await</span> <span class="n">download_to</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">temp</span><span class="o">.</span><span class="n">path</span><span class="p">())</span><span class="o">?</span>
-
-    <span class="c1"># Process</span>
-    <span class="n">data</span> <span class="o">=</span> <span class="n">extract_and_parse</span><span class="p">(</span><span class="n">temp</span><span class="o">.</span><span class="n">path</span><span class="p">())</span><span class="o">?</span>
-
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
-    <span class="c1"># temp file deleted even if extraction fails</span>
-</code></pre></div>
-<h2 id="alternatives-considered">Alternatives Considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<h3 id="1-functions-instead-of-types">1. Functions Instead of Types<a class="headerlink" href="#1-functions-instead-of-types" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">path</span> <span class="o">=</span> <span class="n">create_temp_file</span><span class="p">()</span><span class="o">?</span>
-<span class="c1"># ... use path ...</span>
-<span class="nb">remove</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="o">?</span>  <span class="c1"># Manual cleanup</span>
-</code></pre></div>
-<p>Rejected: Easy to forget cleanup, especially on error paths.</p>
-<h3 id="2-context-manager-syntax">2. Context Manager Syntax<a class="headerlink" href="#2-context-manager-syntax" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">with</span> <span class="nc">TempFile</span><span class="o">.</span><span class="n">new</span><span class="p">()</span> <span class="k">as</span> <span class="n">temp</span><span class="p">:</span>
-    <span class="n">temp</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s2">&quot;data&quot;</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
-<p>Rejected: Incan prefers RAII over explicit context managers.
-The type-based approach is more Rust-like and ensures cleanup even without <code>with</code>.</p>
-<h2 id="open-questions">Open Questions<a class="headerlink" href="#open-questions" title="Permanent link">&para;</a></h2>
+<h3 id="cleanup-semantics">Cleanup semantics<a class="headerlink" href="#cleanup-semantics" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A non-persisted temporary file must be removed when its owning temp handle is dropped.</li>
+<li>A non-persisted temporary directory must remove its directory tree when its owning handle is dropped.</li>
+<li>Cleanup failures must surface as diagnostics or documented runtime errors; the language must not silently claim successful cleanup if the underlying filesystem rejected it.</li>
+</ul>
+<h3 id="filesystem-interaction">Filesystem interaction<a class="headerlink" href="#filesystem-interaction" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Temporary resources are ordinary filesystem entries while they exist.</li>
+<li>Existing path-based APIs can consume <code>temp.path()</code> without any special cases.</li>
+<li>Persisting a resource yields a normal path that remains after the temp handle is gone.</li>
+</ul>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="why-python-style-naming">Why Python-style naming<a class="headerlink" href="#why-python-style-naming" title="Permanent link">&para;</a></h3>
+<p>The naming question is settled in favor of Python's <code>tempfile</code> family. The public stdlib should optimize for familiarity at the Incan layer even if the backing implementation uses shorter or differently named runtime types underneath.</p>
+<h3 id="why-types-instead-of-bare-helper-functions">Why types instead of bare helper functions<a class="headerlink" href="#why-types-instead-of-bare-helper-functions" title="Permanent link">&para;</a></h3>
+<p>Using dedicated temp-handle types keeps lifetime and cleanup tied together. A raw helper like <code>create_temp_file() -&gt; Path</code> would push the burden back onto callers, who would then need to remember cleanup manually.</p>
+<h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Testing benefits immediately because scratch files and directories are a common fixture pattern.</li>
+<li>Error handling composes naturally because cleanup should still happen when functions return early with <code>?</code>.</li>
+<li>The backend can map the feature to a Rust temp-resource implementation, but the language contract is about lifecycle and behavior, not about a specific Rust crate.</li>
+</ul>
+<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
+<p>This feature is additive. Existing <code>Path</code> and filesystem APIs keep their meaning.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
+<li><strong>Manual create-and-delete helpers</strong></li>
 <li>
-<p><strong>Should TempFile implement File trait?</strong> Could allow <code>temp.lines()</code>, <code>temp.read_all()</code>, etc.</p>
+<p>Too easy to misuse, especially on error paths.</p>
 </li>
 <li>
-<p><strong>Secure temp files?</strong> The <code>tempfile</code> crate provides secure creation (avoids race conditions).
-    Should we expose options for this?</p>
+<p><strong>Context-manager-only surface</strong></p>
 </li>
 <li>
-<p><strong>Memory-backed temp files?</strong> For small files, an in-memory option could be faster. Worth adding <code>TempFile.in_memory()</code>?</p>
+<p>Incan does not need a new control-flow surface just to make temporary resources safe.</p>
 </li>
+<li>
+<p><strong>Abbreviated names such as <code>TempFile</code> / <code>TempDir</code></strong></p>
+</li>
+<li>Shorter, but they give up the Python-aligned naming that this RFC explicitly wants for the Incan stdlib surface.</li>
 </ol>
-<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="https://docs.python.org/3/library/tempfile.html">Python tempfile module</a></li>
-<li><a href="https://docs.rs/tempfile/latest/tempfile/">Rust tempfile crate</a></li>
-<li><a href="https://en.wikipedia.org/wiki/Resource_acquisition_is_initialization">RAII pattern</a></li>
+<li>Temporary-resource cleanup semantics vary subtly across operating systems, especially around open handles.</li>
+<li>The Python-style surface may not map one-to-one onto the backing runtime's naming or exact semantics, so the docs must be explicit about where Incan intentionally differs.</li>
+<li>Users may overuse temp files where in-memory buffers would be simpler or faster.</li>
 </ul>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Stdlib</strong>: must define the temporary-resource surface and document cleanup semantics.</li>
+<li><strong>Typechecker / docs</strong>: must treat temp resources as ordinary typed values with path-returning methods.</li>
+<li><strong>Lowering / runtime</strong>: must preserve cleanup and persistence behavior across success and error paths.</li>
+<li><strong>Testing / tooling</strong>: should make examples and diagnostics around temporary resources easy to discover.</li>
+</ul>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Is <code>TemporaryFile</code> without a durable path in scope for the initial version, or is path-addressable temporary storage the only guaranteed surface?</li>
+<li>Should <code>SpooledTemporaryFile</code> be part of the initial RFC, or explicitly deferred?</li>
+<li>What are the exact cross-platform guarantees when a temp file is still open elsewhere at drop time?</li>
+</ol>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

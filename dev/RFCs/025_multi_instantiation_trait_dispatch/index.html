@@ -4312,7 +4312,8 @@
 <li><strong>RFC PR</strong>: —</li>
 <li><strong>Created</strong>: 2026-02-17</li>
 <li><strong>Related</strong>:<ul>
-<li><a href="/dev/RFCs/012_json_value">RFC 012</a> (JsonValue &amp; enum methods)</li>
+<li>RFC 050 (enum methods &amp; trait adoption)</li>
+<li>RFC 051 (<code>JsonValue</code>)</li>
 <li><a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a> (compilable stdlib &amp; rust.module binding)</li>
 <li><a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a> (extensible derive protocol)</li>
 </ul>
@@ -4387,7 +4388,7 @@ compiler matches each definition to its trait by comparing parameter types.</p>
 </code></pre></div>
 <p>Each <code>[]</code> resolves independently based on its argument type.</p>
 <blockquote>
-<p>Note: see <a href="/dev/RFCs/012_json_value">RFC 012</a> for the full <code>JsonValue</code> type definition and indexing support.</p>
+<p>Note: RFC 051 covers the draft <code>JsonValue</code> surface, while RFC 050 covers the enum-language features that make an enum-backed design possible.</p>
 </blockquote>
 <h3 id="works-for-any-generic-trait">Works for any generic trait<a class="headerlink" href="#works-for-any-generic-trait" title="Permanent link">&para;</a></h3>
 <p>This is not <code>Index</code>-specific. Any generic trait can be adopted multiple times:</p>
@@ -4628,7 +4629,8 @@ doesn't scale — every type with the same need would require its own compiler s
    <code>where</code> clause. Incan will need this mechanism once generic functions with trait bounds are implemented.</p>
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="/dev/RFCs/012_json_value">RFC 012</a> — <code>JsonValue</code> Type, Enum Methods, and Enum Trait Adoption</li>
+<li>RFC 050 — Enum Methods and Enum Trait Adoption</li>
+<li>RFC 051 — <code>JsonValue</code> for <code>std.json</code></li>
 <li><a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a> — Compilable Stdlib &amp; Rust Module Binding</li>
 <li><a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a> — Extensible Derive Protocol</li>
 <li>Rust trait system — multiple <code>impl Trait&lt;T&gt; for Type</code> blocks</li>

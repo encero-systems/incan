@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 009: Sized Integer Types & Builtin Type Registry - Incan Documentation</title>
+        <title>RFC 009: Sized integer types and builtin type registry - Incan Documentation</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-009-sized-integer-types-builtin-type-registry" class="md-skip">
+        <a href="#rfc-009-sized-integer-types-and-builtin-type-registry" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 009: Sized Integer Types &amp; Builtin Type Registry
+              RFC 009: Sized integer types and builtin type registry
             
           </span>
         </div>
@@ -3900,13 +3900,58 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Motivation">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation (how users think about it)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Guide-level explanation (how users think about it)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#example-problem" class="md-nav__link">
+  <a href="#explicit-widths-when-they-matter" class="md-nav__link">
     <span class="md-ellipsis">
-      Example Problem
+      Explicit widths when they matter
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#aliases-remain" class="md-nav__link">
+    <span class="md-ellipsis">
+      Aliases remain
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#explicit-conversions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Explicit conversions
     </span>
   </a>
   
@@ -3918,28 +3963,19 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#design" class="md-nav__link">
+  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
     <span class="md-ellipsis">
-      Design
+      Reference-level explanation (precise rules)
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Design">
+    <nav class="md-nav" aria-label="Reference-level explanation (precise rules)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#new-types" class="md-nav__link">
+  <a href="#added-types" class="md-nav__link">
     <span class="md-ellipsis">
-      New Types
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#type-aliases-preserved" class="md-nav__link">
-    <span class="md-ellipsis">
-      Type Aliases (Preserved)
+      Added types
     </span>
   </a>
   
@@ -3952,69 +3988,12 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Literals">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#without-suffix-default" class="md-nav__link">
-    <span class="md-ellipsis">
-      Without Suffix (Default)
-    </span>
-  </a>
-  
 </li>
         
           <li class="md-nav__item">
-  <a href="#with-suffix-explicit" class="md-nav__link">
+  <a href="#arithmetic-and-conversions" class="md-nav__link">
     <span class="md-ellipsis">
-      With Suffix (Explicit)
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#conversions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Conversions
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Conversions">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#explicit-casting-required" class="md-nav__link">
-    <span class="md-ellipsis">
-      Explicit Casting Required
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#conversion-functions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Conversion Functions
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#arithmetic" class="md-nav__link">
-    <span class="md-ellipsis">
-      Arithmetic
+      Arithmetic and conversions
     </span>
   </a>
   
@@ -4023,7 +4002,7 @@
           <li class="md-nav__item">
   <a href="#overflow-behavior" class="md-nav__link">
     <span class="md-ellipsis">
-      Overflow Behavior
+      Overflow behavior
     </span>
   </a>
   
@@ -4035,157 +4014,46 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#examples" class="md-nav__link">
+  <a href="#design-details" class="md-nav__link">
     <span class="md-ellipsis">
-      Examples
+      Design details
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Examples">
+    <nav class="md-nav" aria-label="Design details">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#binary-protocol-parsing" class="md-nav__link">
+  <a href="#why-the-coupling-is-intentional" class="md-nav__link">
     <span class="md-ellipsis">
-      Binary Protocol Parsing
+      Why the coupling is intentional
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#network-port-handling" class="md-nav__link">
+  <a href="#registry-first-builtin-vocabulary" class="md-nav__link">
     <span class="md-ellipsis">
-      Network Port Handling
+      Registry-first builtin vocabulary
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#memory-efficient-arrays" class="md-nav__link">
+  <a href="#interaction-with-existing-features" class="md-nav__link">
     <span class="md-ellipsis">
-      Memory-Efficient Arrays
+      Interaction with existing features
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#bit-manipulation" class="md-nav__link">
+  <a href="#compatibility-migration" class="md-nav__link">
     <span class="md-ellipsis">
-      Bit Manipulation
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#implementation-plan" class="md-nav__link">
-    <span class="md-ellipsis">
-      Implementation Plan
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Implementation Plan">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#phase-0-builtin-type-registry" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 0: Builtin Type Registry
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Phase 0: Builtin Type Registry">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#problem" class="md-nav__link">
-    <span class="md-ellipsis">
-      Problem
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#solution" class="md-nav__link">
-    <span class="md-ellipsis">
-      Solution
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#benefits" class="md-nav__link">
-    <span class="md-ellipsis">
-      Benefits
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#scope" class="md-nav__link">
-    <span class="md-ellipsis">
-      Scope
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-1-lexer" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 1: Lexer
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-2-parser" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 2: Parser
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-3-type-checker" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 3: Type Checker
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-4-codegen" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 4: Codegen
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-5-standard-library" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 5: Standard Library
+      Compatibility / migration
     </span>
   </a>
   
@@ -4199,118 +4067,34 @@
         <li class="md-nav__item">
   <a href="#alternatives-considered" class="md-nav__link">
     <span class="md-ellipsis">
-      Alternatives Considered
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Alternatives Considered">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-only-add-when-needed-via-rust-interop" class="md-nav__link">
-    <span class="md-ellipsis">
-      1. Only Add When Needed via Rust Interop
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-python-style-arbitrary-precision" class="md-nav__link">
-    <span class="md-ellipsis">
-      2. Python-Style Arbitrary Precision
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-wrapper-types-only" class="md-nav__link">
-    <span class="md-ellipsis">
-      3. Wrapper Types Only
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#4-c-style-type-names" class="md-nav__link">
-    <span class="md-ellipsis">
-      4. C-Style Type Names
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#open-questions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Open Questions
+      Alternatives considered
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#checklist" class="md-nav__link">
+  <a href="#drawbacks" class="md-nav__link">
     <span class="md-ellipsis">
-      Checklist
+      Drawbacks
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Checklist">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#phase-0-builtin-type-registry-checklist" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 0: Builtin Type Registry (checklist)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-1-4-sized-types" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 1-4: Sized Types
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-5-standard-library-methods" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 5: Standard Library Methods
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Documentation
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#references" class="md-nav__link">
+  <a href="#layers-affected" class="md-nav__link">
     <span class="md-ellipsis">
-      References
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unresolved-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unresolved questions
     </span>
   </a>
   
@@ -4334,424 +4118,177 @@
   
 
 
-<h1 id="rfc-009-sized-integer-types-builtin-type-registry">RFC 009: Sized Integer Types &amp; Builtin Type Registry<a class="headerlink" href="#rfc-009-sized-integer-types-builtin-type-registry" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> Planned<br />
-<strong>Created:</strong> 2024-12-11<br />
-<strong>Updated:</strong> 2024-12-23</p>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Add explicit sized integer and float types to Incan, enabling precise control over numeric representation for FFI,
-binary protocols, and memory-sensitive applications.</p>
-<p>This RFC also introduces a <strong>Builtin Type Registry</strong> infrastructure (Phase 0) that allows <code>incan_core::lang</code>
-registries to be the source of truth for builtin type methods, eliminating hardcoded method lookups scattered across
-the compiler.</p>
-<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Currently, Incan has only two numeric types:</p>
+<h1 id="rfc-009-sized-integer-types-and-builtin-type-registry">RFC 009: Sized integer types and builtin type registry<a class="headerlink" href="#rfc-009-sized-integer-types-and-builtin-type-registry" title="Permanent link">&para;</a></h1>
 <ul>
-<li><code>int</code> → <code>i64</code> (64-bit signed)</li>
-<li><code>float</code> → <code>f64</code> (64-bit float)</li>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2024-12-11</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong> RFC 005 (Rust interop)</li>
+<li><strong>Issue:</strong> —</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.1</li>
+<li><strong>Shipped in:</strong> —</li>
 </ul>
-<p>This simplicity is great for general-purpose code, but insufficient for:</p>
-<ol>
-<li><strong>FFI / Rust Interop</strong> — Calling Rust functions that expect specific sizes</li>
-<li><strong>Binary Protocols</strong> — Parsing network packets, file formats (PNG, MP3, etc.)</li>
-<li><strong>Memory Efficiency</strong> — Large arrays where <code>i8</code> vs <code>i64</code> matters (8x difference)</li>
-<li><strong>Hardware Interfaces</strong> — GPIO pins, registers, embedded systems</li>
-<li><strong>Cryptography</strong> — Exact bit-width operations</li>
-</ol>
-<h3 id="example-problem">Example Problem<a class="headerlink" href="#example-problem" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Current: Can&#39;t express this cleanly</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">net</span> <span class="kn">import</span><span class="w"> </span><span class="nn">TcpStream</span>
-
-<span class="c1"># TcpStream::connect expects &amp;str, but port is u16 internally</span>
-<span class="c1"># How do we work with u16 port numbers?</span>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>This RFC introduces explicit sized numeric types such as <code>i8</code>, <code>u16</code>, <code>f32</code>, and <code>usize</code>, together with a centralized builtin-type registry. The coupling is intentional: once Incan exposes a broader builtin numeric surface, the language needs one canonical vocabulary source for builtin spellings, methods, and typing behavior rather than a growing set of scattered compiler special cases.</p>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>The current numeric surface is intentionally simple: <code>int</code> lowers to <code>i64</code> and <code>float</code> lowers to <code>f64</code>. That is fine for general application code, but it is too blunt for several real cases:</p>
+<ul>
+<li>Rust interop and FFI frequently require exact-width numeric types.</li>
+<li>Binary protocols and file formats encode fixed-width fields.</li>
+<li>Memory-sensitive workloads benefit from smaller element types.</li>
+<li>Bit manipulation and hardware-facing work depend on explicit widths.</li>
+</ul>
+<p>The RFC also addresses a second problem that appears immediately once sized types arrive: builtin numeric behavior is currently too easy to define piecemeal. If each new builtin type adds methods, coercions, and surface spellings through disconnected compiler logic, the language contract will drift. The builtin registry is therefore not incidental implementation detail in this RFC; it is the mechanism that keeps the expanded numeric surface coherent.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Add exact-width signed integers, unsigned integers, and sized floats to the language surface.</li>
+<li>Preserve <code>int</code> and <code>float</code> as ergonomic aliases for general-purpose code.</li>
+<li>Require explicit conversion where precision or sign can change.</li>
+<li>Make builtin numeric vocabulary come from a single language-owned registry rather than repeated string matching.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Arbitrary-precision integers in this RFC.</li>
+<li>SIMD/vector numeric types in this RFC.</li>
+<li>Implicit numeric widening and narrowing rules beyond what this document explicitly allows.</li>
+<li>Freezing the entire builtin-method catalog for every future builtin type.</li>
+</ul>
+<h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
+<h3 id="explicit-widths-when-they-matter">Explicit widths when they matter<a class="headerlink" href="#explicit-widths-when-they-matter" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">port</span><span class="p">:</span> <span class="n">u16</span> <span class="o">=</span> <span class="mi">8080</span><span class="n">u16</span>
+<span class="n">flags</span><span class="p">:</span> <span class="n">u8</span> <span class="o">=</span> <span class="mb">0b1010_0001</span><span class="n">u8</span>
+<span class="n">sample_rate</span><span class="p">:</span> <span class="kt">i32</span> <span class="o">=</span> <span class="mi">44_100</span><span class="kt">i32</span>
 </code></pre></div>
-<h2 id="design">Design<a class="headerlink" href="#design" title="Permanent link">&para;</a></h2>
-<h3 id="new-types">New Types<a class="headerlink" href="#new-types" title="Permanent link">&para;</a></h3>
+<p>Authors continue using <code>int</code> and <code>float</code> for ordinary code, but they can opt into explicit widths when interop, protocols, or memory layout demand it.</p>
+<h3 id="aliases-remain">Aliases remain<a class="headerlink" href="#aliases-remain" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">42</span>
+<span class="n">precise_count</span><span class="p">:</span> <span class="kt">i64</span> <span class="o">=</span> <span class="mi">42</span>
+
+<span class="n">ratio</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">3.14</span>
+<span class="n">precise_ratio</span><span class="p">:</span> <span class="kt">f64</span> <span class="o">=</span> <span class="mf">3.14</span>
+</code></pre></div>
+<p><code>int</code> and <code>float</code> remain the default ergonomic spellings; <code>i64</code> and <code>f64</code> are the exact-width forms.</p>
+<h3 id="explicit-conversions">Explicit conversions<a class="headerlink" href="#explicit-conversions" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">big</span><span class="p">:</span> <span class="kt">i64</span> <span class="o">=</span> <span class="mi">1000</span>
+<span class="n">small</span><span class="p">:</span> <span class="n">i16</span> <span class="o">=</span> <span class="n">big</span> <span class="k">as</span> <span class="n">i16</span>
+<span class="n">safe</span><span class="p">:</span> <span class="n">i16</span> <span class="o">=</span> <span class="n">i16</span><span class="o">.</span><span class="n">try_from</span><span class="p">(</span><span class="n">big</span><span class="p">)</span><span class="o">?</span>
+</code></pre></div>
+<p>The language should not silently narrow or reinterpret numbers in ways that are easy to miss.</p>
+<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
+<h3 id="added-types">Added types<a class="headerlink" href="#added-types" title="Permanent link">&para;</a></h3>
+<p>The language adds these builtin numeric spellings:</p>
 <table>
 <thead>
 <tr>
-<th>Incan Type</th>
-<th>Rust Type</th>
-<th>Description</th>
+<th>Incan type</th>
+<th>Meaning</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>i8</code></td>
-<td><code>i8</code></td>
-<td>8-bit signed (-128 to 127)</td>
+<td><code>i8</code>, <code>i16</code>, <code>i32</code>, <code>i64</code>, <code>i128</code></td>
+<td>Signed fixed-width integers</td>
 </tr>
 <tr>
-<td><code>i16</code></td>
-<td><code>i16</code></td>
-<td>16-bit signed</td>
+<td><code>u8</code>, <code>u16</code>, <code>u32</code>, <code>u64</code>, <code>u128</code></td>
+<td>Unsigned fixed-width integers</td>
 </tr>
 <tr>
-<td><code>i32</code></td>
-<td><code>i32</code></td>
-<td>32-bit signed</td>
+<td><code>f32</code>, <code>f64</code></td>
+<td>Fixed-width floating-point values</td>
 </tr>
 <tr>
-<td><code>i64</code></td>
-<td><code>i64</code></td>
-<td>64-bit signed (same as <code>int</code>)</td>
-</tr>
-<tr>
-<td><code>i128</code></td>
-<td><code>i128</code></td>
-<td>128-bit signed</td>
-</tr>
-<tr>
-<td><code>u8</code></td>
-<td><code>u8</code></td>
-<td>8-bit unsigned (0 to 255)</td>
-</tr>
-<tr>
-<td><code>u16</code></td>
-<td><code>u16</code></td>
-<td>16-bit unsigned</td>
-</tr>
-<tr>
-<td><code>u32</code></td>
-<td><code>u32</code></td>
-<td>32-bit unsigned</td>
-</tr>
-<tr>
-<td><code>u64</code></td>
-<td><code>u64</code></td>
-<td>64-bit unsigned</td>
-</tr>
-<tr>
-<td><code>u128</code></td>
-<td><code>u128</code></td>
-<td>128-bit unsigned</td>
-</tr>
-<tr>
-<td><code>f32</code></td>
-<td><code>f32</code></td>
-<td>32-bit float</td>
-</tr>
-<tr>
-<td><code>f64</code></td>
-<td><code>f64</code></td>
-<td>64-bit float (same as <code>float</code>)</td>
-</tr>
-<tr>
-<td><code>isize</code></td>
-<td><code>isize</code></td>
-<td>Pointer-sized signed</td>
-</tr>
-<tr>
-<td><code>usize</code></td>
-<td><code>usize</code></td>
-<td>Pointer-sized unsigned</td>
+<td><code>isize</code>, <code>usize</code></td>
+<td>Pointer-sized signed and unsigned integers</td>
 </tr>
 </tbody>
 </table>
-<h3 id="type-aliases-preserved">Type Aliases (Preserved)<a class="headerlink" href="#type-aliases-preserved" title="Permanent link">&para;</a></h3>
-<p>The existing <code>int</code> and <code>float</code> remain as aliases:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># These are equivalent</span>
-<span class="n">x</span><span class="p">:</span> <span class="nb">int</span>    <span class="c1"># Preferred for general code</span>
-<span class="n">x</span><span class="p">:</span> <span class="kt">i64</span>    <span class="c1"># Explicit when size matters</span>
-
-<span class="n">y</span><span class="p">:</span> <span class="nb">float</span>  <span class="c1"># Preferred for general code  </span>
-<span class="n">y</span><span class="p">:</span> <span class="kt">f64</span>    <span class="c1"># Explicit when size matters</span>
-</code></pre></div>
+<p><code>int</code> remains an alias for <code>i64</code>. <code>float</code> remains an alias for <code>f64</code>.</p>
 <h3 id="literals">Literals<a class="headerlink" href="#literals" title="Permanent link">&para;</a></h3>
-<h4 id="without-suffix-default">Without Suffix (Default)<a class="headerlink" href="#without-suffix-default" title="Permanent link">&para;</a></h4>
-<p>Unsuffixed literals infer type from context, defaulting to <code>int</code>/<code>float</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">let</span> <span class="n">x</span> <span class="o">=</span> <span class="mi">42</span>        <span class="c1"># int (i64)</span>
-<span class="k">let</span> <span class="n">y</span> <span class="o">=</span> <span class="mf">3.14</span>      <span class="c1"># float (f64)</span>
-<span class="k">let</span> <span class="n">z</span><span class="p">:</span> <span class="kt">i32</span> <span class="o">=</span> <span class="mi">42</span>   <span class="c1"># i32 (from annotation)</span>
-</code></pre></div>
-<h4 id="with-suffix-explicit">With Suffix (Explicit)<a class="headerlink" href="#with-suffix-explicit" title="Permanent link">&para;</a></h4>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">let</span> <span class="n">a</span> <span class="o">=</span> <span class="mi">42</span><span class="n">i8</span>      <span class="c1"># i8</span>
-<span class="k">let</span> <span class="n">b</span> <span class="o">=</span> <span class="mi">42</span><span class="n">u16</span>     <span class="c1"># u16</span>
-<span class="k">let</span> <span class="n">c</span> <span class="o">=</span> <span class="mi">42</span><span class="kt">i32</span>     <span class="c1"># i32</span>
-<span class="k">let</span> <span class="n">d</span> <span class="o">=</span> <span class="mi">42</span><span class="n">u64</span>     <span class="c1"># u64</span>
-<span class="k">let</span> <span class="n">e</span> <span class="o">=</span> <span class="mf">3.14</span><span class="kt">f32</span>   <span class="c1"># f32</span>
-<span class="k">let</span> <span class="n">f</span> <span class="o">=</span> <span class="mi">255</span><span class="n">u8</span>     <span class="c1"># u8</span>
-</code></pre></div>
-<h3 id="conversions">Conversions<a class="headerlink" href="#conversions" title="Permanent link">&para;</a></h3>
-<h4 id="explicit-casting-required">Explicit Casting Required<a class="headerlink" href="#explicit-casting-required" title="Permanent link">&para;</a></h4>
-<p>No implicit narrowing — all conversions are explicit:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">let</span> <span class="n">big</span><span class="p">:</span> <span class="kt">i64</span> <span class="o">=</span> <span class="mi">1000</span>
-<span class="k">let</span> <span class="n">small</span><span class="p">:</span> <span class="n">i16</span> <span class="o">=</span> <span class="n">big</span> <span class="k">as</span> <span class="n">i16</span>        <span class="c1"># Explicit cast (may truncate)</span>
-<span class="k">let</span> <span class="n">safe</span><span class="p">:</span> <span class="n">i16</span> <span class="o">=</span> <span class="n">i16</span><span class="o">.</span><span class="n">try_from</span><span class="p">(</span><span class="n">big</span><span class="p">)</span><span class="o">?</span> <span class="c1"># Safe conversion (returns Result)</span>
-</code></pre></div>
-<h4 id="conversion-functions">Conversion Functions<a class="headerlink" href="#conversion-functions" title="Permanent link">&para;</a></h4>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Fallible conversions (return Result)</span>
-<span class="k">let</span> <span class="n">x</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="n">i16</span><span class="p">,</span> <span class="nc">ConversionError</span><span class="p">]</span> <span class="o">=</span> <span class="n">i16</span><span class="o">.</span><span class="n">try_from</span><span class="p">(</span><span class="n">big_value</span><span class="p">)</span>
-
-<span class="c1"># Infallible widening (always safe)</span>
-<span class="k">let</span> <span class="n">wide</span><span class="p">:</span> <span class="kt">i64</span> <span class="o">=</span> <span class="kt">i64</span><span class="o">.</span><span class="k">from</span><span class="p">(</span><span class="n">small_value</span><span class="p">)</span>  <span class="c1"># i16 -&gt; i64 always works</span>
-
-<span class="c1"># Truncating cast (use with caution)</span>
-<span class="k">let</span> <span class="n">truncated</span><span class="p">:</span> <span class="n">i8</span> <span class="o">=</span> <span class="n">big_value</span> <span class="k">as</span> <span class="n">i8</span>    <span class="c1"># May lose data</span>
-</code></pre></div>
-<h3 id="arithmetic">Arithmetic<a class="headerlink" href="#arithmetic" title="Permanent link">&para;</a></h3>
-<p>Same-type operations return the same type:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">let</span> <span class="n">a</span><span class="p">:</span> <span class="kt">i32</span> <span class="o">=</span> <span class="mi">10</span>
-<span class="k">let</span> <span class="n">b</span><span class="p">:</span> <span class="kt">i32</span> <span class="o">=</span> <span class="mi">20</span>
-<span class="k">let</span> <span class="n">c</span><span class="p">:</span> <span class="kt">i32</span> <span class="o">=</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>  <span class="c1"># i32</span>
-
-<span class="c1"># Mixed types require explicit conversion</span>
-<span class="k">let</span> <span class="n">x</span><span class="p">:</span> <span class="kt">i32</span> <span class="o">=</span> <span class="mi">10</span>
-<span class="k">let</span> <span class="n">y</span><span class="p">:</span> <span class="kt">i64</span> <span class="o">=</span> <span class="mi">20</span>
-<span class="k">let</span> <span class="n">z</span> <span class="o">=</span> <span class="n">x</span> <span class="k">as</span> <span class="kt">i64</span> <span class="o">+</span> <span class="n">y</span>  <span class="c1"># Must convert first</span>
-</code></pre></div>
-<h3 id="overflow-behavior">Overflow Behavior<a class="headerlink" href="#overflow-behavior" title="Permanent link">&para;</a></h3>
-<p>Follow Rust's behavior:</p>
 <ul>
-<li><strong>Debug builds</strong>: Panic on overflow</li>
-<li><strong>Release builds</strong>: Wrap (two's complement)</li>
+<li>Unsuffixed integer literals default to <code>int</code> unless a surrounding annotation or inference context requires a different numeric type.</li>
+<li>Unsuffixed float literals default to <code>float</code> unless a surrounding annotation or inference context requires a different float type.</li>
+<li>Suffixed literals such as <code>42u16</code>, <code>7i8</code>, and <code>3.14f32</code> must construct the explicitly named type.</li>
+<li>Out-of-range suffixed literals are compile-time errors.</li>
 </ul>
-<p>Explicit wrapping/saturating operations available:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">let</span> <span class="n">x</span><span class="p">:</span> <span class="n">u8</span> <span class="o">=</span> <span class="mi">255</span>
-<span class="k">let</span> <span class="n">y</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">wrapping_add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>    <span class="c1"># 0 (wrapped)</span>
-<span class="k">let</span> <span class="n">z</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">saturating_add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># 255 (saturated)</span>
-<span class="k">let</span> <span class="n">w</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">checked_add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>     <span class="c1"># None (overflow detected)</span>
-</code></pre></div>
-<h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
-<h3 id="binary-protocol-parsing">Binary Protocol Parsing<a class="headerlink" href="#binary-protocol-parsing" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">parse_header</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Header</span><span class="p">,</span> <span class="nc">ParseError</span><span class="p">]:</span>
-    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">8</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">ParseError</span><span class="o">.</span><span class="nc">TooShort</span><span class="p">)</span>
-
-    <span class="k">let</span> <span class="n">magic</span><span class="p">:</span> <span class="n">u32</span> <span class="o">=</span> <span class="n">u32</span><span class="o">.</span><span class="n">from_le_bytes</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="mf">0..4</span><span class="p">])</span>
-    <span class="k">let</span> <span class="n">version</span><span class="p">:</span> <span class="n">u16</span> <span class="o">=</span> <span class="n">u16</span><span class="o">.</span><span class="n">from_le_bytes</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="mf">4..6</span><span class="p">])</span>
-    <span class="k">let</span> <span class="n">flags</span><span class="p">:</span> <span class="n">u8</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="mi">6</span><span class="p">]</span>
-    <span class="k">let</span> <span class="n">reserved</span><span class="p">:</span> <span class="n">u8</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="mi">7</span><span class="p">]</span>
-
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nc">Header</span><span class="p">(</span><span class="n">magic</span><span class="p">,</span> <span class="n">version</span><span class="p">,</span> <span class="n">flags</span><span class="p">))</span>
-</code></pre></div>
-<h3 id="network-port-handling">Network Port Handling<a class="headerlink" href="#network-port-handling" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">connect</span><span class="p">(</span><span class="n">host</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">port</span><span class="p">:</span> <span class="n">u16</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Connection</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
-    <span class="k">let</span> <span class="n">addr</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">host</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">&quot;</span>
-    <span class="k">return</span> <span class="nc">Connection</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">addr</span><span class="p">)</span>
-
-<span class="c1"># Usage</span>
-<span class="k">let</span> <span class="n">conn</span> <span class="o">=</span> <span class="n">connect</span><span class="p">(</span><span class="s2">&quot;localhost&quot;</span><span class="p">,</span> <span class="mi">8080</span><span class="n">u16</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
-<h3 id="memory-efficient-arrays">Memory-Efficient Arrays<a class="headerlink" href="#memory-efficient-arrays" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Image pixel data - 3 bytes per pixel instead of 24</span>
-<span class="k">model</span> <span class="nc">Pixel</span><span class="p">:</span>
-    <span class="n">r</span><span class="p">:</span> <span class="n">u8</span>
-    <span class="n">g</span><span class="p">:</span> <span class="n">u8</span>
-    <span class="n">b</span><span class="p">:</span> <span class="n">u8</span>
-
-<span class="k">let</span> <span class="n">image</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nc">Pixel</span><span class="p">]</span> <span class="o">=</span> <span class="n">load_image</span><span class="p">(</span><span class="s2">&quot;photo.png&quot;</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="bit-manipulation">Bit Manipulation<a class="headerlink" href="#bit-manipulation" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">set_bit</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="n">u32</span><span class="p">,</span> <span class="n">bit</span><span class="p">:</span> <span class="n">u8</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">u32</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">value</span> <span class="o">|</span> <span class="p">(</span><span class="mi">1</span><span class="n">u32</span> <span class="o">&lt;&lt;</span> <span class="n">bit</span><span class="p">)</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">clear_bit</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="n">u32</span><span class="p">,</span> <span class="n">bit</span><span class="p">:</span> <span class="n">u8</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">u32</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">value</span> <span class="o">&amp;</span> <span class="o">~</span><span class="p">(</span><span class="mi">1</span><span class="n">u32</span> <span class="o">&lt;&lt;</span> <span class="n">bit</span><span class="p">)</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">test_bit</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="n">u32</span><span class="p">,</span> <span class="n">bit</span><span class="p">:</span> <span class="n">u8</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-    <span class="k">return</span> <span class="p">(</span><span class="n">value</span> <span class="o">&amp;</span> <span class="p">(</span><span class="mi">1</span><span class="n">u32</span> <span class="o">&lt;&lt;</span> <span class="n">bit</span><span class="p">))</span> <span class="o">!=</span> <span class="mi">0</span>
-</code></pre></div>
-<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
-<h3 id="phase-0-builtin-type-registry">Phase 0: Builtin Type Registry<a class="headerlink" href="#phase-0-builtin-type-registry" title="Permanent link">&para;</a></h3>
-<p>Before adding new types, establish <strong>registry-first</strong> infrastructure so the compiler has a single source of truth for:</p>
+<h3 id="arithmetic-and-conversions">Arithmetic and conversions<a class="headerlink" href="#arithmetic-and-conversions" title="Permanent link">&para;</a></h3>
 <ul>
-<li>builtin type spellings (e.g. <code>i32</code>, <code>u8</code>)</li>
-<li>builtin/surface method vocabulary (e.g. <code>str.upper()</code>, <code>List.append()</code>)</li>
-<li>metadata like “introduced in RFC”, stability, and docs</li>
+<li>Same-type arithmetic yields the same type.</li>
+<li>Mixed-width arithmetic requires an explicit conversion.</li>
+<li>Narrowing or sign-changing conversions must be explicit.</li>
+<li>Widening conversions may be provided as named constructors or helpers, but this RFC does not permit silent widening in ordinary arithmetic expressions.</li>
 </ul>
-<p><strong>Current crate layout note:</strong> in the current workspace, canonical language vocabulary lives in:</p>
+<h3 id="overflow-behavior">Overflow behavior<a class="headerlink" href="#overflow-behavior" title="Permanent link">&para;</a></h3>
+<p>Sized integers follow Rust's overflow behavior:</p>
 <ul>
-<li><code>crates/incan_core/src/lang/types/*</code> for builtin type names</li>
-<li><code>crates/incan_core/src/lang/surface/*</code> for method/function/type “surface” vocabulary</li>
-<li><code>crates/incan_syntax</code> for lexer/token/parsing (syntax), consuming registries where appropriate</li>
+<li>debug builds trap on overflow;</li>
+<li>release builds wrap unless the program uses explicit checked, saturating, or wrapping operations.</li>
 </ul>
-<p>So Phase 0 should be implemented by extending these registries and migrating compiler call sites to consult them,
-rather than parsing <code>incan_stdlib</code> source code.</p>
-<h4 id="problem">Problem<a class="headerlink" href="#problem" title="Permanent link">&para;</a></h4>
-<p>Currently, builtin type methods (e.g., <code>str.upper()</code>, <code>List.append()</code>, <code>FrozenStr.len()</code>) are hardcoded in multiple places:</p>
+<p>The language surface may expose helpers such as <code>checked_add</code>, <code>wrapping_add</code>, and <code>saturating_add</code> on applicable numeric types.</p>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="why-the-coupling-is-intentional">Why the coupling is intentional<a class="headerlink" href="#why-the-coupling-is-intentional" title="Permanent link">&para;</a></h3>
+<p>This RFC deliberately couples sized numeric types with a builtin registry because the registry is part of getting the language surface right. Without it, the feature would immediately push more builtin names, methods, and coercion rules into scattered compiler branches, which would make the spec harder to reason about and the implementation easier to drift.</p>
+<p>The important point is the contract, not the file layout: builtin behavior should come from one coherent vocabulary source instead of repeated hardcoded matches.</p>
+<h3 id="registry-first-builtin-vocabulary">Registry-first builtin vocabulary<a class="headerlink" href="#registry-first-builtin-vocabulary" title="Permanent link">&para;</a></h3>
+<p>The implementation therefore needs a language-owned builtin registry that defines:</p>
 <ul>
-<li><code>src/frontend/typechecker/check_expr/access.rs</code> — method return types</li>
-<li><code>src/backend/ir/emit/mod.rs</code> — code generation</li>
-<li><code>src/backend/ir/emit/expressions/methods.rs</code> — method emission</li>
+<li>builtin type spellings;</li>
+<li>builtin method vocabulary;</li>
+<li>stable metadata needed for typing, docs, and diagnostics.</li>
 </ul>
-<p>This creates triple maintenance burden and increases drift risk between docs/spec/compiler behavior.</p>
-<h4 id="solution">Solution<a class="headerlink" href="#solution" title="Permanent link">&para;</a></h4>
+<h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Rust interop benefits directly because exact-width types can map to exact-width Rust signatures.</li>
+<li>Existing <code>int</code> and <code>float</code> code keeps working unchanged.</li>
+<li>Container indexing becomes more important once <code>usize</code> exists, but this RFC does not silently settle every indexing coercion rule yet.</li>
+</ul>
+<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
+<p>The feature is additive. Existing programs using <code>int</code> and <code>float</code> continue to compile. New code can opt into explicit widths incrementally.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
+<li><strong>Expose exact widths only through Rust interop</strong></li>
 <li>
-<p><strong>Define method vocab in <code>incan_core</code></strong> (source of truth):</p>
-<ul>
-<li><code>crates/incan_core/src/lang/surface/methods.rs</code> (surface method vocab registries; re-exported as
-  <code>incan_core::lang::surface::{string_methods, list_methods, dict_methods, ...}</code> for stable import paths)</li>
-<li>For sized integer methods, add a new registry section within <code>methods.rs</code> (or a sibling module re-exported from
-  <code>crates/incan_core/src/lang/surface/mod.rs</code> if it grows too large)</li>
-</ul>
+<p>Too indirect. These types are useful inside ordinary Incan code, not only at FFI boundaries.</p>
 </li>
 <li>
-<p><strong>Compiler consumes registries</strong> instead of string matches:</p>
-<ul>
-<li>Typechecker consults the registries to determine allowed methods and return types.</li>
-<li>Backend/codegen consults the same registries (or enum/ID mapping derived from them) to emit method calls.</li>
-</ul>
+<p><strong>Python-style arbitrary-precision <code>int</code> only</strong></p>
 </li>
 <li>
-<p><strong>Guardrails</strong></p>
-<ul>
-<li>Add tests that ensure registry uniqueness and prevent drift with lexer/parser expectations (parity checks).</li>
-</ul>
+<p>That improves some numeric ergonomics, but it does not solve fixed-width interop, protocol parsing, or explicit layout control.</p>
 </li>
+<li>
+<p><strong>Wrapper types only</strong></p>
+</li>
+<li>
+<p>Still requires real underlying fixed-width types, so it does not remove the core problem.</p>
+</li>
+<li>
+<p><strong>C-style numeric names</strong></p>
+</li>
+<li>Less explicit and often platform-dependent in ways that this RFC is trying to avoid.</li>
 </ol>
-<h4 id="benefits">Benefits<a class="headerlink" href="#benefits" title="Permanent link">&para;</a></h4>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Single source of truth</strong>: <code>incan_core</code> defines the language surface vocabulary.</li>
-<li><strong>No hardcoding</strong>: typechecker and emitter read from registries.</li>
-<li><strong>Extensibility</strong>: adding a method is a single edit in <code>incan_core::lang::surface</code>.</li>
-<li><strong>Documentation</strong>: reference docs can be generated from registries.</li>
+<li>More builtin numeric types increase the language surface and the testing matrix.</li>
+<li><code>isize</code> and <code>usize</code> expose target-dependent widths, which slightly weakens the otherwise explicit story.</li>
+<li>The registry requirement raises the implementation bar, but that is preferable to baking in more ad hoc builtin behavior.</li>
 </ul>
-<h4 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h4>
-<p>Phase 0 covers:</p>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Registry infrastructure (IDs + metadata tables + docs generation + guardrails)</li>
-<li>Migration of existing hardcoded types:<ul>
-<li><code>str</code>, <code>bytes</code></li>
-<li><code>List</code>, <code>Dict</code>, <code>Set</code></li>
-<li><code>FrozenStr</code>, <code>FrozenBytes</code></li>
-<li><code>FrozenList</code>, <code>FrozenSet</code>, <code>FrozenDict</code></li>
+<li><strong>Lexer / parser</strong>: must recognize the added type names and suffixed numeric literals.</li>
+<li><strong>Typechecker</strong>: must model exact-width numeric types, enforce explicit conversions, and diagnose out-of-range literals.</li>
+<li><strong>Lowering / emission</strong>: must preserve exact widths when lowering to Rust or other backend representations.</li>
+<li><strong>Builtin surface registry</strong>: must own the canonical spelling and method vocabulary for builtin numeric types.</li>
+<li><strong>Docs / tooling</strong>: should surface width-specific help, conversions, and overflow behavior consistently.</li>
 </ul>
-</li>
-<li>Foundation for sized integer methods in Phase 5</li>
-</ul>
-<h3 id="phase-1-lexer">Phase 1: Lexer<a class="headerlink" href="#phase-1-lexer" title="Permanent link">&para;</a></h3>
-<p>Add token recognition for:</p>
-<ul>
-<li>Type names: <code>i8</code>, <code>i16</code>, <code>i32</code>, <code>i64</code>, <code>i128</code>, <code>u8</code>, <code>u16</code>, <code>u32</code>, <code>u64</code>, <code>u128</code>, <code>f32</code>, <code>isize</code>, <code>usize</code></li>
-<li>Literal suffixes: <code>42i32</code>, <code>255u8</code>, <code>3.14f32</code></li>
-</ul>
-<h3 id="phase-2-parser">Phase 2: Parser<a class="headerlink" href="#phase-2-parser" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Parse sized type annotations</li>
-<li>Parse suffixed numeric literals</li>
-</ul>
-<h3 id="phase-3-type-checker">Phase 3: Type Checker<a class="headerlink" href="#phase-3-type-checker" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Add sized integer types to type system</li>
-<li>Enforce explicit conversions (no implicit narrowing)</li>
-<li>Type inference for unsuffixed literals</li>
-<li>Use builtin registry (from Phase 0) for method lookups</li>
-</ul>
-<h3 id="phase-4-codegen">Phase 4: Codegen<a class="headerlink" href="#phase-4-codegen" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Map types directly to Rust equivalents</li>
-<li>Emit proper literal suffixes</li>
-<li>Generate conversion code</li>
-<li>Use builtin registry for method emission</li>
-</ul>
-<h3 id="phase-5-standard-library">Phase 5: Standard Library<a class="headerlink" href="#phase-5-standard-library" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Add conversion methods (<code>try_from</code>, <code>from</code>, <code>as</code>) to registry</li>
-<li>Add byte conversion methods (<code>from_le_bytes</code>, <code>to_be_bytes</code>, etc.) to registry</li>
-<li>Add overflow-handling methods (<code>wrapping_add</code>, <code>saturating_sub</code>, etc.) to registry</li>
-<li>Implement corresponding Rust methods in <code>incan_stdlib</code></li>
-</ul>
-<h2 id="alternatives-considered">Alternatives Considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<h3 id="1-only-add-when-needed-via-rust-interop">1. Only Add When Needed via Rust Interop<a class="headerlink" href="#1-only-add-when-needed-via-rust-interop" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">primitive</span> <span class="kn">import</span><span class="w"> </span><span class="nn">i16</span><span class="o">,</span><span class="w"> </span><span class="nn">u8</span>
-</code></pre></div>
-<p><strong>Rejected</strong>: Awkward syntax, doesn't integrate well with literals.</p>
-<h3 id="2-python-style-arbitrary-precision">2. Python-Style Arbitrary Precision<a class="headerlink" href="#2-python-style-arbitrary-precision" title="Permanent link">&para;</a></h3>
-<p>Python's <code>int</code> is arbitrary precision. We could do the same.</p>
-<p><strong>Rejected</strong>: Doesn't help with FFI, binary protocols, or memory efficiency. Also has performance overhead.</p>
-<h3 id="3-wrapper-types-only">3. Wrapper Types Only<a class="headerlink" href="#3-wrapper-types-only" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">newtype</span> <span class="nc">Port</span> <span class="o">=</span> <span class="n">u16</span>  <span class="c1"># Define in stdlib</span>
-</code></pre></div>
-<p><strong>Rejected</strong>: Still need the underlying sized types.</p>
-<h3 id="4-c-style-type-names">4. C-Style Type Names<a class="headerlink" href="#4-c-style-type-names" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">let</span> <span class="n">x</span><span class="p">:</span> <span class="n">short</span> <span class="o">=</span> <span class="mi">10</span>      <span class="c1"># i16</span>
-<span class="k">let</span> <span class="n">y</span><span class="p">:</span> <span class="n">unsigned</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">20</span>  <span class="c1"># u32</span>
-</code></pre></div>
-<p><strong>Rejected</strong>: Verbose, platform-dependent sizes in C, Rust-style is clearer.</p>
-<h2 id="open-questions">Open Questions<a class="headerlink" href="#open-questions" title="Permanent link">&para;</a></h2>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ol>
-<li><strong>Literal inference</strong>: Should <code>let x: u8 = 256</code> be a compile error or runtime panic?</li>
-<li>
-<p>Proposal: Compile error for out-of-range literals</p>
-</li>
-<li>
-<p><strong>Default integer type</strong>: Keep <code>int</code> as <code>i64</code> or make it platform-dependent like <code>isize</code>?</p>
-</li>
-<li>
-<p>Proposal: Keep as <code>i64</code> for predictability</p>
-</li>
-<li>
-<p><strong>Char type</strong>: Add <code>char</code> as a separate type (Rust's 4-byte Unicode scalar)?</p>
-</li>
-<li>
-<p>Proposal: Defer to separate RFC</p>
-</li>
-<li>
-<p><strong>SIMD types</strong>: Should we include <code>i8x16</code>, <code>f32x4</code> etc?</p>
-</li>
-<li>
-<p>Proposal: Defer to separate RFC for SIMD</p>
-</li>
-<li>
-<p><strong>List/array indexing</strong>: How should <code>int</code> work with indexing?</p>
-</li>
-<li>Problem: <code>arr[i]</code> where <code>i: int</code> fails in Rust (needs <code>usize</code>)</li>
-<li>Option A: Auto-coerce <code>int</code> → <code>usize</code> in indexing context (ergonomic, implicit)</li>
-<li>Option B: Require explicit cast <code>arr[i as usize]</code> (explicit, verbose)</li>
-<li>Option C: Make <code>range()</code> return <code>usize</code> (natural for loops, but breaks if used elsewhere)</li>
-<li>Proposal: Option A — compiler inserts <code>as usize</code> for indexing; matches Python's ergonomics</li>
+<li>What is the exact rule for container indexing: explicit <code>as usize</code>, a targeted compiler coercion in indexing position, or something else?</li>
+<li>Should <code>char</code> join this RFC, or remain a separate feature with its own semantics?</li>
+<li>Which sized-type helper methods are language promises in v1, and which remain stdlib conveniences that can evolve separately?</li>
 </ol>
-<h2 id="checklist">Checklist<a class="headerlink" href="#checklist" title="Permanent link">&para;</a></h2>
-<h3 id="phase-0-builtin-type-registry-checklist">Phase 0: Builtin Type Registry (checklist)<a class="headerlink" href="#phase-0-builtin-type-registry-checklist" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[ ] Extend <code>incan_core::lang::types</code> with sized type vocabulary (<code>i8</code>, <code>u16</code>, <code>f32</code>, <code>usize</code>, ...)</li>
-<li>[ ] Extend <code>incan_core::lang::surface</code> with sized integer method vocabulary (new registry module)</li>
-<li>[ ] Typechecker: consult <code>incan_core::lang::surface</code> registries for method typing</li>
-<li>[ ] Backend: consult <code>incan_core::lang::surface</code> registries (or enum mapping) for method emission</li>
-<li>[ ] Migrate <code>str</code> methods from hardcoded to registry</li>
-<li>[ ] Migrate <code>bytes</code> methods from hardcoded to registry</li>
-<li>[ ] Migrate <code>List</code> methods from hardcoded to registry</li>
-<li>[ ] Migrate <code>Dict</code> methods from hardcoded to registry</li>
-<li>[ ] Migrate <code>Set</code> methods from hardcoded to registry</li>
-<li>[ ] Migrate <code>FrozenStr</code> methods from hardcoded to registry</li>
-<li>[ ] Migrate <code>FrozenBytes</code> methods from hardcoded to registry</li>
-<li>[ ] Migrate <code>FrozenList</code>/<code>FrozenSet</code>/<code>FrozenDict</code> methods from hardcoded to registry</li>
-<li>[ ] Update emitter to use registry for method emission</li>
-<li>[ ] Remove hardcoded method matches from <code>check_expr/access.rs</code></li>
-<li>[ ] Remove hardcoded method matches from <code>emit/mod.rs</code></li>
-</ul>
-<h3 id="phase-1-4-sized-types">Phase 1-4: Sized Types<a class="headerlink" href="#phase-1-4-sized-types" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[ ] Lexer: recognize sized type names</li>
-<li>[ ] Lexer: parse literal suffixes (<code>42i32</code>, <code>3.14f32</code>)</li>
-<li>[ ] Parser: sized type annotations</li>
-<li>[ ] Type checker: sized integer types in type system</li>
-<li>[ ] Type checker: enforce explicit conversions</li>
-<li>[ ] Type checker: literal range checking</li>
-<li>[ ] Codegen: emit proper Rust types</li>
-<li>[ ] Codegen: emit literal suffixes</li>
-<li>[ ] Codegen: auto-coerce <code>int</code> → <code>usize</code> for list indexing</li>
-</ul>
-<h3 id="phase-5-standard-library-methods">Phase 5: Standard Library Methods<a class="headerlink" href="#phase-5-standard-library-methods" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[ ] Stdlib: add sized type interface traits (<code>I8Methods</code>, <code>U16Methods</code>, etc.)</li>
-<li>[ ] Stdlib: conversion methods (<code>try_from</code>, <code>from</code>)</li>
-<li>[ ] Stdlib: byte conversion methods (<code>from_le_bytes</code>, <code>to_be_bytes</code>, etc.)</li>
-<li>[ ] Stdlib: overflow-handling methods (<code>wrapping_add</code>, <code>saturating_sub</code>, etc.)</li>
-</ul>
-<h3 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[ ] Documentation update</li>
-<li>[ ] Examples</li>
-</ul>
-<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
-<ul>
-<li><a href="https://doc.rust-lang.org/std/primitive/index.html">Rust Primitive Types</a></li>
-<li><a href="https://doc.rust-lang.org/book/ch03-02-data-types.html#integer-overflow">Rust Integer Overflow</a></li>
-<li><a href="https://docs.python.org/3/library/struct.html">Python struct module</a> (for comparison)</li>
-</ul>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

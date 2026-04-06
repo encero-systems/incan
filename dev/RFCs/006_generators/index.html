@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 006: Python-Style Generators - Incan Documentation</title>
+        <title>RFC 006: Python-style generators - Incan Documentation</title>
       
     
     
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 006: Python-Style Generators
+              RFC 006: Python-style generators
             
           </span>
         </div>
@@ -3903,19 +3903,46 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#design" class="md-nav__link">
+  <a href="#goals" class="md-nav__link">
     <span class="md-ellipsis">
-      Design
+      Goals
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Design">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation (how users think about it)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Guide-level explanation (how users think about it)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#basic-syntax" class="md-nav__link">
+  <a href="#generator-functions" class="md-nav__link">
     <span class="md-ellipsis">
-      Basic Syntax
+      Generator functions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generator-expressions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generator expressions
     </span>
   </a>
   
@@ -3924,25 +3951,16 @@
           <li class="md-nav__item">
   <a href="#infinite-generators" class="md-nav__link">
     <span class="md-ellipsis">
-      Infinite Generators
+      Infinite generators
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#generators-with-filtering" class="md-nav__link">
+  <a href="#recursive-traversal" class="md-nav__link">
     <span class="md-ellipsis">
-      Generators with Filtering
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#generator-expressions-comprehension-like" class="md-nav__link">
-    <span class="md-ellipsis">
-      Generator Expressions (Comprehension-like)
+      Recursive traversal
     </span>
   </a>
   
@@ -3954,130 +3972,106 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reference-level explanation (precise rules)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reference-level explanation (precise rules)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#generator-functions-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generator functions reference
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generator-expressions-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generator expressions reference
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#typing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Typing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#consumption" class="md-nav__link">
+    <span class="md-ellipsis">
+      Consumption
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#one-generator-model-two-surfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      One generator model, two surfaces
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#distinction-from-fixtures" class="md-nav__link">
     <span class="md-ellipsis">
-      Distinction from Fixtures
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#compilation-strategy" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compilation Strategy
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Compilation Strategy">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#key-points" class="md-nav__link">
-    <span class="md-ellipsis">
-      Key Points
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#iterator-methods" class="md-nav__link">
-    <span class="md-ellipsis">
-      Iterator Methods
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#implementation-plan" class="md-nav__link">
-    <span class="md-ellipsis">
-      Implementation Plan
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Implementation Plan">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#phase-1-parser-changes" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 1: Parser Changes
+      Distinction from fixtures
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#phase-2-type-checker" class="md-nav__link">
+  <a href="#lowering-model" class="md-nav__link">
     <span class="md-ellipsis">
-      Phase 2: Type Checker
+      Lowering model
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#phase-3-codegen" class="md-nav__link">
+  <a href="#interaction-with-existing-features" class="md-nav__link">
     <span class="md-ellipsis">
-      Phase 3: Codegen
+      Interaction with existing features
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#phase-4-generator-expressions" class="md-nav__link">
+  <a href="#compatibility-migration" class="md-nav__link">
     <span class="md-ellipsis">
-      Phase 4: Generator Expressions
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      Examples
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Examples">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#file-processing" class="md-nav__link">
-    <span class="md-ellipsis">
-      File Processing
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#pagination" class="md-nav__link">
-    <span class="md-ellipsis">
-      Pagination
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tree-traversal" class="md-nav__link">
-    <span class="md-ellipsis">
-      Tree Traversal
+      Compatibility / migration
     </span>
   </a>
   
@@ -4091,67 +4085,34 @@
         <li class="md-nav__item">
   <a href="#alternatives-considered" class="md-nav__link">
     <span class="md-ellipsis">
-      Alternatives Considered
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Alternatives Considered">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-explicit-gen-keyword" class="md-nav__link">
-    <span class="md-ellipsis">
-      1. Explicit gen Keyword
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-separate-generator-keyword" class="md-nav__link">
-    <span class="md-ellipsis">
-      2. Separate generator Keyword
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-no-generators-comprehensions-only" class="md-nav__link">
-    <span class="md-ellipsis">
-      3. No Generators (Comprehensions Only)
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#open-questions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Open Questions
+      Alternatives considered
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#checklist" class="md-nav__link">
+  <a href="#drawbacks" class="md-nav__link">
     <span class="md-ellipsis">
-      Checklist
+      Drawbacks
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#references" class="md-nav__link">
+  <a href="#layers-affected" class="md-nav__link">
     <span class="md-ellipsis">
-      References
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unresolved-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unresolved questions
     </span>
   </a>
   
@@ -4175,277 +4136,173 @@
   
 
 
-<h1 id="rfc-006-python-style-generators">RFC 006: Python-Style Generators<a class="headerlink" href="#rfc-006-python-style-generators" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> Planned<br />
-<strong>Created:</strong> 2024-12-10</p>
+<h1 id="rfc-006-python-style-generators">RFC 006: Python-style generators<a class="headerlink" href="#rfc-006-python-style-generators" title="Permanent link">&para;</a></h1>
+<ul>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2024-12-10</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong> RFC 016 (loop and break value), RFC 019 (runner testing)</li>
+<li><strong>Issue:</strong> —</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.1</li>
+<li><strong>Shipped in:</strong> —</li>
+</ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Add Python-style generator functions to Incan, compiled to Rust 2024's <code>gen</code> blocks,
-enabling lazy iteration with familiar <code>yield</code> syntax.</p>
+<p>This RFC introduces Python-style generators to Incan in two connected forms: generator functions that use <code>yield</code> inside <code>def</code>, and generator expressions that produce lazy generator values inline. Both forms describe the same underlying language model: a resumable producer of <code>T</code> exposed as <code>Generator[T]</code>.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Python developers expect generator functions for:</p>
-<ol>
-<li><strong>Lazy evaluation</strong> - Process large/infinite sequences without loading all into memory</li>
-<li><strong>Streaming pipelines</strong> - Chain transformations without intermediate allocations</li>
-<li><strong>Stateful iteration</strong> - Encapsulate complex iteration logic elegantly</li>
-<li><strong>Familiarity</strong> - <code>yield</code> in a function is a well-understood Python pattern</li>
-</ol>
-<p>With Rust 2024's <code>gen</code> blocks now stable, Incan can offer Python-style generators with zero-cost abstractions.</p>
-<h2 id="design">Design<a class="headerlink" href="#design" title="Permanent link">&para;</a></h2>
-<h3 id="basic-syntax">Basic Syntax<a class="headerlink" href="#basic-syntax" title="Permanent link">&para;</a></h3>
-<p>A function becomes a generator when it:</p>
-<ol>
-<li>Contains <code>yield</code> expressions</li>
-<li>Returns <code>Iterator[T]</code></li>
-</ol>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Python-style generator function</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">count_up</span><span class="p">(</span><span class="n">start</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">end</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+<p>Incan currently has eager collections and iterator-shaped loops, but it does not have a first-class way to express lazy, stateful iteration in the language surface itself. That hurts several common cases:</p>
+<ul>
+<li>large or unbounded sequences that should not be materialized eagerly;</li>
+<li>streaming transformations that would otherwise allocate intermediate lists;</li>
+<li>recursive traversals where the natural shape is "produce one value, suspend, resume";</li>
+<li>portability for authors coming from Python, where <code>yield</code> and generator expressions are familiar ways to express lazy iteration.</li>
+</ul>
+<p>The feature also fits Incan's backend well. Rust already has generator machinery, so Incan does not need to invent a bespoke runtime model just to support this control-flow shape.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Add a first-class generator model based on <code>yield</code> and <code>Generator[T]</code>.</li>
+<li>Support both generator functions and generator expressions as part of that model.</li>
+<li>Make lazy iteration explicit in type signatures instead of inferring it from incidental usage.</li>
+<li>Preserve ordinary <code>for</code>-loop ergonomics over generator results.</li>
+<li>Distinguish generator <code>yield</code> clearly from fixture <code>yield</code>.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Async generators in this RFC.</li>
+<li>Bidirectional coroutine features such as Python-style <code>send()</code>.</li>
+<li>A wholesale redesign of comprehensions or iterator combinators beyond generator support itself.</li>
+<li>Standardizing every possible <code>Generator</code> helper method in the initial draft.</li>
+</ul>
+<h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
+<h3 id="generator-functions">Generator functions<a class="headerlink" href="#generator-functions" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">count_up</span><span class="p">(</span><span class="n">start</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">end</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Generator</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
     <span class="k">mut</span> <span class="n">i</span> <span class="o">=</span> <span class="n">start</span>
     <span class="k">while</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">end</span><span class="p">:</span>
         <span class="k">yield</span> <span class="n">i</span>
         <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
 
-<span class="c1"># Usage: lazy iteration</span>
 <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">count_up</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1_000_000</span><span class="p">):</span>
     <span class="k">if</span> <span class="n">n</span> <span class="o">&gt;</span> <span class="mi">100</span><span class="p">:</span>
         <span class="k">break</span>
     <span class="nb">println</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
 </code></pre></div>
-<h3 id="infinite-generators">Infinite Generators<a class="headerlink" href="#infinite-generators" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">fibonacci</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+<p>The function above does not build a list. Each <code>yield</code> produces one element for the surrounding iteration and then suspends the function until the next value is requested.</p>
+<h3 id="generator-expressions">Generator expressions<a class="headerlink" href="#generator-expressions" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">squares</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span> <span class="o">*</span> <span class="n">x</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">))</span>
+
+<span class="k">for</span> <span class="n">sq</span> <span class="ow">in</span> <span class="n">squares</span><span class="p">:</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">sq</span><span class="p">)</span>
+</code></pre></div>
+<p>Generator expressions are the expression form of the same idea: they produce a lazy <code>Generator[T]</code> instead of an eager list.</p>
+<h3 id="infinite-generators">Infinite generators<a class="headerlink" href="#infinite-generators" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">fibonacci</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Generator</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
     <span class="k">mut</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span>
     <span class="k">while</span> <span class="k">true</span><span class="p">:</span>
         <span class="k">yield</span> <span class="n">a</span>
         <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">b</span><span class="p">,</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
 
-<span class="c1"># Take first 10 Fibonacci numbers</span>
-<span class="k">let</span> <span class="n">fibs</span> <span class="o">=</span> <span class="n">fibonacci</span><span class="p">()</span><span class="o">.</span><span class="n">take</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+<span class="n">fibs</span> <span class="o">=</span> <span class="n">fibonacci</span><span class="p">()</span><span class="o">.</span><span class="n">take</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
 </code></pre></div>
-<h3 id="generators-with-filtering">Generators with Filtering<a class="headerlink" href="#generators-with-filtering" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">even_numbers</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
-    <span class="k">mut</span> <span class="n">n</span> <span class="o">=</span> <span class="mi">0</span>
-    <span class="k">while</span> <span class="k">true</span><span class="p">:</span>
-        <span class="k">yield</span> <span class="n">n</span>
-        <span class="n">n</span> <span class="o">+=</span> <span class="mi">2</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">primes</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
-    <span class="k">mut</span> <span class="n">n</span> <span class="o">=</span> <span class="mi">2</span>
-    <span class="k">while</span> <span class="k">true</span><span class="p">:</span>
-        <span class="k">if</span> <span class="n">is_prime</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
-            <span class="k">yield</span> <span class="n">n</span>
-        <span class="n">n</span> <span class="o">+=</span> <span class="mi">1</span>
-</code></pre></div>
-<h3 id="generator-expressions-comprehension-like">Generator Expressions (Comprehension-like)<a class="headerlink" href="#generator-expressions-comprehension-like" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Existing comprehension (eager, collects to List)</span>
-<span class="n">squares</span> <span class="o">=</span> <span class="p">[</span><span class="n">x</span> <span class="o">*</span> <span class="n">x</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">)]</span>
-
-<span class="c1"># Generator expression (lazy, returns Iterator)</span>
-<span class="n">squares_lazy</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span> <span class="o">*</span> <span class="n">x</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">))</span>
-</code></pre></div>
-<h2 id="distinction-from-fixtures">Distinction from Fixtures<a class="headerlink" href="#distinction-from-fixtures" title="Permanent link">&para;</a></h2>
-<p>The <code>yield</code> keyword is already used for test fixtures (RFC 001). The distinction:</p>
-<table>
-<thead>
-<tr>
-<th>Context</th>
-<th>Return Type</th>
-<th>Behavior</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>@fixture</code> function</td>
-<td>Any <code>T</code></td>
-<td>Setup → yield value → teardown</td>
-</tr>
-<tr>
-<td>Generator function</td>
-<td><code>Iterator[T]</code></td>
-<td>Lazy iteration, multiple yields</td>
-</tr>
-</tbody>
-</table>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># FIXTURE: yield once for setup/teardown</span>
-<span class="nd">@fixture</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">database</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Database</span><span class="p">:</span>
-    <span class="n">db</span> <span class="o">=</span> <span class="nc">Database</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s2">&quot;test.db&quot;</span><span class="p">)</span>
-    <span class="k">yield</span> <span class="n">db</span>        <span class="c1"># Single yield: test runs here</span>
-    <span class="n">db</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>      <span class="c1"># Teardown</span>
-
-<span class="c1"># GENERATOR: yield multiple values lazily</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">read_lines</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-    <span class="k">let</span> <span class="n">file</span> <span class="o">=</span> <span class="nc">File</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="o">?</span>
-    <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">file</span><span class="o">.</span><span class="n">lines</span><span class="p">():</span>
-        <span class="k">yield</span> <span class="n">line</span>  <span class="c1"># Multiple yields: lazy iteration</span>
-</code></pre></div>
-<p>The compiler distinguishes by:</p>
-<ul>
-<li><code>@fixture</code> decorator → fixture semantics</li>
-<li><code>Iterator[T]</code> return type (no <code>@fixture</code>) → generator semantics</li>
-</ul>
-<h2 id="compilation-strategy">Compilation Strategy<a class="headerlink" href="#compilation-strategy" title="Permanent link">&para;</a></h2>
-<p>Incan generators compile to Rust 2024 <code>gen</code> blocks:</p>
-<p><strong>Incan:</strong></p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">count_up</span><span class="p">(</span><span class="n">start</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">end</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
-    <span class="k">mut</span> <span class="n">i</span> <span class="o">=</span> <span class="n">start</span>
-    <span class="k">while</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">end</span><span class="p">:</span>
-        <span class="k">yield</span> <span class="n">i</span>
-        <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
-</code></pre></div>
-<p><strong>Generated Rust:</strong></p>
-<div class="language-rust highlight"><pre><span></span><code><span class="k">fn</span><span class="w"> </span><span class="nf">count_up</span><span class="p">(</span><span class="n">start</span><span class="p">:</span><span class="w"> </span><span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">end</span><span class="p">:</span><span class="w"> </span><span class="kt">i64</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">impl</span><span class="w"> </span><span class="nb">Iterator</span><span class="o">&lt;</span><span class="n">Item</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">gen</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">start</span><span class="p">;</span>
-<span class="w">        </span><span class="k">while</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">end</span><span class="w"> </span><span class="p">{</span>
-<span class="w">            </span><span class="kr">yield</span><span class="w"> </span><span class="n">i</span><span class="p">;</span>
-<span class="w">            </span><span class="n">i</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
-<span class="w">        </span><span class="p">}</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="p">}</span>
-</code></pre></div>
-<h3 id="key-points">Key Points<a class="headerlink" href="#key-points" title="Permanent link">&para;</a></h3>
-<ol>
-<li><strong><code>gen</code> block</strong> wraps the function body</li>
-<li><strong><code>impl Iterator&lt;Item = T&gt;</code></strong> return type</li>
-<li><strong>State machine</strong> generated automatically by rustc</li>
-<li><strong>Zero allocation</strong> for the iterator itself</li>
-</ol>
-<h2 id="iterator-methods">Iterator Methods<a class="headerlink" href="#iterator-methods" title="Permanent link">&para;</a></h2>
-<p>Generators return standard iterators, so all iterator methods work:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">naturals</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
-    <span class="k">mut</span> <span class="n">n</span> <span class="o">=</span> <span class="mi">0</span>
-    <span class="k">while</span> <span class="k">true</span><span class="p">:</span>
-        <span class="k">yield</span> <span class="n">n</span>
-        <span class="n">n</span> <span class="o">+=</span> <span class="mi">1</span>
-
-<span class="c1"># Chaining works naturally</span>
-<span class="kt">result</span> <span class="o">=</span> <span class="p">(</span>
-    <span class="n">naturals</span><span class="p">()</span>
-    <span class="o">.</span><span class="n">filter</span><span class="p">((</span><span class="n">n</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="p">(</span><span class="n">n</span> <span class="o">%</span> <span class="mi">2</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>  <span class="c1"># filter even numbers</span>
-    <span class="o">.</span><span class="n">map</span><span class="p">((</span><span class="n">n</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">n</span> <span class="o">*</span> <span class="n">n</span><span class="p">)</span>            <span class="c1"># square the numbers</span>
-    <span class="o">.</span><span class="n">take</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
-<span class="p">)</span> <span class="c1"># result = [0, 4, 16, 36, 64]</span>
-</code></pre></div>
-<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
-<h3 id="phase-1-parser-changes">Phase 1: Parser Changes<a class="headerlink" href="#phase-1-parser-changes" title="Permanent link">&para;</a></h3>
-<ol>
-<li>Detect <code>yield</code> in function body</li>
-<li>Check return type is <code>Iterator[T]</code></li>
-<li>Mark function as generator in AST</li>
-</ol>
-<div class="language-rust highlight"><pre><span></span><code><span class="c1">// AST addition</span>
-<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">FunctionDecl</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="c1">// ... existing fields ...</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">is_generator</span><span class="p">:</span><span class="w"> </span><span class="kt">bool</span><span class="p">,</span><span class="w">  </span><span class="c1">// NEW: detected from yield + Iterator return</span>
-<span class="p">}</span>
-</code></pre></div>
-<h3 id="phase-2-type-checker">Phase 2: Type Checker<a class="headerlink" href="#phase-2-type-checker" title="Permanent link">&para;</a></h3>
-<ol>
-<li>Verify <code>yield</code> expressions match <code>Iterator[T]</code> element type</li>
-<li>Error if <code>yield</code> used without <code>Iterator</code> return type (unless <code>@fixture</code>)</li>
-<li>Error if <code>Iterator</code> return type without <code>yield</code></li>
-</ol>
-<h3 id="phase-3-codegen">Phase 3: Codegen<a class="headerlink" href="#phase-3-codegen" title="Permanent link">&para;</a></h3>
-<ol>
-<li>Wrap generator function bodies in <code>gen { }</code></li>
-<li>Transform <code>yield expr</code> to Rust <code>yield expr</code></li>
-<li>Return type → <code>impl Iterator&lt;Item = T&gt;</code></li>
-</ol>
-<h3 id="phase-4-generator-expressions">Phase 4: Generator Expressions<a class="headerlink" href="#phase-4-generator-expressions" title="Permanent link">&para;</a></h3>
-<p>Lower <code>(expr for x in iter)</code> to anonymous generator:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">squares</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span> <span class="o">*</span> <span class="n">x</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">))</span>
-</code></pre></div>
-<p>Becomes:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="n">squares</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">gen</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="p">(</span><span class="mi">0</span><span class="o">..</span><span class="mi">10</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="kr">yield</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">x</span><span class="p">;</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="p">};</span>
-</code></pre></div>
-<h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
-<h3 id="file-processing">File Processing<a class="headerlink" href="#file-processing" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">read_csv_rows</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="kt">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Lazily read CSV rows without loading entire file.&quot;&quot;&quot;</span>
-    <span class="n">file</span> <span class="o">=</span> <span class="nc">File</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="o">?</span>
-    <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">file</span><span class="o">.</span><span class="n">lines</span><span class="p">():</span>
-        <span class="k">yield</span> <span class="n">line</span><span class="o">.</span><span class="nb">split</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">)</span>
-
-<span class="c1"># Process million-row CSV with constant memory</span>
-<span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">read_csv_rows</span><span class="p">(</span><span class="s2">&quot;huge.csv&quot;</span><span class="p">):</span>
-    <span class="n">process</span><span class="p">(</span><span class="n">row</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="pagination">Pagination<a class="headerlink" href="#pagination" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">paginate</span><span class="p">(</span><span class="n">items</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nc">T</span><span class="p">],</span> <span class="n">page_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="kt">List</span><span class="p">[</span><span class="nc">T</span><span class="p">]]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Yield pages of items.&quot;&quot;&quot;</span>
-    <span class="k">mut</span> <span class="n">start</span> <span class="o">=</span> <span class="mi">0</span>
-    <span class="k">while</span> <span class="n">start</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">):</span>
-        <span class="k">let</span> <span class="n">end</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">start</span> <span class="o">+</span> <span class="n">page_size</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">))</span>
-        <span class="k">yield</span> <span class="n">items</span><span class="p">[</span><span class="n">start</span><span class="o">..</span><span class="n">end</span><span class="p">]</span>
-        <span class="n">start</span> <span class="o">=</span> <span class="n">end</span>
-
-<span class="k">for</span> <span class="n">page</span> <span class="ow">in</span> <span class="n">paginate</span><span class="p">(</span><span class="n">users</span><span class="p">,</span> <span class="mi">10</span><span class="p">):</span>
-    <span class="n">display_page</span><span class="p">(</span><span class="n">page</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="tree-traversal">Tree Traversal<a class="headerlink" href="#tree-traversal" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">walk_tree</span><span class="p">(</span><span class="n">node</span><span class="p">:</span> <span class="nc">Node</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">Node</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Depth-first traversal.&quot;&quot;&quot;</span>
+<p>This is the core value proposition: the generator can describe an unbounded stream, while the consumer decides how much to realize.</p>
+<h3 id="recursive-traversal">Recursive traversal<a class="headerlink" href="#recursive-traversal" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">walk_tree</span><span class="p">(</span><span class="n">node</span><span class="p">:</span> <span class="nc">Node</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Generator</span><span class="p">[</span><span class="nc">Node</span><span class="p">]:</span>
     <span class="k">yield</span> <span class="n">node</span>
     <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
         <span class="k">for</span> <span class="n">descendant</span> <span class="ow">in</span> <span class="n">walk_tree</span><span class="p">(</span><span class="n">child</span><span class="p">):</span>
             <span class="k">yield</span> <span class="n">descendant</span>
 </code></pre></div>
-<h2 id="alternatives-considered">Alternatives Considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<h3 id="1-explicit-gen-keyword">1. Explicit <code>gen</code> Keyword<a class="headerlink" href="#1-explicit-gen-keyword" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">fibonacci</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
-    <span class="k">return</span> <span class="n">gen</span><span class="p">:</span>
-        <span class="k">mut</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span>
-        <span class="k">while</span> <span class="k">true</span><span class="p">:</span>
-            <span class="k">yield</span> <span class="n">a</span>
-            <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">b</span><span class="p">,</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
-</code></pre></div>
-<p><strong>Rejected</strong>: More verbose, less Pythonic. The <code>Iterator[T]</code> return type already signals generator intent.</p>
-<h3 id="2-separate-generator-keyword">2. Separate <code>generator</code> Keyword<a class="headerlink" href="#2-separate-generator-keyword" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">generator</span> <span class="n">fibonacci</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>  <span class="c1"># Note: no Iterator wrapper</span>
-    <span class="k">mut</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span>
-    <span class="k">while</span> <span class="k">true</span><span class="p">:</span>
-        <span class="k">yield</span> <span class="n">a</span>
-        <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">b</span><span class="p">,</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
-</code></pre></div>
-<p><strong>Rejected</strong>: Deviates from Python, which uses regular <code>def</code> for generators.</p>
-<h3 id="3-no-generators-comprehensions-only">3. No Generators (Comprehensions Only)<a class="headerlink" href="#3-no-generators-comprehensions-only" title="Permanent link">&para;</a></h3>
-<p>Rely on list comprehensions and explicit iterator construction.</p>
-<p><strong>Rejected</strong>: Forces eager evaluation, no good story for infinite sequences.</p>
-<h2 id="open-questions">Open Questions<a class="headerlink" href="#open-questions" title="Permanent link">&para;</a></h2>
+<p>Generators are useful when the control flow is naturally incremental instead of collection-oriented.</p>
+<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
+<h3 id="generator-functions-reference">Generator functions reference<a class="headerlink" href="#generator-functions-reference" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A function is a generator function when its body contains <code>yield</code> and its declared return type is <code>Generator[T]</code>.</li>
+<li><code>yield expr</code> produces one element of type <code>T</code> for the surrounding generator.</li>
+<li><code>yield</code> must not appear in ordinary functions, except where another RFC explicitly gives <code>yield</code> special meaning for a distinct construct such as fixtures.</li>
+<li>A generator function may use <code>return</code> to terminate iteration early, but <code>return value</code> is not part of this RFC.</li>
+</ul>
+<h3 id="generator-expressions-reference">Generator expressions reference<a class="headerlink" href="#generator-expressions-reference" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A generator expression has the form <code>(expr for binding in iterable)</code> and yields a <code>Generator[T]</code>, where <code>T</code> is the type of <code>expr</code>.</li>
+<li>The iterable source is consumed lazily as the resulting generator is advanced.</li>
+<li>A generator expression is semantically equivalent to an anonymous generator that iterates the source and yields <code>expr</code> for each bound element.</li>
+<li>Generator expressions are lazy; the list-comprehension surface remains the eager collection form.</li>
+</ul>
+<h3 id="typing">Typing<a class="headerlink" href="#typing" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Every yielded expression must type-check against the element type <code>T</code> in <code>Generator[T]</code>.</li>
+<li>Declaring <code>Generator[T]</code> without any reachable <code>yield</code> is a compile-time error.</li>
+<li>Using <code>yield</code> without a <code>Generator[T]</code> return type is a compile-time error unless another construct has already claimed <code>yield</code> semantics for that context.</li>
+</ul>
+<h3 id="consumption">Consumption<a class="headerlink" href="#consumption" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>for</code> loops must accept generator values anywhere they accept iterable values.</li>
+<li>Generator values may expose chainable helper methods such as <code>.map()</code>, <code>.filter()</code>, <code>.take()</code>, and <code>.collect()</code>, but this RFC does not yet freeze the full helper surface.</li>
+<li>Exhausting a generator ends iteration normally.</li>
+</ul>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="one-generator-model-two-surfaces">One generator model, two surfaces<a class="headerlink" href="#one-generator-model-two-surfaces" title="Permanent link">&para;</a></h3>
+<p>Generator functions and generator expressions are not separate features stitched together for convenience. They are two surfaces over the same language model:</p>
+<ul>
+<li>generator functions are statement-oriented and better for named, reusable, stateful producers;</li>
+<li>generator expressions are expression-oriented and better for inline lazy transforms.</li>
+</ul>
+<p>This RFC treats both as first-class parts of Python-style generator support rather than as rollout stages.</p>
+<h3 id="distinction-from-fixtures">Distinction from fixtures<a class="headerlink" href="#distinction-from-fixtures" title="Permanent link">&para;</a></h3>
+<p>The language already uses <code>yield</code> in fixture-oriented testing flows. That overlap is tolerable only if the surrounding declaration makes the meaning unambiguous:</p>
+<ul>
+<li>fixture declarations keep fixture lifecycle semantics;</li>
+<li>ordinary functions returning <code>Generator[T]</code> use lazy iteration semantics.</li>
+</ul>
+<p>This RFC therefore treats the declaration context, not the token alone, as the source of truth for <code>yield</code> meaning.</p>
+<h3 id="lowering-model">Lowering model<a class="headerlink" href="#lowering-model" title="Permanent link">&para;</a></h3>
+<p>The intended implementation strategy is to lower generator functions and generator expressions through Rust generator machinery such as <code>gen</code> blocks or an equivalent compiler-owned state-machine transformation. That lowering choice is not the language definition; the language contract is only that generators behave as lazy, resumable producers of <code>T</code>.</p>
+<h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>for</code> loops consume generators the same way they consume other iterable sources.</li>
+<li>Recursive generators are valid as long as the yielded element type remains consistent.</li>
+<li>Generator expressions are the lazy counterpart to eager list-comprehension syntax rather than a separate collection feature.</li>
+</ul>
+<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
+<p>The feature is additive. Existing functions, loops, and comprehensions keep their meaning.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
+<li><strong>Explicit <code>gen</code> keyword</strong></li>
 <li>
-<p><strong>Send/receive</strong>: Should generators support <code>yield</code> receiving values (like Python's <code>gen.send()</code>)?
-    Likely deferred — Rust's <code>gen</code> blocks don't support this yet.</p>
+<p>Clear, but more Rust-shaped than Incan needs. Requiring <code>Generator[T]</code> plus <code>yield</code> already communicates intent.</p>
 </li>
 <li>
-<p><strong>Async generators</strong>: <code>async def foo() -&gt; AsyncIterator[T]</code> with <code>yield</code>.
-    Requires <code>async gen</code> blocks (not yet in Rust). Defer to future RFC.</p>
+<p><strong>Dedicated <code>generator</code> declaration form</strong></p>
 </li>
 <li>
-<p><strong>Early return</strong>: What happens with <code>return</code> inside a generator? Propose: terminates iteration (like Python).</p>
+<p>Avoids overloading ordinary <code>def</code>, but splits the function surface for a feature that is still "a function producing values over time."</p>
 </li>
+<li>
+<p><strong>Functions only, expressions later</strong></p>
+</li>
+<li>Not actually more principled. It would make the RFC weaker while still aiming at the same north-star generator model.</li>
 </ol>
-<h2 id="checklist">Checklist<a class="headerlink" href="#checklist" title="Permanent link">&para;</a></h2>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>[ ] Parser: detect <code>yield</code> + <code>Iterator[T]</code> return type → mark as generator</li>
-<li>[ ] Type checker: validate yield types match Iterator element type</li>
-<li>[ ] Codegen: wrap body in <code>gen { }</code>, emit <code>impl Iterator&lt;Item = T&gt;</code></li>
-<li>[ ] Generator expressions: <code>(expr for x in iter)</code> syntax</li>
-<li>[ ] Iterator methods work on generators (<code>.map()</code>, <code>.filter()</code>, <code>.take()</code>, etc.)</li>
-<li>[ ] Error messages for common mistakes (yield without Iterator, etc.)</li>
-<li>[ ] Examples and documentation</li>
-<li>[ ] Integration with existing comprehensions</li>
+<li><code>yield</code> now carries two meanings in the language, so diagnostics must be explicit.</li>
+<li>Generators introduce suspension semantics that users must learn alongside ordinary function control flow.</li>
+<li>Generator expressions add grammar and precedence surface that the parser and formatter must handle carefully.</li>
 </ul>
-<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="https://docs.python.org/3/howto/functional.html#generators">Python Generators</a></li>
-<li><a href="https://rust-lang.github.io/rfcs/3513-gen-blocks.html">Rust RFC 3513: gen blocks</a></li>
-<li><a href="https://blog.rust-lang.org/2025/02/20/Rust-1.85.0.html">Rust 1.85 gen blocks stabilization</a></li>
+<li><strong>Parser</strong>: must accept <code>yield</code> in generator function bodies and parse generator-expression syntax.</li>
+<li><strong>Typechecker</strong>: must enforce that yielded expressions match <code>Generator[T]</code> and that generator declarations are internally consistent.</li>
+<li><strong>Lowering / IR emission</strong>: must preserve suspension points and lazy iteration semantics for both named and anonymous generator forms.</li>
+<li><strong>Stdlib / surface vocabulary</strong>: must define the <code>Generator</code> type and any stable helper methods promised by the language.</li>
+<li><strong>Formatter / tooling</strong>: should format multi-line generators predictably and explain generator-specific diagnostics clearly.</li>
 </ul>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Should generator expressions support the full comprehension clause surface immediately, including multiple <code>for</code> clauses and trailing <code>if</code> filters, or should this RFC only normatively require the single-<code>for</code> core form?</li>
+<li>What is the minimum <code>Generator</code> helper surface that Incan wants to standardize rather than inheriting opportunistically from backend details?</li>
+<li>Should <code>return value</code> inside a generator be rejected outright, or reserved for a future coroutine-oriented extension?</li>
+<li>How much of the fixture/generator <code>yield</code> distinction should be surfaced in linting or style guidance so that mixed mental models do not leak into user code?</li>
+</ol>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

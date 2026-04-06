@@ -4417,7 +4417,8 @@
 <li>RFC PR: —</li>
 <li>Created: 2026-02-17</li>
 <li>Related:<ul>
-<li><a href="/dev/RFCs/012_json_value">RFC 012</a> (JsonValue &amp; enum methods)</li>
+<li>RFC 050 (enum methods &amp; trait adoption)</li>
+<li>RFC 051 (<code>JsonValue</code>)</li>
 <li><a href="/dev/RFCs/closed/implemented/021_model_field_metadata_and_aliases">RFC 021</a> (field metadata &amp; aliases)</li>
 <li><a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a> (compilable stdlib &amp; rust.module binding)</li>
 <li><a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a> (multi-instantiation trait dispatch)</li>
@@ -4472,7 +4473,7 @@ trait backing it. This means generic functions cannot express "T must be JSON-se
 <ul>
 <li><strong>Implementing specific format libraries.</strong> This RFC uses YAML, Protobuf, Avro, SQL DDL, and others as illustrative
   examples of what the protocol <em>enables</em>. It does not propose adding those libraries to the stdlib. Each format would
-  be introduced by its own RFC or feature issue (e.g., <a href="/dev/RFCs/012_json_value">RFC 012</a> for <code>JsonValue</code>).</li>
+  be introduced by its own RFC or feature issue (for example RFC 051 for <code>JsonValue</code>).</li>
 <li><strong>Migrating built-in derives</strong> (<code>Eq</code>, <code>Clone</code>, <code>Debug</code>, etc.) to the <code>__derives__</code> protocol. These remain compiler
   intrinsics handled by the <code>DeriveId</code> registry.
   See <a href="#interaction-with-existing-features">Interaction with existing features</a> for details.</li>
@@ -5033,7 +5034,8 @@ protocol is for library-level functionality.</p>
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a> — Rust Interop</li>
-<li><a href="/dev/RFCs/012_json_value">RFC 012</a> — <code>JsonValue</code> Type and Enum Methods</li>
+<li>RFC 050 — Enum Methods and Enum Trait Adoption</li>
+<li>RFC 051 — <code>JsonValue</code> for <code>std.json</code></li>
 <li><a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a> — Multi-Instantiation Trait Dispatch</li>
 <li><a href="/dev/RFCs/closed/implemented/021_model_field_metadata_and_aliases">RFC 021</a> — Model field metadata and schema-safe aliases</li>
 <li><a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a> — Compilable Stdlib &amp; Rust Module Binding</li>
