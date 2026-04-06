@@ -293,6 +293,18 @@ impl Formatter {
 
     // ---- Match arms and patterns ----
 
+    /// Writes a constructor pattern's type/variant path for Incan surface syntax.
+    ///
+    /// The parser stores qualified patterns as `Type::Variant` for lowering to Rust; match patterns in source use `.`
+    /// between segments. Emitting `::` would produce output the parser cannot re-read (GitHub #235).
+    fn write_pattern_constructor_name(&mut self, name: &str) {
+        if name.contains("::") {
+            self.writer.write(&name.replace("::", "."));
+        } else {
+            self.writer.write(name);
+        }
+    }
+
     fn format_match_arm(&mut self, arm: &MatchArm) {
         self.format_pattern(&arm.pattern.node);
         if let Some(guard) = &arm.guard {
@@ -322,7 +334,7 @@ impl Formatter {
             Pattern::Binding(name) => self.writer.write(name),
             Pattern::Literal(lit) => self.format_literal(lit),
             Pattern::Constructor(name, patterns) => {
-                self.writer.write(name);
+                self.write_pattern_constructor_name(name);
                 if !patterns.is_empty() {
                     self.writer.write("(");
                     for (i, p) in patterns.iter().enumerate() {
