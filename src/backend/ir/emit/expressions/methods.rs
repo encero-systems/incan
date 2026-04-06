@@ -50,7 +50,7 @@ impl<'a> IrEmitter<'a> {
     ///
     /// Method emission cares about the underlying receiver family (`Dict`, `Struct`, `Trait`, ...) rather than whether
     /// lowering represented the value as `T`, `&T`, or `&mut T`.
-    fn receiver_type_for_method_dispatch<'b>(receiver_ty: &'b IrType) -> &'b IrType {
+    fn receiver_type_for_method_dispatch(receiver_ty: &IrType) -> &IrType {
         let mut receiver_ty = receiver_ty;
         while let IrType::Ref(inner) | IrType::RefMut(inner) = receiver_ty {
             receiver_ty = inner.as_ref();
