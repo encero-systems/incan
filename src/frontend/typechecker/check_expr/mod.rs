@@ -113,6 +113,25 @@ impl TypeChecker {
         ty
     }
 
+    /// Type-check an expression with an expected destination type when one is already known.
+    ///
+    /// This is intentionally narrow: only expression forms that benefit from contextual typing without broad inference
+    /// changes should use the hint.
+    pub(crate) fn check_expr_with_expected(
+        &mut self,
+        expr: &Spanned<Expr>,
+        expected: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let ty = match (&expr.node, expected) {
+            (Expr::Paren(inner), Some(expected_ty)) => self.check_expr_with_expected(inner, Some(expected_ty)),
+            (Expr::List(elems), expected_ty) => self.check_list_with_expected(elems, expected_ty),
+            _ => return self.check_expr(expr),
+        };
+
+        self.record_expr_type(expr.span, ty.clone());
+        ty
+    }
+
     /// Typecheck a surface expression via the semantics registry.
     fn check_surface_expr(&mut self, expr: &SurfaceExpr, span: Span) -> ResolvedType {
         use crate::semantics_registry::semantics_registry;

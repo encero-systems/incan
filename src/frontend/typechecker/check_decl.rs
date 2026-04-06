@@ -74,6 +74,49 @@ struct InteropAdapterSig {
 }
 
 impl TypeChecker {
+    /// Replace every nested `Self` occurrence in an annotation with the concrete owner type used for this method body.
+    ///
+    /// Method return validation runs against the concrete owning type, not the abstract declaration surface, so
+    /// containers like `List[Self]` must be concretized recursively before compatibility checks.
+    fn concretize_self_type_in_annotation(ty: &ResolvedType, self_ty: &ResolvedType) -> ResolvedType {
+        match ty {
+            ResolvedType::SelfType => self_ty.clone(),
+            ResolvedType::Generic(name, args) => ResolvedType::Generic(
+                name.clone(),
+                args.iter()
+                    .map(|arg| Self::concretize_self_type_in_annotation(arg, self_ty))
+                    .collect(),
+            ),
+            ResolvedType::Tuple(items) => ResolvedType::Tuple(
+                items
+                    .iter()
+                    .map(|item| Self::concretize_self_type_in_annotation(item, self_ty))
+                    .collect(),
+            ),
+            ResolvedType::Function(params, ret) => ResolvedType::Function(
+                params
+                    .iter()
+                    .map(|param| Self::concretize_self_type_in_annotation(param, self_ty))
+                    .collect(),
+                Box::new(Self::concretize_self_type_in_annotation(ret, self_ty)),
+            ),
+            ResolvedType::FrozenList(inner) => {
+                ResolvedType::FrozenList(Box::new(Self::concretize_self_type_in_annotation(inner, self_ty)))
+            }
+            ResolvedType::FrozenSet(inner) => {
+                ResolvedType::FrozenSet(Box::new(Self::concretize_self_type_in_annotation(inner, self_ty)))
+            }
+            ResolvedType::FrozenDict(key, value) => ResolvedType::FrozenDict(
+                Box::new(Self::concretize_self_type_in_annotation(key, self_ty)),
+                Box::new(Self::concretize_self_type_in_annotation(value, self_ty)),
+            ),
+            ResolvedType::Ref(inner) => {
+                ResolvedType::Ref(Box::new(Self::concretize_self_type_in_annotation(inner, self_ty)))
+            }
+            _ => ty.clone(),
+        }
+    }
+
     /// Build the resolved surface type that represents `nt` in interop signature validation.
     ///
     /// Generic rusttypes are represented as `Generic(Name, TypeVar...)` so adapter checks compare against the
@@ -1314,17 +1357,7 @@ impl TypeChecker {
         }
 
         let return_type = self.resolve_type_checked(&method.return_type);
-        let effective_return_type =
-            if matches!(return_type, ResolvedType::SelfType) && !matches!(self_ty, ResolvedType::SelfType) {
-                match &self_ty {
-                    ResolvedType::Named(name) if !owner_type_params.is_empty() => {
-                        ResolvedType::Generic(name.clone(), vec![ResolvedType::Unknown; owner_type_params.len()])
-                    }
-                    _ => self_ty.clone(),
-                }
-            } else {
-                return_type.clone()
-            };
+        let effective_return_type = Self::concretize_self_type_in_annotation(&return_type, &self_ty);
         self.symbols.set_return_type(effective_return_type);
 
         // Set error type for ? checking

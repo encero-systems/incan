@@ -3199,6 +3199,30 @@ def foo() -> List[int]:
     assert!(check_str(source).is_ok());
 }
 
+#[test]
+fn test_empty_list_matches_typed_call_parameter() {
+    let source = r#"
+def takes_names(names: List[str]) -> int:
+  return len(names)
+
+def foo() -> int:
+  return takes_names([])
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_list_self_accepts_explicit_owner_instances() {
+    let source = r#"
+pub class Boxed[T]:
+  pub value: T
+
+  def pair(self) -> List[Self]:
+    return [Boxed(value=self.value), Boxed(value=self.value)]
+"#;
+    assert!(check_str(source).is_ok());
+}
+
 // ========================================
 // Model tests
 // ========================================

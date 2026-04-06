@@ -1289,6 +1289,68 @@ def test_nested_dataset_modules() -> None:
     }
 
     #[test]
+    fn e2e_empty_list_arguments_in_tests_preserve_string_element_type() {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "empty_list_test"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        let tests_dir = dir.join("tests");
+
+        if let Err(err) = std::fs::create_dir_all(&src_dir) {
+            panic!("failed to create src dir: {}", err);
+        }
+        if let Err(err) = std::fs::create_dir_all(&tests_dir) {
+            panic!("failed to create tests dir: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            src_dir.join("helpers.incn"),
+            r#"
+pub def count_names(names: List[str]) -> int:
+    return len(names)
+"#,
+        ) {
+            panic!("failed to write helper source: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            tests_dir.join("test_empty_names.incn"),
+            r#"
+from std.testing import assert_eq
+from helpers import count_names
+
+def test_empty_names() -> None:
+    assert_eq(count_names([]), 0)
+"#,
+        ) {
+            panic!("failed to write test source: {}", err);
+        }
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected empty list string arg test to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            !stderr.contains("type annotations needed"),
+            "expected no Rust inference failure for empty string list.\nstderr:\n{}",
+            stderr,
+        );
+        assert!(
+            !stderr.contains("vec![].into_iter().map(|s| s.to_string()).collect()"),
+            "expected no untyped empty string-list conversion in generated Rust.\nstderr:\n{}",
+            stderr,
+        );
+    }
+
+    #[test]
     fn e2e_assert_statement_with_module_import_succeeds() {
         let dir = write_test_project(
             "test_assert_stmt.incn",

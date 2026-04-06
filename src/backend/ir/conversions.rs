@@ -485,7 +485,10 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 // Vec<&str> to Vec<String> - check before generic variable handling
                 (_, Some(IrType::List(elem))) if matches!(elem.as_ref(), IrType::String) => {
                     if matches!(expr.ty, IrType::List(_)) {
-                        Conversion::VecStringConversion
+                        match &expr.kind {
+                            IrExprKind::List(items) if items.is_empty() => Conversion::None,
+                            _ => Conversion::VecStringConversion,
+                        }
                     } else {
                         Conversion::None
                     }
@@ -667,6 +670,15 @@ mod tests {
 
         let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
         assert_eq!(conv, Conversion::VecStringConversion);
+    }
+
+    #[test]
+    fn test_incan_function_empty_list_to_string_list_skips_collect_conversion() {
+        let expr = IrExpr::new(IrExprKind::List(Vec::new()), IrType::List(Box::new(IrType::String)));
+        let target = IrType::List(Box::new(IrType::String));
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::None);
     }
 
     #[test]

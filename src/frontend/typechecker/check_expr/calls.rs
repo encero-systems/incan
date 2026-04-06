@@ -343,32 +343,33 @@ impl TypeChecker {
         fields: &std::collections::HashMap<String, FieldInfo>,
         args: &[CallArg],
         call_span: Span,
-    ) {
+    ) -> ResolvedType {
         // v0.1: only named args for model/class constructors (stable field ordering not guaranteed).
         if args.iter().any(|a| matches!(a, CallArg::Positional(_))) {
             // Typecheck argument expressions regardless, so type errors in expressions still show up.
             self.check_call_args(args);
             self.errors
                 .push(errors::positional_constructor_args_not_supported(type_name, call_span));
-            return;
+            return self.constructor_result_type(type_name);
         }
 
         // Track provided fields and validate existence/duplicates/type compatibility.
         let mut provided: std::collections::HashMap<String, Span> = std::collections::HashMap::new();
+        let mut type_bindings: std::collections::HashMap<String, ResolvedType> = std::collections::HashMap::new();
         for arg in args {
             let CallArg::Named(field_name, expr) = arg else {
                 continue;
             };
 
-            // Always typecheck the expression exactly once, even if the key is invalid/duplicate.
-            // This avoids double-reporting while still surfacing expression errors.
-            let value_ty = self.check_expr(expr);
-
             let Some((canonical_name, field_info)) = self.resolve_field_info(fields, field_name, true, true) else {
+                // Still typecheck the expression exactly once so nested diagnostics are preserved.
+                self.check_expr(expr);
                 self.errors
                     .push(errors::missing_field(type_name, field_name, expr.span));
                 continue;
             };
+
+            let value_ty = self.check_expr_with_expected(expr, Some(&field_info.ty));
 
             if provided.contains_key(&canonical_name) {
                 self.errors.push(errors::duplicate_field_in_call(
@@ -379,6 +380,7 @@ impl TypeChecker {
                 continue;
             }
             provided.insert(canonical_name.clone(), expr.span);
+            self.infer_type_param_bindings(&field_info.ty, &value_ty, &mut type_bindings);
 
             if !self.types_compatible(&value_ty, &field_info.ty) {
                 self.errors.push(errors::field_type_mismatch(
@@ -398,6 +400,8 @@ impl TypeChecker {
                 ));
             }
         }
+
+        self.constructor_result_type_with_bindings(type_name, &type_bindings)
     }
 
     /// Extract the expression from a call argument (positional or named).
@@ -477,24 +481,80 @@ impl TypeChecker {
             .collect()
     }
 
+    /// Type-check call arguments while threading parameter types into contextual-expression checks when available.
+    fn check_call_arg_types_for_params(
+        &mut self,
+        args: &[CallArg],
+        params: &[(String, ResolvedType)],
+    ) -> Vec<ResolvedType> {
+        let mut positional_index = 0usize;
+
+        args.iter()
+            .map(|arg| {
+                let expected = match arg {
+                    CallArg::Positional(_) => {
+                        let expected = params.get(positional_index).map(|(_, ty)| ty);
+                        positional_index += 1;
+                        expected
+                    }
+                    CallArg::Named(name, _) => params
+                        .iter()
+                        .find(|(param_name, _)| param_name == name)
+                        .map(|(_, ty)| ty),
+                };
+                self.check_expr_with_expected(Self::call_arg_expr(arg), expected)
+            })
+            .collect()
+    }
+
     /// Compute the constructor result surface type for a known type symbol.
     ///
     /// Generic constructors return a placeholder `Generic(Name, Unknown...)` so call sites can continue
     /// typechecking while inference refines arguments.
     fn constructor_result_type(&self, name: &str) -> ResolvedType {
+        self.constructor_result_type_with_bindings(name, &std::collections::HashMap::new())
+    }
+
+    /// Compute the constructor result surface type, substituting any generic bindings inferred from constructor fields.
+    ///
+    /// Unbound type parameters remain `Unknown` so callers can continue typechecking even when inference is partial.
+    fn constructor_result_type_with_bindings(
+        &self,
+        name: &str,
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+    ) -> ResolvedType {
         match self.lookup_type_info(name) {
-            Some(TypeInfo::Model(model)) if !model.type_params.is_empty() => {
-                ResolvedType::Generic(name.to_string(), vec![ResolvedType::Unknown; model.type_params.len()])
-            }
-            Some(TypeInfo::Class(class)) if !class.type_params.is_empty() => {
-                ResolvedType::Generic(name.to_string(), vec![ResolvedType::Unknown; class.type_params.len()])
-            }
-            Some(TypeInfo::Newtype(newtype)) if !newtype.type_params.is_empty() => {
-                ResolvedType::Generic(name.to_string(), vec![ResolvedType::Unknown; newtype.type_params.len()])
-            }
+            Some(TypeInfo::Model(model)) if !model.type_params.is_empty() => ResolvedType::Generic(
+                name.to_string(),
+                model
+                    .type_params
+                    .iter()
+                    .map(|type_param| bindings.get(type_param).cloned().unwrap_or(ResolvedType::Unknown))
+                    .collect(),
+            ),
+            Some(TypeInfo::Class(class)) if !class.type_params.is_empty() => ResolvedType::Generic(
+                name.to_string(),
+                class
+                    .type_params
+                    .iter()
+                    .map(|type_param| bindings.get(type_param).cloned().unwrap_or(ResolvedType::Unknown))
+                    .collect(),
+            ),
+            Some(TypeInfo::Newtype(newtype)) if !newtype.type_params.is_empty() => ResolvedType::Generic(
+                name.to_string(),
+                newtype
+                    .type_params
+                    .iter()
+                    .map(|type_param| bindings.get(type_param).cloned().unwrap_or(ResolvedType::Unknown))
+                    .collect(),
+            ),
             Some(TypeInfo::Enum(enum_info)) if !enum_info.type_params.is_empty() => ResolvedType::Generic(
                 name.to_string(),
-                vec![ResolvedType::Unknown; enum_info.type_params.len()],
+                enum_info
+                    .type_params
+                    .iter()
+                    .map(|type_param| bindings.get(type_param).cloned().unwrap_or(ResolvedType::Unknown))
+                    .collect(),
             ),
             _ => ResolvedType::Named(name.to_string()),
         }
@@ -508,7 +568,7 @@ impl TypeChecker {
         args: &[CallArg],
         call_span: Span,
     ) -> ResolvedType {
-        let arg_types = self.check_call_arg_types(args);
+        let arg_types = self.check_call_arg_types_for_params(args, &info.params);
         let mut positional: Vec<(ResolvedType, Span)> = Vec::new();
         let mut named: std::collections::HashMap<&str, (ResolvedType, Span)> = std::collections::HashMap::new();
 
@@ -552,6 +612,9 @@ impl TypeChecker {
     }
 
     /// Infer concrete type bindings for generic type parameters from a parameter/argument type pair.
+    ///
+    /// This walks matching container structure recursively so constructor field checks and function calls can recover
+    /// bindings such as `T -> String` from shapes like `Boxed[T]` versus `Boxed[String]`.
     fn infer_type_param_bindings(
         &self,
         expected: &ResolvedType,
@@ -1454,7 +1517,7 @@ impl TypeChecker {
                     _ => None,
                 });
             if let Some(fields) = ctor_fields {
-                self.check_model_or_class_constructor_call(name, &fields, args, span);
+                let constructor_ty = self.check_model_or_class_constructor_call(name, &fields, args, span);
                 if in_scope && let Some(tid) = surface_types::from_str(name) {
                     if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
                         return self.check_json_query_constructor_call(tid, args, span);
@@ -1463,7 +1526,7 @@ impl TypeChecker {
                         return ResolvedType::Named(surface_types::as_str(tid).to_string());
                     }
                 }
-                return self.constructor_result_type(name);
+                return constructor_ty;
             }
         }
 
@@ -1510,7 +1573,19 @@ impl TypeChecker {
         }
 
         match self.lookup_symbol(name).map(|s| &s.kind) {
-            Some(SymbolKind::Type(_)) => self.constructor_result_type(name),
+            Some(SymbolKind::Type(_)) => {
+                let ctor_fields: Option<std::collections::HashMap<String, FieldInfo>> =
+                    self.lookup_type_info(name).and_then(|info| match info {
+                        TypeInfo::Model(m) => Some(m.fields.clone()),
+                        TypeInfo::Class(c) => Some(c.fields.clone()),
+                        _ => None,
+                    });
+                if let Some(fields) = ctor_fields {
+                    self.check_model_or_class_constructor_call(name, &fields, args, span)
+                } else {
+                    self.constructor_result_type(name)
+                }
+            }
             Some(SymbolKind::Variant(info)) => ResolvedType::Named(info.enum_name.clone()),
             Some(_) => ResolvedType::Unknown,
             None => {

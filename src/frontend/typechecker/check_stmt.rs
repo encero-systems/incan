@@ -234,8 +234,6 @@ impl TypeChecker {
     fn check_field_assignment(&mut self, field_assign: &FieldAssignmentStmt, span: Span) {
         // Check the object expression
         let obj_ty = self.check_expr(&field_assign.object);
-        // Check the value expression
-        let value_ty = self.check_expr(&field_assign.value);
         let field = &field_assign.field;
 
         // Tuples are immutable - disallow field assignment on tuples
@@ -247,15 +245,16 @@ impl TypeChecker {
         // Verify field exists on object and value type matches field type
         match &obj_ty {
             ResolvedType::SelfType => {
-                if let Some(expected_ty) = self.trait_required_field_type(field, field_assign.target_span)
-                    && !self.types_compatible(&value_ty, &expected_ty)
-                {
-                    self.errors.push(errors::field_type_mismatch(
-                        field,
-                        &expected_ty.to_string(),
-                        &value_ty.to_string(),
-                        field_assign.value.span,
-                    ));
+                if let Some(expected_ty) = self.trait_required_field_type(field, field_assign.target_span) {
+                    let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
+                    if !self.types_compatible(&value_ty, &expected_ty) {
+                        self.errors.push(errors::field_type_mismatch(
+                            field,
+                            &expected_ty.to_string(),
+                            &value_ty.to_string(),
+                            field_assign.value.span,
+                        ));
+                    }
                 }
             }
             ResolvedType::Named(type_name) => {
@@ -272,6 +271,7 @@ impl TypeChecker {
 
                 match field_type {
                     Some(expected_ty) => {
+                        let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
                         if !self.types_compatible(&value_ty, &expected_ty) {
                             self.errors.push(errors::field_type_mismatch(
                                 field,
@@ -370,7 +370,15 @@ impl TypeChecker {
     }
 
     fn check_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
-        let value_ty = self.check_expr(&assign.value);
+        let annotated_ty = assign.ty.as_ref().map(|ty_ann| self.resolve_type_checked(ty_ann));
+        let reassignment_ty = self
+            .lookup_local_variable_info(&assign.name)
+            .map(|var_info| var_info.ty.clone());
+        let value_ty = if let Some(var_ty) = reassignment_ty.as_ref() {
+            self.check_expr_with_expected(&assign.value, Some(var_ty))
+        } else {
+            self.check_expr_with_expected(&assign.value, annotated_ty.as_ref())
+        };
 
         // Check if it's a re-assignment
         if let Some(var_info) = self.lookup_local_variable_info(&assign.name) {
@@ -403,7 +411,7 @@ impl TypeChecker {
         }
 
         let ty = if let Some(ty_ann) = &assign.ty {
-            let ann_ty = self.resolve_type_checked(ty_ann);
+            let ann_ty = annotated_ty.unwrap_or_else(|| self.resolve_type_checked(ty_ann));
             // Check value matches annotation
             if !self.types_compatible(&value_ty, &ann_ty) {
                 self.errors.push(errors::type_mismatch(
@@ -431,7 +439,8 @@ impl TypeChecker {
 
     fn check_return(&mut self, expr: Option<&Spanned<Expr>>, span: Span) {
         let return_ty = if let Some(e) = expr {
-            self.check_expr(e)
+            let expected_return_ty = self.symbols.current_return_type().cloned();
+            self.check_expr_with_expected(e, expected_return_ty.as_ref())
         } else {
             ResolvedType::Unit
         };
