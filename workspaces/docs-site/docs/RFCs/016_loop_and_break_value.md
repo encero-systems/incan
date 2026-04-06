@@ -1,41 +1,37 @@
 # RFC 016: `loop` and `break <value>` (Loop Expressions)
 
-**Status:** Planned
-**Created:** 2025-12-24  
+- **Status:** Planned
+- **Created:** 2025-12-24
+- **Author(s):** Danny Meijer (@dannymeijer)
+- **Related:** RFC 006 (generators)
+- **Issue:** —
+- **RFC PR:** —
+- **Written against:** v0.1
+- **Shipped in:** —
 
 ## Summary
 
-Add a `loop:` keyword for explicit infinite loops, and extend `break` to optionally carry a value: `break <expr>`.
-
-This enables treating `loop:` as an **expression** that can produce a value (similar to Rust’s `loop { ... }`), while
-keeping `while` as the general conditional loop construct.
+Add a `loop:` keyword for explicit infinite loops and extend `break` to optionally carry a value (`break <expr>`), so `loop:` can be an expression that produces a value (like Rust’s `loop { ... }`) while `while` remains the general conditional loop construct.
 
 ## Motivation
 
-Today, users express infinite loops as `while True:`. The compiler may emit Rust `loop {}` for this pattern, but the
-source language has no explicit infinite-loop construct and cannot express “break with a value”.
-
-Adding `loop:` and `break <value>` provides:
-
-- Clearer intent in source (`loop:` reads as “infinite loop”).
-- A foundation for expression-oriented control flow without “initialize then mutate” patterns.
-- A natural home for “search until found” patterns that return a value.
+Today, users express infinite loops as `while True:`. The compiler may emit Rust `loop {}` for that pattern, but the source language has no explicit infinite-loop construct and cannot express “break with a value.” Adding `loop:` and `break <value>` gives clearer intent (`loop:` reads as an infinite loop), a foundation for expression-oriented control flow without “initialize then mutate” patterns, and a natural shape for “search until found” loops that return a value.
 
 ## Goals
 
 - Introduce `loop:` as an explicit infinite loop construct.
 - Allow `break` to optionally carry a value: `break <expr>`.
-- Allow `loop:` to be used in expression position (e.g., assignment RHS).
+- Allow `loop:` in expression position (e.g., assignment RHS).
 - Keep existing `break` (no value) valid and well-defined.
-- Keep `while True:` valid (and optionally desugar `loop:` to `while True:` or vice-versa).
+- Keep `while True:` valid (and optionally desugar between `loop:` and `while True:` in the implementation).
 
 ## Non-goals
 
-- Labeled `break` / `continue` syntax changes (may be addressed in a follow-up RFC).
-- `break` with multiple values / tuple sugar (users can return tuples explicitly).
-- Making `while` an expression (this RFC keeps “value-yielding loops” scoped to `loop:`).
+- Labeled `break` / `continue` syntax (follow-up RFC).
+- `break` with multiple values or tuple sugar (callers return tuples explicitly).
+- Making `while` an expression (value-yielding loops stay scoped to `loop:`).
 
-## Proposed syntax
+## Guide-level explanation (how users think about it)
 
 ### `loop:`
 
@@ -52,53 +48,36 @@ break
 break some_expr
 ```
 
-## Semantics
+### Compute a value without external mutation
 
-### Loop execution
+```incan
+answer = loop:
+    if some_condition():
+        break 42
+```
 
-- `loop:` executes its body repeatedly until it is exited via `break` (or an error/abort).
-- `continue` skips to the next iteration (existing behavior).
+Equivalent with `while True:` without `break <value>` typically uses a `mut` accumulator and `break` after assignment.
 
-### `break` values
+### Search until found
 
-- `break` exits the innermost `loop:`. If it includes a value, that value becomes the value produced by the `loop:` expression.
-- `break` without a value is equivalent to `break ()` (i.e., produces `Unit`).
+```incan
+found = loop:
+    item = next_item()
+    if item.is_ok():
+        break item
+```
 
-### Expression result type
+### `break` without a value
 
-`loop:` is an expression with a single result type:
+```incan
+loop:
+    if done():
+        break
+```
 
-- If every reachable `break` in the loop is `break` (no value), the loop’s type is `Unit`.
-- If one or more `break` statements include values, the loop’s type is the **least upper bound** (LUB) / unification
-  result of all `break` value types.
-    - If the compiler cannot unify the break value types, it is a type error.
-- If a `loop:` has no reachable `break`, it is considered non-terminating.
-    - Initial implementation may treat this as a type error unless we also introduce a `Never`/`!` type.
+### Async and `await`
 
-### Interaction with generators (`yield`)
-
-`break` and `yield` are different control-flow concepts:
-
-- `break` exits a loop.
-- `yield` produces one element of an `Iterator[T]` and suspends execution (RFC 006).
-
-Inside a generator function, `loop:` behaves like any other loop construct:
-
-- `yield expr` produces a value and suspends the generator.
-- `break` exits the loop; the generator may continue after the loop, or terminate if nothing follows.
-
-Open design question:
-
-- If `loop:` is allowed as an expression inside generator bodies, `break <value>` would produce a value for the `loop:`
-  expression, but this value is distinct from generator output (which is produced only by `yield`).
-  We can either allow this (it is orthogonal), or restrict “loop-as-expression” in generators initially for simplicity.
-
-### Interaction with async/await
-
-`await` is an async suspension point: it pauses an `async def` until a `Future` is ready.
-It does not replace loops.
-
-You typically combine them:
+`await` pauses an `async def` until a `Future` is ready; it does not replace loops. They compose naturally:
 
 ```incan
 import std.async
@@ -108,8 +87,6 @@ async def wait_until_done() -> None:
         if await done():
             break
 ```
-
-If you need polling/backoff, `await` controls waiting between iterations:
 
 ```incan
 from std.async.time import sleep
@@ -123,154 +100,97 @@ async def wait_with_backoff() -> None:
     return
 ```
 
-## Examples
+## Reference-level explanation (precise rules)
 
-### Example 1: Compute a value without external mutation
+### Loop execution
 
-```incan
-answer = loop:
-    if some_condition():
-        break 42
-```
+- `loop:` runs its body repeatedly until it exits via `break` (or an error/abort).
+- `continue` skips to the next iteration (existing behavior).
 
-Equivalent with `while True:` (today):
+### `break` values
 
-```incan
-mut answer = 0
-while True:
-    # Without `break <value>`, you typically compute a result via external mutation.
-    if some_condition():
-        answer = 42
-        break
-```
+- `break` exits the innermost enclosing `loop:`.
+- If `break` includes a value, that value is the value of the `loop:` expression.
+- `break` without a value is equivalent to `break ()` (the loop’s value is `Unit`).
 
-### Example 2: Search until found
+### Expression result type
 
-```incan
-found = loop:
-    item = next_item()
-    if item.is_ok():
-        break item
-```
+`loop:` is an expression with a single result type:
 
-Equivalent with `while True:` (today):
+- If every reachable `break` omits a value, the loop’s type is `Unit`.
+- If any reachable `break` carries a value, the loop’s type is the least upper bound (unification) of all break value types; if the compiler cannot unify them, it must report a type error.
+- If a `loop:` has no reachable `break`, the loop is non-terminating on those paths. Until the language defines a bottom (`Never` / `!`) type, the typechecker must reject such `loop:` expressions where a concrete type is required (see Design Decisions).
 
-```incan
-mut found = None
-while True:
-    item = next_item()
-    if item.is_ok():
-        found = item
-        break
-```
+### Generators (`yield`)
 
-Alternative with a conditional `while` (works when you can express the loop as “repeat until condition”):
+- `break` exits a loop; `yield` produces one element of an `Iterator` and suspends (RFC 006).
+- Inside a generator, `loop:` behaves like any other loop: `yield` suspends; `break` exits the loop and may leave the generator running after the loop or finishing, depending on control flow after the loop.
+- When `loop:` appears as an expression in a generator body, `break <value>` completes the loop expression only; it does not contribute to the iterator’s yielded sequence (only `yield` does). This is allowed and orthogonal to generator output (see Design Decisions).
+
+### Backend alignment
+
+The language must be able to lower value-carrying `break` together with `loop:` to the host pattern where an infinite loop is the construct that yields a value via `break` (as in Rust). A lowering that only has conditional `while` loops may need a dedicated representation for “infinite loop with value-carrying break” so the backend can emit the correct shape.
+
+## Design details
+
+### Why keep `loop:` / `break <value>` when `while` exists
+
+- `loop:` supports multiple exit points (success, timeout, error) without extra state variables.
+- `break <value>` makes the loop expression-oriented: `found = loop: ... break value` without a pre-declared `mut` holder.
+- A purely conditional `while` often forces pre-initialization or a “run once then test” shape that `loop:` avoids.
+
+### Example: conditional `while` alternative
 
 ```incan
 item = next_item()
 while not item.is_ok():
     item = next_item()
 
-# Here: item.is_ok() == true
 found = item
 ```
 
-Why keep `loop:` / `break <value>` anyway?
-
-- `loop:` supports **multiple exit points** naturally (success, timeout, error), without extra state variables.
-- `break <value>` makes the loop **expression-oriented**, so you can write `found = loop: ... break value` directly.
-- A conditional `while` often forces **pre-initialization** (or a `do-while` construct) to compute the first value.
-
-### Example 3: `break` without value
-
-```incan
-loop:
-    if done():
-        break
-```
-
-## Lowering / codegen strategy (Rust backend)
-
-### Desugaring options
-
-The compiler may implement `loop:` in one of two ways:
-
-1. **AST-level sugar**: desugar `loop:` to `while True:` early, and keep codegen optimizations.
-2. **Dedicated IR node**: lower `loop:` directly to an IR `Loop` statement/expression, and emit Rust `loop {}`.
-
-If `break <value>` is introduced, a dedicated IR representation is recommended, because Rust requires:
-
-- `loop { ... break expr; }` for value-yielding loops, and
-- the `loop` construct (not `while`) to yield a value.
-
-### IR changes
-
-If we treat `loop:` as an expression, IR likely needs:
-
-- An expression form (e.g., `IrExprKind::Loop { body: Vec<IrStmt>, result_ty: IrType }`), or
-- A block-expression convention where a `Loop` statement plus `break value` composes into an expression value.
-
-Additionally, `IrStmtKind::Break` should be extended to carry an optional value expression
-(and still optionally support labels in the future).
-
-## Backwards compatibility
-
-- Existing programs remain valid.
-- `while True:` remains valid and may continue to codegen to Rust `loop {}`.
-- `break` without value remains valid.
+This works when the loop is “repeat until condition,” but not always when the first iteration shape differs or there are multiple exits.
 
 ## Alternatives considered
 
-## Implementation notes (current crate layout)
+1. **Only `while True:`**
+   - Rejected: harder to justify `break <value>` on `while`, and less clear intent for infinite loops.
 
-This RFC introduces new syntax and vocabulary:
+2. **Make `while` an expression too**
+   - Rejected: larger semantic surface and surprise (“`while` yields a value?”); weaker alignment with common backend shapes for value-carrying breaks.
 
-- A new keyword: `loop`
-- An extended form of `break` (`break <value>`)
+## Drawbacks
 
-In the current workspace, those changes should be implemented in:
+- Adds a new keyword and parsing surface.
+- Unifying all `break` value types can produce dense type errors when branches disagree.
+- Generator and async bodies add control-flow combinations that implementers and tests must cover.
 
-- `crates/incan_core/src/lang/keywords.rs`: add `loop` to the keyword registry (with correct RFC provenance)
-- `crates/incan_syntax`: lexer emits `TokenKind::Keyword(KeywordId::Loop)` and parser handles `loop:` and `break <expr>`
-- `crates/incan_core` docgen/tests: update reference docs + add parity/guardrail tests so registry ↔ lexer stay aligned
+## Layers affected
 
-### Alternative A: Only keep `while True:`
+- **Lexer / parser:** `loop` keyword, `loop:` blocks, optional expression after `break`.
+- **Typechecker:** treat `loop:` as an expression; unify break value types; rules for non-terminating loops until a bottom type exists.
+- **Lowering / IR / emission:** represent infinite loops and value-carrying `break` so the backend can emit the correct infinite-loop + break-value pattern.
+- **Formatter / LSP (as applicable):** formatting and keyword-aware tooling for `loop` and extended `break`.
 
-Pros:
+## Design Decisions
 
-- No new keyword.
+1. **Non-terminating `loop:` (no reachable `break`)** — Until the language defines a bottom (`Never` / `!`) type, a `loop:` used as an expression where a concrete type is required must be rejected if there is no reachable `break`. Introducing `Never` is explicitly out of scope for this RFC’s minimum bar; a follow-up may add it and relax this rule.
 
-Cons:
+2. **Labeled `break` / `continue`** — Deferred to a separate RFC (see Non-goals).
 
-- Harder to justify `break <value>` on `while`.
-- Less clear intent in source.
+3. **Statement-only vs expression `loop:`** — Both forms are in scope: `loop:` may appear as a statement or as an expression (per Goals), not phased as statement-only first.
 
-### Alternative B: Make `while` an expression too
+4. **`loop:` as an expression inside generator bodies** — Allowed. `break <value>` only completes the inner `loop:` expression; iterator consumers still observe output only through `yield`.
 
-Pros:
+## Possible future syntax sugar: `loop ... until ...`
 
-- Fewer constructs.
-
-Cons:
-
-- More semantic surface and surprises (“`while` yields a value?”).
-- Less aligned with Rust codegen constraints.
-
-## Open questions
-
-- Do we want a `Never`/`!` type for non-terminating `loop:` expressions?
-- Do we want labeled loops (and labeled `break`/`continue`) in the same RFC or separately?
-- Should `loop:` be allowed in statement position only initially, with expression usage added later?
-
-### Possible future syntax sugar: `loop ... until ...`
-
-We may add a compact, statement-level sugar for “repeat an action until a condition holds”:
+A compact statement-level sugar for “repeat an action until a condition holds” may be added later:
 
 ```incan
 loop item.next() until item.is_ok()
 ```
 
-Desugaring (action first, then test, then break):
+Conceptual desugaring:
 
 ```incan
 loop:
@@ -279,7 +199,5 @@ loop:
         break
 ```
 
-Notes:
-
 - `until <expr>` must typecheck to `bool`.
-- This form is intended as a **statement** (it does not yield a value by itself).
+- This form is intended as a **statement** and does not yield a value by itself.

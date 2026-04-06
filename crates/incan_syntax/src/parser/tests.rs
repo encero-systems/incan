@@ -234,6 +234,39 @@ def f(a: Foo) -> int:
         Ok(())
     }
 
+    /// Qualified unit variant patterns parse as `Type::Variant` in the AST (for Rust lowering); surface syntax uses `.`.
+    #[test]
+    fn test_parse_qualified_unit_pattern_stores_double_colon_in_ast() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(x: int) -> int:
+  match x:
+    Kind.Read =>
+      return 1
+"#;
+        let program = parse_str(source)?;
+        let func = match &program.declarations[0].node {
+            Declaration::Function(func) => func,
+            _ => panic!("Expected function"),
+        };
+        let match_expr = match &func.body[0].node {
+            Statement::Expr(expr) => expr,
+            _ => panic!("Expected match expression statement"),
+        };
+        let arms = match &match_expr.node {
+            Expr::Match(_, arms) => arms,
+            _ => panic!("Expected match expression"),
+        };
+        let arm = &arms[0].node;
+        match &arm.pattern.node {
+            Pattern::Constructor(name, args) => {
+                assert_eq!(name, "Kind::Read");
+                assert!(args.is_empty());
+            }
+            _ => panic!("Expected constructor pattern"),
+        }
+        Ok(())
+    }
+
     #[test]
     fn test_parse_decorator_paths() -> Result<(), Vec<CompileError>> {
         let source = r#"

@@ -523,6 +523,58 @@ mod tests {
         Ok(())
     }
 
+    /// Formats `source` and checks the result lexes and parses (regression harness for formatter output validity).
+    fn assert_format_round_trip_lex_parse(source: &str) -> Result<String, FormatError> {
+        let formatted = format_source(source)?;
+        let tokens = crate::frontend::lexer::lex(&formatted).map_err(|errs| {
+            FormatError::SyntaxError(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n"))
+        })?;
+        crate::frontend::parser::parse(&tokens).map_err(|errs| {
+            FormatError::SyntaxError(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n"))
+        })?;
+        Ok(formatted)
+    }
+
+    /// Regression #235: qualified constructor patterns use `::` in the AST; the formatter must print Incansurface `.`.
+    #[test]
+    fn test_format_source_qualified_match_pattern_round_trip() -> Result<(), FormatError> {
+        let source = r#"def f(x: int) -> int:
+    match x:
+        E.V =>
+            return 1
+"#;
+        let formatted = assert_format_round_trip_lex_parse(source)?;
+        assert!(
+            formatted.contains("E.V"),
+            "expected dot-qualified pattern in output; got: {formatted}"
+        );
+        assert!(
+            !formatted.contains("E::V"),
+            "formatter must not emit internal :: spelling for match patterns; got: {formatted}"
+        );
+        Ok(())
+    }
+
+    /// Regression (GitHub #235): qualified constructor patterns with payloads must also round-trip.
+    #[test]
+    fn test_format_source_qualified_match_pattern_with_args_round_trip() -> Result<(), FormatError> {
+        let source = r#"def f(x: int) -> int:
+    match x:
+        E.V(y) =>
+            return y
+"#;
+        let formatted = assert_format_round_trip_lex_parse(source)?;
+        assert!(
+            formatted.contains("E.V(") && formatted.contains("y"),
+            "expected dot-qualified pattern with args in output; got: {formatted}"
+        );
+        assert!(
+            !formatted.contains("E::V"),
+            "formatter must not emit internal :: spelling for match patterns; got: {formatted}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn test_format_source_refuses_comment_loss_inline_comment() -> Result<(), FormatError> {
         let source = r#"def foo() -> int:
