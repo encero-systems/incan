@@ -4429,8 +4429,12 @@ They are not intended as runtime function calls.</p>
 <li><strong>Diagnostics</strong>: Unknown symbol errors in f-string interpolations now point to the precise <code>{expr}</code> span (including nested interpolation expressions) instead of the full f-string (<a href="/dev/RFCs/closed/implemented/011_fstring_error_spans">RFC 011</a>, #71).</li>
 <li><strong>Compiler</strong>: Fixed project root resolving to empty string when running <code>incan run src/main.incn</code> from the project directory, causing "No such file or directory" errors.</li>
 <li><strong>Compiler</strong>: Trait-typed values are now correctly assignable to supertrait return types in function returns and generic upcasts with compatible type arguments (<a href="/dev/RFCs/closed/implemented/042_traits_are_always_abstract">RFC 042</a>, #184).</li>
-<li><strong>Docs</strong>: Web tutorial examples updated to <code>std.web</code> imports and namespaced decorators.</li>
-<li><strong>Docs</strong>: Derives and traits explanation updated to use <code>@rust.extern</code>.</li>
+<li>
+<p><strong>Docs</strong>: Web tutorial examples updated to <code>std.web</code> imports and namespaced decorators.</p>
+</li>
+<li>
+<p><strong>Docs</strong>: Derives and traits explanation updated to use <code>@rust.extern</code>.</p>
+</li>
 <li><strong>Tooling</strong>: <code>incan fmt</code> no longer appends an extra blank line at end of file — output ends with a single trailing newline (#189).</li>
 <li><strong>Compiler</strong>: Trait bound inference now covers trait methods and impl methods, not just standalone functions. Generic bounds required by return types (e.g., <code>impl BoundedDataSet&lt;T&gt;</code>) are properly inferred and emitted in the Rust codegen, even when the bounds aren't used in the function body (#196).</li>
 <li><strong>Compiler/Tooling</strong>: Library builds now treat <code>mod.incn</code> as a directory entrypoint instead of a semantic module segment, so nested package modules no longer leak <code>crate::&lt;module&gt;::r#mod</code> paths or stale flat-vs-nested Rust files during <code>incan build --lib</code> (#227).</li>
@@ -4439,6 +4443,7 @@ They are not intended as runtime function calls.</p>
 <ul>
 <li>Web route handlers and their request models must be declared <code>pub</code> for cross-module wrapper generation (#117).</li>
 <li>Rust macro syntax (e.g., <code>serde_json::json!(...)</code>) is not supported in Incan source — use Rust crate functions and types directly instead.</li>
+<li><strong>Compiler</strong>: In some method-call shapes involving field-backed values, ownership lowering can still require an explicit <code>.clone()</code> to satisfy generated Rust, even though Incan is intended to hide borrow-checker mechanics from user code (#241). Targeted for the <code>0.3 Release</code> milestone.</li>
 </ul>
 <h2 id="rfcs-implemented">RFCs implemented<a class="headerlink" href="#rfcs-implemented" title="Permanent link">&para;</a></h2>
 <ul>
