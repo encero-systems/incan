@@ -63,6 +63,7 @@
 | Super | `super` |  | Hard | - | Import | Expression | RFC 000 | 0.1 | Stable |
 | Crate | `crate` |  | Hard | - | Import | Expression | RFC 005 | 0.1 | Stable |
 | Const | `const` |  | Hard | - | Binding | Statement | RFC 008 | 0.1 | Stable |
+| Static | `static` |  | Hard | - | Binding | Statement | RFC 052 | 0.2 | Stable |
 | Let | `let` |  | Hard | - | Binding | Statement | RFC 000 | 0.1 | Stable |
 | Mut | `mut` |  | Hard | - | Binding | Modifier | RFC 000 | 0.1 | Stable |
 | SelfKw | `self` |  | Hard | - | Binding | ReceiverOnly | RFC 000 | 0.1 | Stable |

@@ -45,6 +45,32 @@ In Incan, `const` exists to make intent explicit and to unlock compiler guarante
     In Incan, `const` means “compile-time constant”: the initializer must be const-evaluable, and the result is exposed as
     a read-only (frozen) value.
 
+## When should I use `static` instead?
+
+Use `static` when the module owns **mutable runtime state** that must live across calls:
+
+```incan
+static registered_names: list[str] = []
+
+def register_name(name: str) -> None:
+    registered_names.append(name)
+```
+
+The important difference is semantic, not cosmetic:
+
+- `const` is compile-time, deeply immutable, and never reassignable.
+- `static` is runtime-initialized, module-owned storage, and reads observe the current live value.
+
+If you catch yourself trying to reassign a `const`, the value probably was not a `const` to begin with.
+
+`static` has its own rules and mental model. Do not treat it as a “mutable const”.
+
+For the full story, see:
+
+- [Module static storage](static_storage.md)
+- [Static storage (reference)](../reference/static_storage.md)
+- [Module state (how-to)](../how-to/module_state.md)
+
 ## What can a `const` initializer do?
 
 *Allowed*:
@@ -121,5 +147,8 @@ const LIMIT: int = BASE * 2
 ## See also
 
 - [RFC 008: Const bindings][RFC 008]
+- [RFC 052: Module static storage][RFC 052]
+- [Module static storage](static_storage.md)
+- [Static storage (reference)](../reference/static_storage.md)
 
 --8<-- "_snippets/rfcs_refs.md"

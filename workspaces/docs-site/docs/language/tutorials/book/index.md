@@ -14,7 +14,7 @@ Goals:
 2. [Values, variables, and types](02_values_variables_and_types.md)
 3. [Functions](03_functions.md)
 4. [Control flow](04_control_flow.md)
-5. [Modules and imports](05_modules_and_imports.md)
+5. [Modules and imports](05_modules_and_imports.md) — also introduces module-owned state with `static`
 6. [Errors (Result/Option and `?`)](06_errors.md)
 7. [Strings and formatting](07_strings_and_formatting.md)
 8. [Collections and iteration](08_collections_and_iteration.md)

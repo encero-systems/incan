@@ -1,6 +1,6 @@
 # RFC 052: Module Static Storage
 
-- **Status:** Planned
+- **Status:** In Progress
 - **Created:** 2026-04-07
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -251,6 +251,25 @@ This RFC does not require one specific backend storage strategy. It only require
 - **Stdlib / Runtime (`incan_stdlib`)**: runtime support may be needed for initialization ordering and shared mutable storage behavior, but this RFC does not require automatic synchronization for escaped aliases.
 - **Formatter**: the formatter must support `static` declarations and preserve canonical spacing and ordering.
 - **LSP / Tooling**: hover, completion, rename, diagnostics, and symbol displays should surface `static` as mutable module state rather than as a constant.
+
+## Implementation Plan
+
+- Add `static` as a distinct declaration kind in the lexer/parser/AST/formatter and surface it through LSP/tooling.
+- Extend typechecking and symbol resolution so module statics are first-class bindings with declaration-order validation, imported-rebinding diagnostics, and local live-alias tracking.
+- Introduce first-class IR support for module statics plus runtime storage helpers in `incan_stdlib` so reads, writes, and direct aliases preserve live storage semantics.
+- Extend library export manifests and `pub::` import resolution so `pub static` shares the same storage cell across modules.
+- Cover the feature with parser, typechecker, codegen snapshot, and end-to-end runtime tests, then update language docs and release notes.
+
+## Progress Checklist
+
+- [x] Parser/AST/formatter support for `static` / `pub static`
+- [x] Typechecker support for module-scope placement, required annotation/initializer, declaration-order rules, cycle rejection, and imported-static rebinding diagnostics
+- [x] IR lowering and Rust emission support for first-class module static storage
+- [x] Runtime storage helpers in `incan_stdlib` for live reads, writes, and direct aliases
+- [x] Library manifest / `pub::` support for exported statics
+- [x] Language docs and release notes updated
+- [x] Targeted parser, typechecker, codegen snapshot, and runtime tests added
+- [ ] Full repository verification gate (`mkdocs build --strict`, `make fmt`, `make pre-commit-full`, `make smoke-test`)
 
 ## Design Decisions
 

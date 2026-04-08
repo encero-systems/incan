@@ -19,6 +19,7 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 - [Async Programming](how-to/async_programming.md)
 - [Error Messages](how-to/error_messages.md)
 - [File I/O](how-to/file_io.md)
+- [Module state](how-to/module_state.md)
 - [Performance](how-to/performance.md)
 - [Rust Interop](how-to/rust_interop.md)
 
@@ -26,6 +27,7 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 
 - Generated language reference: [Language reference (generated)](reference/language.md)
 - Formatting / style (canonical `incan fmt` guide): [Code formatting](../tooling/how-to/formatting.md)
+- Static storage: [Static storage](reference/static_storage.md)
 - Numeric semantics: [Numeric Semantics](reference/numeric_semantics.md)
 - Strings: [Strings](reference/strings.md)
 - Derives reference cluster:
@@ -44,6 +46,7 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 - [Control flow](explanation/control_flow.md)
 - [Closures](explanation/closures.md)
 - [Consts](explanation/consts.md)
+- [Module static storage](explanation/static_storage.md)
 - [Derives & Traits](reference/derives_and_traits.md)
 - [Enums](explanation/enums.md)
 - [Error Handling](explanation/error_handling.md)

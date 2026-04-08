@@ -13,10 +13,10 @@ For details and tasks, use the split pages:
 - Modules are discovered from the filesystem — there is no explicit `mod` declaration step.
 - Directories can act as modules; use `mod.incn` as the “main file” for a directory module when needed.
 - Common types and functions are available without imports via the prelude (see the reference page for the full list).
-- The **standard library** lives under the `std` namespace (e.g. `from std.web import route`). The compiler activates
-  features automatically based on which `std.*` modules you import.
+- The **standard library** lives under the `std` namespace (e.g. `from std.web import route`). The compiler activates features automatically based on which `std.*` modules you import.
 - Some language keywords are **import-activated** (soft keywords), for example `async` / `await` after importing
   `std.async` (details in the reference page).
+- Modules may also export **shared runtime state** via `pub static`, which importing modules access as the same live storage cell rather than as a copied value.
 
 <!-- TODO: Add a link to the standard library sections once we create them -->
 
@@ -47,4 +47,6 @@ without `__init__.py`; use `mod.incn` when you need a directory entrypoint.
 ## Where to go next
 
 - Practical multi-file project layouts: [Imports and modules (how-to)](../how-to/imports_and_modules.md)
+- Practical shared module state: [Module state (how-to)](../how-to/module_state.md)
 - Full import syntax, path rules, prelude contents: [Imports and modules (reference)](../reference/imports_and_modules.md)
+- Exact `static` / `pub static` rules: [Static storage (reference)](../reference/static_storage.md)

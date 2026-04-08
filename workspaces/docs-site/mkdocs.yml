@@ -132,6 +132,7 @@ nav:
           - Error messages: language/how-to/error_messages.md
           - File I/O: language/how-to/file_io.md
           - Imports and modules: language/how-to/imports_and_modules.md
+          - Module state: language/how-to/module_state.md
           - Modeling with enums: language/how-to/modeling_with_enums.md
           - std.testing guide: language/how-to/testing_stdlib.md
           - String processing: language/how-to/string_processing.md
@@ -144,6 +145,7 @@ nav:
           - Glossary: language/reference/glossary.md
           - File I/O reference (Path/File APIs): language/reference/file_io.md
           - Imports and modules: language/reference/imports_and_modules.md
+          - Static storage: language/reference/static_storage.md
           - Numeric semantics: language/reference/numeric_semantics.md
           - Strings and Bytes: language/reference/strings.md
           - Testing: language/reference/testing.md
@@ -171,6 +173,7 @@ nav:
           - Control flow: language/explanation/control_flow.md
           - Closures: language/explanation/closures.md
           - Consts: language/explanation/consts.md
+          - Module static storage: language/explanation/static_storage.md
           - Derives & traits (explained): language/explanation/derives_and_traits.md
           - How derives work: language/explanation/how_derives_work.md
           - Enums: language/explanation/enums.md

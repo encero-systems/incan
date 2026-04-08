@@ -66,6 +66,23 @@ The reference documents how parent/root paths work:
 
 See: [Imports and modules (reference)](../../reference/imports_and_modules.md).
 
+## Module-owned state with `static`
+
+Sometimes a module does not just export functions and types.  
+Sometimes it owns long-lived runtime state.
+
+That is what `static` is for:
+
+--8<-- "snippets/module_state.md"
+
+Important:
+
+- `static` is *runtime* state, not a compile-time constant
+- imported `pub static` names refer to the same live storage
+- `static` always needs an explicit type and initializer
+
+Use `const` for baked compile-time data (constants).
+
 ## Try it
 
 1. Add another function in `strings.incn` (for example `whisper`).
@@ -93,8 +110,11 @@ See: [Imports and modules (reference)](../../reference/imports_and_modules.md).
 ## What to learn next
 
 - Explanation: [Imports and modules](../../explanation/imports_and_modules.md)
+- Explanation: [Module static storage](../../explanation/static_storage.md)
 - How-to: [Imports and modules (how-to)](../../how-to/imports_and_modules.md)
+- How-to: [Module state](../../how-to/module_state.md)
 - Reference: [Imports and modules (reference)](../../reference/imports_and_modules.md)
+- Reference: [Static storage](../../reference/static_storage.md)
 
 ## Next
 
