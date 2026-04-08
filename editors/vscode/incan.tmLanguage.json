@@ -620,7 +620,7 @@
           "name": "keyword.control.flow.incan"
         },
         {
-          "match": "\\b(const)\\b",
+          "match": "\\b(const|static)\\b",
           "name": "keyword.control.const.incan"
         },
         {

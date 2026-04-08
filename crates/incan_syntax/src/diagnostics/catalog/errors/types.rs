@@ -236,6 +236,33 @@ pub fn reassignment_without_mut(name: &str, span: Span) -> CompileError {
         .with_note("Reassignment requires the variable to be declared as mutable")
 }
 
+pub fn static_initializer_requires_earlier_static(name: &str, current: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Static '{}' cannot reference '{}' before it is initialized",
+            current, name
+        ),
+        span,
+    )
+    .with_hint("Module statics may only reference earlier statics in declaration order")
+}
+
+pub fn static_dependency_cycle(cycle: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Static dependency cycle detected: {}", cycle), span)
+}
+
+pub fn imported_static_reassignment_not_allowed(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Cannot reassign imported static '{}'", name), span)
+        .with_hint("Imported statics expose shared storage; mutate their contents instead of rebinding the name")
+}
+
+pub fn const_reassignment_suggests_static(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Cannot reassign const '{}'", name), span).with_hint(format!(
+        "If this value needs module-owned mutable storage, declare it as `static {}: Type = ...`",
+        name
+    ))
+}
+
 // -- Match exhaustiveness ----------------------------------------------------
 
 pub fn non_exhaustive_match(missing: &[String], span: Span) -> CompileError {

@@ -217,6 +217,24 @@ pub fn method_decl_expected_body(span: Span) -> CompileError {
     )
 }
 
+pub fn static_only_allowed_at_module_scope(span: Span) -> CompileError {
+    CompileError::syntax(
+        "`static` declarations are only allowed at module scope".to_string(),
+        span,
+    )
+    .with_hint("Move this declaration to the top level of the module")
+}
+
+pub fn static_missing_type_annotation(name: &str, span: Span) -> CompileError {
+    CompileError::syntax(format!("Static '{}' requires an explicit type annotation", name), span)
+        .with_hint(format!("Declare it as `static {}: Type = ...`", name))
+}
+
+pub fn static_missing_initializer(name: &str, span: Span) -> CompileError {
+    CompileError::syntax(format!("Static '{}' requires an initializer", name), span)
+        .with_hint(format!("Declare it as `static {}: Type = value`", name))
+}
+
 pub fn decorators_on_fields_not_supported(span: Span) -> CompileError {
     CompileError::syntax("Decorators on fields are not supported".to_string(), span)
 }

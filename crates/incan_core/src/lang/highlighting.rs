@@ -32,7 +32,7 @@ const FLOW_KEYWORDS: &[KeywordId] = &[
     KeywordId::Pass,
 ];
 
-const CONST_KEYWORDS: &[KeywordId] = &[KeywordId::Const];
+const CONST_KEYWORDS: &[KeywordId] = &[KeywordId::Const, KeywordId::Static];
 const ASYNC_KEYWORDS: &[KeywordId] = &[KeywordId::Async, KeywordId::Await];
 const DECLARATION_KEYWORDS: &[KeywordId] = &[
     KeywordId::Def,

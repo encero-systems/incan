@@ -43,6 +43,8 @@ impl<'a> Parser<'a> {
             Declaration::Import(self.import_decl(Visibility::Private)?)
         } else if self.check_keyword(KeywordId::Const) {
             Declaration::Const(self.const_decl_with_visibility(visibility)?)
+        } else if self.check_keyword(KeywordId::Static) {
+            Declaration::Static(self.static_decl_with_visibility(visibility)?)
         } else if self.check_keyword(KeywordId::Model) {
             Declaration::Model(self.model_decl(decorators, visibility)?)
         } else if self.check_keyword(KeywordId::Class) {
@@ -83,6 +85,25 @@ impl<'a> Parser<'a> {
         self.expect_op(OperatorId::Eq, "Expected '=' after const name")?;
         let value = self.expression()?;
         Ok(ConstDecl {
+            visibility,
+            name,
+            ty,
+            value,
+        })
+    }
+
+    fn static_decl_with_visibility(&mut self, visibility: Visibility) -> Result<StaticDecl, CompileError> {
+        self.expect_keyword(KeywordId::Static, "Expected 'static'")?;
+        let name = self.identifier()?;
+        if !self.match_punct(PunctuationId::Colon) {
+            return Err(errors::static_missing_type_annotation(&name, self.current_span()));
+        }
+        let ty = self.type_expr()?;
+        if !self.match_op(OperatorId::Eq) {
+            return Err(errors::static_missing_initializer(&name, self.current_span()));
+        }
+        let value = self.expression()?;
+        Ok(StaticDecl {
             visibility,
             name,
             ty,

@@ -299,6 +299,7 @@ impl<'a> Parser<'a> {
                 || self.check_keyword(KeywordId::Enum)
                 || self.check_keyword(KeywordId::Type)
                 || self.check_keyword(KeywordId::Const)
+                || self.check_keyword(KeywordId::Static)
                 || self.check_keyword(KeywordId::Import)
             {
                 return;

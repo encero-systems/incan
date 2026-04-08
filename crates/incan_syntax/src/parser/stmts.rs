@@ -44,6 +44,8 @@ impl<'a> Parser<'a> {
         } else if self.check_keyword(KeywordId::Pass) {
             self.advance();
             Statement::Pass
+        } else if self.check_keyword(KeywordId::Static) {
+            return Err(errors::static_only_allowed_at_module_scope(self.current_span()));
         } else if self.check(&TokenKind::Punctuation(PunctuationId::Ellipsis)) {
             // ... is equivalent to pass (Python-style placeholder)
             self.advance();
@@ -81,6 +83,8 @@ impl<'a> Parser<'a> {
         } else if self.check_keyword(KeywordId::Pass) || self.check(&TokenKind::Punctuation(PunctuationId::Ellipsis)) {
             self.advance();
             Statement::Pass
+        } else if self.check_keyword(KeywordId::Static) {
+            return Err(errors::static_only_allowed_at_module_scope(self.current_span()));
         } else if let Some(surface_stmt) = self.try_surface_keyword_statement()? {
             surface_stmt
         } else {

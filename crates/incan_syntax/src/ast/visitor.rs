@@ -17,6 +17,7 @@ pub trait Visitor {
         match &decl.node {
             Declaration::Import(i) => self.visit_import(i),
             Declaration::Const(c) => self.visit_const(c),
+            Declaration::Static(s) => self.visit_static(s),
             Declaration::Model(m) => self.visit_model(m),
             Declaration::Class(c) => self.visit_class(c),
             Declaration::Trait(t) => self.visit_trait(t),
@@ -30,6 +31,7 @@ pub trait Visitor {
 
     fn visit_import(&mut self, _import: &ImportDecl) {}
     fn visit_const(&mut self, _const_decl: &ConstDecl) {}
+    fn visit_static(&mut self, _static_decl: &StaticDecl) {}
     fn visit_docstring(&mut self, _doc: &str) {}
     fn visit_model(&mut self, _model: &ModelDecl) {}
     fn visit_class(&mut self, _class: &ClassDecl) {}

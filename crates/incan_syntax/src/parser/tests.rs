@@ -1506,6 +1506,54 @@ const ANSWER: int = 42
     }
 
     #[test]
+    fn test_parse_static_decl() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+pub static counter: int = 0
+"#;
+        let program = parse_str(source)?;
+        assert_eq!(program.declarations.len(), 1);
+        match &program.declarations[0].node {
+            Declaration::Static(static_decl) => {
+                assert_eq!(static_decl.name, "counter");
+                assert_eq!(static_decl.visibility, Visibility::Public);
+            }
+            _ => panic!("Expected static"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_static_requires_type_annotation() {
+        let source = "static counter = 0\n";
+        let Err(errors) = parse_str(source) else {
+            panic!("expected parse error");
+        };
+        assert!(errors.iter().any(|error| error.message.contains("requires an explicit type annotation")));
+    }
+
+    #[test]
+    fn test_parse_static_requires_initializer() {
+        let source = "static counter: int\n";
+        let Err(errors) = parse_str(source) else {
+            panic!("expected parse error");
+        };
+        assert!(errors.iter().any(|error| error.message.contains("requires an initializer")));
+    }
+
+    #[test]
+    fn test_parse_static_rejected_in_function_body() {
+        let source = r#"
+def main() -> int:
+  static counter: int = 0
+  return counter
+"#;
+        let Err(errors) = parse_str(source) else {
+            panic!("expected parse error");
+        };
+        assert!(errors.iter().any(|error| error.message.contains("only allowed at module scope")));
+    }
+
+    #[test]
     fn test_parse_fstring_expr_spans_multiple_interpolations() -> Result<(), Vec<CompileError>> {
         let source = "def greet(name: str, title: str) -> str:\n  return f\"Hello {title} {name}\"\n";
         let program = parse_str(source)?;

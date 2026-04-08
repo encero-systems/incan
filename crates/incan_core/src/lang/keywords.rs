@@ -79,6 +79,7 @@ pub enum KeywordId {
 
     // Bindings / receivers
     Const,
+    Static,
     Let,
     Mut,
     SelfKw,
@@ -475,6 +476,15 @@ pub const KEYWORDS: &[KeywordDescriptor] = &[
         &[KeywordUsage::Statement],
         RFC::_008,
         Since(0, 1),
+    ),
+    info(
+        KeywordId::Static,
+        "static",
+        &[],
+        KeywordCategory::Binding,
+        &[KeywordUsage::Statement],
+        RFC::_052,
+        Since(0, 2),
     ),
     info(
         KeywordId::Let,

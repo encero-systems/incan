@@ -16,6 +16,14 @@ pub struct ConstDecl {
     pub value: Spanned<super::Expr>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct StaticDecl {
+    pub visibility: Visibility,
+    pub name: Ident,
+    pub ty: Spanned<Type>,
+    pub value: Spanned<super::Expr>,
+}
+
 // ============================================================================
 // Imports
 // ============================================================================

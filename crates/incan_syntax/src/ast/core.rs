@@ -38,7 +38,8 @@ pub type Ident = String;
 
 /// Visibility modifier for module-level items.
 ///
-/// This is intentionally minimal for now; only `pub` is supported for consts.
+/// This is intentionally minimal for now; only `pub` is supported for top-level declarations that allow visibility
+/// control (for example `const` and `static`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Visibility {
     #[default]
@@ -67,6 +68,7 @@ pub struct Program {
 pub enum Declaration {
     Import(super::ImportDecl),
     Const(super::ConstDecl),
+    Static(super::StaticDecl),
     Model(super::ModelDecl),
     Class(super::ClassDecl),
     Trait(super::TraitDecl),

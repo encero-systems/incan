@@ -14,6 +14,7 @@ pub mod iter;
 pub mod num;
 pub mod prelude;
 pub mod reflection;
+pub mod storage;
 pub mod strings;
 pub mod testing;
 pub mod version;
