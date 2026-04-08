@@ -581,7 +581,7 @@ impl ResolvedType {
         }
     }
 
-    /// Get the Err type from Result[T, E]
+    /// Get the Err type from `Result[T, E]`.
     pub fn result_err_type(&self) -> Option<&ResolvedType> {
         match self {
             ResolvedType::Generic(name, args)
@@ -593,7 +593,7 @@ impl ResolvedType {
         }
     }
 
-    /// Get the inner type from Option[T]
+    /// Get the inner type from `Option[T]`.
     pub fn option_inner_type(&self) -> Option<&ResolvedType> {
         match self {
             ResolvedType::Generic(name, args)

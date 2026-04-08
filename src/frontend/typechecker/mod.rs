@@ -1313,6 +1313,7 @@ impl TypeChecker {
         }
     }
 
+    /// Recurse through call arguments while checking initializer-reachable static writes.
     fn collect_static_initializer_static_writes_from_call_args(
         &mut self,
         args: &[CallArg],
@@ -1328,6 +1329,7 @@ impl TypeChecker {
         }
     }
 
+    /// Recurse through statements reachable from an initializer expression and reject any write to static storage.
     fn collect_static_initializer_static_writes_from_stmt(
         &mut self,
         stmt: &Spanned<Statement>,
