@@ -675,15 +675,15 @@ impl TypeChecker {
         _decl_span: Span,
     ) -> ConstEvalResult {
         match lit {
-            Literal::Int(n) => ConstEvalResult {
+            Literal::Int(il) => ConstEvalResult {
                 ty: ResolvedType::Int,
                 kind: ConstKind::RustNative,
-                value: Some(ConstValue::Int(*n)),
+                value: Some(ConstValue::Int(il.value)),
             },
             Literal::Float(f) => ConstEvalResult {
                 ty: ResolvedType::Float,
                 kind: ConstKind::RustNative,
-                value: Some(ConstValue::Float(*f)),
+                value: Some(ConstValue::Float(f.value)),
             },
             Literal::Bool(b) => ConstEvalResult {
                 ty: ResolvedType::Bool,

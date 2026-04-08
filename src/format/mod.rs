@@ -469,6 +469,24 @@ mod tests {
         })
     }
 
+    fn assert_comment_line_immediately_before(
+        lines: &[&str],
+        stmt_label: &str,
+        line_matches: impl Fn(&str) -> bool,
+        comment_needle: &str,
+    ) -> Result<(), FormatError> {
+        let idx = lines.iter().position(|&l| line_matches(l)).ok_or_else(|| {
+            FormatError::SyntaxError(format!(
+                "missing formatted line for {stmt_label} (comment-anchoring regression)"
+            ))
+        })?;
+        assert!(
+            idx > 0 && lines[idx - 1].contains(comment_needle),
+            "expected comment {comment_needle:?} on the line immediately before {stmt_label}; lines={lines:?}"
+        );
+        Ok(())
+    }
+
     fn assert_decl_block_docstring_markers(doc: Option<&str>, context: &str) -> Result<(), FormatError> {
         let Some(doc) = doc else {
             return Err(FormatError::SyntaxError(format!(
@@ -705,6 +723,125 @@ def function() -> int:
         assert!(
             formatted.contains("# keep this comment"),
             "expected inline comment to survive formatting; got: {formatted}"
+        );
+        Ok(())
+    }
+
+    /// Regression (GitHub #250): `f64::Display` drops `.0` for whole numbers, which broke
+    /// `normalize_code_for_match` anchors in [`reattach_comments`] and flushed standalone `#` lines to EOF.
+    ///
+    /// Covers `120.0`, distinct `1E6` / `1e6` exponents, `1_000.0`, and underscored int `1_000`, each with a standalone
+    /// comment on the line above. See also [`test_format_source_preserves_numeric_literal_source_substring`].
+    #[test]
+    fn test_format_source_preserves_float_spelling_for_comment_anchors() -> Result<(), FormatError> {
+        let source = r#"def main() -> None:
+    """Docstring."""
+    # Comment before float line.
+    x = 120.0
+    # Comment before int line.
+    y = 1
+    # Comment before E float line.
+    z = 1E6
+    # Comment before e float line.
+    w = 1e6
+    # Comment before underscore float line.
+    v = 1_000.0
+    # Comment before underscore int line.
+    u = 1_000
+"#;
+        let formatted = format_source(source)?;
+        assert!(
+            formatted.contains("120.0"),
+            "expected 120.0 spelling preserved; got: {formatted:?}"
+        );
+        assert!(
+            formatted.contains("z = 1E6"),
+            "expected uppercase E on z line; got: {formatted:?}"
+        );
+        assert!(
+            formatted.contains("w = 1e6"),
+            "expected lowercase e on w line; got: {formatted:?}"
+        );
+        assert!(
+            formatted.contains("v = 1_000.0"),
+            "expected underscores on v line; got: {formatted:?}"
+        );
+        assert!(
+            formatted.contains("u = 1_000"),
+            "expected underscores on int u line; got: {formatted:?}"
+        );
+
+        let lines: Vec<&str> = formatted.lines().collect();
+        assert_comment_line_immediately_before(
+            &lines,
+            "x = 120.0",
+            |l| l.trim_start().starts_with("x = "),
+            "# Comment before float",
+        )?;
+        assert_comment_line_immediately_before(
+            &lines,
+            "y = 1",
+            |l| l.trim_start().starts_with("y = "),
+            "# Comment before int",
+        )?;
+        assert_comment_line_immediately_before(
+            &lines,
+            "z = 1E6",
+            |l| l.trim_start().starts_with("z = "),
+            "# Comment before E float",
+        )?;
+        assert_comment_line_immediately_before(
+            &lines,
+            "w = 1e6",
+            |l| l.trim_start().starts_with("w = "),
+            "# Comment before e float",
+        )?;
+        assert_comment_line_immediately_before(
+            &lines,
+            "v = 1_000.0",
+            |l| l.trim_start().starts_with("v = "),
+            "# Comment before underscore float",
+        )?;
+        assert_comment_line_immediately_before(
+            &lines,
+            "u = 1_000",
+            |l| l.trim_start().starts_with("u = "),
+            "# Comment before underscore int",
+        )?;
+        Ok(())
+    }
+
+    /// [`IntLiteral::repr`](incan_syntax::ast::IntLiteral) / [`FloatLiteral::repr`](incan_syntax::ast::FloatLiteral)
+    /// use the lexer source slice (`_`, `E`/`e` preserved).
+    #[test]
+    fn test_format_source_preserves_numeric_literal_source_substring() -> Result<(), FormatError> {
+        let source = r#"def f() -> None:
+    a = 1_200.0
+    b = 1E6
+    c = 1_000
+    d = 1e6
+    e = 1000.0
+"#;
+        let formatted = format_source(source)?;
+        assert!(
+            formatted.contains("1_200.0"),
+            "expected underscore separators preserved in float literal; got: {formatted:?}"
+        );
+        assert!(
+            formatted.contains("b = 1E6"),
+            "expected uppercase E on b line; got: {formatted:?}"
+        );
+        assert!(
+            formatted.contains("c = 1_000"),
+            "expected underscore separators preserved in int literal; got: {formatted:?}"
+        );
+        assert!(
+            formatted.contains("d = 1e6"),
+            "expected lowercase e on d line; got: {formatted:?}"
+        );
+        assert!(
+            formatted.contains("e = 1000.0"),
+            "expected plain 1000.0 preserved; got: {formatted:?}"
         );
         Ok(())
     }

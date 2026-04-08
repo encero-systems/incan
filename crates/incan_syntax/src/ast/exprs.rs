@@ -99,10 +99,56 @@ pub enum FStringPart {
     Expr(Spanned<Expr>),
 }
 
+/// Parsed integer literal with the **source substring** used for formatting.
+///
+/// [`IntLiteral::repr`] is the exact `source[start..end]` span from the lexer (including `_` numeric separators).
+///
+/// [`PartialEq`] compares only [`IntLiteral::value`] so AST equality tests do not depend on `repr`.
+#[derive(Debug, Clone)]
+pub struct IntLiteral {
+    pub value: i64,
+    pub repr: String,
+}
+
+impl PartialEq for IntLiteral {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl IntLiteral {
+    /// Canonical decimal spelling — for AST nodes built without source text (tests, vocab bridge).
+    pub fn synthetic(value: i64) -> Self {
+        Self {
+            value,
+            repr: value.to_string(),
+        }
+    }
+}
+
+/// Parsed floating-point literal with the **source substring** used for formatting.
+///
+/// [`FloatLiteral::repr`] is the exact `source[start..end]` span from the lexer (including `_` numeric separators and
+/// the author’s `e` / `E` exponent spelling). It avoids `f64` `Display` shortening (for example `120.0` vs `120`) and
+/// keeps formatter output aligned with comment reattachment anchors.
+///
+/// [`PartialEq`] compares only [`FloatLiteral::value`] (IEEE bits) so AST equality tests do not depend on `repr`.
+#[derive(Debug, Clone)]
+pub struct FloatLiteral {
+    pub value: f64,
+    pub repr: String,
+}
+
+impl PartialEq for FloatLiteral {
+    fn eq(&self, other: &Self) -> bool {
+        self.value.to_bits() == other.value.to_bits()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
-    Int(i64),
-    Float(f64),
+    Int(IntLiteral),
+    Float(FloatLiteral),
     String(String),
     Bytes(Vec<u8>),
     Bool(bool),

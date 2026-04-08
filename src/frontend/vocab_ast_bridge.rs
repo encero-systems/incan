@@ -427,7 +427,7 @@ fn internal_expr_to_public(expr: &ast::Expr) -> Result<incan_vocab::IncanExpr, V
     match expr {
         ast::Expr::Ident(name) => Ok(incan_vocab::IncanExpr::Name(name.clone())),
         ast::Expr::Literal(ast::Literal::String(value)) => Ok(incan_vocab::IncanExpr::Str(value.clone())),
-        ast::Expr::Literal(ast::Literal::Int(value)) => Ok(incan_vocab::IncanExpr::Int(*value)),
+        ast::Expr::Literal(ast::Literal::Int(il)) => Ok(incan_vocab::IncanExpr::Int(il.value)),
         ast::Expr::Literal(ast::Literal::Bool(value)) => Ok(incan_vocab::IncanExpr::Bool(*value)),
         ast::Expr::Tuple(values) => values
             .iter()
@@ -506,7 +506,9 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
     match expr {
         incan_vocab::IncanExpr::Name(name) => Ok(ast::Expr::Ident(name.clone())),
         incan_vocab::IncanExpr::Str(value) => Ok(ast::Expr::Literal(ast::Literal::String(value.clone()))),
-        incan_vocab::IncanExpr::Int(value) => Ok(ast::Expr::Literal(ast::Literal::Int(*value))),
+        incan_vocab::IncanExpr::Int(value) => Ok(ast::Expr::Literal(ast::Literal::Int(ast::IntLiteral::synthetic(
+            *value,
+        )))),
         incan_vocab::IncanExpr::Bool(value) => Ok(ast::Expr::Literal(ast::Literal::Bool(*value))),
         incan_vocab::IncanExpr::CurrentField(field) => Ok(ast::Expr::Field(
             Box::new(ast::Spanned::new(
@@ -636,7 +638,7 @@ fn public_decorator_arg_value_from_internal_expr(
 ) -> Result<incan_vocab::DecoratorArgValue, VocabAstBridgeError> {
     match expr {
         ast::Expr::Literal(ast::Literal::String(value)) => Ok(incan_vocab::DecoratorArgValue::Str(value.clone())),
-        ast::Expr::Literal(ast::Literal::Int(value)) => Ok(incan_vocab::DecoratorArgValue::Int(*value)),
+        ast::Expr::Literal(ast::Literal::Int(il)) => Ok(incan_vocab::DecoratorArgValue::Int(il.value)),
         ast::Expr::Literal(ast::Literal::Bool(value)) => Ok(incan_vocab::DecoratorArgValue::Bool(*value)),
         _ => Ok(incan_vocab::DecoratorArgValue::Expr(internal_expr_to_public(expr)?)),
     }

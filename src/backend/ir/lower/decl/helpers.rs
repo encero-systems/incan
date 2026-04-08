@@ -351,8 +351,8 @@ impl AstLowering {
         match expr {
             ast::Expr::Literal(lit) => match lit {
                 ast::Literal::String(s) => Some(format!("{s:?}")),
-                ast::Literal::Int(i) => Some(i.to_string()),
-                ast::Literal::Float(f) => Some(f.to_string()),
+                ast::Literal::Int(i) => Some(i.value.to_string()),
+                ast::Literal::Float(f) => Some(f.value.to_string()),
                 ast::Literal::Bool(b) => Some(b.to_string()),
                 ast::Literal::Bytes(bytes) => Some(format!("{bytes:?}")),
                 ast::Literal::None => Some("()".to_string()),

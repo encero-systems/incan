@@ -218,8 +218,9 @@ impl Formatter {
 
     fn format_literal(&mut self, lit: &Literal) {
         match lit {
-            Literal::Int(n) => self.writer.write(&n.to_string()),
-            Literal::Float(f) => self.writer.write(&f.to_string()),
+            Literal::Int(il) => self.writer.write(&il.repr),
+            // Emit source `FloatLiteral::repr`, not `f64` `Display` (which drops `.0`, etc.).
+            Literal::Float(fl) => self.writer.write(&fl.repr),
             Literal::String(s) => {
                 self.writer.write("\"");
                 self.writer.write(&escape_string(s));

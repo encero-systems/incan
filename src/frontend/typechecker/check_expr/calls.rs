@@ -1599,7 +1599,7 @@ impl TypeChecker {
 #[cfg(test)]
 mod validate_rust_function_call_tests {
     use super::TypeChecker;
-    use crate::frontend::ast::{CallArg, Expr, Literal, Span, Spanned};
+    use crate::frontend::ast::{CallArg, Expr, IntLiteral, Literal, Span, Spanned};
     use crate::frontend::symbols::{NewtypeInfo, ResolvedType, Symbol, SymbolKind, TypeInfo};
     use incan_core::interop::{RustFunctionSig, RustParam};
     use std::collections::HashMap;
@@ -1608,7 +1608,7 @@ mod validate_rust_function_call_tests {
     fn zero_parameter_rust_sig_rejects_extra_arguments() {
         let mut checker = TypeChecker::new();
         let span = Span::new(0, 1);
-        let arg_expr = Spanned::new(Expr::Literal(Literal::Int(1)), span);
+        let arg_expr = Spanned::new(Expr::Literal(Literal::Int(IntLiteral::synthetic(1))), span);
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
             params: Vec::new(),
@@ -1654,7 +1654,7 @@ mod validate_rust_function_call_tests {
     fn too_few_arguments_reports_arity_before_param_zip() {
         let mut checker = TypeChecker::new();
         let span = Span::new(0, 1);
-        let arg_expr = Spanned::new(Expr::Literal(Literal::Int(1)), span);
+        let arg_expr = Spanned::new(Expr::Literal(Literal::Int(IntLiteral::synthetic(1))), span);
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
             params: vec![
@@ -1762,7 +1762,7 @@ mod validate_rust_function_call_tests {
             is_async: false,
             is_unsafe: false,
         };
-        let arg_expr = Spanned::new(Expr::Literal(Literal::Int(123)), span);
+        let arg_expr = Spanned::new(Expr::Literal(Literal::Int(IntLiteral::synthetic(123))), span);
         let args = [CallArg::Positional(arg_expr)];
         let arg_types = [ResolvedType::Int];
 

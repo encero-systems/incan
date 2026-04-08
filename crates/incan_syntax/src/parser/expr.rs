@@ -198,9 +198,9 @@ impl<'a> Parser<'a> {
                 expr = Spanned::new(Expr::Try(Box::new(expr)), span);
             } else if self.match_token(&TokenKind::Punctuation(PunctuationId::Dot)) {
                 // Check for tuple index access (.0, .1, etc) vs field/method access
-                if let TokenKind::Int(n) = &self.peek().kind {
+                if let TokenKind::Int(il) = &self.peek().kind {
                     // Tuple index access: expr.0, expr.1
-                    let idx = *n;
+                    let idx = il.value;
                     self.advance();
                     let span = Span::new(expr.span.start, self.tokens[self.pos - 1].span.end);
                     // Use the index as a string field name
@@ -388,15 +388,15 @@ impl<'a> Parser<'a> {
 
     fn try_literal(&mut self) -> Option<Literal> {
         match &self.peek().kind {
-            TokenKind::Int(n) => {
-                let n = *n;
+            TokenKind::Int(il) => {
+                let il = il.clone();
                 self.advance();
-                Some(Literal::Int(n))
+                Some(Literal::Int(il))
             }
-            TokenKind::Float(f) => {
-                let f = *f;
+            TokenKind::Float(fl) => {
+                let fl = fl.clone();
                 self.advance();
-                Some(Literal::Float(f))
+                Some(Literal::Float(fl))
             }
             TokenKind::String(s) => {
                 let s = s.clone();

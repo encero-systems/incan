@@ -306,8 +306,8 @@ fn build_parametrize_case(expr: &crate::frontend::ast::Spanned<Expr>) -> Paramet
 /// Render an expression as a short display string for test case IDs.
 fn render_display(expr: &Expr) -> String {
     match expr {
-        Expr::Literal(Literal::Int(n)) => n.to_string(),
-        Expr::Literal(Literal::Float(f)) => f.to_string(),
+        Expr::Literal(Literal::Int(il)) => il.value.to_string(),
+        Expr::Literal(Literal::Float(f)) => f.value.to_string(),
         Expr::Literal(Literal::String(s)) => s.clone(),
         Expr::Literal(Literal::Bool(b)) => b.to_string(),
         Expr::Unary(crate::frontend::ast::UnaryOp::Neg, operand) => {
@@ -327,8 +327,8 @@ fn render_display(expr: &Expr) -> String {
 /// - Negative: `-42`
 fn render_rust_arg(expr: &Expr) -> String {
     match expr {
-        Expr::Literal(Literal::Int(n)) => n.to_string(),
-        Expr::Literal(Literal::Float(f)) => f.to_string(),
+        Expr::Literal(Literal::Int(il)) => il.value.to_string(),
+        Expr::Literal(Literal::Float(f)) => f.value.to_string(),
         Expr::Literal(Literal::String(s)) => {
             format!("\"{}\".to_string()", s.replace('\\', "\\\\").replace('"', "\\\""))
         }

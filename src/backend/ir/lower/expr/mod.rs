@@ -136,8 +136,8 @@ impl AstLowering {
 
             // ---- Literals ----
             ast::Expr::Literal(lit) => match lit {
-                ast::Literal::Int(n) => (IrExprKind::Int(*n), IrType::Int),
-                ast::Literal::Float(n) => (IrExprKind::Float(*n), IrType::Float),
+                ast::Literal::Int(il) => (IrExprKind::Int(il.value), IrType::Int),
+                ast::Literal::Float(fl) => (IrExprKind::Float(fl.value), IrType::Float),
                 ast::Literal::String(s) => (IrExprKind::String(s.clone()), IrType::String),
                 ast::Literal::Bytes(bytes) => (IrExprKind::Bytes(bytes.clone()), IrType::Unknown),
                 ast::Literal::Bool(b) => (IrExprKind::Bool(*b), IrType::Bool),

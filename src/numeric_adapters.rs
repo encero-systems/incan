@@ -92,10 +92,10 @@ pub fn pow_exponent_kind_from_ast(expr: &Spanned<Expr>, ty: &ResolvedType) -> Po
 
 fn extract_int_literal(expr: &Spanned<Expr>) -> Option<i64> {
     match &expr.node {
-        Expr::Literal(Literal::Int(n)) => Some(*n),
+        Expr::Literal(Literal::Int(il)) => Some(il.value),
         Expr::Unary(UnaryOp::Neg, inner) => {
-            if let Expr::Literal(Literal::Int(n)) = &inner.node {
-                Some(-n)
+            if let Expr::Literal(Literal::Int(il)) = &inner.node {
+                Some(-il.value)
             } else {
                 None
             }

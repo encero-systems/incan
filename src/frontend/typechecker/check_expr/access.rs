@@ -507,7 +507,7 @@ impl TypeChecker {
                         self.errors.push(errors::tuple_index_requires_int_literal(index.span));
                         return ResolvedType::Unknown;
                     };
-                    if let Some(idx) = self.resolve_tuple_index(*raw_idx, elems.len(), span) {
+                    if let Some(idx) = self.resolve_tuple_index(raw_idx.value, elems.len(), span) {
                         return elems.get(idx).cloned().unwrap_or(ResolvedType::Unknown);
                     }
                     ResolvedType::Unknown
@@ -527,7 +527,7 @@ impl TypeChecker {
                     self.errors.push(errors::tuple_index_requires_int_literal(index.span));
                     return ResolvedType::Unknown;
                 };
-                if let Some(idx) = self.resolve_tuple_index(*raw_idx, elems.len(), span) {
+                if let Some(idx) = self.resolve_tuple_index(raw_idx.value, elems.len(), span) {
                     return elems.get(idx).cloned().unwrap_or(ResolvedType::Unknown);
                 }
                 ResolvedType::Unknown

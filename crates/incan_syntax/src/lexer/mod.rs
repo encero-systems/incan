@@ -612,9 +612,9 @@ mod tests {
     #[allow(clippy::approx_constant)]
     fn test_numbers() {
         let tokens = lex_ok("42 3.14 1_000_000 1e10");
-        assert!(matches!(tokens[0].kind, TokenKind::Int(42)));
-        assert!(matches!(tokens[1].kind, TokenKind::Float(f) if (f - 3.14).abs() < 0.001));
-        assert!(matches!(tokens[2].kind, TokenKind::Int(1000000)));
+        assert!(matches!(&tokens[0].kind, TokenKind::Int(il) if il.value == 42));
+        assert!(matches!(&tokens[1].kind, TokenKind::Float(fl) if (fl.value - 3.14).abs() < 0.001));
+        assert!(matches!(&tokens[2].kind, TokenKind::Int(il) if il.value == 1_000_000 && il.repr == "1_000_000"));
         assert!(matches!(tokens[3].kind, TokenKind::Float(_)));
     }
 
@@ -757,17 +757,17 @@ mod tests {
     fn test_range_not_float() {
         // 1..2 should be Int, DotDot, Int - not a float
         let tokens = lex_ok("1..2");
-        assert!(matches!(tokens[0].kind, TokenKind::Int(1)));
+        assert!(matches!(&tokens[0].kind, TokenKind::Int(il) if il.value == 1));
         assert!(matches!(tokens[1].kind, TokenKind::Operator(OperatorId::DotDot)));
-        assert!(matches!(tokens[2].kind, TokenKind::Int(2)));
+        assert!(matches!(&tokens[2].kind, TokenKind::Int(il) if il.value == 2));
     }
 
     #[test]
     fn test_inclusive_range() {
         // 1..=5 should work
         let tokens = lex_ok("1..=5");
-        assert!(matches!(tokens[0].kind, TokenKind::Int(1)));
+        assert!(matches!(&tokens[0].kind, TokenKind::Int(il) if il.value == 1));
         assert!(matches!(tokens[1].kind, TokenKind::Operator(OperatorId::DotDotEq)));
-        assert!(matches!(tokens[2].kind, TokenKind::Int(5)));
+        assert!(matches!(&tokens[2].kind, TokenKind::Int(il) if il.value == 5));
     }
 }

@@ -507,8 +507,8 @@ mod tests {
     use super::*;
     use crate::frontend::ast::{
         ClassDecl, ConstDecl, Declaration, EnumDecl, Expr, FunctionDecl, ImportDecl, ImportItem, ImportKind,
-        ImportPath, Literal, ModelDecl, NewtypeDecl, Program, Span, Spanned, StaticDecl, TraitDecl, Type, VariantDecl,
-        Visibility,
+        ImportPath, IntLiteral, Literal, ModelDecl, NewtypeDecl, Program, Span, Spanned, StaticDecl, TraitDecl, Type,
+        VariantDecl, Visibility,
     };
     use crate::frontend::{lexer, parser};
 
@@ -1001,7 +1001,7 @@ source-root = "library"
             visibility: crate::frontend::ast::Visibility::Public,
             name: "X".to_string(),
             ty: Some(make_spanned(Type::Simple("int".to_string()))),
-            value: make_spanned(Expr::Literal(Literal::Int(1))),
+            value: make_spanned(Expr::Literal(Literal::Int(IntLiteral::synthetic(1)))),
         };
         let program = Program {
             declarations: vec![make_spanned(Declaration::Const(konst))],
@@ -1022,7 +1022,7 @@ source-root = "library"
             visibility: crate::frontend::ast::Visibility::Public,
             name: "COUNTER".to_string(),
             ty: make_spanned(Type::Simple("int".to_string())),
-            value: make_spanned(Expr::Literal(Literal::Int(0))),
+            value: make_spanned(Expr::Literal(Literal::Int(IntLiteral::synthetic(0)))),
         };
         let program = Program {
             declarations: vec![make_spanned(Declaration::Static(static_decl))],

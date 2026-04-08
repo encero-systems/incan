@@ -4,7 +4,7 @@
 
 use super::Lexer;
 use super::tokens::TokenKind;
-use crate::ast::Span;
+use crate::ast::{FloatLiteral, IntLiteral, Span};
 use crate::diagnostics::errors;
 
 impl<'a> Lexer<'a> {
@@ -66,23 +66,24 @@ impl<'a> Lexer<'a> {
         }
 
         if is_float {
+            let end = self.current_pos;
+            let repr = self.source.get(start..end).unwrap_or("").to_string();
+            // `value` omits `_` (Rust float parsing); `repr` is the exact source substring for faithful formatting.
             match value.parse::<f64>() {
-                Ok(f) => self.add_token(TokenKind::Float(f), start),
+                Ok(f) => self.add_token(TokenKind::Float(FloatLiteral { value: f, repr }), start),
                 Err(_) => {
-                    self.errors.push(errors::invalid_float_literal(
-                        &value,
-                        Span::new(start, self.current_pos),
-                    ));
+                    self.errors
+                        .push(errors::invalid_float_literal(&repr, Span::new(start, end)));
                 }
             }
         } else {
+            let end = self.current_pos;
+            let repr = self.source.get(start..end).unwrap_or("").to_string();
             match value.parse::<i64>() {
-                Ok(i) => self.add_token(TokenKind::Int(i), start),
+                Ok(i) => self.add_token(TokenKind::Int(IntLiteral { value: i, repr }), start),
                 Err(_) => {
-                    self.errors.push(errors::invalid_integer_literal(
-                        &value,
-                        Span::new(start, self.current_pos),
-                    ));
+                    self.errors
+                        .push(errors::invalid_integer_literal(&repr, Span::new(start, end)));
                 }
             }
         }
