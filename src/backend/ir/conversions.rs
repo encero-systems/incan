@@ -610,8 +610,13 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
     }
 }
 
-/// Returns true when lowering/emission treats this Incan parameter like `name: &mut RustTy` (aggregate) rather than
+/// Returns true when lowering/emission treats this Incan parameter like `name: &mut RustTy` rather than
 /// `mut name: RustTy` (small scalars).
+fn mut_param_passed_by_rust_mut_ref(ty: &IrType) -> bool {
+    !matches!(ty, IrType::Int | IrType::Float | IrType::Bool)
+}
+
+/// Returns true when mutable arguments should bypass Incan value materialization at call sites.
 ///
 /// Mutable `str` parameters use `&mut String` in Rust but still need normal Incan argument conversions (e.g.
 /// `.to_string()` for literals).
@@ -619,9 +624,12 @@ fn mut_param_skips_incan_value_conversions(ty: &IrType) -> bool {
     !matches!(ty, IrType::Int | IrType::Float | IrType::Bool | IrType::String)
 }
 
-/// Predicate shared by call emission: mutable aggregates are reborrowed as `&mut T` and must not use `.clone()` at the
-/// call site (see issue #244).
+/// Predicate shared by call emission: mutable non-scalar parameters are reborrowed as `&mut T` at call sites.
 pub(crate) fn incan_mutable_param_passed_as_rust_mut_ref(param: &FunctionParam) -> bool {
+    param.mutability == Mutability::Mutable && mut_param_passed_by_rust_mut_ref(&param.ty)
+}
+
+fn incan_mutable_param_skips_incan_value_conversions(param: &FunctionParam) -> bool {
     param.mutability == Mutability::Mutable && mut_param_skips_incan_value_conversions(&param.ty)
 }
 
@@ -638,7 +646,7 @@ pub(crate) fn determine_conversion_for_incan_call(
     if matches!(
         context,
         ConversionContext::IncanFunctionArg | ConversionContext::IncanFunctionArgInReturn
-    ) && callee_param.is_some_and(incan_mutable_param_passed_as_rust_mut_ref)
+    ) && callee_param.is_some_and(incan_mutable_param_skips_incan_value_conversions)
     {
         return Conversion::None;
     }
@@ -681,6 +689,29 @@ mod tests {
             conv,
             Conversion::None,
             "mutable aggregate args must not clone at call sites"
+        );
+    }
+
+    #[test]
+    fn test_incan_call_keeps_string_conversion_for_mutable_string_param_issue244() {
+        let expr = IrExpr::new(IrExprKind::String("x".to_string()), IrType::String);
+        let param = FunctionParam {
+            name: "s".to_string(),
+            ty: IrType::String,
+            mutability: Mutability::Mutable,
+            is_self: false,
+            default: None,
+        };
+        let conv = determine_conversion_for_incan_call(
+            &expr,
+            Some(&param.ty),
+            ConversionContext::IncanFunctionArg,
+            Some(&param),
+        );
+        assert_eq!(
+            conv,
+            Conversion::ToString,
+            "mutable string params still require normal Incan string conversion"
         );
     }
 
