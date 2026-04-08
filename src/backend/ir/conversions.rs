@@ -621,7 +621,7 @@ fn mut_param_skips_incan_value_conversions(ty: &IrType) -> bool {
 
 /// Predicate shared by call emission: mutable aggregates are reborrowed as `&mut T` and must not use `.clone()` at the
 /// call site (see issue #244).
-pub fn incan_mutable_param_passed_as_rust_mut_ref(param: &FunctionParam) -> bool {
+pub(crate) fn incan_mutable_param_passed_as_rust_mut_ref(param: &FunctionParam) -> bool {
     param.mutability == Mutability::Mutable && mut_param_skips_incan_value_conversions(&param.ty)
 }
 
@@ -629,7 +629,7 @@ pub fn incan_mutable_param_passed_as_rust_mut_ref(param: &FunctionParam) -> bool
 ///
 /// For mutable aggregate parameters, codegen emits `&mut` of the binding. The generic Incan rule that clones non-copy
 /// locals on non-final reads would produce an owned value and break Rust (`expected &mut Vec`, `found Vec`).
-pub fn determine_conversion_for_incan_call(
+pub(crate) fn determine_conversion_for_incan_call(
     expr: &IrExpr,
     target_ty: Option<&IrType>,
     context: ConversionContext,
