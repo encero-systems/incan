@@ -929,7 +929,7 @@ The compiler still handles Incan-specific delegation logic:
 
 ## Delivery phases (if pursued)
 
-This is **not** the formal In-Progress “Implementation Plan” checklist; it is a **critical-path** ordering for when the project chooses to invest. Skip or reorder after the [strategic note](#strategic-note-rusttype-rfc-043-and-what-still-justifies-this-rfc).
+This is **not** the formal In-Progress “Implementation Plan” checklist; it is a **critical-path** ordering for when the project chooses to invest. Skip or reorder after the [strategic note](#strategic-note-historical).
 
 ### Phase 0 — Decision
 
