@@ -5,9 +5,12 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use super::super::super::conversions::{BinOpEmitKind, ConversionContext, determine_binop_plan, determine_conversion};
+use super::super::super::conversions::{
+    BinOpEmitKind, ConversionContext, determine_binop_plan, determine_conversion_for_incan_call,
+    incan_mutable_param_passed_as_rust_mut_ref,
+};
 use super::super::super::expr::{BinOp, IrCallArg, IrExprKind, TypedExpr, VarAccess, VarRefKind};
-use super::super::super::types::{IrType, Mutability};
+use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::constructors::{self, ConstructorId};
@@ -382,12 +385,6 @@ impl<'a> IrEmitter<'a> {
                 // typing information.
                 let sig_param = function_sig.and_then(|sig| sig.params.get(idx));
                 if let Some(param) = sig_param {
-                    if param.mutability == Mutability::Mutable {
-                        match &a.ty {
-                            IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
-                            _ => return Ok(quote! { &mut #emitted }),
-                        }
-                    }
                     if matches!(&param.ty, IrType::Ref(_)) {
                         match &a.ty {
                             IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
@@ -434,8 +431,17 @@ impl<'a> IrEmitter<'a> {
                     ConversionContext::IncanFunctionArg
                 };
 
-                let conversion = determine_conversion(a, target_ty, context);
-                Ok(conversion.apply(emitted))
+                let conversion = determine_conversion_for_incan_call(a, target_ty, context, sig_param);
+                let mut tokens = conversion.apply(emitted);
+                if let Some(param) = sig_param
+                    && incan_mutable_param_passed_as_rust_mut_ref(param)
+                {
+                    match &a.ty {
+                        IrType::Ref(_) | IrType::RefMut(_) => {}
+                        _ => tokens = quote! { &mut #tokens },
+                    }
+                }
+                Ok(tokens)
             })
             .collect::<Result<_, _>>()?;
 

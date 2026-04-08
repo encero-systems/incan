@@ -825,6 +825,22 @@ fn test_issue236_non_string_join_codegen() {
     insta::assert_snapshot!("issue236_non_string_join", rust_code);
 }
 
+/// Issue #244: recursive call with `mut` list args inside `while` must not emit `.clone()` for those args.
+#[test]
+fn test_issue244_recursive_mut_list_codegen() {
+    let source = load_test_file("issue244_recursive_mut_list");
+    let rust_code = generate_rust(&source);
+    assert!(
+        !rust_code.contains("pending.clone()") && !rust_code.contains("visited.clone()"),
+        "recursive walk must not clone mut list params; got:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("walk(nxt, pending, visited)"),
+        "expected direct reborrow of &mut Vec params at recursive walk call; got:\n{rust_code}"
+    );
+    insta::assert_snapshot!("issue244_recursive_mut_list", rust_code);
+}
+
 // ============================================================================
 // Tests for declarations (functions, classes, models, traits, enums)
 // ============================================================================

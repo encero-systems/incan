@@ -163,7 +163,9 @@
 //! let data = std::fs::read_to_string(&content);  // ← borrow applied
 //! ```
 
+use super::decl::FunctionParam;
 use super::expr::{BinOp, VarAccess};
+use super::types::Mutability;
 use super::{IrExpr, IrExprKind, IrType, TypedExpr};
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ir, pow_exponent_kind_from_ir};
 use incan_core::{NumericOp, NumericTy, needs_float_promotion, result_numeric_type};
@@ -608,12 +610,79 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
     }
 }
 
+/// Returns true when lowering/emission treats this Incan parameter like `name: &mut RustTy` (aggregate) rather than
+/// `mut name: RustTy` (small scalars).
+///
+/// Mutable `str` parameters use `&mut String` in Rust but still need normal Incan argument conversions (e.g.
+/// `.to_string()` for literals).
+fn mut_param_skips_incan_value_conversions(ty: &IrType) -> bool {
+    !matches!(ty, IrType::Int | IrType::Float | IrType::Bool | IrType::String)
+}
+
+/// Predicate shared by call emission: mutable aggregates are reborrowed as `&mut T` and must not use `.clone()` at the
+/// call site (see issue #244).
+pub fn incan_mutable_param_passed_as_rust_mut_ref(param: &FunctionParam) -> bool {
+    param.mutability == Mutability::Mutable && mut_param_skips_incan_value_conversions(&param.ty)
+}
+
+/// Like [`determine_conversion`], but uses callee parameter metadata when available.
+///
+/// For mutable aggregate parameters, codegen emits `&mut` of the binding. The generic Incan rule that clones non-copy
+/// locals on non-final reads would produce an owned value and break Rust (`expected &mut Vec`, `found Vec`).
+pub fn determine_conversion_for_incan_call(
+    expr: &IrExpr,
+    target_ty: Option<&IrType>,
+    context: ConversionContext,
+    callee_param: Option<&FunctionParam>,
+) -> Conversion {
+    if matches!(
+        context,
+        ConversionContext::IncanFunctionArg | ConversionContext::IncanFunctionArgInReturn
+    ) && callee_param.is_some_and(incan_mutable_param_passed_as_rust_mut_ref)
+    {
+        return Conversion::None;
+    }
+    determine_conversion(expr, target_ty, context)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::ir::decl::FunctionParam;
     use crate::backend::ir::expr::{VarAccess, VarRefKind};
+    use crate::backend::ir::types::Mutability;
 
     // === IncanFunctionArg Tests ===
+
+    #[test]
+    fn test_incan_call_skips_clone_for_mutable_list_param_issue244() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "pending".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::List(Box::new(IrType::Int)),
+        );
+        let param = FunctionParam {
+            name: "pending".to_string(),
+            ty: IrType::List(Box::new(IrType::Int)),
+            mutability: Mutability::Mutable,
+            is_self: false,
+            default: None,
+        };
+        let conv = determine_conversion_for_incan_call(
+            &expr,
+            Some(&param.ty),
+            ConversionContext::IncanFunctionArg,
+            Some(&param),
+        );
+        assert_eq!(
+            conv,
+            Conversion::None,
+            "mutable aggregate args must not clone at call sites"
+        );
+    }
 
     #[test]
     fn test_incan_function_string_literal_to_string() {
