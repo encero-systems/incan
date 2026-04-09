@@ -1727,6 +1727,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#generic-instance-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generic instance methods
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#traits-authoring" class="md-nav__link">
     <span class="md-ellipsis">
       Traits (authoring)
@@ -4371,6 +4380,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#generic-instance-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generic instance methods
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#traits-authoring" class="md-nav__link">
     <span class="md-ellipsis">
       Traits (authoring)
@@ -4796,6 +4814,38 @@ Rust interop decorator (see <a href="/dev/RFCs/closed/implemented/023_compilable
 <p>See also: <a href="../../explanation/models_and_classes/classes/#static-methods-staticmethod">Classes: Static methods</a></p>
 <h3 id="requires"><code>@requires(...)</code><a class="headerlink" href="#requires" title="Permanent link">&para;</a></h3>
 <p>Covered below in <a href="#requires-adopter-contract">Traits (authoring)</a>.</p>
+<hr />
+<h2 id="generic-instance-methods">Generic instance methods<a class="headerlink" href="#generic-instance-methods" title="Permanent link">&para;</a></h2>
+<p>Instance methods on <code>class</code>, <code>model</code>, <code>trait</code>, and <code>newtype</code> declarations may declare their own type parameters using
+the same syntax as top-level generic functions:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Box</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">value</span>
+</code></pre></div>
+<p>This is method-level polymorphism. The type parameters belong to the method, not to the enclosing type.</p>
+<p>Rules to keep in mind:</p>
+<ul>
+<li>Method type parameters appear after the method name: <code>def name[T, U with Trait](...)</code>.</li>
+<li>Method type parameters are scoped to that method only.</li>
+<li>Enclosing type parameters and method type parameters may both be used in the same signature.</li>
+<li>Trait methods may also be generic, whether they are required (<code>...</code>) or provide a default body.</li>
+</ul>
+<p>Examples:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Shelf</span><span class="p">[</span><span class="nc">U</span><span class="p">]:</span>
+    <span class="n">item</span><span class="p">:</span> <span class="nc">U</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">swap</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">value</span>
+</code></pre></div>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Echo</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">echo</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">value</span>
+</code></pre></div>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Wrapper</span><span class="p">[</span><span class="nc">U</span><span class="p">]</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">U</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">echo</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">value</span>
+</code></pre></div>
+<p>Method generic syntax is intentionally aligned with function generic syntax. If you already know how to read <code>def f[T](...)</code>, you already know how to read <code>def method[T](...)</code>.</p>
 <hr />
 <h2 id="traits-authoring">Traits (authoring)<a class="headerlink" href="#traits-authoring" title="Permanent link">&para;</a></h2>
 <p>Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with <code>with TraitName</code>, and you may also use the trait name itself directly in annotations. Methods can be required (<code>...</code>) or have defaults.</p>

@@ -4530,6 +4530,7 @@ They are not intended as runtime function calls.</p>
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Compiler</strong>: Generic instance methods on classes, traits, models, and newtypes now parse and flow through formatting, typechecking, lowering, and library export metadata correctly (#253).</li>
 <li><strong>Tooling</strong>: <code>incan fmt</code> keeps qualified enum/constructor match patterns in the dot form (<code>Type.Variant</code>), instead of rewriting them to <code>Type::Variant</code>, which the parser does not accept in pattern position (#235).</li>
 <li><strong>Tooling</strong>: <code>incan fmt</code> re-emits numeric literals using their source spelling (integer and float, including <code>_</code> separators and <code>E</code>/<code>e</code> in float exponents), avoiding <code>Display</code> normalization such as <code>120.0</code> → <code>120</code> or <code>1_000</code> → <code>1000</code>, so comment reattachment keeps standalone <code>#</code> lines next to the right statements instead of moving them to the end of a block (#250).</li>
 <li><strong>Tooling</strong>: <code>incan fmt</code> preserves a single blank line between statements in indented blocks (functions, control flow, match arms, vocab bodies, and similar) and collapses two or more consecutive empty lines down to one.</li>
