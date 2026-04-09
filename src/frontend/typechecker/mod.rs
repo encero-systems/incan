@@ -461,6 +461,17 @@ impl TypeChecker {
         }
     }
 
+    /// Detect whether a normalized Rust display type starts with `&T` or `&mut T`.
+    ///
+    /// Returns the mutability flag plus the remaining inner type spelling so [`Self::resolved_type_from_rust_display`]
+    /// can preserve borrow semantics for Rust-backed values instead of collapsing them into plain path types.
+    fn rust_display_borrow_kind(normalized: &str) -> Option<(bool, &str)> {
+        if let Some(inner) = normalized.strip_prefix("&mut") {
+            return Some((true, inner));
+        }
+        normalized.strip_prefix('&').map(|inner| (false, inner))
+    }
+
     /// Map structured rust-metadata [`RustTypeShape`] into a [`ResolvedType`] for field access and pattern typing.
     ///
     /// `Option`/`Result` become [`ResolvedType::Generic`] with constructor names `Option` and `Result`. Concrete paths
@@ -531,12 +542,21 @@ impl TypeChecker {
     /// for one or both type arguments. Prefer precise typing from Incan surfaces over relying on this heuristic.
     pub(crate) fn resolved_type_from_rust_display(&self, rust_ty: &str) -> ResolvedType {
         let trimmed = rust_ty.trim();
-        let no_lifetimes = trimmed
-            .replace("'static ", "")
-            .replace("'_", "")
-            .replace("&mut ", "&")
-            .replace(' ', "");
+        let no_lifetimes = trimmed.replace("'static ", "").replace("'_", "").replace(' ', "");
         let normalized = no_lifetimes.trim_start_matches("::").to_string();
+        match normalized.as_str() {
+            "&str" => return ResolvedType::Str,
+            "&[u8]" => return ResolvedType::Bytes,
+            _ => {}
+        }
+        if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(normalized.as_str()) {
+            let inner_ty = self.resolved_type_from_rust_display(inner);
+            return if is_mut {
+                ResolvedType::RefMut(Box::new(inner_ty))
+            } else {
+                ResolvedType::Ref(Box::new(inner_ty))
+            };
+        }
         match normalized.as_str() {
             "bool" => ResolvedType::Bool,
             "f32" | "f64" => ResolvedType::Float,
@@ -2014,8 +2034,10 @@ impl TypeChecker {
             {
                 true
             }
-            // Internal references: allow exact ref compatibility and allow `&FrozenStr` where `&str` is expected.
-            (ResolvedType::Ref(a), ResolvedType::Ref(b)) => self.types_compatible(a, b),
+            // Internal references: `&mut T` may satisfy `&T`, but not the reverse.
+            (ResolvedType::Ref(a), ResolvedType::Ref(b))
+            | (ResolvedType::RefMut(a), ResolvedType::Ref(b))
+            | (ResolvedType::RefMut(a), ResolvedType::RefMut(b)) => self.types_compatible(a, b),
             (ResolvedType::FrozenStr, ResolvedType::Str | ResolvedType::FrozenStr) => true,
             // `FrozenStr` is a read-only string wrapper; allow it where `str` is expected.
             (ResolvedType::Named(name), ResolvedType::Str)

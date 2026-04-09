@@ -212,7 +212,12 @@ impl TypeChecker {
     pub(in crate::frontend::typechecker) fn is_copy_type(&self, ty: &ResolvedType) -> bool {
         matches!(
             ty,
-            ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool | ResolvedType::Unit | ResolvedType::Ref(_)
+            ResolvedType::Int
+                | ResolvedType::Float
+                | ResolvedType::Bool
+                | ResolvedType::Unit
+                | ResolvedType::Ref(_)
+                | ResolvedType::RefMut(_)
         )
     }
 
@@ -272,7 +277,9 @@ impl TypeChecker {
                         | Some(TypeInfo::Enum(_))
                 )
             }
-            ResolvedType::Ref(_) | ResolvedType::Function(_, _) | ResolvedType::SelfType => true,
+            ResolvedType::Ref(_) | ResolvedType::RefMut(_) | ResolvedType::Function(_, _) | ResolvedType::SelfType => {
+                true
+            }
             ResolvedType::TypeVar(_) => false,
             // RFC 041: provenance is known, but Incan does not yet query Rust for `Copy`/`Clone`; do not assume.
             ResolvedType::RustPath(_) => false,
@@ -337,6 +344,9 @@ impl TypeChecker {
             ),
             ResolvedType::Ref(inner) => {
                 ResolvedType::Ref(Box::new(self.substitute_self_in_resolved_type(*inner, receiver)))
+            }
+            ResolvedType::RefMut(inner) => {
+                ResolvedType::RefMut(Box::new(self.substitute_self_in_resolved_type(*inner, receiver)))
             }
             other => other,
         }
@@ -895,7 +905,7 @@ impl TypeChecker {
             match option_methods::from_str(method) {
                 Some(option_methods::OptionMethodId::Copied) => {
                     // Rust: `Option<&T>::copied() -> Option<T>` (for `T: Copy`).
-                    if let ResolvedType::Ref(t) = inner {
+                    if let ResolvedType::Ref(t) | ResolvedType::RefMut(t) = inner {
                         let t = (*t).clone();
                         if matches!(t, ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool) {
                             return option_ty(t);

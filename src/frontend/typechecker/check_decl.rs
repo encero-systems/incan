@@ -116,6 +116,9 @@ impl TypeChecker {
             ResolvedType::Ref(inner) => {
                 ResolvedType::Ref(Box::new(Self::concretize_self_type_in_annotation(inner, self_ty)))
             }
+            ResolvedType::RefMut(inner) => {
+                ResolvedType::RefMut(Box::new(Self::concretize_self_type_in_annotation(inner, self_ty)))
+            }
             _ => ty.clone(),
         }
     }

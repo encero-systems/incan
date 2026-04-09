@@ -715,6 +715,48 @@ fn test_resolved_type_from_fully_qualified_result_display_normalizes() {
 }
 
 #[test]
+fn test_resolved_type_from_borrowed_rust_path_display_extracts_ref_payload() {
+    let checker = TypeChecker::new();
+    let resolved = checker.resolved_type_from_rust_display("&demo::Thing");
+    assert_eq!(
+        resolved,
+        ResolvedType::Ref(Box::new(ResolvedType::RustPath("demo::Thing".to_string()))),
+    );
+}
+
+#[test]
+fn test_resolved_type_from_mut_borrowed_rust_path_display_extracts_refmut_payload() {
+    let checker = TypeChecker::new();
+    let resolved = checker.resolved_type_from_rust_display("&mut demo::Thing");
+    assert_eq!(
+        resolved,
+        ResolvedType::RefMut(Box::new(ResolvedType::RustPath("demo::Thing".to_string()))),
+    );
+}
+
+#[test]
+fn test_resolved_type_from_builtin_borrowed_displays_stays_stable() {
+    let checker = TypeChecker::new();
+    assert_eq!(checker.resolved_type_from_rust_display("&str"), ResolvedType::Str);
+    assert_eq!(checker.resolved_type_from_rust_display("&[u8]"), ResolvedType::Bytes);
+}
+
+#[test]
+fn test_types_compatible_refmut_is_assignable_to_ref_but_not_reverse() {
+    let checker = TypeChecker::new();
+    let immutable = ResolvedType::Ref(Box::new(ResolvedType::RustPath("demo::Thing".to_string())));
+    let mutable = ResolvedType::RefMut(Box::new(ResolvedType::RustPath("demo::Thing".to_string())));
+    assert!(
+        checker.types_compatible(&mutable, &immutable),
+        "mutable borrow should satisfy immutable borrow expectations"
+    );
+    assert!(
+        !checker.types_compatible(&immutable, &mutable),
+        "immutable borrow must not satisfy mutable borrow expectations"
+    );
+}
+
+#[test]
 fn test_duplicate_interop_edges_rejected() {
     let source = r#"
 from rust::mail import EmailAddress as RustEmailAddress
@@ -753,6 +795,51 @@ def f() -> None:
     assert!(
         result.is_ok(),
         "expected permissive fallback when metadata is unavailable, got {result:?}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_rust_metadata_function_signature_preserves_borrowed_rust_path_param() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut checker = TypeChecker::new();
+    let manifest_dir = std::env::current_dir()?;
+    checker.set_rust_metadata_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_metadata_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::takes_ref".to_string(),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Function(RustFunctionSig {
+                    params: vec![RustParam {
+                        name: Some("value".to_string()),
+                        type_display: "&demo::Thing".to_string(),
+                    }],
+                    return_type: "()".to_string(),
+                    is_async: false,
+                    is_unsafe: false,
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust metadata function: {e}")))?;
+    let Some(RustItemMetadata {
+        kind: RustItemKind::Function(sig),
+        ..
+    }) = checker.rust_item_metadata_for_path("demo::takes_ref")
+    else {
+        return Err(std::io::Error::other("expected rust metadata function entry").into());
+    };
+    assert_eq!(
+        checker.resolved_function_type_from_rust_sig(&sig, false),
+        ResolvedType::Function(
+            vec![ResolvedType::Ref(Box::new(ResolvedType::RustPath(
+                "demo::Thing".to_string()
+            )))],
+            Box::new(ResolvedType::Unit),
+        )
     );
     Ok(())
 }

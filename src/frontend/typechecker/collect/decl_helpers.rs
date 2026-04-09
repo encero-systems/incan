@@ -92,6 +92,11 @@ fn resolve_owner_self_reference(
             Some(owner_name),
             Some(owner_self_ty),
         ))),
+        ResolvedType::RefMut(inner) => ResolvedType::RefMut(Box::new(resolve_owner_self_reference(
+            *inner,
+            Some(owner_name),
+            Some(owner_self_ty),
+        ))),
         other => other,
     }
 }

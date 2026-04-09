@@ -388,11 +388,7 @@ impl<'a> IrEmitter<'a> {
                     if matches!(&param.ty, IrType::Ref(_)) {
                         match &a.ty {
                             IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
-                            _ => {
-                                if !a.ty.is_copy() {
-                                    return Ok(quote! { &#emitted });
-                                }
-                            }
+                            _ => return Ok(quote! { &#emitted }),
                         }
                     }
                 } else if let Some(target_ty) = target_ty {
@@ -405,11 +401,7 @@ impl<'a> IrEmitter<'a> {
                         },
                         IrType::Ref(_) => match &a.ty {
                             IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
-                            _ => {
-                                if !a.ty.is_copy() {
-                                    return Ok(quote! { &#emitted });
-                                }
-                            }
+                            _ => return Ok(quote! { &#emitted }),
                         },
                         _ => {}
                     }
@@ -537,5 +529,125 @@ impl<'a> IrEmitter<'a> {
                 Ok(quote! { #l #op_tokens #r })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::ir::decl::FunctionParam;
+    use crate::backend::ir::expr::{IrCallArg, VarAccess, VarRefKind};
+    use crate::backend::ir::types::{IrType, Mutability};
+    use crate::backend::ir::{FunctionRegistry, IrEmitter, TypedExpr};
+
+    fn render(tokens: TokenStream) -> String {
+        tokens.to_string().replace(' ', "")
+    }
+
+    fn rust_call_target(name: &str) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::Var {
+                name: name.to_string(),
+                access: VarAccess::Copy,
+                ref_kind: VarRefKind::ExternalRustName,
+            },
+            IrType::Function {
+                params: Vec::new(),
+                ret: Box::new(IrType::Unit),
+            },
+        )
+    }
+
+    fn local_arg(name: &str, ty: IrType) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::Var {
+                name: name.to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            ty,
+        )
+    }
+
+    #[test]
+    fn emit_call_expr_borrows_struct_arg_for_rust_ref_param() -> Result<(), Box<dyn std::error::Error>> {
+        let mut registry = FunctionRegistry::new();
+        registry.register(
+            "takes_ref".to_string(),
+            vec![FunctionParam {
+                name: "value".to_string(),
+                ty: IrType::Ref(Box::new(IrType::Struct("demo::Thing".to_string()))),
+                mutability: Mutability::Immutable,
+                is_self: false,
+                default: None,
+            }],
+            IrType::Unit,
+        );
+        let emitter = IrEmitter::new(&registry);
+        let func = rust_call_target("takes_ref");
+        let arg = local_arg("thing", IrType::Struct("demo::Thing".to_string()));
+        let tokens = emitter
+            .emit_call_expr(&func, &[IrCallArg { name: None, expr: arg }], None)
+            .map_err(|err| {
+                std::io::Error::other(format!(
+                    "emit_call_expr should succeed for borrowed rust arg regression: {err:?}"
+                ))
+            })?;
+        assert_eq!(render(tokens), "takes_ref(&thing)");
+        Ok(())
+    }
+
+    #[test]
+    fn emit_call_expr_borrows_mutably_for_rust_refmut_param() -> Result<(), Box<dyn std::error::Error>> {
+        let mut registry = FunctionRegistry::new();
+        registry.register(
+            "takes_ref_mut".to_string(),
+            vec![FunctionParam {
+                name: "value".to_string(),
+                ty: IrType::RefMut(Box::new(IrType::Struct("demo::Thing".to_string()))),
+                mutability: Mutability::Mutable,
+                is_self: false,
+                default: None,
+            }],
+            IrType::Unit,
+        );
+        let emitter = IrEmitter::new(&registry);
+        let func = rust_call_target("takes_ref_mut");
+        let arg = local_arg("thing", IrType::Struct("demo::Thing".to_string()));
+        let tokens = emitter
+            .emit_call_expr(&func, &[IrCallArg { name: None, expr: arg }], None)
+            .map_err(|err| {
+                std::io::Error::other(format!(
+                    "emit_call_expr should succeed for mutable borrowed rust arg regression: {err:?}"
+                ))
+            })?;
+        assert_eq!(render(tokens), "takes_ref_mut(&mutthing)");
+        Ok(())
+    }
+
+    #[test]
+    fn emit_call_expr_borrows_copy_arg_for_rust_ref_param() -> Result<(), Box<dyn std::error::Error>> {
+        let mut registry = FunctionRegistry::new();
+        registry.register(
+            "takes_ref".to_string(),
+            vec![FunctionParam {
+                name: "value".to_string(),
+                ty: IrType::Ref(Box::new(IrType::Int)),
+                mutability: Mutability::Immutable,
+                is_self: false,
+                default: None,
+            }],
+            IrType::Unit,
+        );
+        let emitter = IrEmitter::new(&registry);
+        let func = rust_call_target("takes_ref");
+        let arg = local_arg("value", IrType::Int);
+        let tokens = emitter
+            .emit_call_expr(&func, &[IrCallArg { name: None, expr: arg }], None)
+            .map_err(|err| {
+                std::io::Error::other(format!("emit_call_expr should borrow copy args for rust refs: {err:?}"))
+            })?;
+        assert_eq!(render(tokens), "takes_ref(&value)");
+        Ok(())
     }
 }

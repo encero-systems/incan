@@ -27,7 +27,7 @@ use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
 
 use super::TypeChecker;
-use crate::frontend::typechecker::{RustArgCoercionInfo, RustArgCoercionKind};
+use crate::frontend::typechecker::{IdentKind, RustArgCoercionInfo, RustArgCoercionKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RustArgBoundaryMatch {
@@ -139,7 +139,7 @@ impl TypeChecker {
                 }
                 Some(format!("Tuple[{}]", rendered.join(", ")))
             }
-            ResolvedType::Ref(inner) => Self::incan_boundary_type_display(inner),
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => Self::incan_boundary_type_display(inner),
             _ => None,
         }
     }
@@ -675,6 +675,13 @@ impl TypeChecker {
             ResolvedType::Ref(inner) => {
                 if let ResolvedType::Ref(actual_inner) = actual {
                     self.infer_type_param_bindings(inner, actual_inner, bindings);
+                } else if let ResolvedType::RefMut(actual_inner) = actual {
+                    self.infer_type_param_bindings(inner, actual_inner, bindings);
+                }
+            }
+            ResolvedType::RefMut(inner) => {
+                if let ResolvedType::RefMut(actual_inner) = actual {
+                    self.infer_type_param_bindings(inner, actual_inner, bindings);
                 }
             }
             _ => {}
@@ -747,7 +754,7 @@ impl TypeChecker {
                 }
             }
             ResolvedType::Named(type_name) => self.named_type_satisfies_bound(type_name, bound),
-            ResolvedType::Ref(inner) => self.type_satisfies_explicit_bound(inner, bound),
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.type_satisfies_explicit_bound(inner, bound),
             ResolvedType::Function(_, _) | ResolvedType::SelfType => false,
         }
     }
@@ -1471,6 +1478,13 @@ impl TypeChecker {
                 }),
                 _ => None,
             }) {
+                self.record_expr_type(
+                    callee.span,
+                    self.resolved_function_type_from_rust_sig(&rust_sig.1, false),
+                );
+                self.type_info
+                    .ident_kinds
+                    .insert((callee.span.start, callee.span.end), IdentKind::RustImport);
                 return self.validate_rust_function_call(rust_sig.0.as_str(), &rust_sig.1, args, span);
             }
 

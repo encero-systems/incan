@@ -699,7 +699,10 @@ impl TypeChecker {
                     Self::remap_resolved_type_with_import_aliases(item, imported_type_aliases);
                 }
             }
-            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) | ResolvedType::Ref(inner) => {
+            ResolvedType::FrozenList(inner)
+            | ResolvedType::FrozenSet(inner)
+            | ResolvedType::Ref(inner)
+            | ResolvedType::RefMut(inner) => {
                 Self::remap_resolved_type_with_import_aliases(inner, imported_type_aliases);
             }
             ResolvedType::FrozenDict(key, value) => {
