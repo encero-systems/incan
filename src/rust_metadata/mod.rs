@@ -13,8 +13,8 @@ mod test_fixtures;
 
 #[cfg(test)]
 pub(crate) use test_fixtures::{
-    write_async_result_probe_crate, write_hyphenated_function_probe_crate, write_nested_context_probe_crate,
-    write_reexported_function_probe_crate, write_substrait_probe_crate,
+    write_async_result_probe_crate, write_borrowed_param_probe_crate, write_hyphenated_function_probe_crate,
+    write_nested_context_probe_crate, write_reexported_function_probe_crate, write_substrait_probe_crate,
 };
 
 pub use cache::RustMetadataCache;
@@ -36,6 +36,10 @@ mod tests {
 
     fn type_mismatch(msg: impl std::fmt::Display) -> Box<dyn std::error::Error> {
         std::io::Error::other(msg.to_string()).into()
+    }
+
+    fn borrowed_params(sig: &incan_core::interop::RustFunctionSig) -> Vec<&str> {
+        sig.params.iter().map(|param| param.type_display.as_str()).collect()
     }
 
     fn write_probe_crate(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -218,8 +222,10 @@ impl ProbeType {
         match &meta.kind {
             RustItemKind::Function(sig) => {
                 assert_eq!(sig.params.len(), 2);
-                assert!(sig.params[0].type_display.starts_with('&'));
-                assert!(sig.params[1].type_display.starts_with('&'));
+                assert_eq!(
+                    borrowed_params(sig),
+                    vec!["&ra_reexport_probe::State", "&ra_reexport_probe::Plan"]
+                );
                 assert!(
                     sig.is_async,
                     "expected re-exported function metadata to preserve async-ness"
@@ -243,8 +249,7 @@ impl ProbeType {
         match &meta.kind {
             RustItemKind::Function(sig) => {
                 assert_eq!(sig.params.len(), 2);
-                assert!(sig.params[0].type_display.starts_with('&'));
-                assert!(sig.params[1].type_display.starts_with('&'));
+                assert_eq!(borrowed_params(sig), vec!["&foo_bar::State", "&foo_bar::Plan"]);
                 assert!(sig.is_async, "expected async metadata for hyphenated-package probe");
             }
             other => {
@@ -281,8 +286,7 @@ impl ProbeType {
         match &meta.kind {
             RustItemKind::Function(sig) => {
                 assert_eq!(sig.params.len(), 2);
-                assert!(sig.params[0].type_display.starts_with('&'));
-                assert!(sig.params[1].type_display.starts_with('&'));
+                assert_eq!(borrowed_params(sig), vec!["&foo_bar::State", "&foo_bar::Plan"]);
                 assert!(sig.is_async, "expected async metadata via generated lock project");
             }
             other => {
@@ -359,6 +363,78 @@ impl ProbeType {
     }
 
     #[test]
+    fn borrowed_function_params_preserve_concrete_canonical_pointees() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        write_borrowed_param_probe_crate(tmp.path())?;
+        let cache = RustMetadataCache::new();
+        let meta = cache.get_or_extract(tmp.path(), "ra_borrowed_param_probe::logical_plan::consumer::consume", &|_| ())?;
+        match &meta.kind {
+            RustItemKind::Function(sig) => {
+                assert_eq!(
+                    borrowed_params(sig),
+                    vec![
+                        "&ra_borrowed_param_probe::execution::session_state::SessionState",
+                        "&substrait::proto::Plan",
+                    ]
+                );
+                assert!(sig.is_async, "expected async metadata for borrowed-param probe");
+            }
+            other => {
+                return Err(type_mismatch(format!(
+                    "expected function metadata for borrowed-param probe, got {other:?}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn generated_lock_projects_preserve_concrete_borrowed_param_pointees()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let dep_root = tmp.path().join("borrowed-param-probe");
+        write_borrowed_param_probe_crate(&dep_root)?;
+
+        let lock_root = tmp.path().join("generated_lock");
+        let mut generator = ProjectGenerator::new(&lock_root, "lock_probe", true);
+        generator.set_dependencies(vec![DependencySpec {
+            crate_name: "ra_borrowed_param_probe".to_string(),
+            version: None,
+            features: vec![],
+            default_features: true,
+            source: DependencySource::Path { path: dep_root.clone() },
+            optional: false,
+            package: None,
+        }]);
+        generator.generate("fn main() { let _ = ra_borrowed_param_probe::logical_plan::consumer::consume; }\n")?;
+
+        let cache = RustMetadataCache::new();
+        let meta = cache.get_or_extract(
+            &lock_root,
+            "ra_borrowed_param_probe::logical_plan::consumer::consume",
+            &|_| (),
+        )?;
+        match &meta.kind {
+            RustItemKind::Function(sig) => {
+                assert_eq!(
+                    borrowed_params(sig),
+                    vec![
+                        "&ra_borrowed_param_probe::execution::session_state::SessionState",
+                        "&substrait::proto::Plan",
+                    ]
+                );
+                assert!(sig.is_async, "expected async metadata via generated lock project");
+            }
+            other => {
+                return Err(type_mismatch(format!(
+                    "expected function metadata via generated lock project, got {other:?}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn generated_lock_projects_resolve_registry_dependencies_via_cargo_lock_fallback()
     -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
@@ -404,16 +480,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         match &meta.kind {
             RustItemKind::Function(sig) => {
                 assert_eq!(sig.params.len(), 2);
-                assert!(
-                    sig.params[0].type_display.starts_with('&'),
-                    "expected borrowed first param, got {}",
-                    sig.params[0].type_display
-                );
-                assert!(
-                    sig.params[1].type_display.starts_with('&'),
-                    "expected borrowed second param, got {}",
-                    sig.params[1].type_display
-                );
+                assert_eq!(borrowed_params(sig), vec!["&foo_bar::State", "&foo_bar::Plan"]);
                 assert!(sig.is_async, "expected async metadata for registry fallback probe");
             }
             other => {

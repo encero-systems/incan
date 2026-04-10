@@ -193,3 +193,58 @@ pub async fn consume(_state: &State, _plan: &Plan) -> Result<LogicalPlan, Consum
     )?;
     Ok(())
 }
+
+/// Minimal crate exposing nested borrowed function params through local imported type names.
+pub(crate) fn write_borrowed_param_probe_crate(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    fs::create_dir_all(root.join("src"))?;
+    fs::create_dir_all(root.join("substrait").join("src"))?;
+    fs::write(
+        root.join("Cargo.toml"),
+        r#"[package]
+name = "ra_borrowed_param_probe"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+substrait = { path = "substrait" }
+"#,
+    )?;
+    fs::write(
+        root.join("substrait").join("Cargo.toml"),
+        r#"[package]
+name = "substrait"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        root.join("substrait").join("src/lib.rs"),
+        r#"pub mod proto {
+    pub struct Plan;
+}
+"#,
+    )?;
+    fs::write(
+        root.join("src/lib.rs"),
+        r#"pub mod execution {
+    pub mod session_state {
+        pub struct SessionState;
+    }
+}
+
+pub mod logical_plan {
+    pub mod consumer {
+        pub mod plan {
+            use crate::execution::session_state::SessionState;
+            use substrait::proto::Plan;
+
+            pub async fn consume(_state: &SessionState, _plan: &Plan) {}
+        }
+
+        pub use plan::consume;
+    }
+}
+"#,
+    )?;
+    Ok(())
+}

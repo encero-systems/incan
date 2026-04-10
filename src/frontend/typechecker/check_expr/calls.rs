@@ -1627,7 +1627,7 @@ impl TypeChecker {
 mod validate_rust_function_call_tests {
     use super::TypeChecker;
     use crate::frontend::ast::{CallArg, Expr, IntLiteral, Literal, Span, Spanned};
-    use crate::frontend::symbols::{NewtypeInfo, ResolvedType, Symbol, SymbolKind, TypeInfo};
+    use crate::frontend::symbols::{NewtypeInfo, ResolvedType, Symbol, SymbolKind, TypeInfo, VariableInfo};
     use incan_core::interop::{RustFunctionSig, RustParam};
     use std::collections::HashMap;
 
@@ -1902,6 +1902,42 @@ mod validate_rust_function_call_tests {
                 .rust_arg_coercions
                 .contains_key(&(span.start, span.end)),
             "expected rust arg coercion metadata for borrowed String boundary"
+        );
+    }
+
+    #[test]
+    fn rust_function_call_accepts_concrete_borrowed_rust_path_param_without_ref_unknown_diagnostic() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(10, 20);
+        checker.symbols.define(Symbol {
+            name: "plan".to_string(),
+            kind: SymbolKind::Variable(VariableInfo {
+                ty: ResolvedType::RustPath("demo::Plan".to_string()),
+                is_mutable: false,
+                is_used: false,
+            }),
+            span,
+            scope: 0,
+        });
+
+        let arg_expr = Spanned::new(Expr::Ident("plan".to_string()), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let sig = RustFunctionSig {
+            params: vec![RustParam {
+                name: Some("value".to_string()),
+                type_display: "&demo::Plan".to_string(),
+            }],
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_function_call("rust::demo::consume_plan", &sig, &args, span);
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected concrete borrowed Rust path boundary to typecheck, errors={:?}",
+            checker.errors
         );
     }
 

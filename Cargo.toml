@@ -55,6 +55,7 @@ rust-metadata = [
     "dep:ra_ap_ide_db",
     "dep:ra_ap_load-cargo",
     "dep:ra_ap_project_model",
+    "dep:ra_ap_syntax",
     "dep:ra_ap_vfs",
 ]
 
@@ -109,6 +110,7 @@ ra_ap_hir = { version = "0.0.325", optional = true }
 ra_ap_ide_db = { version = "0.0.325", optional = true }
 ra_ap_load-cargo = { version = "0.0.325", optional = true }
 ra_ap_project_model = { version = "0.0.325", optional = true }
+ra_ap_syntax = { version = "0.0.325", optional = true }
 ra_ap_vfs = { version = "0.0.325", optional = true }
 
 [dev-dependencies]

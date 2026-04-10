@@ -12,6 +12,10 @@ use ra_ap_hir::{
     Module, ModuleDef, Name, ScopeDef, Trait, Type, Variant, VariantDef, Visibility, attach_db,
 };
 use ra_ap_ide_db::RootDatabase;
+use ra_ap_syntax::{
+    AstNode,
+    ast::{self, HasModuleItem, HasName},
+};
 
 use super::error::RustMetadataError;
 
@@ -166,6 +170,20 @@ fn resolve_source_path(text: &str, crate_name: &str, module: Module, db: &RootDa
         && let Some(path) = canonical_module_def_path(item.into_module_def(), db)
     {
         return Some(path);
+    }
+
+    if !text.contains("::") {
+        for (name, def) in module.scope(db, None) {
+            if name.as_str() != text {
+                continue;
+            }
+            let ScopeDef::ModuleDef(module_def) = def else {
+                continue;
+            };
+            if let Some(path) = canonical_module_def_path(module_def, db) {
+                return Some(path);
+            }
+        }
     }
 
     if text.contains("::") {
@@ -420,13 +438,168 @@ fn source_function_return_type_display(f: Function, db: &RootDatabase) -> Option
     })
 }
 
+fn join_use_path(prefix: Option<&str>, path: &str) -> String {
+    match prefix {
+        Some(prefix) if !prefix.is_empty() => format!("{prefix}::{path}"),
+        _ => path.to_string(),
+    }
+}
+
+fn use_tree_import_path(tree: &ast::UseTree, target_name: &str, prefix: Option<&str>) -> Option<String> {
+    let path = tree.path().map(|path| path.to_string().replace(' ', ""));
+    let qualified = path.as_deref().map(|path| join_use_path(prefix, path));
+
+    if let Some(use_tree_list) = tree.use_tree_list() {
+        let next_prefix = qualified.as_deref();
+        for child in use_tree_list.use_trees() {
+            if let Some(path) = use_tree_import_path(&child, target_name, next_prefix) {
+                return Some(path);
+            }
+        }
+    }
+
+    if let Some(rename) = tree.rename()
+        && let Some(name) = rename.name()
+        && name.to_string() == target_name
+    {
+        return qualified;
+    }
+
+    if let Some(qualified) = qualified {
+        let imported_name = qualified.rsplit("::").next().unwrap_or(qualified.as_str());
+        if imported_name == target_name {
+            return Some(qualified);
+        }
+    }
+
+    None
+}
+
+fn imported_type_path_in_function_scope(f: Function, target_name: &str, db: &RootDatabase) -> Option<String> {
+    let source = f.source(db)?;
+    let syntax = source.value.syntax().clone();
+
+    if let Some(item_list) = syntax.ancestors().find_map(ast::ItemList::cast) {
+        for item in item_list.items() {
+            let ast::Item::Use(use_item) = item else {
+                continue;
+            };
+            if let Some(path) = use_item
+                .use_tree()
+                .and_then(|tree| use_tree_import_path(&tree, target_name, None))
+            {
+                return Some(path);
+            }
+        }
+        return None;
+    }
+
+    let source_file = syntax.ancestors().find_map(ast::SourceFile::cast)?;
+    for item in source_file.items() {
+        let ast::Item::Use(use_item) = item else {
+            continue;
+        };
+        if let Some(path) = use_item
+            .use_tree()
+            .and_then(|tree| use_tree_import_path(&tree, target_name, None))
+        {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn canonicalize_imported_single_segment_type_display(text: &str, f: Function, db: &RootDatabase) -> Option<String> {
+    let normalized = text.trim().replace(' ', "");
+    if let Some(inner) = normalized.strip_prefix("&mut") {
+        return imported_type_path_in_function_scope(f, inner, db).map(|path| format!("&mut {path}"));
+    }
+    if let Some(inner) = normalized.strip_prefix('&') {
+        return imported_type_path_in_function_scope(f, inner, db).map(|path| format!("&{path}"));
+    }
+    if normalized.contains("::") || normalized.contains(['<', '>', '(', ')', '[', ']', ',']) {
+        return None;
+    }
+    imported_type_path_in_function_scope(f, normalized.as_str(), db)
+}
+
+fn type_shape_contains_unknown(shape: &RustTypeShape) -> bool {
+    match shape {
+        RustTypeShape::Option(inner) | RustTypeShape::Ref(inner) => type_shape_contains_unknown(inner),
+        RustTypeShape::Result(ok, err) => type_shape_contains_unknown(ok) || type_shape_contains_unknown(err),
+        RustTypeShape::Tuple(items) => items.iter().any(type_shape_contains_unknown),
+        RustTypeShape::RustPath { args, .. } => args.iter().any(type_shape_contains_unknown),
+        RustTypeShape::Unknown => true,
+        RustTypeShape::Bool
+        | RustTypeShape::Float
+        | RustTypeShape::Int
+        | RustTypeShape::Str
+        | RustTypeShape::Bytes
+        | RustTypeShape::Unit
+        | RustTypeShape::TypeParam(_) => false,
+    }
+}
+
+/// Resolve a function parameter's declared source annotation into a canonical display string.
+///
+/// rust-analyzer sometimes degrades borrowed parameter displays to `&?` even when the written source still carries a
+/// concrete imported or local pointee type. When that happens, the source annotation is the more faithful contract and
+/// should drive metadata so downstream typechecking/codegen can keep the concrete borrow boundary.
+fn source_function_param_type_display(
+    f: Function,
+    param: &ra_ap_hir::Param<'_>,
+    db: &RootDatabase,
+) -> Option<String> {
+    let source = f.source(db)?;
+    let param_list = source.value.param_list()?;
+    let self_offset = usize::from(param_list.self_param().is_some());
+    if param.index() < self_offset {
+        return None;
+    }
+    let source_param = param_list.params().nth(param.index() - self_offset)?;
+    let text = source_param.ty()?.to_string();
+    if let Some(imported_display) = canonicalize_imported_single_segment_type_display(text.as_str(), f, db) {
+        return Some(imported_display);
+    }
+    let module = f.module(db);
+    let crate_name = module
+        .krate(db)
+        .display_name(db)
+        .map(|name| name.canonical_name().as_str().to_owned())?;
+    let shape = source_type_shape(text.as_str(), crate_name.as_str(), module, db);
+    if matches!(shape, RustTypeShape::TypeParam(_))
+        && let Some(imported_display) = canonicalize_imported_single_segment_type_display(text.as_str(), f, db)
+    {
+        return Some(imported_display);
+    }
+    let rendered = match shape {
+        RustTypeShape::Unknown => normalize_display_path(text.as_str()),
+        other => render_shape_display(&other),
+    };
+    if rendered.contains('?')
+        && let Some(imported_display) = canonicalize_imported_single_segment_type_display(text.as_str(), f, db)
+    {
+        return Some(imported_display);
+    }
+    Some(rendered)
+}
+
 fn extract_function_sig(f: Function, db: &RootDatabase, dt: DisplayTarget) -> RustFunctionSig {
     let params = f
         .assoc_fn_params(db)
         .into_iter()
-        .map(|p| RustParam {
-            name: p.name(db).map(|n| n.as_str().to_owned()),
-            type_display: function_sig_type_display(p.ty(), db, dt),
+        .map(|p| {
+            let shape = rust_type_shape(p.ty(), db, dt);
+            let mut type_display = function_sig_type_display(p.ty(), db, dt);
+            if (type_shape_contains_unknown(&shape) || p.ty().contains_unknown() || type_display.contains('?'))
+                && let Some(source_type_display) = source_function_param_type_display(f, &p, db)
+            {
+                type_display = source_type_display;
+            }
+            RustParam {
+                name: p.name(db).map(|n| n.as_str().to_owned()),
+                type_display,
+            }
         })
         .collect();
     let output_type = f.async_ret_type(db).unwrap_or_else(|| f.ret_type(db));
@@ -620,15 +793,24 @@ fn trait_info(tr: Trait, db: &RootDatabase, dt: DisplayTarget) -> RustTraitInfo 
 /// registered the package with hyphens or via a differently-cased display name.
 fn find_crate(db: &RootDatabase, crate_name: &str) -> Option<Crate> {
     let normalized = crate_name.replace('-', "_");
-    Crate::all(db).into_iter().find(|k| {
-        k.display_name(db).is_some_and(|dn| {
+    let crates = Crate::all(db);
+
+    if let Some(found) = crates.iter().copied().find(|krate| {
+        krate.display_name(db).is_some_and(|dn| {
             dn.to_string().replace('-', "_") == normalized
                 || dn.crate_name().as_str().replace('-', "_") == normalized
                 || dn.canonical_name().as_str().replace('-', "_") == normalized
-        }) || k
-            .root_module(db)
-            .name(db)
-            .is_some_and(|name| name.as_str().replace('-', "_") == normalized)
+        })
+    }) {
+        return Some(found);
+    }
+
+    crates.into_iter().find(|krate| {
+        krate.display_name(db).is_none()
+            && krate
+                .root_module(db)
+                .name(db)
+                .is_some_and(|name| name.as_str().replace('-', "_") == normalized)
     })
 }
 

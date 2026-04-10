@@ -51,7 +51,8 @@ struct DiskCacheEnvelope {
     items: HashMap<String, RustItemMetadata>,
 }
 
-const DISK_CACHE_FORMAT: u32 = 1;
+// Bump when extracted metadata semantics change in a way that makes previously persisted items unsafe to reuse.
+const DISK_CACHE_FORMAT: u32 = 4;
 const DISK_CACHE_FILE: &str = ".incan_rust_metadata_cache.json";
 
 #[derive(Deserialize)]
