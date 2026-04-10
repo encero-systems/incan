@@ -4330,13 +4330,10 @@
 
 
 <h1 id="release-02">Release 0.2<a class="headerlink" href="#release-02" title="Permanent link">&para;</a></h1>
-<p>Incan 0.2 introduces <strong>namespaced stdlib imports</strong> and <strong>namespaced decorators</strong> under the <code>std.*</code> module tree (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>).
-This is a breaking change to import syntax — all stdlib imports and decorators must now use their fully qualified paths.</p>
-<p>This release lays the groundwork for a cleaner stdlib architecture where the compiler knows less about domain-specific
-modules (web, testing, async) and the stdlib can grow without polluting the global namespace.</p>
+<p>Incan 0.2 introduces <strong>namespaced stdlib imports</strong> and <strong>namespaced decorators</strong> under the <code>std.*</code> module tree (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>). This is a breaking change to import syntax — all stdlib imports and decorators must now use their fully qualified paths.</p>
+<p>This release lays the groundwork for a cleaner stdlib architecture where the compiler knows less about domain-specific modules (web, testing, async) and the stdlib can grow without polluting the global namespace.</p>
 <h2 id="project-manifest-changes">Project Manifest Changes<a class="headerlink" href="#project-manifest-changes" title="Permanent link">&para;</a></h2>
-<p>Incan 0.2 introduces a distinction between <strong>Incan Library dependencies</strong> and <strong>Rust crate dependencies</strong>.
-As a result, the dependency tables in <code>incan.toml</code> have been renamed to clarify their purpose:</p>
+<p>Incan 0.2 introduces a distinction between <strong>Incan Library dependencies</strong> and <strong>Rust crate dependencies</strong>. As a result, the dependency tables in <code>incan.toml</code> have been renamed to clarify their purpose:</p>
 <ul>
 <li><code>[dependencies]</code> is now reserved for <strong>Incan Library</strong> dependencies.</li>
 <li><code>[rust-dependencies]</code> is the new table for <strong>Rust crate</strong> dependencies.</li>
@@ -4344,8 +4341,7 @@ As a result, the dependency tables in <code>incan.toml</code> have been renamed 
 </ul>
 <p>Using <code>[dependencies]</code> for Rust crates will now emit a helpful migration error pointing you to the correct table name.</p>
 <h2 id="incan-libraries-experimental">Incan Libraries (Experimental)<a class="headerlink" href="#incan-libraries-experimental" title="Permanent link">&para;</a></h2>
-<p>This release introduces the foundation for <strong>Incan Libraries</strong> (<a href="/dev/RFCs/closed/implemented/031_library_system_phase1">RFC 031</a>).
-You can now build an Incan project as a library that exports functions, models, classes, and constants for other Incan projects to consume.</p>
+<p>This release introduces the foundation for <strong>Incan Libraries</strong> (<a href="/dev/RFCs/closed/implemented/031_library_system_phase1">RFC 031</a>). You can now build an Incan project as a library that exports functions, models, classes, and constants for other Incan projects to consume.</p>
 <h3 id="building-a-library">Building a library<a class="headerlink" href="#building-a-library" title="Permanent link">&para;</a></h3>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>--lib<span class="w"> </span>path/to/project
 </code></pre></div>
@@ -4364,15 +4360,13 @@ You can now build an Incan project as a library that exports functions, models, 
 <p>This feature is in its early stages and currently supports local path dependencies. Further enhancements to the library system are planned for future releases.</p>
 <h2 id="module-static-storage">Module Static Storage<a class="headerlink" href="#module-static-storage" title="Permanent link">&para;</a></h2>
 <p>Incan 0.2 introduces a new top-level declaration form: <code>static</code> (<a href="/dev/RFCs/closed/implemented/052_module_static_storage">RFC 052</a>, #242).</p>
-<p>Use <code>static</code> when a module needs one live storage cell that persists across calls, for example counters, registries,
-caches, or shared mutable collections.</p>
+<p>Use <code>static</code> when a module needs one live storage cell that persists across calls, for example counters, registries, caches, or shared mutable collections.</p>
 <p><code>static</code> is intentionally distinct from <code>const</code>:</p>
 <ul>
 <li><code>const</code> remains compile-time, deeply immutable, and baked into the output program</li>
 <li><code>static</code> is runtime-initialized, live, and mutable through the ordinary assignment, method, and indexing paths</li>
 </ul>
-<p>This release also includes <code>pub static</code>, so library modules can export live shared state through library manifests and
-<code>pub::</code> imports rather than only exporting frozen compile-time constants.</p>
+<p>This release also includes <code>pub static</code>, so library modules can export live shared state through library manifests and <code>pub::</code> imports rather than only exporting frozen compile-time constants.</p>
 <p>Example:</p>
 <div class="language-incan highlight"><span class="filename">analytics.incn</span><pre><span></span><code><span class="k">pub</span> <span class="n">static</span> <span class="n">hits</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
 
@@ -4405,8 +4399,7 @@ caches, or shared mutable collections.</p>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span>
 </code></pre></div>
 <h3 id="decorators">Decorators<a class="headerlink" href="#decorators" title="Permanent link">&para;</a></h3>
-<p>Decorators are now resolved by their fully qualified module path.
-Use an explicit import or a canonical path:</p>
+<p>Decorators are now resolved by their fully qualified module path. Use an explicit import or a canonical path:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Import and use short name (preferred)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.web.routing</span><span class="w"> </span><span class="kn">import</span> <span class="n">route</span>
 
@@ -4443,98 +4436,60 @@ Use an explicit import or a canonical path:</p>
 <p><code>async</code>/<code>await</code> keywords are activated per file through stdlib imports.</p>
 <p>If a file uses async syntax, import <code>std.async</code> (or a submodule like <code>std.async.time</code>) in that same file.</p>
 <h3 id="stdlib-types-require-explicit-imports">Stdlib types require explicit imports<a class="headerlink" href="#stdlib-types-require-explicit-imports" title="Permanent link">&para;</a></h3>
-<p>Types like <code>App</code>, <code>Response</code>, <code>Html</code>, <code>Json</code>, and <code>Query</code> are no longer globally available — import them from <code>std.web</code>.
-The compiler will suggest the correct import if you use a stdlib type without importing it.</p>
+<p>Types like <code>App</code>, <code>Response</code>, <code>Html</code>, <code>Json</code>, and <code>Query</code> are no longer globally available — import them from <code>std.web</code>. The compiler will suggest the correct import if you use a stdlib type without importing it.</p>
 <h3 id="testing-markers-are-runner-metadata">Testing markers are runner metadata<a class="headerlink" href="#testing-markers-are-runner-metadata" title="Permanent link">&para;</a></h3>
-<p><code>@skip</code>, <code>@xfail</code>, <code>@slow</code>, <code>@fixture</code>, and <code>@parametrize</code> are consumed by <code>incan test</code> from <code>std.testing</code> metadata.
-They are not intended as runtime function calls.</p>
+<p><code>@skip</code>, <code>@xfail</code>, <code>@slow</code>, <code>@fixture</code>, and <code>@parametrize</code> are consumed by <code>incan test</code> from <code>std.testing</code> metadata. They are not intended as runtime function calls.</p>
 <h3 id="reserved-names">Reserved names<a class="headerlink" href="#reserved-names" title="Permanent link">&para;</a></h3>
 <p><code>std</code> and <code>rust</code> are now reserved at the module level and cannot be used as declaration names.</p>
 <h2 id="features-and-enhancements">Features and Enhancements<a class="headerlink" href="#features-and-enhancements" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Compiler</strong>: Namespaced stdlib imports under <code>std.*</code> — all stdlib modules use qualified paths (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>).</li>
-<li><strong>Compiler</strong>: New <code>static</code> keyword for module-owned runtime state, plus <code>pub static</code> exports through library
-  manifests and <code>pub::</code> imports (<a href="/dev/RFCs/closed/implemented/052_module_static_storage">RFC 052</a>, #242). See <a href="#module-static-storage">Module Static Storage</a>.</li>
-<li><strong>Parser/formatter</strong>: Parenthesized multi-line import lists are supported for both <code>from module import (...)</code>
-  and <code>from rust::crate import (...)</code>, with optional per-item aliases and formatter-aware wrapping (#116).</li>
-<li><strong>Compiler</strong>: Import-activated soft keywords — <code>async</code> and <code>await</code> are identifiers by default and become reserved only
-  when <code>import std.async</code> (or <code>from std.async...</code>) is present. Forgetting the import produces a targeted diagnostic with
-  a fix suggestion. Similarly, <code>std.testing</code> activates the <code>assert</code> statement syntax (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
-<li><strong>Compiler</strong>: Surface Semantics Engine — soft keywords (<code>assert</code>, <code>async</code>, <code>await</code>) and decorator semantics are routed
-  through a registry-driven dispatch system (<code>SurfaceSemanticsPack</code>). The parser emits generic <code>Surface</code> AST nodes keyed
-  by <code>SurfaceFeatureKey</code>; downstream stages dispatch on that key rather than per-keyword AST variants. Adding a new soft
-  keyword requires no parser, AST, or IR changes — only a keyword descriptor and a semantics-pack handler (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
+<li><strong>Compiler</strong>: New <code>static</code> keyword for module-owned runtime state, plus <code>pub static</code> exports through library manifests and <code>pub::</code> imports (<a href="/dev/RFCs/closed/implemented/052_module_static_storage">RFC 052</a>, #242). See <a href="#module-static-storage">Module Static Storage</a>.</li>
+<li><strong>Parser/formatter</strong>: Parenthesized multi-line import lists are supported for both <code>from module import (...)</code> and <code>from rust::crate import (...)</code>, with optional per-item aliases and formatter-aware wrapping (#116).</li>
+<li><strong>Compiler</strong>: Import-activated soft keywords — <code>async</code> and <code>await</code> are identifiers by default and become reserved only when <code>import std.async</code> (or <code>from std.async...</code>) is present. Forgetting the import produces a targeted diagnostic with a fix suggestion. Similarly, <code>std.testing</code> activates the <code>assert</code> statement syntax (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
+<li><strong>Compiler</strong>: Surface Semantics Engine — soft keywords (<code>assert</code>, <code>async</code>, <code>await</code>) and decorator semantics are routed through a registry-driven dispatch system (<code>SurfaceSemanticsPack</code>). The parser emits generic <code>Surface</code> AST nodes keyed by <code>SurfaceFeatureKey</code>; downstream stages dispatch on that key rather than per-keyword AST variants. Adding a new soft keyword requires no parser, AST, or IR changes — only a keyword descriptor and a semantics-pack handler (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Compiler</strong>: <code>incan-vocab</code> establishes a standalone, registry-driven keyword/manifest/desugaring contract for future library vocabulary extensions, and core tooling consumers now read keyword surface data through that shared registry path (<a href="/dev/RFCs/closed/implemented/027_incan_vocab_crate">RFC 027</a>, #161).</li>
 <li><strong>Compiler</strong>: First-class named function references — named <code>def</code> functions can now be passed as values, stored in variables, and placed in collections without wrapping in a closure. <code>Callable[Params, R]</code> is accepted as syntactic sugar for <code>(Params) -&gt; R</code> and desugared at parse time. Generic function references are explicitly rejected with a clear diagnostic (<a href="/dev/RFCs/closed/implemented/035_first_class_function_references">RFC 035</a>, #169).</li>
 <li><strong>Compiler</strong>: Traits are now always abstract, trait names and generic trait instantiations are valid annotation types, and traits may adopt supertraits with <code>with</code>, enabling transitive capability hierarchies like <code>DataSet[T]</code> / <code>BoundedDataSet[T]</code> (<a href="/dev/RFCs/closed/implemented/042_traits_are_always_abstract">RFC 042</a>, #179).</li>
-<li><strong>Compiler</strong>: Namespaced decorator resolution — decorators resolved by module path
-  (e.g., <code>from std.web.routing import route</code> enables <code>@route(...)</code>) with alias support (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>).</li>
-<li><strong>Compiler</strong>: <code>@rust.extern</code> marker for Rust-backed function stubs, replacing the internal <code>@std.builtin</code>
-  decorator (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>, <a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
-<li><strong>Compiler</strong>: <code>@staticmethod</code> decorator for type-scoped methods with no <code>self</code> receiver, available on <code>class</code>,
-  <code>model</code>, and <code>newtype</code> declarations. Required for <code>@rust.extern</code> methods on types (instance delegation is not
-  supported).</li>
-<li><strong>Testing</strong>: <code>std.testing</code> is Incan-first — user-facing API and assertion behavior are defined in
-  <code>crates/incan_stdlib/stdlib/testing.incn</code>,
-  with Rust limited to explicit <code>@rust.extern</code> host boundaries (for example <code>fail</code> and <code>fail_t</code>) (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
-<li><strong>Compiler</strong>: Stdlib namespace registry (<code>STDLIB_NAMESPACES</code>) replaces the flat stdlib-module list — convention-based
-  submodule discovery, registry-driven unknown-module diagnostics, and soft-keyword activation metadata.</li>
+<li><strong>Compiler</strong>: Namespaced decorator resolution — decorators resolved by module path (e.g., <code>from std.web.routing import route</code> enables <code>@route(...)</code>) with alias support (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>).</li>
+<li><strong>Compiler</strong>: <code>@rust.extern</code> marker for Rust-backed function stubs, replacing the internal <code>@std.builtin</code> decorator (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>, <a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
+<li><strong>Compiler</strong>: <code>@staticmethod</code> decorator for type-scoped methods with no <code>self</code> receiver, available on <code>class</code>, <code>model</code>, and <code>newtype</code> declarations. Required for <code>@rust.extern</code> methods on types (instance delegation is not supported).</li>
+<li><strong>Testing</strong>: <code>std.testing</code> is Incan-first — user-facing API and assertion behavior are defined in <code>crates/incan_stdlib/stdlib/testing.incn</code>, with Rust limited to explicit <code>@rust.extern</code> host boundaries (for example <code>fail</code> and <code>fail_t</code>) (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
+<li><strong>Compiler</strong>: Stdlib namespace registry (<code>STDLIB_NAMESPACES</code>) replaces the flat stdlib-module list — convention-based submodule discovery, registry-driven unknown-module diagnostics, and soft-keyword activation metadata.</li>
 <li><strong>Compiler</strong>: Reserved root namespaces — <code>std</code> and <code>rust</code> cannot be used as user declaration names.</li>
 <li><strong>Compiler</strong>: Stdlib types require explicit imports with actionable error messages when used without import.</li>
-<li><strong>Compiler</strong>: <code>from rust import &lt;crate&gt;</code> syntax for importing Rust crates — the compiler validates imports against
-  <code>[rust-dependencies]</code> in <code>incan.toml</code> and emits the correct <code>use</code> statements in generated Rust (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
-<li><strong>Compiler</strong>: <code>rust::</code> paths accept segments whose spellings match Incan keywords (for example Rust modules named
-  <code>type</code>), and <code>from rust::... import</code> can import such symbols — use <code>as</code> for a safe local name (e.g.
-  <code>from rust::my_crate::proto import type as proto_type</code>) (#197).</li>
-<li><strong>Compiler</strong>: <code>rust-metadata</code> is now caller-owned again instead of ambient in <code>TypeChecker</code>, which fixes the
-  accidental repo-root extraction regression in plain semantic/test paths and restores cheap permissive handling for
-  unextracted Rust members.</li>
-<li><strong>Compiler</strong>: project-local rust-metadata caches now persist extracted RFC 041 item metadata under
-  <code>target/incan_lock</code>, so generated metadata workspaces can reuse extracted items across sessions instead of rebuilding
-  every lookup from scratch.</li>
-<li><strong>Compiler</strong>: Borrowed Rust free-function signatures now preserve <code>&amp;T</code> / <code>&amp;mut T</code> semantics through more of the
-  typechecker, lowering, and emission pipeline, including generated-lock metadata workspaces and typed imported
-  callees. Some downstream rust-metadata dependency-loading gaps are still being closed (#257).</li>
-<li><strong>Compiler</strong>: <code>rusttype</code> backing types may use Rust-style qualified paths after a <code>rust::</code> import binding
-  (e.g. <code>type Binary = rusttype proto_type::Binary</code> when <code>proto_type</code> is an imported module). Generics on qualified
-  paths (<code>a::B[T]</code>) are rejected at parse time with a clear diagnostic (#197).</li>
-<li><strong>Tooling</strong>: <code>make build</code> in the Incan repository symlinks <code>~/.cargo/bin/incan</code> and <code>~/.cargo/bin/incan-lsp</code> to the
-  workspace <code>target/debug</code> binaries when not running under CI (opt out with <code>INCAN_SKIP_CARGO_BIN_LINK=1</code>), so the CLI
-  and language server on your PATH match the checkout without a separate <code>cargo install</code>.</li>
-<li><strong>Compiler</strong>: Rust crate dependency management with inline version annotations, manifest-based configuration,
-  version validation (semver), and lock files for reproducible builds (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
+<li><strong>Compiler</strong>: <code>from rust import &lt;crate&gt;</code> syntax for importing Rust crates — the compiler validates imports against <code>[rust-dependencies]</code> in <code>incan.toml</code> and emits the correct <code>use</code> statements in generated Rust (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
+<li><strong>Compiler</strong>: <code>rust::</code> paths accept segments whose spellings match Incan keywords (for example Rust modules named <code>type</code>), and <code>from rust::... import</code> can import such symbols — use <code>as</code> for a safe local name (e.g. <code>from rust::my_crate::proto import type as proto_type</code>) (#197).</li>
+<li><strong>Compiler</strong>: <code>rust-inspect</code> is now caller-owned again instead of ambient in <code>TypeChecker</code>, which fixes the accidental repo-root extraction regression in plain semantic/test paths and restores cheap permissive handling for unextracted Rust members.</li>
+<li><strong>Compiler</strong>: project-local rust-inspect caches now persist extracted RFC 041 item metadata under <code>target/incan_lock</code>, so generated metadata workspaces can reuse extracted items across sessions instead of rebuilding every lookup from scratch.</li>
+<li><strong>Compiler</strong>: Borrowed Rust free-function signatures now preserve <code>&amp;T</code> / <code>&amp;mut T</code> semantics through more of the typechecker, lowering, and emission pipeline, including generated-lock metadata workspaces and typed imported callees. Some downstream rust-inspect dependency-loading gaps are still being closed (#257).</li>
+<li><strong>Compiler</strong>: <code>rusttype</code> backing types may use Rust-style qualified paths after a <code>rust::</code> import binding (e.g. <code>type Binary = rusttype proto_type::Binary</code> when <code>proto_type</code> is an imported module). Generics on qualified paths (<code>a::B[T]</code>) are rejected at parse time with a clear diagnostic (#197).</li>
+<li><strong>Tooling</strong>: <code>make build</code> in the Incan repository symlinks <code>~/.cargo/bin/incan</code> and <code>~/.cargo/bin/incan-lsp</code> to the workspace <code>target/debug</code> binaries when not running under CI (opt out with <code>INCAN_SKIP_CARGO_BIN_LINK=1</code>), so the CLI and language server on your PATH match the checkout without a separate <code>cargo install</code>.</li>
+<li><strong>Compiler</strong>: Rust crate dependency management with inline version annotations, manifest-based configuration, version validation (semver), and lock files for reproducible builds (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
 <li><strong>Compiler</strong>: RFC 041 first-class Rust interop authoring surface: <code>rusttype</code> declarations, <code>interop:</code> edge blocks, and <code>std.rust</code> capability markers used in generic <code>with</code> bounds (<a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a>, #175).</li>
 <li><strong>Compiler/LSP</strong>: Imported prost <code>oneof</code> payloads now keep their concrete field/variant typing through CLI and editor analysis, so matches like <code>Some(RelType.Read(read))</code> on imported Rust-backed fields resolve <code>read</code> reliably instead of degrading to placeholder <code>T</code> (#218).</li>
 <li><strong>Compiler</strong>: Empty list literals now preserve destination element typing in typed call, assignment, and test-runner codegen paths, avoiding generated Rust inference failures for cases like <code>List[str]</code> parameters receiving <code>[]</code> (#229).</li>
 <li><strong>Compiler</strong>: <code>List[Self]</code> method returns now accept list literals containing explicit instances of the enclosing class when those constructor arguments determine the same owner type, instead of degrading to <code>List[Owner[?]]</code> mismatches (#230).</li>
 <li><strong>Compiler</strong>: Generic model and class field access now resolves declared fields through the concrete owner instantiation, so expressions like <code>boxed.value</code> typecheck correctly for receivers such as <code>Boxed[T]</code> instead of reporting a false missing-field error (#231).</li>
 <li><strong>Tooling</strong>: LSP document symbols, hover, and completions now include <code>newtype</code>/<code>rusttype</code> and <code>type</code> alias declarations. Hovering over a <code>rusttype</code> shows the canonical Rust path of the underlying type (<a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a>).</li>
-<li><strong>Compiler</strong>: Convention-based source root resolution — the compiler and test runner resolve user module imports
-  against <code>src/</code> (or an explicit <code>[build] source-root</code>) so imports are uniform across source and test files (<a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a>).</li>
+<li><strong>Compiler</strong>: Convention-based source root resolution — the compiler and test runner resolve user module imports against <code>src/</code> (or an explicit <code>[build] source-root</code>) so imports are uniform across source and test files (<a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a>).</li>
 <li><strong>Web</strong>: Compiler-to-stdlib routing handoff via <code>incan_stdlib</code> macros (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>).</li>
 <li><strong>Web</strong>: Web-free compiler — all web-specific knowledge (route registration, extractor types, response builders) lives in <code>std.web</code> stdlib modules and the <code>incan_web_macros</code> proc-macro crate. The compiler uses generic decorator passthrough (<code>@rust.extern</code> + <code>rust.module()</code>) and derive passthrough (<code>@derive(X)</code> from <code>rust.module()</code> traits) with no domain-specific web logic in the compiler core (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
-<li><strong>Web</strong>: Import-driven web feature activation — importing <code>std.web</code> automatically enables <code>axum</code>,
-  <code>incan_web_macros</code>, and <code>inventory</code> dependencies in the generated project (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
-<li><strong>Runtime</strong>: <code>incan_stdlib::r#async</code> now provides the narrow Rust runtime leaves behind the source-declared
-  <code>std.async</code> modules, rather than exposing the async surface as a raw Tokio re-export facade.</li>
-<li><strong>Tooling</strong>: <code>incan init</code> scaffolds a full project: <code>src/main.incn</code>, <code>tests/test_main.incn</code>, and <code>incan.toml</code>
-  with <code>[project.scripts] main</code> set (<a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a>).</li>
+<li><strong>Web</strong>: Import-driven web feature activation — importing <code>std.web</code> automatically enables <code>axum</code>, <code>incan_web_macros</code>, and <code>inventory</code> dependencies in the generated project (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
+<li><strong>Runtime</strong>: <code>incan_stdlib::r#async</code> now provides the narrow Rust runtime leaves behind the source-declared <code>std.async</code> modules, rather than exposing the async surface as a raw Tokio re-export facade.</li>
+<li><strong>Tooling</strong>: <code>incan init</code> scaffolds a full project: <code>src/main.incn</code>, <code>tests/test_main.incn</code>, and <code>incan.toml</code> with <code>[project.scripts] main</code> set (<a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a>).</li>
 <li><strong>Tooling</strong>: <code>incan lock</code> generates <code>incan.lock</code> for reproducible builds; <code>--locked</code> and <code>--frozen</code> flags enforce lock freshness in CI (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
-<li><strong>Tooling</strong>: Test runner resolves imports against the project source root, enabling tests to import directly from
-  source modules (e.g., <code>from greet import greet</code>) without duplication (<a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a>).</li>
+<li><strong>Tooling</strong>: Test runner resolves imports against the project source root, enabling tests to import directly from source modules (e.g., <code>from greet import greet</code>) without duplication (<a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a>).</li>
 <li><strong>Tooling</strong>: Test marker semantics (<code>@skip</code>, <code>@xfail</code>, <code>@slow</code>, <code>@fixture</code>, <code>@parametrize</code>) are derived from <code>std.testing</code> metadata in <code>crates/incan_stdlib/stdlib/testing.incn</code> instead of brittle string/path hardcoding (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Parser</strong>: <code>async</code> is allowed as a module path segment in imports (e.g., <code>from std.async.time import sleep</code>).</li>
 <li><strong>Diagnostics</strong>: Clearer error messages for unknown decorators and reserved namespace violations.</li>
 <li><strong>Diagnostics</strong>: Enhanced lock-out-of-date error with expected vs actual fingerprint for easier debugging.</li>
-<li><strong>Compiler</strong>: <code>rust::core</code> and <code>rust::alloc</code> are now rejected at the typechecker level with a targeted diagnostic
-  pointing users to <code>rust::std::...</code> instead (reserved for future <code>no_std</code>/target work) (<a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a>).</li>
-<li><strong>Diagnostics</strong>: Rust interop dependency errors now include the import site path and a hint to verify the
-  crate/module/item path or add version/features in <code>incan.toml</code> (<a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a>, <a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
+<li><strong>Compiler</strong>: <code>rust::core</code> and <code>rust::alloc</code> are now rejected at the typechecker level with a targeted diagnostic pointing users to <code>rust::std::...</code> instead (reserved for future <code>no_std</code>/target work) (<a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a>).</li>
+<li><strong>Diagnostics</strong>: Rust interop dependency errors now include the import site path and a hint to verify the crate/module/item path or add version/features in <code>incan.toml</code> (<a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a>, <a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
 <li><strong>Docs</strong>: "Your first Incan project" tutorial covering <code>incan init</code>, modules, and testing.</li>
 <li><strong>Docs</strong>: Rust interoperability how-to expanded with <code>rusttype</code>, <code>interop:</code> adapters, capability bounds from <code>std.rust</code>, and explicit Rust-boundary coercion guidance (<a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a>, #175). The same guide now covers keyword-named Rust path segments, qualified <code>rusttype</code> backing paths, and the LSP page recommends <code>make build</code> for keeping CLI and <code>incan-lsp</code> aligned (#197).</li>
 <li><strong>Docs</strong>: Contributor docs now describe the registry-driven keyword path, including <code>incan-vocab</code>, parser <code>Ident</code> keyword handling, and generated VS Code grammar synchronization (<a href="/dev/RFCs/closed/implemented/027_incan_vocab_crate">RFC 027</a>).</li>
-<li><strong>Codegen</strong>: String literals passed to external Rust type methods now emit <code>.into()</code> instead of <code>.to_string()</code>,
-  letting the Rust compiler resolve custom string types (e.g. Polars' <code>PlSmallStr</code>) via the <code>Into</code> trait.</li>
+<li><strong>Codegen</strong>: String literals passed to external Rust type methods now emit <code>.into()</code> instead of <code>.to_string()</code>, letting the Rust compiler resolve custom string types (e.g. Polars' <code>PlSmallStr</code>) via the <code>Into</code> trait.</li>
 <li><strong>Compiler</strong>: MSRV bumped from 1.85 to 1.91 (required by the current compiler/runtime/tooling dependency set, including <code>wasmtime</code> 40.x and rust-analyzer metadata crates).</li>
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
@@ -4556,12 +4511,8 @@ They are not intended as runtime function calls.</p>
 <li><strong>Diagnostics</strong>: Unknown symbol errors in f-string interpolations now point to the precise <code>{expr}</code> span (including nested interpolation expressions) instead of the full f-string (<a href="/dev/RFCs/closed/implemented/011_fstring_error_spans">RFC 011</a>, #71).</li>
 <li><strong>Compiler</strong>: Fixed project root resolving to empty string when running <code>incan run src/main.incn</code> from the project directory, causing "No such file or directory" errors.</li>
 <li><strong>Compiler</strong>: Trait-typed values are now correctly assignable to supertrait return types in function returns and generic upcasts with compatible type arguments (<a href="/dev/RFCs/closed/implemented/042_traits_are_always_abstract">RFC 042</a>, #184).</li>
-<li>
-<p><strong>Docs</strong>: Web tutorial examples updated to <code>std.web</code> imports and namespaced decorators.</p>
-</li>
-<li>
-<p><strong>Docs</strong>: Derives and traits explanation updated to use <code>@rust.extern</code>.</p>
-</li>
+<li><strong>Docs</strong>: Web tutorial examples updated to <code>std.web</code> imports and namespaced decorators.</li>
+<li><strong>Docs</strong>: Derives and traits explanation updated to use <code>@rust.extern</code>.</li>
 <li><strong>Tooling</strong>: <code>incan fmt</code> no longer appends an extra blank line at end of file — output ends with a single trailing newline (#189).</li>
 <li><strong>Compiler</strong>: Trait bound inference now covers trait methods and impl methods, not just standalone functions. Generic bounds required by return types (e.g., <code>impl BoundedDataSet&lt;T&gt;</code>) are properly inferred and emitted in the Rust codegen, even when the bounds aren't used in the function body (#196).</li>
 <li><strong>Compiler/Tooling</strong>: Library builds now treat <code>mod.incn</code> as a directory entrypoint instead of a semantic module segment, so nested package modules no longer leak <code>crate::&lt;module&gt;::r#mod</code> paths or stale flat-vs-nested Rust files during <code>incan build --lib</code> (#227).</li>

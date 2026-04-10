@@ -4615,12 +4615,12 @@
 <p>Normative rules:</p>
 <ul>
 <li><code>impl</code> blocks must appear inside <code>rusttype</code> declarations only. Ordinary <code>newtype</code> and <code>model</code> declarations must not contain <code>impl</code> blocks; the compiler must reject them with a clear diagnostic.</li>
-<li>The trait name must resolve to an imported Rust trait (via <code>rust::</code> or <code>std.rust</code>) and be available in the <code>rust_metadata</code> module.</li>
-<li>Method signatures in the <code>impl</code> block must match the trait's method signatures as reported by Rust metadata (in <code>rust_metadata</code>). The compiler must validate parameter types, return types, receiver shapes, and asyncness.</li>
+<li>The trait name must resolve to an imported Rust trait (via <code>rust::</code> or <code>std.rust</code>) and be available in the <code>rust_inspect</code> crate.</li>
+<li>Method signatures in the <code>impl</code> block must match the trait's method signatures as reported by rust-inspect metadata (in <code>rust_inspect</code>). The compiler must validate parameter types, return types, receiver shapes, and asyncness.</li>
 <li>Associated types declared with <code>type AssocType = T</code> must be compatible with the trait's associated type constraints.</li>
 <li>If a trait item has associated types, either:<ul>
 <li>the <code>impl</code> block explicitly declares them, or</li>
-<li>the compiler infers them from the backing Rust type's trait impl via <code>rust_metadata</code>.
+<li>the compiler infers them from the backing Rust type's trait impl via <code>rust_inspect</code>.
   Otherwise the compiler must emit a diagnostic requiring explicit declarations.</li>
 </ul>
 </li>
@@ -4668,7 +4668,7 @@
 </ul>
 <h4 id="expected-diagnostics-for-implforwarding-path">Expected diagnostics for <code>impl</code>/forwarding path<a class="headerlink" href="#expected-diagnostics-for-implforwarding-path" title="Permanent link">&para;</a></h4>
 <ul>
-<li>Trait not found in scope: "Trait <code>X</code> not imported or not available in rust_metadata." </li>
+<li>Trait not found in scope: "Trait <code>X</code> not imported or not available in rust_inspect." </li>
 <li><code>impl</code> outside <code>rusttype</code>: "<code>impl</code> blocks are only allowed inside <code>rusttype</code> declarations." </li>
 <li>Signature mismatch: "Method <code>foo</code> signature differs from <code>Trait::foo</code>; expected <code>...</code>, found <code>...</code>."</li>
 <li>Forwarding failure: "Backing type does not implement <code>Trait</code> and no method bodies are present." </li>
@@ -4686,7 +4686,7 @@
 <li>When a <code>rusttype</code> declaration includes <code>impl Future:</code> with an associated <code>type Output = T</code>, the compiler generates <code>impl Future for Type</code> with a <code>poll</code> method that delegates to the backing type.</li>
 <li>The generated <code>poll</code> must handle <code>Pin</code> projection correctly, preserving Rust pinning guarantees. The compiler must maintain the invariant that <code>Pin&lt;&amp;mut Type&gt;</code> corresponds to a safe projection into <code>Pin&lt;&amp;mut backing_type&gt;</code>.</li>
 <li>Output type mapping: if the backing type's <code>Future::Output</code> differs from the declared <code>Output</code>, the compiler must insert the appropriate conversion (using <code>From</code> impls, <code>map</code>, or <code>map_err</code>) in the generated <code>poll</code> method.</li>
-<li>The compiler should verify (via <code>rust_metadata</code> when available) that the backing type actually implements <code>Future</code>. When metadata is unavailable, the compiler must accept the declaration and let rustc validate it.</li>
+<li>The compiler should verify (via <code>rust_inspect</code> when available) that the backing type actually implements <code>Future</code>. When metadata is unavailable, the compiler must accept the declaration and let rustc validate it.</li>
 </ul>
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <h4 id="rfc-026-superseded">RFC 026 (superseded)<a class="headerlink" href="#rfc-026-superseded" title="Permanent link">&para;</a></h4>
@@ -4707,7 +4707,7 @@
 <p>The semantic center of this RFC is:</p>
 <ol>
 <li><code>impl</code> blocks on <code>rusttype</code> are Incan-authored, Rust-emitted trait implementations.</li>
-<li>The compiler owns the translation: method signatures are validated against Rust metadata, bodies are lowered through the standard Incan pipeline, and the output is a valid Rust <code>impl</code> block.</li>
+<li>The compiler owns the translation: method signatures are validated against rust-inspect metadata, bodies are lowered through the standard Incan pipeline, and the output is a valid Rust <code>impl</code> block.</li>
 <li><code>@rust.derive</code> is a passthrough: the compiler does not interpret the derive macro, it forwards it to rustc.</li>
 <li>Async bridging is a specialization of <code>impl Future</code> that the compiler can optimize by delegating <code>poll</code> to the backing type.</li>
 </ol>

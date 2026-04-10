@@ -5072,7 +5072,7 @@ compiler automatically passes it as a borrowed <code>&amp;str</code> — the mos
         <span class="kc">None</span> <span class="o">=&gt;</span>
             <span class="k">pass</span>
 </code></pre></div>
-<p>For a single tuple-field variant, the typechecker models the payload as a <code>RustPath</code> of the form <code>{backing_rust_path}::{Variant}</code> (aligned with how member paths are composed for imported ADTs). Multiple positional sub-patterns are accepted but typed permissively until richer Rust metadata is available.</p>
+<p>For a single tuple-field variant, the typechecker models the payload as a <code>RustPath</code> of the form <code>{backing_rust_path}::{Variant}</code> (aligned with how member paths are composed for imported ADTs). Multiple positional sub-patterns are accepted but typed permissively until richer <code>rust-inspect</code> metadata is available.</p>
 <p>If the scrutinee is typed as a bare imported Rust path (not a <code>rusttype</code> alias), the type prefix in the pattern is not cross-checked against that path; prefer spelling the <code>rusttype</code> wrapper and matching on <code>PlanRel.Variant(...)</code> so the prefix matches your Incan type name.</p>
 <h2 id="limitations">Limitations<a class="headerlink" href="#limitations" title="Permanent link">&para;</a></h2>
 <ol>
