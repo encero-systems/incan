@@ -29,6 +29,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::env;
+#[cfg(feature = "rust-metadata")]
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::frontend::ast::{Declaration, Program};
@@ -322,6 +324,9 @@ pub struct IrCodegen<'a> {
     declared_crate_names: Option<HashSet<String>>,
     /// Consumer-side `pub::` dependency metadata used by internal typechecking.
     library_manifest_index: Option<Arc<LibraryManifestIndex>>,
+    /// Manifest/workspace root for rust-metadata-backed typechecking during IR generation.
+    #[cfg(feature = "rust-metadata")]
+    rust_metadata_manifest_dir: Option<PathBuf>,
 }
 
 impl<'a> IrCodegen<'a> {
@@ -337,6 +342,8 @@ impl<'a> IrCodegen<'a> {
             emit_zen_in_main: false,
             declared_crate_names: None,
             library_manifest_index: None,
+            #[cfg(feature = "rust-metadata")]
+            rust_metadata_manifest_dir: None,
         }
     }
 
@@ -350,6 +357,12 @@ impl<'a> IrCodegen<'a> {
     /// Set the consumer-side library manifest index for `pub::` import validation.
     pub fn set_library_manifest_index(&mut self, index: LibraryManifestIndex) {
         self.library_manifest_index = Some(Arc::new(index));
+    }
+
+    /// Set the manifest/workspace root used for rust-metadata-backed typechecking during IR generation.
+    #[cfg(feature = "rust-metadata")]
+    pub fn set_rust_metadata_manifest_dir(&mut self, dir: PathBuf) {
+        self.rust_metadata_manifest_dir = Some(dir);
     }
 
     /// Get the Rust crates imported via `import rust::` or `from rust::`
@@ -366,6 +379,19 @@ impl<'a> IrCodegen<'a> {
     #[cfg(test)]
     fn needs_serde(&self) -> bool {
         self.needs_serde
+    }
+
+    fn configure_typechecker(&self, tc: &mut crate::frontend::typechecker::TypeChecker) {
+        if let Some(names) = self.declared_crate_names.clone() {
+            tc.set_declared_crate_names(names);
+        }
+        if let Some(index) = self.library_manifest_index.clone() {
+            tc.set_library_manifest_index_shared(index);
+        }
+        #[cfg(feature = "rust-metadata")]
+        if let Some(dir) = self.rust_metadata_manifest_dir.clone() {
+            tc.set_rust_metadata_manifest_dir(dir);
+        }
     }
 
     /// Add a dependency module (for multi-file compilation)
@@ -558,12 +584,7 @@ impl<'a> IrCodegen<'a> {
         let type_info_opt = {
             use crate::frontend::typechecker::TypeChecker;
             let mut tc = TypeChecker::new();
-            if let Some(names) = self.declared_crate_names.clone() {
-                tc.set_declared_crate_names(names);
-            }
-            if let Some(index) = self.library_manifest_index.clone() {
-                tc.set_library_manifest_index_shared(index);
-            }
+            self.configure_typechecker(&mut tc);
             match tc.check_with_imports(program, &deps) {
                 Ok(()) => tc.type_info().clone(),
                 Err(errs) => return Err(GenerationError::TypeCheck(errs)),
@@ -736,12 +757,7 @@ impl<'a> IrCodegen<'a> {
                 let module_type_info = {
                     use crate::frontend::typechecker::TypeChecker;
                     let mut tc = TypeChecker::new();
-                    if let Some(names) = self.declared_crate_names.clone() {
-                        tc.set_declared_crate_names(names);
-                    }
-                    if let Some(index) = self.library_manifest_index.clone() {
-                        tc.set_library_manifest_index_shared(index);
-                    }
+                    self.configure_typechecker(&mut tc);
                     match tc.check_with_imports_allow_private(ast, &deps) {
                         Ok(()) => tc.type_info().clone(),
                         Err(errs) => return Err(GenerationError::TypeCheck(errs)),
@@ -762,12 +778,14 @@ impl<'a> IrCodegen<'a> {
                     inner.set_internal_module_roots(internal_roots.clone());
                     inner.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
                     inner.set_add_clippy_allows(false);
+                    inner.set_external_rust_functions(self.external_rust_functions.clone());
                     svc.emit_program(&ir)?
                 } else {
                     let mut emitter = IrEmitter::new(&ir.function_registry);
                     emitter.set_internal_module_roots(internal_roots.clone());
                     emitter.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
                     emitter.set_add_clippy_allows(false);
+                    emitter.set_external_rust_functions(self.external_rust_functions.clone());
                     emitter.emit_program(&ir)?
                 };
                 modules.insert(name.to_string(), module_code);
@@ -863,12 +881,7 @@ impl<'a> IrCodegen<'a> {
                     let module_type_info = {
                         use crate::frontend::typechecker::TypeChecker;
                         let mut tc = TypeChecker::new();
-                        if let Some(names) = self.declared_crate_names.clone() {
-                            tc.set_declared_crate_names(names);
-                        }
-                        if let Some(index) = self.library_manifest_index.clone() {
-                            tc.set_library_manifest_index_shared(index);
-                        }
+                        self.configure_typechecker(&mut tc);
                         match tc.check_with_imports_allow_private(ast, &deps) {
                             Ok(()) => tc.type_info().clone(),
                             Err(errs) => return Err(GenerationError::TypeCheck(errs)),
@@ -889,12 +902,14 @@ impl<'a> IrCodegen<'a> {
                         inner.set_internal_module_roots(internal_roots.clone());
                         inner.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
                         inner.set_add_clippy_allows(false);
+                        inner.set_external_rust_functions(self.external_rust_functions.clone());
                         svc.emit_program(&ir)?
                     } else {
                         let mut emitter = IrEmitter::new(&ir.function_registry);
                         emitter.set_internal_module_roots(internal_roots.clone());
                         emitter.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
                         emitter.set_add_clippy_allows(false);
+                        emitter.set_external_rust_functions(self.external_rust_functions.clone());
                         emitter.emit_program(&ir)?
                     };
                     modules.insert(path.clone(), module_code);
@@ -922,6 +937,8 @@ mod tests {
     use crate::frontend::{lexer, parser};
     use crate::library_manifest::{ConstExport, FunctionExport, LibraryManifest, ModelExport, ParamExport, TypeRef};
     use std::collections::HashMap;
+    #[cfg(feature = "rust-metadata")]
+    use std::fs;
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
         match result {
@@ -947,6 +964,20 @@ mod tests {
     fn parse_program(source: &str) -> Program {
         let tokens = must_ok(lexer::lex(source));
         must_ok(parser::parse(&tokens))
+    }
+
+    #[cfg(feature = "rust-metadata")]
+    fn seeded_rust_metadata_workspace() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            r#"[package]
+name = "ra_seeded_codegen_probe"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )?;
+        Ok(tmp)
     }
 
     fn db_module_program() -> Program {
@@ -1418,5 +1449,408 @@ def main() -> None:
         let code = must_ok(codegen.try_generate(&ast));
         assert!(code.contains("use widgets as widgets_alias;"));
         assert!(!code.contains("use pub::widgets"));
+    }
+
+    #[cfg(feature = "rust-metadata")]
+    #[test]
+    fn test_codegen_borrows_rust_backed_free_function_args_from_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+        use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustVisibility};
+
+        let source = r#"
+from rust::demo import Thing
+from rust::demo import takes_ref
+
+def forward(value: Thing) -> None:
+  takes_ref(value)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = seeded_rust_metadata_workspace()?;
+        let manifest_dir = tmp.path().to_path_buf();
+        let mut tc = TypeChecker::new();
+        tc.set_rust_metadata_manifest_dir(manifest_dir.clone());
+        tc.rust_metadata_cache
+            .insert_test_item(
+                &manifest_dir,
+                RustItemMetadata {
+                    canonical_path: "demo::takes_ref".to_string(),
+                    definition_path: Some("demo::takes_ref".to_string()),
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Function(RustFunctionSig {
+                        params: vec![RustParam {
+                            name: Some("value".to_string()),
+                            type_display: "&demo::Thing".to_string(),
+                        }],
+                        return_type: "()".to_string(),
+                        is_async: false,
+                        is_unsafe: false,
+                    }),
+                },
+            )
+            .map_err(|e| std::io::Error::other(format!("seed rust metadata function: {e}")))?;
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("takes_ref(&value);"),
+            "expected borrowed rust free-function arg in generated code; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust-metadata")]
+    #[test]
+    fn test_codegen_borrows_async_rust_backed_free_function_args_from_metadata()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+        use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustVisibility};
+
+        let source = r#"
+from std.async import sleep
+from rust::demo import State
+from rust::demo import Plan
+from rust::demo import consume
+
+async def run(state: State, plan: Plan) -> None:
+  await sleep(0.01)
+  await consume(state, plan)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = seeded_rust_metadata_workspace()?;
+        let manifest_dir = tmp.path().to_path_buf();
+        let mut tc = TypeChecker::new();
+        tc.set_rust_metadata_manifest_dir(manifest_dir.clone());
+        tc.rust_metadata_cache
+            .insert_test_item(
+                &manifest_dir,
+                RustItemMetadata {
+                    canonical_path: "demo::consume".to_string(),
+                    definition_path: Some("demo::consume".to_string()),
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Function(RustFunctionSig {
+                        params: vec![
+                            RustParam {
+                                name: Some("state".to_string()),
+                                type_display: "&demo::State".to_string(),
+                            },
+                            RustParam {
+                                name: Some("plan".to_string()),
+                                type_display: "&demo::Plan".to_string(),
+                            },
+                        ],
+                        return_type: "()".to_string(),
+                        is_async: true,
+                        is_unsafe: false,
+                    }),
+                },
+            )
+            .map_err(|e| std::io::Error::other(format!("seed rust metadata function: {e}")))?;
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("consume(&state, &plan).await"),
+            "expected borrowed async rust free-function args in generated code; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust-metadata")]
+    #[test]
+    fn test_codegen_borrows_async_rust_backed_free_function_args_from_real_rust_metadata()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+        use crate::rust_metadata::write_async_result_probe_crate;
+
+        let source = r#"
+from std.async import sleep
+from rust::ra_async_result_probe import State
+from rust::ra_async_result_probe import Plan
+from rust::ra_async_result_probe import consume
+
+async def run(state: State, plan: Plan) -> None:
+  await sleep(0.01)
+  await consume(state, plan)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = tempfile::tempdir()?;
+        write_async_result_probe_crate(tmp.path())?;
+
+        let mut tc = TypeChecker::new();
+        tc.set_rust_metadata_manifest_dir(tmp.path().to_path_buf());
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("consume(&state, &plan).await"),
+            "expected borrowed async rust free-function args from real metadata; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust-metadata")]
+    #[test]
+    fn test_codegen_borrows_async_rust_backed_free_function_args_from_generated_lock_workspace()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::backend::project::ProjectGenerator;
+        use crate::frontend::typechecker::TypeChecker;
+        use crate::manifest::{DependencySource, DependencySpec};
+        use crate::rust_metadata::write_hyphenated_function_probe_crate;
+
+        let source = r#"
+from std.async import sleep
+from rust::foo_bar import State
+from rust::foo_bar import Plan
+from rust::foo_bar::consumer import consume
+
+async def run(state: State, plan: Plan) -> None:
+  await sleep(0.01)
+  await consume(state, plan)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = tempfile::tempdir()?;
+        let dep_root = tmp.path().join("foo-bar-dep");
+        write_hyphenated_function_probe_crate(&dep_root)?;
+
+        let lock_root = tmp.path().join("generated_lock");
+        let mut generator = ProjectGenerator::new(&lock_root, "lock_probe", true);
+        generator.set_dependencies(vec![DependencySpec {
+            crate_name: "foo-bar".to_string(),
+            version: None,
+            features: vec![],
+            default_features: true,
+            source: DependencySource::Path { path: dep_root.clone() },
+            optional: false,
+            package: None,
+        }]);
+        generator.generate("fn main() {}\n")?;
+
+        let mut tc = TypeChecker::new();
+        tc.set_rust_metadata_manifest_dir(lock_root.clone());
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("consume(&state, &plan).await"),
+            "expected borrowed async rust free-function args from generated lock workspace; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust-metadata")]
+    #[test]
+    fn test_nested_module_codegen_borrows_async_rust_args_from_generated_lock_workspace()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::backend::project::ProjectGenerator;
+        use crate::manifest::{DependencySource, DependencySpec};
+        use crate::rust_metadata::write_hyphenated_function_probe_crate;
+
+        let main_module = parse_program(
+            r#"
+def main() -> None:
+  return
+"#,
+        );
+        let dep_module = parse_program(
+            r#"
+from std.async import sleep
+from rust::foo_bar import State
+from rust::foo_bar import Plan
+from rust::foo_bar::consumer import consume
+
+async def run(state: State, plan: Plan) -> None:
+  await sleep(0.01)
+  await consume(state, plan)
+"#,
+        );
+
+        let tmp = tempfile::tempdir()?;
+        let dep_root = tmp.path().join("foo-bar-dep");
+        write_hyphenated_function_probe_crate(&dep_root)?;
+
+        let lock_root = tmp.path().join("generated_lock");
+        let mut generator = ProjectGenerator::new(&lock_root, "lock_probe", true);
+        generator.set_dependencies(vec![DependencySpec {
+            crate_name: "foo-bar".to_string(),
+            version: None,
+            features: vec![],
+            default_features: true,
+            source: DependencySource::Path { path: dep_root.clone() },
+            optional: false,
+            package: None,
+        }]);
+        generator.generate("fn main() {}\n")?;
+
+        let worker_path = vec!["worker".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.set_rust_metadata_manifest_dir(lock_root);
+        codegen.add_module_with_path_segments("worker", &dep_module, worker_path.clone());
+
+        let (_main_code, rust_modules) =
+            must_ok(codegen.try_generate_multi_file_nested(&main_module, std::slice::from_ref(&worker_path)));
+        let worker_code = must_some(rust_modules.get(&worker_path), "missing generated worker module");
+
+        assert!(
+            worker_code.contains("consume(&state, &plan).await"),
+            "expected borrowed async rust free-function args in generated nested module; got:\n{worker_code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust-metadata")]
+    #[test]
+    fn test_codegen_borrows_async_rust_args_after_rust_method_return() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+        use crate::rust_metadata::write_async_result_probe_crate;
+
+        let source = r#"
+from std.async import sleep
+from rust::ra_async_result_probe import SessionContext
+from rust::ra_async_result_probe import Plan
+from rust::ra_async_result_probe import consume
+
+async def run(plan: Plan) -> None:
+  ctx = SessionContext.new()
+  state = ctx.state()
+  await sleep(0.01)
+  await consume(state, plan)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = tempfile::tempdir()?;
+        write_async_result_probe_crate(tmp.path())?;
+
+        let mut tc = TypeChecker::new();
+        tc.set_rust_metadata_manifest_dir(tmp.path().to_path_buf());
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("consume(&state, &plan).await"),
+            "expected borrowed async rust free-function args after rust method return; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust-metadata")]
+    #[test]
+    fn test_ir_codegen_uses_configured_rust_metadata_workspace_for_async_borrows()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::rust_metadata::write_hyphenated_function_probe_crate;
+
+        let tmp = tempfile::tempdir()?;
+        let dep_root = tmp.path().join("foo-bar-dep");
+        write_hyphenated_function_probe_crate(&dep_root)?;
+
+        let host_root = tmp.path().join("host");
+        std::fs::create_dir_all(host_root.join("src"))?;
+        std::fs::write(
+            host_root.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"host\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies.foo_bar]\npackage = \"foo-bar\"\npath = \"{}\"\n",
+                dep_root.display()
+            ),
+        )?;
+        std::fs::write(host_root.join("src/lib.rs"), "pub fn touch() {}\n")?;
+
+        let source = r#"
+from std.async import sleep
+from rust::foo_bar import State
+from rust::foo_bar import Plan
+from rust::foo_bar::consumer import consume
+
+async def run(state: State, plan: Plan) -> None:
+  await sleep(0.01)
+  await consume(state, plan)
+"#;
+        let ast = parse_program(source);
+        let mut codegen = IrCodegen::new();
+        codegen.set_rust_metadata_manifest_dir(host_root);
+        let code = must_ok(codegen.try_generate(&ast));
+
+        assert!(
+            code.contains("consume(&state, &plan).await"),
+            "expected IrCodegen to preserve borrowed async args via the configured metadata workspace; got:\n{code}"
+        );
+        Ok(())
     }
 }

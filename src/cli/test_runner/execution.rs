@@ -6,6 +6,8 @@ use std::time::Instant;
 use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::cli::commands;
 use crate::cli::commands::common;
+#[cfg(feature = "rust-metadata")]
+use crate::cli::commands::common::ensure_rust_metadata_workspace;
 use crate::cli::prelude::ParsedModule;
 use crate::dependency_resolver::resolve_dependencies;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
@@ -184,6 +186,23 @@ pub(super) fn run_single_test(
     // ---- Setup codegen ----
     let mut codegen = IrCodegen::new();
     codegen.set_library_manifest_index(library_manifest_index.clone());
+    #[cfg(feature = "rust-metadata")]
+    {
+        let rust_metadata_manifest_dir = match ensure_rust_metadata_workspace(
+            &project_root,
+            &project_name,
+            manifest
+                .as_ref()
+                .and_then(|m| m.build.as_ref().and_then(|build| build.rust_edition.clone())),
+            &resolved,
+            &project_requirements,
+            lock_payload.clone(),
+        ) {
+            Ok(dir) => dir,
+            Err(err) => return TestResult::Failed(start.elapsed(), err.message),
+        };
+        codegen.set_rust_metadata_manifest_dir(rust_metadata_manifest_dir);
+    }
 
     for module in &source_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());

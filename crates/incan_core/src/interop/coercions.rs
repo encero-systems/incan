@@ -63,9 +63,15 @@ fn admitted_scalar_coercion(incan_type: &str, rust_target: &str) -> Option<Coerc
         ("bool", "bool") => Some(CoercionPolicy::Exact),
         ("str", "String") | ("frozenstr", "String") => Some(CoercionPolicy::Exact),
         ("str", "std::string::String") | ("frozenstr", "std::string::String") => Some(CoercionPolicy::Exact),
+        ("str", "&String") | ("frozenstr", "&String") => Some(CoercionPolicy::Borrow),
+        ("str", "&std::string::String") | ("frozenstr", "&std::string::String") => Some(CoercionPolicy::Borrow),
+        ("str", "&alloc::string::String") | ("frozenstr", "&alloc::string::String") => Some(CoercionPolicy::Borrow),
         ("str", "&str") | ("frozenstr", "&str") => Some(CoercionPolicy::Borrow),
         ("bytes", "Vec<u8>") | ("frozenbytes", "Vec<u8>") => Some(CoercionPolicy::Exact),
         ("bytes", "std::vec::Vec<u8>") | ("frozenbytes", "std::vec::Vec<u8>") => Some(CoercionPolicy::Exact),
+        ("bytes", "&Vec<u8>") | ("frozenbytes", "&Vec<u8>") => Some(CoercionPolicy::Borrow),
+        ("bytes", "&std::vec::Vec<u8>") | ("frozenbytes", "&std::vec::Vec<u8>") => Some(CoercionPolicy::Borrow),
+        ("bytes", "&alloc::vec::Vec<u8>") | ("frozenbytes", "&alloc::vec::Vec<u8>") => Some(CoercionPolicy::Borrow),
         ("bytes", "&[u8]") | ("frozenbytes", "&[u8]") => Some(CoercionPolicy::Borrow),
         ("none", "()") | ("unit", "()") => Some(CoercionPolicy::Exact),
         _ => None,
@@ -316,7 +322,15 @@ mod tests {
         assert_eq!(admitted_builtin_coercion("float", "f32"), Some(CoercionPolicy::Lossy));
         assert_eq!(admitted_builtin_coercion("str", "&str"), Some(CoercionPolicy::Borrow));
         assert_eq!(
+            admitted_builtin_coercion("str", "&String"),
+            Some(CoercionPolicy::Borrow)
+        );
+        assert_eq!(
             admitted_builtin_coercion("FrozenStr", "&str"),
+            Some(CoercionPolicy::Borrow)
+        );
+        assert_eq!(
+            admitted_builtin_coercion("bytes", "&Vec<u8>"),
             Some(CoercionPolicy::Borrow)
         );
         assert_eq!(admitted_builtin_coercion("Unit", "()"), Some(CoercionPolicy::Exact));

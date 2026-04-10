@@ -34,6 +34,7 @@ pub(crate) fn substitute_resolved_type(ty: &ResolvedType, map: &HashMap<String, 
             ResolvedType::Tuple(elems.iter().map(|e| substitute_resolved_type(e, map)).collect())
         }
         ResolvedType::Ref(inner) => ResolvedType::Ref(Box::new(substitute_resolved_type(inner, map))),
+        ResolvedType::RefMut(inner) => ResolvedType::RefMut(Box::new(substitute_resolved_type(inner, map))),
         _ => ty.clone(),
     }
 }

@@ -92,7 +92,7 @@ incan build file.incn
   │
   └──▶ 6) Build
           - `cargo build --release`
-          - Binary path: target/incan/<project_name>/target/release/<project_name>
+          - Binary path: target/incan/.cargo-target/release/<project_name> (shared Cargo `target` dir under `target/incan/`)
 ```
 
 Notes:

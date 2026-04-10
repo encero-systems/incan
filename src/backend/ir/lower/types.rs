@@ -142,6 +142,7 @@ impl AstLowering {
             ResolvedType::Unit => IrType::Unit,
             ResolvedType::Named(name) => IrType::Struct(name.clone()),
             ResolvedType::Ref(inner) => IrType::Ref(Box::new(self.lower_resolved_type(inner))),
+            ResolvedType::RefMut(inner) => IrType::RefMut(Box::new(self.lower_resolved_type(inner))),
             ResolvedType::Generic(name, args) => match classify_generic_base(name.as_str()) {
                 GenericBaseKind::Collection(CollectionTypeId::List) => IrType::List(Box::new(
                     args.first()

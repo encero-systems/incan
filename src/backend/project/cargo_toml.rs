@@ -67,22 +67,45 @@ struct LibTarget {
 // Dependency conversion
 // ============================================================================
 
-/// Convert a [`DependencySpec`] into a `(crate_name, toml::Value)` pair.
+/// Return the dependency key that generated Cargo manifests should render for `spec`.
+///
+/// Cargo lets a dependency key differ from the published package name via `package = "..."`. Generated manifests use
+/// the Rust-import-safe dependency key here so the key matches the crate spelling that downstream code and
+/// rust-metadata queries use.
+fn rendered_dependency_key(spec: &DependencySpec) -> String {
+    spec.crate_name.replace('-', "_")
+}
+
+/// Return the published Cargo package name to render for `spec`, if it differs from the dependency key.
+fn rendered_package_name(spec: &DependencySpec, dependency_key: &str) -> Option<String> {
+    spec.package.clone().or_else(|| {
+        if dependency_key != spec.crate_name {
+            Some(spec.crate_name.clone())
+        } else {
+            None
+        }
+    })
+}
+
+/// Convert a [`DependencySpec`] into a `(dependency_key, toml::Value)` pair.
 ///
 /// Returns [`toml::Value::String`] for simple version-only registry deps (shorthand form),
 /// or [`toml::Value::Table`] for deps that need extra fields (features, git, path, etc.).
 fn dependency_spec_to_toml(spec: &DependencySpec, output_dir: &Path) -> (String, toml::Value) {
+    let dependency_key = rendered_dependency_key(spec);
+    let package_name = rendered_package_name(spec, &dependency_key);
+
     // ---- Check if shorthand form is possible ----
     let shorthand_ok = matches!(spec.source, DependencySource::Registry)
         && spec.version.is_some()
         && spec.features.is_empty()
         && spec.default_features
         && !spec.optional
-        && spec.package.is_none();
+        && package_name.is_none();
 
     if shorthand_ok {
         let version = spec.version.as_deref().unwrap_or("*");
-        return (spec.crate_name.clone(), toml::Value::String(version.to_string()));
+        return (dependency_key, toml::Value::String(version.to_string()));
     }
 
     // ---- Build a table for complex deps ----
@@ -116,8 +139,8 @@ fn dependency_spec_to_toml(spec: &DependencySpec, output_dir: &Path) -> (String,
         }
     }
 
-    if let Some(package) = &spec.package {
-        table.insert("package".into(), package.clone().into());
+    if let Some(package) = package_name {
+        table.insert("package".into(), package.into());
     }
     if let Some(version) = &spec.version {
         table.insert("version".into(), version.clone().into());
@@ -133,7 +156,7 @@ fn dependency_spec_to_toml(spec: &DependencySpec, output_dir: &Path) -> (String,
         table.insert("optional".into(), true.into());
     }
 
-    (spec.crate_name.clone(), toml::Value::Table(table))
+    (dependency_key, toml::Value::Table(table))
 }
 
 /// Build a [`toml::Value::Table`] for a path-only dependency (used for stdlib/derive crates).
@@ -180,12 +203,13 @@ impl ProjectGenerator {
         // Add resolved user dependencies
         let mut optional_features = Vec::new();
         for spec in &self.dependencies {
-            if added_crates.contains(&spec.crate_name) {
+            let dependency_key = rendered_dependency_key(spec);
+            if added_crates.contains(&dependency_key) {
                 continue;
             }
             let (name, value) = dependency_spec_to_toml(spec, &self.output_dir);
             if spec.optional {
-                optional_features.push(spec.crate_name.clone());
+                optional_features.push(name.clone());
             }
             added_crates.insert(name.clone());
             deps.insert(name, value);
@@ -195,13 +219,15 @@ impl ProjectGenerator {
         let dev_deps = if self.include_dev_dependencies && !self.dev_dependencies.is_empty() {
             let mut dev = toml::Table::new();
             for spec in &self.dev_dependencies {
-                if added_crates.contains(&spec.crate_name) {
+                let dependency_key = rendered_dependency_key(spec);
+                if added_crates.contains(&dependency_key) {
                     continue;
                 }
                 let (name, value) = dependency_spec_to_toml(spec, &self.output_dir);
                 if spec.optional {
-                    optional_features.push(spec.crate_name.clone());
+                    optional_features.push(name.clone());
                 }
+                added_crates.insert(name.clone());
                 dev.insert(name, value);
             }
             if dev.is_empty() { None } else { Some(dev) }
@@ -571,6 +597,38 @@ mod tests {
         assert!(
             toml.contains("path = "),
             "expected path-based dependency in Cargo.toml, got:\n{toml}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_cargo_toml_hyphenated_dependency_uses_rust_safe_key_and_package_alias()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::manifest::{DependencySource, DependencySpec};
+
+        let mut generator = ProjectGenerator::new("/tmp/consumer/out", "consumer", true);
+        generator.set_dependencies(vec![DependencySpec {
+            crate_name: "datafusion-substrait".to_string(),
+            version: Some("53".to_string()),
+            features: vec!["protoc".to_string()],
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: true,
+            package: None,
+        }]);
+
+        let toml = generator.generate_cargo_toml()?;
+        assert!(
+            toml.contains("[dependencies.datafusion_substrait]"),
+            "expected underscore-safe dependency key in Cargo.toml, got:\n{toml}"
+        );
+        assert!(
+            toml.contains("package = \"datafusion-substrait\""),
+            "expected original Cargo package name in package field, got:\n{toml}"
+        );
+        assert!(
+            toml.contains("datafusion_substrait = [\"dep:datafusion_substrait\"]"),
+            "expected optional feature gate to track the rendered dependency key, got:\n{toml}"
         );
         Ok(())
     }

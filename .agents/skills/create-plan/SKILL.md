@@ -69,12 +69,12 @@ From the Incan repo root:
 | Step | Command | Notes |
 |------|---------|--------|
 | Format | `make fmt` | Writes sources; `make fmt-check` for read-only. Nightly rustfmt required (see Makefile). |
-| Full test + clippy | `make pre-commit-full` | fmt-check, full `cargo test` (via `TEST_CMD`), clippy `-D warnings`. |
+| Full gate | `make pre-commit` | Full local gate: full checks + `smoke-test-fast`. |
 | Smoke | `make smoke-test` | Runs tests again plus `smoke-test-core` (release build, canaries, example builds, scripts). |
 
-**Typical one-liner after implementation:** `make fmt && make pre-commit-full && make smoke-test`.
+**Typical one-liner after implementation:** `make fmt && make pre-commit`.
 
-Optional: `make verify` = `pre-commit-full` + `smoke-test-fast` when the full test suite was already run repeatedly.
+Optional: `make smoke-test` when you explicitly want the full smoke suite after `pre-commit`.
 
 **Project rules:** no `.unwrap()` / `.expect()` in Incan (see `AGENTS.md`).
 

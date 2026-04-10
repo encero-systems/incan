@@ -21,6 +21,8 @@ use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
 use std::collections::{HashMap, HashSet};
 
+#[cfg(feature = "rust-metadata")]
+use super::common::ensure_rust_metadata_workspace;
 use super::common::{
     build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_modules, collect_project_requirements,
     format_dependency_error, merge_project_requirement_dependencies, resolve_project_root, validate_output_dir,
@@ -477,6 +479,20 @@ fn prepare_project(
         locked,
         frozen,
     })?;
+    #[cfg(feature = "rust-metadata")]
+    {
+        let rust_metadata_manifest_dir = ensure_rust_metadata_workspace(
+            &project_root,
+            project_name.as_str(),
+            manifest
+                .as_ref()
+                .and_then(|m| m.build.as_ref().and_then(|b| b.rust_edition.clone())),
+            &resolved,
+            &project_requirements,
+            lock_payload.clone(),
+        )?;
+        codegen.set_rust_metadata_manifest_dir(rust_metadata_manifest_dir);
+    }
     generator.set_cargo_lock_payload(lock_payload);
 
     let cargo_flags = cargo_command_flags(locked, frozen, &cargo_features);
@@ -633,7 +649,7 @@ pub fn build_library(
     };
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
 
-    let _lock_payload_for_typecheck = resolve_lock_payload(LockResolutionRequest {
+    let lock_payload_for_typecheck = resolve_lock_payload(LockResolutionRequest {
         project_root: &project_root,
         project_name: project_name.as_str(),
         manifest: Some(&manifest),
@@ -647,16 +663,14 @@ pub fn build_library(
     let rust_metadata_manifest_dir = project_root.join("target").join("incan_lock");
     #[cfg(feature = "rust-metadata")]
     {
-        let mut rust_metadata_generator =
-            ProjectGenerator::new(&rust_metadata_manifest_dir, project_name.as_str(), true);
-        rust_metadata_generator.set_dependencies(resolved.dependencies.clone());
-        rust_metadata_generator.set_dev_dependencies(resolved.dev_dependencies.clone());
-        rust_metadata_generator.set_include_dev_dependencies(true);
-        rust_metadata_generator.set_stdlib_features(project_requirements.stdlib_features.clone());
-        rust_metadata_generator.set_rust_edition(manifest.build.as_ref().and_then(|build| build.rust_edition.clone()));
-        rust_metadata_generator
-            .generate("fn main() {}")
-            .map_err(|e| CliError::failure(format!("Failed to generate rust-metadata lock project: {e}")))?;
+        ensure_rust_metadata_workspace(
+            &project_root,
+            project_name.as_str(),
+            manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
+            &resolved,
+            &project_requirements,
+            lock_payload_for_typecheck.clone(),
+        )?;
     }
 
     let mut all_errors = String::new();
@@ -761,6 +775,18 @@ pub fn build_library(
         locked,
         frozen,
     })?;
+    #[cfg(feature = "rust-metadata")]
+    {
+        let rust_metadata_manifest_dir = ensure_rust_metadata_workspace(
+            &project_root,
+            project_name.as_str(),
+            manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
+            &resolved,
+            &project_requirements,
+            lock_payload.clone(),
+        )?;
+        codegen.set_rust_metadata_manifest_dir(rust_metadata_manifest_dir);
+    }
     generator.set_cargo_lock_payload(lock_payload);
     generator.set_cargo_policy_flags(cargo_command_flags(locked, frozen, &cargo_features));
     generator.set_dependencies(resolved.dependencies);

@@ -14,7 +14,7 @@ exclude = ["target/incan"]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0-dev.7"
+version = "0.2.0-dev.8"
 description = "The Incan programming language compiler"
 edition = "2024"
 rust-version = "1.91"
@@ -42,12 +42,13 @@ readme.workspace = true
 
 [features]
 default = ["cli", "std_testing", "std_async", "std_decorators"]
-cli = ["dep:clap", "dep:tracing-subscriber"]
+cli = ["dep:clap", "dep:tracing-subscriber", "rust-metadata"]
 lsp = ["dep:tower-lsp", "dep:tokio"]
 std_testing = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_testing"]
 std_async = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_async"]
 std_decorators = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_decorators"]
-# Rust dependency metadata via rust-analyzer (`ra_ap_*`). Optional to keep default builds lighter.
+# Rust dependency metadata via rust-analyzer (`ra_ap_*`). Kept optional for non-CLI/library builds; the CLI enables it
+# so ordinary `rust::` imports can preserve real function/type signatures.
 rust-metadata = [
     "dep:anyhow",
     "dep:ra_ap_hir",
@@ -99,8 +100,8 @@ hex = "0.4.3"
 time = { version = "0.3.45", features = ["formatting"] }
 semver = "1.0.27"
 # WASM runtime for desugarer packaging
-wasmtime = { version = "40", default-features = false, features = ["cranelift", "runtime", "std"] }
-wasmtime-wasi = { version = "40", default-features = false, features = ["p1"] }
+wasmtime = { version = "43.0.1", default-features = false, features = ["cranelift", "runtime", "std"] }
+wasmtime-wasi = { version = "43.0.1", default-features = false, features = ["p1"] }
 
 # Optional: rust-analyzer library stack for `rust::` metadata (RFC 041). Pin versions together.
 anyhow = { version = "1.0.98", optional = true }

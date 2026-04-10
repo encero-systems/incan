@@ -107,6 +107,40 @@ fn canonical_module_def_path(def: ModuleDef, db: &RootDatabase) -> Option<String
     }
 }
 
+fn canonical_adt_path(adt: Adt, db: &RootDatabase) -> Option<String> {
+    canonical_module_def_path(ModuleDef::Adt(adt), db)
+}
+
+fn render_shape_display(shape: &RustTypeShape) -> String {
+    match shape {
+        RustTypeShape::Bool => "bool".to_string(),
+        RustTypeShape::Float => "f64".to_string(),
+        RustTypeShape::Int => "i64".to_string(),
+        RustTypeShape::Str => "String".to_string(),
+        RustTypeShape::Bytes => "Vec<u8>".to_string(),
+        RustTypeShape::Unit => "()".to_string(),
+        RustTypeShape::Option(inner) => format!("Option<{}>", render_shape_display(inner)),
+        RustTypeShape::Result(ok, err) => {
+            format!("Result<{}, {}>", render_shape_display(ok), render_shape_display(err))
+        }
+        RustTypeShape::Tuple(items) => {
+            let rendered: Vec<String> = items.iter().map(render_shape_display).collect();
+            format!("({})", rendered.join(", "))
+        }
+        RustTypeShape::Ref(inner) => format!("&{}", render_shape_display(inner)),
+        RustTypeShape::RustPath { path, args } => {
+            if args.is_empty() {
+                path.clone()
+            } else {
+                let rendered_args: Vec<String> = args.iter().map(render_shape_display).collect();
+                format!("{path}<{}>", rendered_args.join(", "))
+            }
+        }
+        RustTypeShape::TypeParam(name) => name.clone(),
+        RustTypeShape::Unknown => "?".to_string(),
+    }
+}
+
 fn resolve_source_path(text: &str, crate_name: &str, module: Module, db: &RootDatabase) -> Option<String> {
     let text = text.trim().replace(' ', "");
     if text.is_empty() {
@@ -313,7 +347,7 @@ fn rust_type_shape(ty: &Type<'_>, db: &RootDatabase, dt: DisplayTarget) -> RustT
         return RustTypeShape::Str;
     }
 
-    if let Some((_adt, args)) = ty.as_adt_with_args() {
+    if let Some((adt, args)) = ty.as_adt_with_args() {
         let base = split_display_base(display.as_str()).to_string();
         let arg_shapes: Vec<RustTypeShape> = args
             .into_iter()
@@ -340,10 +374,8 @@ fn rust_type_shape(ty: &Type<'_>, db: &RootDatabase, dt: DisplayTarget) -> RustT
             }
             _ => {}
         }
-        return RustTypeShape::RustPath {
-            path: base,
-            args: arg_shapes,
-        };
+        let path = canonical_adt_path(adt, db).unwrap_or(base);
+        return RustTypeShape::RustPath { path, args: arg_shapes };
     }
 
     if display_looks_like_type_param(display.as_str()) {
@@ -360,16 +392,50 @@ fn rust_type_shape(ty: &Type<'_>, db: &RootDatabase, dt: DisplayTarget) -> RustT
     RustTypeShape::Unknown
 }
 
+fn function_sig_type_display(ty: &Type<'_>, db: &RootDatabase, dt: DisplayTarget) -> String {
+    match rust_type_shape(ty, db, dt) {
+        RustTypeShape::Unknown => normalize_display_path(format_ty(ty, db, dt).as_str()),
+        other => render_shape_display(&other),
+    }
+}
+
+/// Resolve a function's declared source return annotation into a canonical display string.
+///
+/// rust-analyzer can still surface opaque async return displays such as `impl ?Sized` for some free functions. When
+/// that happens, the written source annotation is the more faithful contract: it still contains the concrete `Result<T,
+/// E>` (or other) return that downstream typechecking expects, and we can canonicalize it against the function's
+/// defining module.
+fn source_function_return_type_display(f: Function, db: &RootDatabase) -> Option<String> {
+    let source = f.source(db)?;
+    let text = source.value.ret_type()?.ty()?.to_string();
+    let module = f.module(db);
+    let crate_name = module
+        .krate(db)
+        .display_name(db)
+        .map(|name| name.canonical_name().as_str().to_owned())?;
+    let shape = source_type_shape(text.as_str(), crate_name.as_str(), module, db);
+    Some(match shape {
+        RustTypeShape::Unknown => normalize_display_path(text.as_str()),
+        other => render_shape_display(&other),
+    })
+}
+
 fn extract_function_sig(f: Function, db: &RootDatabase, dt: DisplayTarget) -> RustFunctionSig {
     let params = f
         .assoc_fn_params(db)
         .into_iter()
         .map(|p| RustParam {
             name: p.name(db).map(|n| n.as_str().to_owned()),
-            type_display: format_ty(p.ty(), db, dt),
+            type_display: function_sig_type_display(p.ty(), db, dt),
         })
         .collect();
-    let return_type = format_ty(&f.ret_type(db), db, dt);
+    let output_type = f.async_ret_type(db).unwrap_or_else(|| f.ret_type(db));
+    let mut return_type = function_sig_type_display(&output_type, db, dt);
+    if return_type.starts_with("impl ")
+        && let Some(source_return_type) = source_function_return_type_display(f, db)
+    {
+        return_type = source_return_type;
+    }
     RustFunctionSig {
         params,
         return_type,
@@ -548,13 +614,21 @@ fn trait_info(tr: Trait, db: &RootDatabase, dt: DisplayTarget) -> RustTraitInfo 
     RustTraitInfo { items }
 }
 
+/// Find a crate by any spelling that can legally name it across Cargo and Rust surfaces.
+///
+/// rust-metadata queries use canonical Rust paths, so the first segment may be the Rust crate name even when Cargo
+/// registered the package with hyphens or via a differently-cased display name.
 fn find_crate(db: &RootDatabase, crate_name: &str) -> Option<Crate> {
+    let normalized = crate_name.replace('-', "_");
     Crate::all(db).into_iter().find(|k| {
         k.display_name(db).is_some_and(|dn| {
-            dn.to_string() == crate_name
-                || dn.crate_name().as_str() == crate_name
-                || dn.canonical_name().as_str() == crate_name
-        })
+            dn.to_string().replace('-', "_") == normalized
+                || dn.crate_name().as_str().replace('-', "_") == normalized
+                || dn.canonical_name().as_str().replace('-', "_") == normalized
+        }) || k
+            .root_module(db)
+            .name(db)
+            .is_some_and(|name| name.as_str().replace('-', "_") == normalized)
     })
 }
 
@@ -679,6 +753,7 @@ fn extract_rust_item_inner(db: &RootDatabase, canonical_path: &str) -> Result<Ru
     };
     Ok(RustItemMetadata {
         canonical_path: canonical_path.to_owned(),
+        definition_path: canonical_module_def_path(def, db),
         visibility: vis,
         kind,
     })

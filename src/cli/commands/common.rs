@@ -7,6 +7,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "rust-metadata")]
+use crate::backend::ProjectGenerator;
 use crate::backend::ir::detect_serde_non_import_usage;
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult};
@@ -249,6 +251,45 @@ pub(crate) fn merge_project_requirement_dependencies(
         .dependencies
         .sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
     Ok(())
+}
+
+/// Generate the rust-metadata workspace that semantic Rust extraction should query for this project.
+///
+/// The generated workspace intentionally uses the Rust import spelling for dependency keys, while preserving the
+/// published Cargo package name separately when the two differ.
+#[cfg(feature = "rust-metadata")]
+pub(crate) fn ensure_rust_metadata_workspace(
+    project_root: &Path,
+    project_name: &str,
+    rust_edition: Option<String>,
+    resolved: &ResolvedDependencies,
+    project_requirements: &ProjectRequirements,
+    cargo_lock_payload: Option<String>,
+) -> CliResult<PathBuf> {
+    let rust_metadata_manifest_dir = project_root.join("target").join("incan_lock");
+    let mut generator = ProjectGenerator::new(&rust_metadata_manifest_dir, project_name, true);
+    generator.set_dependencies(resolved.dependencies.clone());
+    generator.set_dev_dependencies(resolved.dev_dependencies.clone());
+    generator.set_include_dev_dependencies(true);
+    generator.set_stdlib_features(project_requirements.stdlib_features.clone());
+    generator.set_rust_edition(rust_edition);
+    generator.set_cargo_lock_payload(cargo_lock_payload);
+    let mut referenced_crates = std::collections::BTreeSet::new();
+    for dep in resolved.dependencies.iter().chain(resolved.dev_dependencies.iter()) {
+        referenced_crates.insert(dep.crate_name.replace('-', "_"));
+    }
+    let mut rust_metadata_stub = String::new();
+    for crate_name in referenced_crates {
+        rust_metadata_stub.push_str(format!("use {crate_name} as _;\n").as_str());
+    }
+    rust_metadata_stub.push_str("fn main() {}");
+    generator.generate(rust_metadata_stub.as_str()).map_err(|e| {
+        CliError::failure(format!(
+            "Failed to generate rust-metadata lock project at {}: {e}",
+            rust_metadata_manifest_dir.display()
+        ))
+    })?;
+    Ok(rust_metadata_manifest_dir)
 }
 
 /// Resolve the source path for a stdlib module path (e.g. `["std", "testing"]`).
@@ -1340,6 +1381,55 @@ pub def main() -> int:
         assert!(modules[0].file_path.ends_with("src/b.incn"));
         assert!(modules[1].file_path.ends_with("src/a.incn"));
         assert!(modules[2].file_path.ends_with("src/main.incn"));
+        Ok(())
+    }
+
+    #[cfg(feature = "rust-metadata")]
+    #[test]
+    fn ensure_rust_metadata_workspace_uses_rust_safe_dependency_keys() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let requirements = ProjectRequirements::default();
+        let resolved = ResolvedDependencies {
+            dependencies: vec![DependencySpec {
+                crate_name: "datafusion-substrait".to_string(),
+                version: Some("53".to_string()),
+                features: vec!["protoc".to_string()],
+                default_features: true,
+                source: DependencySource::Registry,
+                optional: false,
+                package: None,
+            }],
+            dev_dependencies: Vec::new(),
+        };
+
+        let out_dir = ensure_rust_metadata_workspace(
+            tmp.path(),
+            "metadata_probe",
+            Some("2021".to_string()),
+            &resolved,
+            &requirements,
+            Some("[[package]]\nname = \"metadata_probe\"\n".to_string()),
+        )?;
+        let cargo_toml = fs::read_to_string(out_dir.join("Cargo.toml"))?;
+        let cargo_lock = fs::read_to_string(out_dir.join("Cargo.lock"))?;
+        let main_rs = fs::read_to_string(out_dir.join("src").join("main.rs"))?;
+
+        assert!(
+            cargo_toml.contains("[dependencies.datafusion_substrait]"),
+            "expected rust-safe dependency key in generated rust-metadata workspace, got:\n{cargo_toml}"
+        );
+        assert!(
+            cargo_toml.contains("package = \"datafusion-substrait\""),
+            "expected original package name preserved in generated rust-metadata workspace, got:\n{cargo_toml}"
+        );
+        assert!(
+            cargo_lock.contains("metadata_probe"),
+            "expected rust-metadata workspace to write the provided Cargo.lock payload"
+        );
+        assert!(
+            main_rs.contains("use datafusion_substrait as _;"),
+            "expected rust-metadata workspace stub to reference the aliased dependency crate, got:\n{main_rs}"
+        );
         Ok(())
     }
 }

@@ -20,6 +20,18 @@ pub struct RustWorkspace {
 }
 
 impl RustWorkspace {
+    fn metadata_cargo_config() -> CargoConfig {
+        let mut cargo_config = CargoConfig::default();
+        // The generated `target/incan_lock` workspace is a semantic probe, not the user's real build. Keep metadata
+        // loading offline-first so missing registry state fails fast instead of burning tens of seconds on network
+        // retries during ordinary typechecking/codegen.
+        cargo_config.extra_args.push("--offline".to_string());
+        cargo_config
+            .extra_env
+            .insert("CARGO_NET_OFFLINE".to_string(), Some("true".to_string()));
+        cargo_config
+    }
+
     /// Load the Cargo project rooted at `manifest_dir` (directory containing `Cargo.toml`).
     ///
     /// `progress` is forwarded to rust-analyzer while discovering workspace members.
@@ -34,7 +46,7 @@ impl RustWorkspace {
         load_out_dirs_from_check: bool,
     ) -> Result<Self, RustMetadataError> {
         let manifest_dir = manifest_dir.canonicalize()?;
-        let cargo_config = CargoConfig::default();
+        let cargo_config = Self::metadata_cargo_config();
         let load_config = LoadCargoConfig {
             load_out_dirs_from_check,
             // Proc macros are optional for many crates; `None` keeps CI fast.
@@ -55,5 +67,24 @@ impl RustWorkspace {
     /// Shared read-only access to the underlying database.
     pub fn db(&self) -> &RootDatabase {
         &self.db
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RustWorkspace;
+
+    #[test]
+    fn metadata_loader_forces_offline_cargo_queries() {
+        let cargo_config = RustWorkspace::metadata_cargo_config();
+        assert!(
+            cargo_config.extra_args.iter().any(|arg| arg == "--offline"),
+            "rust-metadata workspace loads should pass --offline to cargo metadata"
+        );
+        assert_eq!(
+            cargo_config.extra_env.get("CARGO_NET_OFFLINE"),
+            Some(&Some("true".to_string())),
+            "rust-metadata workspace loads should force offline cargo resolution"
+        );
     }
 }

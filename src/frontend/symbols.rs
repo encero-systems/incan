@@ -553,6 +553,12 @@ pub enum ResolvedType {
     /// - This is currently compiler-internal (not a user-spellable surface type).
     /// - It exists to model Rust interop semantics like `HashMap::get` returning `Option<&V>`.
     Ref(Box<ResolvedType>),
+    /// Internal mutable reference type (borrowed `&mut T`).
+    ///
+    /// ## Notes
+    /// - This is currently compiler-internal (not a user-spellable surface type).
+    /// - It exists to preserve mutable Rust interop signatures through IR lowering.
+    RefMut(Box<ResolvedType>),
     /// Rust import with a known canonical path (`crate::...` string), RFC 041.
     ///
     /// Lowers to backend `IrType::Unknown` until dedicated IR typing exists; provenance also lives on
@@ -664,6 +670,7 @@ impl std::fmt::Display for ResolvedType {
             ResolvedType::TypeVar(name) => write!(f, "{}", name),
             ResolvedType::SelfType => write!(f, "Self"),
             ResolvedType::Ref(inner) => write!(f, "&{}", inner),
+            ResolvedType::RefMut(inner) => write!(f, "&mut {}", inner),
             ResolvedType::RustPath(path) => write!(f, "rust::{}", path),
             ResolvedType::Unknown => write!(f, "?"),
         }

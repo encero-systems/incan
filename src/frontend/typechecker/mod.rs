@@ -32,7 +32,7 @@
 //!     return f"Hello, {name}!"
 //! "#;
 //!
-//! let ast = parser::parse(source).expect("parse failed");
+//! let ast = parser::parse(source)?;
 //! let mut checker = typechecker::TypeChecker::new();
 //! checker.check_program(&ast)?;
 //! ```
@@ -89,10 +89,10 @@ use incan_core::lang::types::stringlike::StringLikeId;
 /// ```ignore
 /// use incan::frontend::{lexer, parser, typechecker};
 ///
-/// let tokens = lexer::lex("def foo() -> int: return 1").unwrap();
-/// let ast = parser::parse(&tokens).unwrap();
+/// let tokens = lexer::lex("def foo() -> int: return 1")?;
+/// let ast = parser::parse(&tokens)?;
 /// let mut tc = typechecker::TypeChecker::new();
-/// tc.check_program(&ast).unwrap();
+/// tc.check_program(&ast)?;
 /// let info = tc.type_info();
 /// // info.expr_type(...) can now be queried by spans.
 /// ```
@@ -359,10 +359,15 @@ impl TypeChecker {
             #[cfg(feature = "rust-metadata")]
             rust_metadata_cache: RustMetadataCache::new(),
             #[cfg(feature = "rust-metadata")]
-            rust_metadata_manifest_dir: std::env::current_dir().ok(),
+            rust_metadata_manifest_dir: None,
         }
     }
 
+    /// Opt into semantic Rust metadata extraction for this checker.
+    ///
+    /// The checker stays metadata-free by default so plain semantic/unit-test paths do not accidentally load an
+    /// external Rust workspace. Callers that own project context, such as the CLI, test runner, and LSP, must set the
+    /// generated metadata workspace explicitly.
     #[cfg(feature = "rust-metadata")]
     pub fn set_rust_metadata_manifest_dir(&mut self, dir: PathBuf) {
         self.rust_metadata_manifest_dir = Some(dir);
@@ -370,8 +375,9 @@ impl TypeChecker {
 
     #[cfg(feature = "rust-metadata")]
     pub(crate) fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
         let dir = self.rust_metadata_manifest_dir.as_ref()?;
-        match self.rust_metadata_cache.get_or_extract(dir, canonical_path, &|_| ()) {
+        match self.rust_metadata_cache.get_or_extract(dir, lookup_path, &|_| ()) {
             Ok(meta) => Some((*meta).clone()),
             Err(_) => None,
         }
@@ -380,6 +386,134 @@ impl TypeChecker {
     #[cfg(not(feature = "rust-metadata"))]
     pub(crate) fn rust_item_metadata_for_path(&self, _canonical_path: &str) -> Option<RustItemMetadata> {
         None
+    }
+
+    fn split_top_level_generic_args(args: &str) -> Vec<&str> {
+        let mut parts = Vec::new();
+        let mut depth = 0usize;
+        let mut start = 0usize;
+        for (idx, ch) in args.char_indices() {
+            match ch {
+                '<' | '(' | '[' => depth += 1,
+                '>' | ')' | ']' => depth = depth.saturating_sub(1),
+                ',' if depth == 0 => {
+                    parts.push(args[start..idx].trim());
+                    start = idx + ch.len_utf8();
+                }
+                _ => {}
+            }
+        }
+        let tail = args[start..].trim();
+        if !tail.is_empty() {
+            parts.push(tail);
+        }
+        parts
+    }
+
+    /// Normalize a Rust metadata lookup path down to the nominal item path.
+    ///
+    /// rust-analyzer metadata is keyed by the item path (`foo::Bar`), not by instantiated spellings like
+    /// `foo::Bar<T>` or placeholder displays like `{unknown}`. This strips outer generic instantiation from a Rust
+    /// path while rejecting obviously non-item spellings before hitting the metadata cache/extractor.
+    fn rust_metadata_lookup_path(canonical_path: &str) -> Option<&str> {
+        let trimmed = canonical_path.trim();
+        if trimmed.is_empty() || trimmed == "{unknown}" {
+            return None;
+        }
+        let had_generics = trimmed.contains('<');
+        let base = trimmed.split_once('<').map_or(trimmed, |(base, _)| base);
+        if had_generics && !base.contains("::") {
+            return None;
+        }
+        if base.is_empty() || base.contains(['{', '}', '(', ')', '[', ']', ',', ' ']) {
+            return None;
+        }
+        Some(base)
+    }
+
+    fn rust_path_base_and_args(&self, path: &str) -> (String, Vec<ResolvedType>) {
+        let trimmed = path.trim();
+        if let Some(start) = trimmed.find('<')
+            && trimmed.ends_with('>')
+        {
+            let base = trimmed[..start].to_string();
+            let inner = &trimmed[start + 1..trimmed.len() - 1];
+            let args = Self::split_top_level_generic_args(inner)
+                .into_iter()
+                .map(|arg| self.resolved_type_from_rust_display(arg))
+                .collect();
+            return (base, args);
+        }
+        (trimmed.to_string(), Vec::new())
+    }
+
+    fn attached_rust_definition_for_path(&self, canonical_path: &str) -> Option<String> {
+        self.symbols.all_symbols().iter().find_map(|sym| {
+            let SymbolKind::RustItem(info) = &sym.kind else {
+                return None;
+            };
+            if info.path != canonical_path {
+                return None;
+            }
+            info.metadata.as_ref().and_then(|meta| meta.definition_path.clone())
+        })
+    }
+
+    /// Extract the cheap Rust identity already known to the checker for compatibility checks.
+    ///
+    /// This must stay metadata-light. `types_compatible(...)` calls it frequently, so it may only use symbol-local
+    /// metadata already attached during import collection. Fresh rust-metadata extraction from this path would leak a
+    /// heavy workspace/indexing concern into ordinary semantic checks.
+    fn rust_identity_for_type(&self, ty: &ResolvedType) -> Option<(String, Option<String>, Vec<ResolvedType>)> {
+        match ty {
+            ResolvedType::RustPath(path) => {
+                let (base, args) = self.rust_path_base_and_args(path);
+                let definition = self.attached_rust_definition_for_path(base.as_str());
+                Some((base, definition, args))
+            }
+            ResolvedType::Named(name) => {
+                let SymbolKind::RustItem(info) = &self.lookup_symbol(name)?.kind else {
+                    return None;
+                };
+                let definition = info.metadata.as_ref().and_then(|meta| meta.definition_path.clone());
+                Some((info.path.clone(), definition, Vec::new()))
+            }
+            ResolvedType::Generic(name, args) => {
+                let SymbolKind::RustItem(info) = &self.lookup_symbol(name)?.kind else {
+                    return None;
+                };
+                let definition = info.metadata.as_ref().and_then(|meta| meta.definition_path.clone());
+                Some((info.path.clone(), definition, args.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    fn rust_type_identities_compatible(&self, actual: &ResolvedType, expected: &ResolvedType) -> Option<bool> {
+        if let ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) = expected
+            && let Some(matches) = self.rust_type_identities_compatible(actual, inner)
+        {
+            return Some(matches);
+        }
+        let (actual_path, actual_def, actual_args) = self.rust_identity_for_type(actual)?;
+        let (expected_path, expected_def, expected_args) = self.rust_identity_for_type(expected)?;
+        let same_base = actual_path == expected_path;
+        let same_definition =
+            actual_def.is_some() && expected_def.is_some() && actual_def.as_ref() == expected_def.as_ref();
+        let actual_resolves_to_expected = actual_def.as_deref() == Some(expected_path.as_str());
+        let expected_resolves_to_actual = expected_def.as_deref() == Some(actual_path.as_str());
+        if !same_base && !same_definition && !actual_resolves_to_expected && !expected_resolves_to_actual {
+            return Some(false);
+        }
+        if actual_args.len() != expected_args.len() {
+            return Some(actual_args.is_empty() && expected_args.is_empty());
+        }
+        Some(
+            actual_args
+                .iter()
+                .zip(expected_args.iter())
+                .all(|(actual, expected)| self.types_compatible(actual, expected)),
+        )
     }
 
     /// Whether a Rust signature parameter is the implicit receiver (`self`/`&self`/`&mut self`).
@@ -461,6 +595,17 @@ impl TypeChecker {
         }
     }
 
+    /// Detect whether a normalized Rust display type starts with `&T` or `&mut T`.
+    ///
+    /// Returns the mutability flag plus the remaining inner type spelling so [`Self::resolved_type_from_rust_display`]
+    /// can preserve borrow semantics for Rust-backed values instead of collapsing them into plain path types.
+    fn rust_display_borrow_kind(normalized: &str) -> Option<(bool, &str)> {
+        if let Some(inner) = normalized.strip_prefix("&mut") {
+            return Some((true, inner));
+        }
+        normalized.strip_prefix('&').map(|inner| (false, inner))
+    }
+
     /// Map structured rust-metadata [`RustTypeShape`] into a [`ResolvedType`] for field access and pattern typing.
     ///
     /// `Option`/`Result` become [`ResolvedType::Generic`] with constructor names `Option` and `Result`. Concrete paths
@@ -520,9 +665,10 @@ impl TypeChecker {
 
     /// Convert a Rust display type string into a conservative [`ResolvedType`].
     ///
-    /// RFC 041: intentionally best-effort — only common std-ish spellings and simple `Option`/`Result` wrappers are
-    /// recognized. Nested generics, lifetimes, and crate paths otherwise become [`ResolvedType::RustPath`] (or
-    /// [`ResolvedType::Unknown`] when empty); lowering relies on rustc for fidelity.
+    /// RFC 041: intentionally best-effort. Common primitive spellings and `Option` / `Result` wrappers are
+    /// recognized, including namespaced aliases whose trailing segment is `Option` or `Result`. Nested generics,
+    /// lifetimes, and crate paths otherwise become [`ResolvedType::RustPath`] (or [`ResolvedType::Unknown`] when
+    /// empty); lowering relies on rustc for fidelity.
     ///
     /// ## `Result<T, E>` parsing
     ///
@@ -531,12 +677,21 @@ impl TypeChecker {
     /// for one or both type arguments. Prefer precise typing from Incan surfaces over relying on this heuristic.
     pub(crate) fn resolved_type_from_rust_display(&self, rust_ty: &str) -> ResolvedType {
         let trimmed = rust_ty.trim();
-        let no_lifetimes = trimmed
-            .replace("'static ", "")
-            .replace("'_", "")
-            .replace("&mut ", "&")
-            .replace(' ', "");
+        let no_lifetimes = trimmed.replace("'static ", "").replace("'_", "").replace(' ', "");
         let normalized = no_lifetimes.trim_start_matches("::").to_string();
+        match normalized.as_str() {
+            "&str" => return ResolvedType::Str,
+            "&[u8]" => return ResolvedType::Bytes,
+            _ => {}
+        }
+        if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(normalized.as_str()) {
+            let inner_ty = self.resolved_type_from_rust_display(inner);
+            return if is_mut {
+                ResolvedType::RefMut(Box::new(inner_ty))
+            } else {
+                ResolvedType::Ref(Box::new(inner_ty))
+            };
+        }
         match normalized.as_str() {
             "bool" => ResolvedType::Bool,
             "f32" | "f64" => ResolvedType::Float,
@@ -546,39 +701,41 @@ impl TypeChecker {
             "str" | "&str" | "String" | "std::string::String" | "alloc::string::String" => ResolvedType::Str,
             "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>" | "&[u8]" => ResolvedType::Bytes,
             "()" => ResolvedType::Unit,
-            _ if (normalized.starts_with("Option<")
-                || normalized.starts_with("std::option::Option<")
-                || normalized.starts_with("core::option::Option<"))
-                && normalized.ends_with('>') =>
-            {
-                let inner = normalized
-                    .trim_start_matches("Option<")
-                    .trim_start_matches("std::option::Option<")
-                    .trim_start_matches("core::option::Option<")
-                    .trim_end_matches('>');
-                ResolvedType::Generic("Option".to_string(), vec![self.resolved_type_from_rust_display(inner)])
-            }
-            _ if (normalized.starts_with("Result<")
-                || normalized.starts_with("std::result::Result<")
-                || normalized.starts_with("core::result::Result<"))
-                && normalized.ends_with('>') =>
-            {
-                let inner = normalized
-                    .trim_start_matches("Result<")
-                    .trim_start_matches("std::result::Result<")
-                    .trim_start_matches("core::result::Result<")
-                    .trim_end_matches('>');
-                let mut parts = inner.splitn(2, ',');
-                let ok_ty = parts
-                    .next()
-                    .map(|p| self.resolved_type_from_rust_display(p))
-                    .unwrap_or(ResolvedType::Unknown);
-                // Malformed `Result<…>` display from metadata: keep going with `Unknown` error arm.
-                let err_ty = parts
-                    .next()
-                    .map(|p| self.resolved_type_from_rust_display(p))
-                    .unwrap_or(ResolvedType::Unknown);
-                ResolvedType::Generic("Result".to_string(), vec![ok_ty, err_ty])
+            _ if normalized.ends_with('>') => {
+                if let Some((base, inner)) = normalized.split_once('<') {
+                    let base = base.trim_end_matches('>');
+                    let inner = inner.trim_end_matches('>');
+                    let tail = base.rsplit("::").next().unwrap_or(base);
+                    match collection_type_id(tail) {
+                        Some(CollectionTypeId::Option) => {
+                            return ResolvedType::Generic(
+                                "Option".to_string(),
+                                vec![self.resolved_type_from_rust_display(inner)],
+                            );
+                        }
+                        Some(CollectionTypeId::Result) => {
+                            let mut parts = inner.splitn(2, ',');
+                            let ok_ty = parts
+                                .next()
+                                .map(|p| self.resolved_type_from_rust_display(p))
+                                .unwrap_or(ResolvedType::Unknown);
+                            // Result aliases such as `datafusion_common::error::Result<T>` often erase the concrete
+                            // error arm from the display. Keep the success path semantic and degrade only the missing
+                            // error arm.
+                            let err_ty = parts
+                                .next()
+                                .map(|p| self.resolved_type_from_rust_display(p))
+                                .unwrap_or(ResolvedType::Unknown);
+                            return ResolvedType::Generic("Result".to_string(), vec![ok_ty, err_ty]);
+                        }
+                        _ => {}
+                    }
+                }
+                if self.lookup_type_info(normalized.as_str()).is_some() {
+                    ResolvedType::Named(normalized)
+                } else {
+                    ResolvedType::RustPath(normalized)
+                }
             }
             _ if !normalized.is_empty() => {
                 if self.lookup_type_info(normalized.as_str()).is_some() {
@@ -1876,6 +2033,10 @@ impl TypeChecker {
             return true;
         }
 
+        if let Some(matches) = self.rust_type_identities_compatible(actual, expected) {
+            return matches;
+        }
+
         match (actual, expected) {
             (ResolvedType::Unknown, _) | (_, ResolvedType::Unknown) => true,
             (ResolvedType::TypeVar(_), _) | (_, ResolvedType::TypeVar(_)) => true,
@@ -2014,8 +2175,10 @@ impl TypeChecker {
             {
                 true
             }
-            // Internal references: allow exact ref compatibility and allow `&FrozenStr` where `&str` is expected.
-            (ResolvedType::Ref(a), ResolvedType::Ref(b)) => self.types_compatible(a, b),
+            // Internal references: `&mut T` may satisfy `&T`, but not the reverse.
+            (ResolvedType::Ref(a), ResolvedType::Ref(b))
+            | (ResolvedType::RefMut(a), ResolvedType::Ref(b))
+            | (ResolvedType::RefMut(a), ResolvedType::RefMut(b)) => self.types_compatible(a, b),
             (ResolvedType::FrozenStr, ResolvedType::Str | ResolvedType::FrozenStr) => true,
             // `FrozenStr` is a read-only string wrapper; allow it where `str` is expected.
             (ResolvedType::Named(name), ResolvedType::Str)

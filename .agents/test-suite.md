@@ -81,7 +81,7 @@ Flag (as suggestions, not failures) when:
 
 If the user says "full sweep", "full run", "task completion", or "pre-PR validation", run the complete gate:
 
-1. `make pre-commit-full` — format check + full test suite + clippy
+1. `make pre-commit` — full local gate (full checks + smoke-test-fast)
 2. `make smoke-test` — builds release, runs all examples with timeout, runs benchmarks
 3. Report any failures from either step
 

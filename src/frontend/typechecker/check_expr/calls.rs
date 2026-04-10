@@ -27,7 +27,7 @@ use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
 
 use super::TypeChecker;
-use crate::frontend::typechecker::{RustArgCoercionInfo, RustArgCoercionKind};
+use crate::frontend::typechecker::{IdentKind, RustArgCoercionInfo, RustArgCoercionKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RustArgBoundaryMatch {
@@ -139,7 +139,7 @@ impl TypeChecker {
                 }
                 Some(format!("Tuple[{}]", rendered.join(", ")))
             }
-            ResolvedType::Ref(inner) => Self::incan_boundary_type_display(inner),
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => Self::incan_boundary_type_display(inner),
             _ => None,
         }
     }
@@ -220,6 +220,18 @@ impl TypeChecker {
         RustArgBoundaryMatch::NoMatch
     }
 
+    fn rust_lookup_probe_boundary_match(&self, arg_ty: &ResolvedType, target_ty: &ResolvedType) -> bool {
+        match (arg_ty, target_ty) {
+            (ResolvedType::Str | ResolvedType::FrozenStr, ResolvedType::Ref(inner)) => {
+                matches!(inner.as_ref(), ResolvedType::Str)
+            }
+            (ResolvedType::Bytes | ResolvedType::FrozenBytes, ResolvedType::Ref(inner)) => {
+                matches!(inner.as_ref(), ResolvedType::Bytes)
+            }
+            _ => false,
+        }
+    }
+
     #[cfg(test)]
     pub(in crate::frontend::typechecker) fn rust_arg_matches_boundary(
         &self,
@@ -237,11 +249,11 @@ impl TypeChecker {
     /// The receiver is already validated by access resolution; this function validates only post-receiver parameters.
     pub(in crate::frontend::typechecker) fn validate_rust_method_call(
         &mut self,
-        rust_path: &str,
-        method: &str,
+        callable_display: &str,
         sig: &RustFunctionSig,
         args: &[CallArg],
         arg_types: &[ResolvedType],
+        preserves_lookup_arg_shape: bool,
         span: Span,
     ) -> ResolvedType {
         let params = if Self::rust_signature_has_receiver(sig) {
@@ -250,10 +262,9 @@ impl TypeChecker {
             &sig.params
         };
 
-        let callable_display = format!("rust::{rust_path}.{method}");
         if arg_types.len() != params.len() {
             self.errors.push(errors::builtin_arity(
-                callable_display.as_str(),
+                callable_display,
                 params.len(),
                 arg_types.len(),
                 span,
@@ -265,6 +276,9 @@ impl TypeChecker {
             let arg_expr = Self::call_arg_expr(arg);
             let normalized = param.type_display.replace(' ', "");
             let target_ty = self.resolved_type_from_rust_display(normalized.as_str());
+            if preserves_lookup_arg_shape && self.rust_lookup_probe_boundary_match(arg_ty, &target_ty) {
+                continue;
+            }
             match self.rust_arg_boundary_match(arg_ty, param.type_display.as_str()) {
                 RustArgBoundaryMatch::Exact => {}
                 RustArgBoundaryMatch::Coercion(kind) => {
@@ -675,6 +689,13 @@ impl TypeChecker {
             ResolvedType::Ref(inner) => {
                 if let ResolvedType::Ref(actual_inner) = actual {
                     self.infer_type_param_bindings(inner, actual_inner, bindings);
+                } else if let ResolvedType::RefMut(actual_inner) = actual {
+                    self.infer_type_param_bindings(inner, actual_inner, bindings);
+                }
+            }
+            ResolvedType::RefMut(inner) => {
+                if let ResolvedType::RefMut(actual_inner) = actual {
+                    self.infer_type_param_bindings(inner, actual_inner, bindings);
                 }
             }
             _ => {}
@@ -747,7 +768,7 @@ impl TypeChecker {
                 }
             }
             ResolvedType::Named(type_name) => self.named_type_satisfies_bound(type_name, bound),
-            ResolvedType::Ref(inner) => self.type_satisfies_explicit_bound(inner, bound),
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.type_satisfies_explicit_bound(inner, bound),
             ResolvedType::Function(_, _) | ResolvedType::SelfType => false,
         }
     }
@@ -1457,31 +1478,37 @@ impl TypeChecker {
                 return result;
             }
 
-            if let Some(func_info) = self.lookup_symbol(name).and_then(|sym| match &sym.kind {
-                SymbolKind::Function(info) => Some(info.clone()),
-                _ => None,
-            }) {
-                return self.validate_function_call(name, &func_info, args, span);
-            }
-
-            if let Some(rust_sig) = self.lookup_symbol(name).and_then(|sym| match &sym.kind {
-                SymbolKind::RustItem(info) => info.metadata.as_ref().and_then(|meta| match &meta.kind {
-                    incan_core::interop::RustItemKind::Function(sig) => Some((info.path.clone(), sig.clone())),
-                    _ => None,
-                }),
-                _ => None,
-            }) {
-                return self.validate_rust_function_call(rust_sig.0.as_str(), &rust_sig.1, args, span);
-            }
-
-            // RFC 042: traits are abstract — reject `TraitName(...)` constructor syntax.
-            if self
-                .lookup_symbol(name)
-                .is_some_and(|sym| matches!(sym.kind, SymbolKind::Trait(_)))
-            {
-                self.check_call_args(args);
-                self.errors.push(errors::cannot_instantiate_trait(name, span));
-                return ResolvedType::Unknown;
+            if let Some(sym) = self.lookup_symbol(name).cloned() {
+                match sym.kind {
+                    SymbolKind::Function(func_info) => {
+                        return self.validate_function_call(name, &func_info, args, span);
+                    }
+                    SymbolKind::RustItem(info) => {
+                        if let Some(meta) = &info.metadata
+                            && let incan_core::interop::RustItemKind::Function(sig) = &meta.kind
+                        {
+                            let error_count_before = self.errors.len();
+                            let result = self.validate_rust_function_call(info.path.as_str(), sig, args, span);
+                            if self.errors.len() == error_count_before {
+                                self.record_expr_type(
+                                    callee.span,
+                                    self.resolved_function_type_from_rust_sig(sig, false),
+                                );
+                                self.type_info
+                                    .ident_kinds
+                                    .insert((callee.span.start, callee.span.end), IdentKind::RustImport);
+                            }
+                            return result;
+                        }
+                    }
+                    // RFC 042: traits are abstract — reject `TraitName(...)` constructor syntax.
+                    SymbolKind::Trait(_) => {
+                        self.check_call_args(args);
+                        self.errors.push(errors::cannot_instantiate_trait(name, span));
+                        return ResolvedType::Unknown;
+                    }
+                    _ => {}
+                }
             }
 
             let in_scope = self.symbols.lookup(name).is_some();
@@ -1732,7 +1759,7 @@ mod validate_rust_function_call_tests {
             is_unsafe: false,
         };
 
-        let _ = checker.validate_rust_method_call("regex::Regex", "is_match", &sig, &[], &[], span);
+        let _ = checker.validate_rust_method_call("rust::regex::Regex.is_match", &sig, &[], &[], false, span);
 
         assert!(
             checker.errors.iter().any(
@@ -1766,7 +1793,7 @@ mod validate_rust_function_call_tests {
         let args = [CallArg::Positional(arg_expr)];
         let arg_types = [ResolvedType::Int];
 
-        let _ = checker.validate_rust_method_call("regex::Regex", "is_match", &sig, &args, &arg_types, span);
+        let _ = checker.validate_rust_method_call("rust::regex::Regex.is_match", &sig, &args, &arg_types, false, span);
 
         assert!(
             checker
@@ -1775,6 +1802,50 @@ mod validate_rust_function_call_tests {
                 .any(|e| e.message.contains("&str") && e.message.contains("int")),
             "expected type mismatch diagnostic for method arg, errors={:?}",
             checker.errors
+        );
+    }
+
+    #[test]
+    fn rust_lookup_preserving_method_accepts_string_probe_for_ref_string_param() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(0, 1);
+        let sig = RustFunctionSig {
+            params: vec![
+                RustParam {
+                    name: Some("self".to_string()),
+                    type_display: "&Self".to_string(),
+                },
+                RustParam {
+                    name: Some("key".to_string()),
+                    type_display: "&String".to_string(),
+                },
+            ],
+            return_type: "Option<&i64>".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+        let arg_expr = Spanned::new(Expr::Literal(Literal::String("the".to_string())), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let arg_types = [ResolvedType::Str];
+
+        let _ = checker.validate_rust_method_call(
+            "rust::std::collections::HashMap.get",
+            &sig,
+            &args,
+            &arg_types,
+            true,
+            span,
+        );
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected lookup-preserving rust method call to stay permissive for string probes, errors={:?}",
+            checker.errors
+        );
+        assert!(
+            checker.type_info.rust_arg_coercions.is_empty(),
+            "expected lookup-preserving rust method call to preserve arg shape without coercion, got {:?}",
+            checker.type_info.rust_arg_coercions
         );
     }
 
@@ -1799,6 +1870,38 @@ mod validate_rust_function_call_tests {
         assert!(
             checker.rust_arg_matches_boundary(&ResolvedType::Str, "Email"),
             "expected `str` to be admitted for rusttype target boundary via `from` interop edge hint"
+        );
+    }
+
+    #[test]
+    fn rust_function_call_accepts_string_for_borrowed_string_param() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(10, 20);
+        let arg_expr = Spanned::new(Expr::Literal(Literal::String("{}".to_string())), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let sig = RustFunctionSig {
+            params: vec![RustParam {
+                name: Some("value".to_string()),
+                type_display: "&String".to_string(),
+            }],
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_function_call("rust::demo::takes_borrowed_string", &sig, &args, span);
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected borrowed String boundary to admit Incan str, errors={:?}",
+            checker.errors
+        );
+        assert!(
+            checker
+                .type_info
+                .rust_arg_coercions
+                .contains_key(&(span.start, span.end)),
+            "expected rust arg coercion metadata for borrowed String boundary"
         );
     }
 
@@ -1885,7 +1988,14 @@ mod validate_rust_function_call_tests {
             is_unsafe: false,
         };
 
-        let _ = checker.validate_rust_method_call("demo::EmailService", "set_email", &sig, &args, &arg_types, span);
+        let _ = checker.validate_rust_method_call(
+            "rust::demo::EmailService.set_email",
+            &sig,
+            &args,
+            &arg_types,
+            false,
+            span,
+        );
 
         assert!(
             checker.errors.is_empty(),

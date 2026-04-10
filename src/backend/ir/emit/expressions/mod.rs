@@ -462,6 +462,12 @@ impl<'a> IrEmitter<'a> {
                             },
                             incan_core::interop::CoercionPolicy::Borrow => match rust_target.as_str() {
                                 "&str" | "&[u8]" => quote! { #inner },
+                                "&String" | "&std::string::String" | "&alloc::string::String" => {
+                                    quote! { &(#inner).to_string() }
+                                }
+                                "&Vec<u8>" | "&std::vec::Vec<u8>" | "&alloc::vec::Vec<u8>" => {
+                                    quote! { &(#inner).to_vec() }
+                                }
                                 _ => quote! { &#inner },
                             },
                             incan_core::interop::CoercionPolicy::Lossy => match rust_target.as_str() {
@@ -601,6 +607,41 @@ mod tests {
             emitted.to_string().contains('?'),
             "expected try-adapter emission to include `?`, got `{}`",
             emitted
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn interop_borrowed_string_coercion_materializes_owned_string_before_borrow() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::InteropCoerce {
+                expr: Box::new(TypedExpr::new(
+                    IrExprKind::String("payload".to_string()),
+                    IrType::String,
+                )),
+                from_ty: IrType::String,
+                to_ty: IrType::Ref(Box::new(IrType::String)),
+                kind: IrInteropCoercionKind::Builtin {
+                    policy: incan_core::interop::CoercionPolicy::Borrow,
+                    rust_target: "&String".to_string(),
+                },
+            },
+            IrType::Ref(Box::new(IrType::String)),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains(". to_string ()"),
+            "expected borrowed String interop coercion to materialize an owned String, got `{rendered}`"
+        );
+        assert!(
+            rendered.starts_with("&"),
+            "expected borrowed String interop coercion to emit a borrow, got `{rendered}`"
         );
         Ok(())
     }

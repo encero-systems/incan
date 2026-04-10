@@ -179,8 +179,8 @@ cargo test --test integration_tests
 # Full test suite
 make test
 
-# Full pre-commit gate (format + tests + clippy)
-make pre-commit-full
+# Full pre-commit gate (full checks + smoke-test-fast)
+make pre-commit
 
 # Update all snapshots if codegen changed
 INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests

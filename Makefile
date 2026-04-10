@@ -2,9 +2,14 @@
 # =====================================
 
 NEXTEST := $(shell command -v cargo-nextest 2>/dev/null)
+TEST_VERBOSE ?= 0
 
 ifeq ($(strip $(NEXTEST)),)
+ifeq ($(TEST_VERBOSE),1)
 TEST_CMD = cargo test --all --verbose
+else
+TEST_CMD = cargo test --all
+endif
 else
 TEST_CMD = cargo nextest run --all --status-level all
 endif
@@ -133,6 +138,15 @@ fmt-check-ci:
 lint-fast-ci:
 	@cargo clippy --workspace --all-features -- -D warnings
 
+.PHONY: cargo-deny  ## quality - Run cargo-deny policy checks
+cargo-deny:
+	@echo "\033[1mRunning cargo-deny...\033[0m"
+	@cargo deny check
+
+.PHONY: cargo-deny-ci
+cargo-deny-ci:
+	@cargo deny check
+
 .PHONY: check-fast-ci
 check-fast-ci:
 	@cargo check --workspace --all-features
@@ -146,8 +160,8 @@ udeps:
 	@echo "\033[1mChecking for unused dependencies...\033[0m"
 	@cargo +nightly udeps --quiet 2>/dev/null || echo "\033[33m⚠ cargo-udeps skipped (requires cargo-udeps + nightly rustc 1.85+. Run `rustup update nightly` if needed.)\033[0m"
 
-.PHONY: pre-commit  ## quality - Fast local gate: fmt-check + cargo check with phase timing
-pre-commit:
+.PHONY: pre-commit-fast  ## quality - Fast local gate: fmt-check + cargo check with phase timing
+pre-commit-fast:
 	@set -e; \
 	start=$$(date +%s); \
 	printf "\033[1mChecking formatting...\033[0m "; \
@@ -161,8 +175,8 @@ pre-commit:
 	echo "\033[32m✓ Pre-commit checks passed (fast)\033[0m"; \
 	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, check=$$((t2-t1))s, total=$$((t2-start))s"
 
-.PHONY: pre-commit-full  ## quality - Full local gate: fmt-check + tests + clippy with phase timing
-pre-commit-full:
+.PHONY: pre-commit-full-gate  ## quality - Full local gate core: fmt-check + tests + clippy + cargo-deny with phase timing
+pre-commit-full-gate:
 	@set -e; \
 	start=$$(date +%s); \
 	printf "\033[1mChecking formatting...\033[0m "; \
@@ -177,8 +191,19 @@ pre-commit-full:
 	$(MAKE) -s lint-fast-ci; \
 	echo "\033[32mDONE\033[0m"; \
 	t3=$$(date +%s); \
+	echo "\033[1mRunning cargo-deny...\033[0m"; \
+	$(MAKE) -s cargo-deny-ci; \
+	echo "\033[32mDONE\033[0m"; \
+	t4=$$(date +%s); \
 	echo "\033[32m✓ Pre-commit checks passed (full)\033[0m"; \
-	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, tests=$$((t2-t1))s, lint=$$((t3-t2))s, total=$$((t3-start))s"
+	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, tests=$$((t2-t1))s, lint=$$((t3-t2))s, deny=$$((t4-t3))s, total=$$((t4-start))s"
+
+.PHONY: pre-commit  ## quality - Full local gate: pre-commit-full-gate + smoke-test-fast
+pre-commit:
+	@echo "\033[1mRunning pre-commit (full local gate)...\033[0m"
+	@$(MAKE) pre-commit-full-gate
+	@$(MAKE) smoke-test-fast
+	@echo "\033[32m✓ Pre-commit passed\033[0m"
 
 .PHONY: ci-full  ## quality - Full CI check: fmt, lint, udeps, test, and release build
 ci-full: fmt lint udeps
@@ -254,10 +279,9 @@ smoke-test-fast:
 	@$(MAKE) smoke-test-core
 	@echo "\033[32m✓ Smoke-test-fast passed\033[0m"
 
-.PHONY: verify  ## test - Recommended local gate: pre-commit-full + smoke-test-fast
+.PHONY: verify  ## test - Compatibility alias to pre-commit
 verify:
-	@$(MAKE) pre-commit-full
-	@$(MAKE) smoke-test-fast
+	@$(MAKE) pre-commit
 
 .PHONY: test-verbose  ## test - Run tests with output
 test-verbose:

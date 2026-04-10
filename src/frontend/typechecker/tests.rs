@@ -89,6 +89,20 @@ pub enum Choice {
     Ok(())
 }
 
+#[cfg(feature = "rust-metadata")]
+fn seeded_rust_metadata_workspace() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        r#"[package]
+name = "ra_seeded_metadata_probe"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    Ok(tmp)
+}
+
 fn assert_check_ok(source: &str) {
     if let Err(errs) = check_str(source) {
         for e in &errs {
@@ -715,6 +729,66 @@ fn test_resolved_type_from_fully_qualified_result_display_normalizes() {
 }
 
 #[test]
+fn test_resolved_type_from_namespaced_result_alias_normalizes_ok_payload() {
+    let checker = TypeChecker::new();
+    let resolved = checker.resolved_type_from_rust_display(
+        "datafusion_common::error::Result<datafusion_expr::logical_plan::plan::LogicalPlan>",
+    );
+    assert_eq!(
+        resolved,
+        ResolvedType::Generic(
+            "Result".to_string(),
+            vec![
+                ResolvedType::RustPath("datafusion_expr::logical_plan::plan::LogicalPlan".to_string()),
+                ResolvedType::Unknown,
+            ],
+        )
+    );
+}
+
+#[test]
+fn test_resolved_type_from_borrowed_rust_path_display_extracts_ref_payload() {
+    let checker = TypeChecker::new();
+    let resolved = checker.resolved_type_from_rust_display("&demo::Thing");
+    assert_eq!(
+        resolved,
+        ResolvedType::Ref(Box::new(ResolvedType::RustPath("demo::Thing".to_string()))),
+    );
+}
+
+#[test]
+fn test_resolved_type_from_mut_borrowed_rust_path_display_extracts_refmut_payload() {
+    let checker = TypeChecker::new();
+    let resolved = checker.resolved_type_from_rust_display("&mut demo::Thing");
+    assert_eq!(
+        resolved,
+        ResolvedType::RefMut(Box::new(ResolvedType::RustPath("demo::Thing".to_string()))),
+    );
+}
+
+#[test]
+fn test_resolved_type_from_builtin_borrowed_displays_stays_stable() {
+    let checker = TypeChecker::new();
+    assert_eq!(checker.resolved_type_from_rust_display("&str"), ResolvedType::Str);
+    assert_eq!(checker.resolved_type_from_rust_display("&[u8]"), ResolvedType::Bytes);
+}
+
+#[test]
+fn test_types_compatible_refmut_is_assignable_to_ref_but_not_reverse() {
+    let checker = TypeChecker::new();
+    let immutable = ResolvedType::Ref(Box::new(ResolvedType::RustPath("demo::Thing".to_string())));
+    let mutable = ResolvedType::RefMut(Box::new(ResolvedType::RustPath("demo::Thing".to_string())));
+    assert!(
+        checker.types_compatible(&mutable, &immutable),
+        "mutable borrow should satisfy immutable borrow expectations"
+    );
+    assert!(
+        !checker.types_compatible(&immutable, &mutable),
+        "immutable borrow must not satisfy mutable borrow expectations"
+    );
+}
+
+#[test]
 fn test_duplicate_interop_edges_rejected() {
     let source = r#"
 from rust::mail import EmailAddress as RustEmailAddress
@@ -755,6 +829,176 @@ def f() -> None:
         "expected permissive fallback when metadata is unavailable, got {result:?}"
     );
     Ok(())
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_rust_metadata_function_signature_preserves_borrowed_rust_path_param() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_metadata_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_metadata_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_metadata_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::takes_ref".to_string(),
+                definition_path: Some("demo::takes_ref".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Function(RustFunctionSig {
+                    params: vec![RustParam {
+                        name: Some("value".to_string()),
+                        type_display: "&demo::Thing".to_string(),
+                    }],
+                    return_type: "()".to_string(),
+                    is_async: false,
+                    is_unsafe: false,
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust metadata function: {e}")))?;
+    let Some(RustItemMetadata {
+        kind: RustItemKind::Function(sig),
+        ..
+    }) = checker.rust_item_metadata_for_path("demo::takes_ref")
+    else {
+        return Err(std::io::Error::other("expected rust metadata function entry").into());
+    };
+    assert_eq!(
+        checker.resolved_function_type_from_rust_sig(&sig, false),
+        ResolvedType::Function(
+            vec![ResolvedType::Ref(Box::new(ResolvedType::RustPath(
+                "demo::Thing".to_string()
+            )))],
+            Box::new(ResolvedType::Unit),
+        )
+    );
+    Ok(())
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_rust_metadata_lookup_path_strips_outer_generic_instantiation() {
+    assert_eq!(
+        TypeChecker::rust_metadata_lookup_path("incan_stdlib::r#async::channel::SendError<T>"),
+        Some("incan_stdlib::r#async::channel::SendError")
+    );
+    assert_eq!(
+        TypeChecker::rust_metadata_lookup_path("Result<(),incan_stdlib::r#async::channel::SendError<T>>"),
+        None
+    );
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_rust_metadata_lookup_path_rejects_unknown_placeholder() {
+    assert_eq!(TypeChecker::rust_metadata_lookup_path("{unknown}"), None);
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_rust_item_metadata_lookup_reuses_cached_nominal_item_for_instantiated_rust_path()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_metadata_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_metadata_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_metadata_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::SendError".to_string(),
+                definition_path: Some("demo::SendError".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    fields: Vec::new(),
+                    methods: Vec::new(),
+                    variants: Vec::new(),
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust metadata type: {e}")))?;
+
+    let Some(meta) = checker.rust_item_metadata_for_path("demo::SendError<T>") else {
+        return Err(std::io::Error::other("expected nominal rust metadata hit").into());
+    };
+    assert_eq!(meta.canonical_path, "demo::SendError");
+    Ok(())
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_types_compatible_accepts_rust_alias_definition_without_metadata_lookup() {
+    let mut checker = TypeChecker::new();
+    checker.symbols.define(Symbol {
+        name: "RawSender".to_string(),
+        kind: SymbolKind::RustItem(RustItemInfo {
+            crate_name: "incan_stdlib".to_string(),
+            path: "incan_stdlib::r#async::channel::RawSender".to_string(),
+            binding: RustImportBindingKind::FromImport,
+            metadata: Some(RustItemMetadata {
+                canonical_path: "incan_stdlib::r#async::channel::RawSender".to_string(),
+                definition_path: Some("incan_stdlib::r#async::channel::Sender".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    fields: Vec::new(),
+                    methods: Vec::new(),
+                    variants: Vec::new(),
+                }),
+            }),
+        }),
+        span: Span::default(),
+        scope: 0,
+    });
+
+    let actual = ResolvedType::Generic("RawSender".to_string(), vec![ResolvedType::Int]);
+    let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath(
+        "incan_stdlib::r#async::channel::Sender<i32>".to_string(),
+    )));
+
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "Rust alias should satisfy borrowed underlying Rust path without forcing fresh metadata extraction"
+    );
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_types_compatible_accepts_rust_path_alias_with_attached_definition_metadata() {
+    let mut checker = TypeChecker::new();
+    checker.symbols.define(Symbol {
+        name: "RawSemaphore".to_string(),
+        kind: SymbolKind::RustItem(RustItemInfo {
+            crate_name: "incan_stdlib".to_string(),
+            path: "incan_stdlib::r#async::sync::RawSemaphore".to_string(),
+            binding: RustImportBindingKind::FromImport,
+            metadata: Some(RustItemMetadata {
+                canonical_path: "incan_stdlib::r#async::sync::RawSemaphore".to_string(),
+                definition_path: Some("incan_stdlib::r#async::sync::Semaphore".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    fields: Vec::new(),
+                    methods: Vec::new(),
+                    variants: Vec::new(),
+                }),
+            }),
+        }),
+        span: Span::default(),
+        scope: 0,
+    });
+
+    let actual = ResolvedType::RustPath("incan_stdlib::r#async::sync::RawSemaphore".to_string());
+    let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath(
+        "incan_stdlib::r#async::sync::Semaphore".to_string(),
+    )));
+
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "RustPath aliases should reuse attached import metadata instead of forcing external metadata lookup"
+    );
 }
 
 #[cfg(feature = "rust-metadata")]
@@ -894,6 +1138,16 @@ def f() -> None:
     assert_check_ok(source);
 }
 
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_typechecker_defaults_to_no_rust_metadata_workspace() {
+    let checker = TypeChecker::new();
+    assert!(
+        checker.rust_metadata_manifest_dir.is_none(),
+        "plain typechecker construction should not eagerly bind a rust-metadata workspace"
+    );
+}
+
 /// Default builds omit `rust-metadata`; Rust receivers stay permissive (no method index).
 #[cfg(not(feature = "rust-metadata"))]
 #[test]
@@ -1008,7 +1262,8 @@ def render[T](value: Label[T]) -> str:
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
     let mut checker = TypeChecker::new();
-    let manifest_dir = std::env::current_dir()?;
+    let tmp = seeded_rust_metadata_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
     checker.set_rust_metadata_manifest_dir(manifest_dir.clone());
     checker
         .rust_metadata_cache
@@ -1016,6 +1271,7 @@ def render[T](value: Label[T]) -> str:
             &manifest_dir,
             RustItemMetadata {
                 canonical_path: "std::string::String".to_string(),
+                definition_path: Some("std::string::String".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![RustMethodSig {
@@ -1078,7 +1334,8 @@ def f(x: Envelope) -> None:
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
     let mut checker = TypeChecker::new();
-    let manifest_dir = std::env::current_dir()?;
+    let tmp = seeded_rust_metadata_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
     checker.set_rust_metadata_manifest_dir(manifest_dir.clone());
     checker
         .rust_metadata_cache
@@ -1086,6 +1343,7 @@ def f(x: Envelope) -> None:
             &manifest_dir,
             RustItemMetadata {
                 canonical_path: "demo::Envelope".to_string(),
+                definition_path: Some("demo::Envelope".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],
@@ -1108,6 +1366,7 @@ def f(x: Envelope) -> None:
             &manifest_dir,
             RustItemMetadata {
                 canonical_path: "demo::Kind".to_string(),
+                definition_path: Some("demo::Kind".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],
@@ -1145,7 +1404,8 @@ def f(x: Envelope) -> None:
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
     let mut checker = TypeChecker::new();
-    let manifest_dir = std::env::current_dir()?;
+    let tmp = seeded_rust_metadata_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
     checker.set_rust_metadata_manifest_dir(manifest_dir.clone());
     checker
         .rust_metadata_cache
@@ -1153,6 +1413,7 @@ def f(x: Envelope) -> None:
             &manifest_dir,
             RustItemMetadata {
                 canonical_path: "demo::Envelope".to_string(),
+                definition_path: Some("demo::Envelope".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],
@@ -1175,6 +1436,7 @@ def f(x: Envelope) -> None:
             &manifest_dir,
             RustItemMetadata {
                 canonical_path: "demo::Kind".to_string(),
+                definition_path: Some("demo::Kind".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],
@@ -1215,7 +1477,8 @@ def inspect(rel: Rel) -> None:
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
     let mut checker = TypeChecker::new();
-    let manifest_dir = std::env::current_dir()?;
+    let tmp = seeded_rust_metadata_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
     checker.set_rust_metadata_manifest_dir(manifest_dir.clone());
     checker
         .rust_metadata_cache
@@ -1223,6 +1486,7 @@ def inspect(rel: Rel) -> None:
             &manifest_dir,
             RustItemMetadata {
                 canonical_path: "demo::Rel".to_string(),
+                definition_path: Some("demo::Rel".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],
@@ -1245,6 +1509,7 @@ def inspect(rel: Rel) -> None:
             &manifest_dir,
             RustItemMetadata {
                 canonical_path: "demo::rel::RelType".to_string(),
+                definition_path: Some("demo::rel::RelType".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],
@@ -1266,6 +1531,7 @@ def inspect(rel: Rel) -> None:
             &manifest_dir,
             RustItemMetadata {
                 canonical_path: "demo::ReadRel".to_string(),
+                definition_path: Some("demo::ReadRel".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],
@@ -1288,6 +1554,7 @@ def inspect(rel: Rel) -> None:
             &manifest_dir,
             RustItemMetadata {
                 canonical_path: "demo::read_rel::ReadType".to_string(),
+                definition_path: Some("demo::read_rel::ReadType".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],

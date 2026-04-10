@@ -21,7 +21,7 @@ Incan generates a Rust project and builds it via Cargo.
 On build, Incan prints the generated project directory and the compiled binary path. In practice, outputs live under:
 
 - Generated Rust project: `target/incan/<name>/`
-- Built binary: `target/incan/<name>/target/release/<name>`
+- Built binary: `target/incan/.cargo-target/release/<name>`
 
 See: [CLI reference](../reference/cli_reference.md).
 

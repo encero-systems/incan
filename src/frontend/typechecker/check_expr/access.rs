@@ -133,9 +133,9 @@ impl TypeChecker {
         receiver_span: Span,
         span: Span,
     ) -> Option<ResolvedType> {
-        if RustCollectionFamily::for_canonical_path(rust_path)
-            .is_some_and(|family| family.preserves_lookup_arg_shape(method))
-        {
+        let preserves_lookup_arg_shape = RustCollectionFamily::for_canonical_path(rust_path)
+            .is_some_and(|family| family.preserves_lookup_arg_shape(method));
+        if preserves_lookup_arg_shape {
             self.type_info.record_regular_method_arg_shape(receiver_span, method);
         }
         let metadata = self.rust_item_metadata_for_path(rust_path)?;
@@ -146,7 +146,15 @@ impl TypeChecker {
                     // not yet extracted. Stay permissive rather than false-positiving on valid calls.
                     return Some(ResolvedType::Unknown);
                 };
-                Some(self.validate_rust_method_call(rust_path, method, &sig, args, arg_types, span))
+                let callable_display = format!("rust::{rust_path}.{method}");
+                Some(self.validate_rust_method_call(
+                    callable_display.as_str(),
+                    &sig,
+                    args,
+                    arg_types,
+                    preserves_lookup_arg_shape,
+                    span,
+                ))
             }
             RustItemKind::Unsupported { description } => {
                 self.errors.push(errors::rust_item_shape_not_supported(
@@ -212,7 +220,12 @@ impl TypeChecker {
     pub(in crate::frontend::typechecker) fn is_copy_type(&self, ty: &ResolvedType) -> bool {
         matches!(
             ty,
-            ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool | ResolvedType::Unit | ResolvedType::Ref(_)
+            ResolvedType::Int
+                | ResolvedType::Float
+                | ResolvedType::Bool
+                | ResolvedType::Unit
+                | ResolvedType::Ref(_)
+                | ResolvedType::RefMut(_)
         )
     }
 
@@ -272,7 +285,9 @@ impl TypeChecker {
                         | Some(TypeInfo::Enum(_))
                 )
             }
-            ResolvedType::Ref(_) | ResolvedType::Function(_, _) | ResolvedType::SelfType => true,
+            ResolvedType::Ref(_) | ResolvedType::RefMut(_) | ResolvedType::Function(_, _) | ResolvedType::SelfType => {
+                true
+            }
             ResolvedType::TypeVar(_) => false,
             // RFC 041: provenance is known, but Incan does not yet query Rust for `Copy`/`Clone`; do not assume.
             ResolvedType::RustPath(_) => false,
@@ -337,6 +352,9 @@ impl TypeChecker {
             ),
             ResolvedType::Ref(inner) => {
                 ResolvedType::Ref(Box::new(self.substitute_self_in_resolved_type(*inner, receiver)))
+            }
+            ResolvedType::RefMut(inner) => {
+                ResolvedType::RefMut(Box::new(self.substitute_self_in_resolved_type(*inner, receiver)))
             }
             other => other,
         }
@@ -895,7 +913,7 @@ impl TypeChecker {
             match option_methods::from_str(method) {
                 Some(option_methods::OptionMethodId::Copied) => {
                     // Rust: `Option<&T>::copied() -> Option<T>` (for `T: Copy`).
-                    if let ResolvedType::Ref(t) = inner {
+                    if let ResolvedType::Ref(t) | ResolvedType::RefMut(t) = inner {
                         let t = (*t).clone();
                         if matches!(t, ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool) {
                             return option_ty(t);

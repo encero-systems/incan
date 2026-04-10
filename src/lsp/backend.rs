@@ -11,11 +11,9 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 #[cfg(feature = "rust-metadata")]
-use crate::backend::ProjectGenerator;
-#[cfg(feature = "rust-metadata")]
 use crate::cli::commands::common::{
-    build_source_map, collect_inline_rust_imports, collect_project_requirements, format_dependency_error,
-    merge_project_requirement_dependencies,
+    build_source_map, collect_inline_rust_imports, collect_project_requirements, ensure_rust_metadata_workspace,
+    format_dependency_error, merge_project_requirement_dependencies,
 };
 use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust-metadata")]
@@ -176,7 +174,7 @@ impl IncanLanguageServer {
             metadata_modules.push(parsed_module_for_lsp_document(path, source, &ast));
             metadata_modules.extend(deps.iter().cloned());
             rust_metadata_manifest_dir =
-                ensure_rust_metadata_workspace(manifest, &metadata_modules, &library_manifest_index).ok();
+                prepare_lsp_rust_metadata_workspace(manifest, &metadata_modules, &library_manifest_index).ok();
         }
 
         // Step 3: Type check (with multi-file import resolution)
@@ -635,7 +633,11 @@ fn resolved_rust_metadata_dependencies(
 }
 
 #[cfg(feature = "rust-metadata")]
-fn ensure_rust_metadata_workspace(
+/// Build the rust-metadata workspace for LSP analysis after collecting the document's effective Rust dependencies.
+///
+/// The shared CLI helper owns workspace generation; this wrapper only translates the LSP document set into the
+/// resolved dependency inputs that helper expects.
+fn prepare_lsp_rust_metadata_workspace(
     manifest: &ProjectManifest,
     modules: &[ParsedModule],
     library_manifest_index: &LibraryManifestIndex,
@@ -656,15 +658,15 @@ fn ensure_rust_metadata_workspace(
     let resolved = resolved_rust_metadata_dependencies(manifest, modules, library_manifest_index)?;
     let project_requirements =
         collect_project_requirements(modules, library_manifest_index).map_err(|err| err.to_string())?;
-    let rust_metadata_manifest_dir = manifest.project_root().join("target").join("incan_lock");
-    let mut generator = ProjectGenerator::new(&rust_metadata_manifest_dir, project_name.as_str(), true);
-    generator.set_dependencies(resolved.dependencies);
-    generator.set_dev_dependencies(resolved.dev_dependencies);
-    generator.set_include_dev_dependencies(true);
-    generator.set_stdlib_features(project_requirements.stdlib_features);
-    generator.set_rust_edition(manifest.build.as_ref().and_then(|build| build.rust_edition.clone()));
-    generator.generate("fn main() {}").map_err(|err| err.to_string())?;
-    Ok(rust_metadata_manifest_dir)
+    ensure_rust_metadata_workspace(
+        manifest.project_root(),
+        project_name.as_str(),
+        manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
+        &resolved,
+        &project_requirements,
+        None,
+    )
+    .map_err(|err| err.to_string())
 }
 
 #[cfg(all(test, feature = "rust-metadata"))]
@@ -697,7 +699,7 @@ def use_it(x: Serialize) -> None:
             ast,
         };
 
-        let out_dir = ensure_rust_metadata_workspace(&manifest, &[module], &LibraryManifestIndex::default())
+        let out_dir = prepare_lsp_rust_metadata_workspace(&manifest, &[module], &LibraryManifestIndex::default())
             .map_err(std::io::Error::other)?;
         let cargo_toml = std::fs::read_to_string(out_dir.join("Cargo.toml"))?;
 
