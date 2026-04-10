@@ -4342,7 +4342,7 @@ incan build --lib [OPTIONS] [OUTPUT_DIR]
 <li><code>--lib</code> builds the current project as a library. In this mode, <code>src/lib.incn</code> is required and <code>FILE</code> is optional.</li>
 <li>Prints the generated Rust project path (example): <code>target/incan/&lt;name&gt;/</code></li>
 <li>Builds the generated Rust project and prints the binary path (example):
-  <code>target/incan/&lt;name&gt;/target/release/&lt;name&gt;</code></li>
+  <code>target/incan/.cargo-target/release/&lt;name&gt;</code></li>
 <li>In <code>--lib</code> mode, also emits a library artifact under <code>target/lib/</code> (including <code>&lt;name&gt;.incnlib</code>).</li>
 </ul>
 <p>Dependency flags:</p>
@@ -4467,7 +4467,7 @@ inputs. Commit it to version control for reproducible builds.</p>
 <p>Build outputs:</p>
 <ul>
 <li><strong>Generated Rust project</strong>: <code>target/incan/&lt;name&gt;/</code></li>
-<li><strong>Built binary</strong>: <code>target/incan/&lt;name&gt;/target/release/&lt;name&gt;</code></li>
+<li><strong>Built binary</strong>: <code>target/incan/.cargo-target/release/&lt;name&gt;</code></li>
 <li><strong>Built library artifact (<code>--lib</code>)</strong>: <code>target/lib/&lt;name&gt;.incnlib</code> plus the generated library crate output</li>
 </ul>
 <p>Cleaning:</p>

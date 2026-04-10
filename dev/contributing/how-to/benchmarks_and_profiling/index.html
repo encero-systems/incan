@@ -4280,7 +4280,7 @@ make<span class="w"> </span>benchmarks
 
 <span class="c1"># Build Incan version</span>
 ../../../target/release/incan<span class="w"> </span>build<span class="w"> </span>fib.incn
-cp<span class="w"> </span>../../../target/incan/fib/target/release/fib<span class="w"> </span>./fib_incan
+cp<span class="w"> </span>../../../target/incan/.cargo-target/release/fib<span class="w"> </span>./fib_incan
 
 <span class="c1"># Build Rust baseline</span>
 rustc<span class="w"> </span>-O<span class="w"> </span>fib.rs<span class="w"> </span>-o<span class="w"> </span>fib_rust
@@ -4300,10 +4300,10 @@ incan<span class="w"> </span>build<span class="w"> </span>myprogram.incn
 
 <span class="c1"># Profile with Instruments (macOS)</span>
 xcrun<span class="w"> </span>xctrace<span class="w"> </span>record<span class="w"> </span>--template<span class="w"> </span><span class="s2">&quot;Time Profiler&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--launch<span class="w"> </span>./target/incan/myprogram/target/release/myprogram
+<span class="w">  </span>--launch<span class="w"> </span>./target/incan/.cargo-target/release/myprogram
 
 <span class="c1"># Profile with perf (Linux)</span>
-perf<span class="w"> </span>record<span class="w"> </span>./target/incan/myprogram/target/release/myprogram
+perf<span class="w"> </span>record<span class="w"> </span>./target/incan/.cargo-target/release/myprogram
 perf<span class="w"> </span>report
 </code></pre></div>
 <h3 id="profiling-the-compiler">Profiling the compiler<a class="headerlink" href="#profiling-the-compiler" title="Permanent link">&para;</a></h3>

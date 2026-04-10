@@ -4486,6 +4486,15 @@ They are not intended as runtime function calls.</p>
 <li><strong>Compiler</strong>: <code>rust::</code> paths accept segments whose spellings match Incan keywords (for example Rust modules named
   <code>type</code>), and <code>from rust::... import</code> can import such symbols — use <code>as</code> for a safe local name (e.g.
   <code>from rust::my_crate::proto import type as proto_type</code>) (#197).</li>
+<li><strong>Compiler</strong>: <code>rust-metadata</code> is now caller-owned again instead of ambient in <code>TypeChecker</code>, which fixes the
+  accidental repo-root extraction regression in plain semantic/test paths and restores cheap permissive handling for
+  unextracted Rust members.</li>
+<li><strong>Compiler</strong>: project-local rust-metadata caches now persist extracted RFC 041 item metadata under
+  <code>target/incan_lock</code>, so generated metadata workspaces can reuse extracted items across sessions instead of rebuilding
+  every lookup from scratch.</li>
+<li><strong>Compiler</strong>: Borrowed Rust free-function signatures now preserve <code>&amp;T</code> / <code>&amp;mut T</code> semantics through more of the
+  typechecker, lowering, and emission pipeline, including generated-lock metadata workspaces and typed imported
+  callees. Some downstream rust-metadata dependency-loading gaps are still being closed (#257).</li>
 <li><strong>Compiler</strong>: <code>rusttype</code> backing types may use Rust-style qualified paths after a <code>rust::</code> import binding
   (e.g. <code>type Binary = rusttype proto_type::Binary</code> when <code>proto_type</code> is an imported module). Generics on qualified
   paths (<code>a::B[T]</code>) are rejected at parse time with a clear diagnostic (#197).</li>
