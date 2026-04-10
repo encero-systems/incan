@@ -62,7 +62,7 @@ Behavior:
 - `--lib` builds the current project as a library. In this mode, `src/lib.incn` is required and `FILE` is optional.
 - Prints the generated Rust project path (example): `target/incan/<name>/`
 - Builds the generated Rust project and prints the binary path (example):
-  `target/incan/<name>/target/release/<name>`
+  `target/incan/.cargo-target/release/<name>`
 - In `--lib` mode, also emits a library artifact under `target/lib/` (including `<name>.incnlib`).
 
 Dependency flags:
@@ -235,7 +235,7 @@ See: [Managing dependencies](../how-to/dependencies.md) for practical guidance.
 Build outputs:
 
 - **Generated Rust project**: `target/incan/<name>/`
-- **Built binary**: `target/incan/<name>/target/release/<name>`
+- **Built binary**: `target/incan/.cargo-target/release/<name>`
 - **Built library artifact (`--lib`)**: `target/lib/<name>.incnlib` plus the generated library crate output
 
 Cleaning:

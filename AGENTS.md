@@ -47,18 +47,19 @@ Skills, learnings, and agent notes live under **this repository’s** `.agents/`
 
 ### Common commands
 
-| Command                                                   | Purpose                                          |
-| --------------------------------------------------------- | ------------------------------------------------ |
-| `make build`                                              | Debug build (fast)                               |
-| `make release`                                            | Optimized build                                  |
-| `make test`                                               | Run all tests                                    |
-| `make fmt`                                                | Format Rust code (`cargo +nightly fmt`)          |
-| `make lint`                                               | Run clippy                                       |
-| `make check`                                              | Format check + clippy                            |
-| `make pre-commit`                                         | Fast local gate (format check + `cargo check`)   |
-| `make pre-commit-full`                                    | Full local gate (format check + tests + clippy)  |
-| `make examples`                                           | Smoke test all examples (requires release build) |
-| `INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests` | Update codegen snapshots                         |
+| Command                                                   | Purpose                                                               |
+| --------------------------------------------------------- | --------------------------------------------------------------------- |
+| `make build`                                              | Debug build (fast)                                                    |
+| `make release`                                            | Optimized build                                                       |
+| `make test`                                               | Run all tests                                                         |
+| `make fmt`                                                | Format Rust code (`cargo +nightly fmt`)                               |
+| `make lint`                                               | Run clippy                                                            |
+| `make check`                                              | Format check + clippy                                                 |
+| `make pre-commit-fast`                                    | Fast local gate (format check + `cargo check`)                        |
+| `make pre-commit`                                         | Full local gate (full checks + smoke-test-fast)                       |
+| `make smoke-tests`                                        | Full smoke test: tests + release canary + examples + benchmarks-incan |
+| `make examples`                                           | Smoke test all examples (requires release build)                      |
+| `INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests` | Update codegen snapshots                                              |
 
 ## Docs-site Workflow (MkDocs Material)
 

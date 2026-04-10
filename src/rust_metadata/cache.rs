@@ -96,13 +96,16 @@ static TEST_SHARED_CACHE_ROOT: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new(
 
 fn shared_cache_root() -> Option<PathBuf> {
     #[cfg(test)]
-    if let Some(path) = TEST_SHARED_CACHE_ROOT
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .ok()
-        .and_then(|guard| guard.clone())
     {
-        return Some(path);
+        // Never silently skip the override: a poisoned mutex must not fall through to the real user cache dir.
+        let root = TEST_SHARED_CACHE_ROOT
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        if let Some(path) = root {
+            return Some(path);
+        }
     }
 
     if let Some(path) = std::env::var_os("INCAN_RUST_METADATA_SHARED_CACHE_DIR") {
@@ -160,8 +163,12 @@ fn read_json_cache(path: &Path) -> Result<Option<DiskCacheEnvelope>, RustMetadat
 
 fn read_disk_cache(root: &Path, fingerprint: &str) -> Result<Option<DiskCacheEnvelope>, RustMetadataError> {
     let cache_path = disk_cache_path(root);
-    if let Some(envelope) = read_json_cache(&cache_path)? {
-        return Ok(Some(envelope));
+    if cache_path.is_file() {
+        // Local cache file exists: it is authoritative. Malformed JSON is a hard miss for this workspace — do **not**
+        // fall back to the shared fingerprint cache, or identical probe `Cargo.toml` fingerprints could repopulate
+        // entries from `~/Library/Caches/...` / `$XDG_CACHE_HOME` after a corrupted local file (flaky tests, confusing
+        // IDE behavior).
+        return read_json_cache(&cache_path);
     }
     let Some(shared_path) = shared_disk_cache_path(fingerprint) else {
         return Ok(None);
@@ -747,7 +754,7 @@ name = "foo_bar"
         let _shared_root = TestSharedCacheRootGuard::new(Some(isolated_shared.path().to_path_buf()));
         fs::write(
             tmp.path().join("Cargo.toml"),
-            "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            "[package]\nname = \"incan_test_malformed_rust_metadata_disk_cache\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         )?;
         fs::write(disk_cache_path(tmp.path()), "{ definitely not json")?;
         let mut inner = CacheInner::default();
