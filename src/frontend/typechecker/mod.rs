@@ -328,6 +328,47 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
+    const RUST_KEYWORDS: [&'static str; 53] = [
+        "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn", "for", "if",
+        "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "Self",
+        "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while", "async", "await",
+        "dyn", "abstract", "become", "box", "do", "final", "macro", "override", "priv", "try", "typeof", "unsized",
+        "virtual", "yield", "gen", "union",
+    ];
+
+    fn escape_rust_keyword_segments(path: &str) -> String {
+        path.split("::")
+            .map(|segment| {
+                if segment.starts_with("r#") {
+                    return segment.to_string();
+                }
+                if Self::RUST_KEYWORDS.contains(&segment) {
+                    return format!("r#{segment}");
+                }
+                segment.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("::")
+    }
+
+    fn strip_raw_ident_prefixes(path: &str) -> String {
+        path.split("::")
+            .map(|segment| segment.strip_prefix("r#").unwrap_or(segment))
+            .collect::<Vec<_>>()
+            .join("::")
+    }
+
+    fn normalize_raw_wrapper_leaf(path: &str) -> String {
+        let mut segments: Vec<&str> = path.split("::").collect();
+        if let Some(last) = segments.last_mut()
+            && let Some(stripped) = last.strip_prefix("Raw")
+            && !stripped.is_empty()
+        {
+            *last = stripped;
+        }
+        segments.join("::")
+    }
+
     pub fn new() -> Self {
         Self {
             symbols: SymbolTable::new(),
@@ -377,10 +418,18 @@ impl TypeChecker {
     pub(crate) fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
         let dir = self.rust_metadata_manifest_dir.as_ref()?;
-        match self.rust_metadata_cache.get_or_extract(dir, lookup_path, &|_| ()) {
-            Ok(meta) => Some((*meta).clone()),
-            Err(_) => None,
+        let escaped_lookup = Self::escape_rust_keyword_segments(lookup_path);
+        let mut candidates = vec![lookup_path.to_string()];
+        if escaped_lookup != lookup_path {
+            candidates.push(escaped_lookup);
         }
+        for candidate in candidates {
+            match self.rust_metadata_cache.get_or_extract(dir, candidate.as_str(), &|_| ()) {
+                Ok(meta) => return Some((*meta).clone()),
+                Err(_) => continue,
+            }
+        }
+        None
     }
 
     #[cfg(not(feature = "rust-metadata"))]
@@ -459,11 +508,10 @@ impl TypeChecker {
         })
     }
 
-    /// Extract the cheap Rust identity already known to the checker for compatibility checks.
+    /// Extract a Rust identity tuple for compatibility checks.
     ///
-    /// This must stay metadata-light. `types_compatible(...)` calls it frequently, so it may only use symbol-local
-    /// metadata already attached during import collection. Fresh rust-metadata extraction from this path would leak a
-    /// heavy workspace/indexing concern into ordinary semantic checks.
+    /// This stays metadata-light on purpose: compatibility checks are hot, so they must not trigger fresh
+    /// rust-metadata extraction.
     fn rust_identity_for_type(&self, ty: &ResolvedType) -> Option<(String, Option<String>, Vec<ResolvedType>)> {
         match ty {
             ResolvedType::RustPath(path) => {
@@ -475,14 +523,28 @@ impl TypeChecker {
                 let SymbolKind::RustItem(info) = &self.lookup_symbol(name)?.kind else {
                     return None;
                 };
-                let definition = info.metadata.as_ref().and_then(|meta| meta.definition_path.clone());
+                let definition = info
+                    .metadata
+                    .as_ref()
+                    .and_then(|meta| meta.definition_path.clone())
+                    .or_else(|| {
+                        self.rust_item_metadata_for_path(info.path.as_str())
+                            .and_then(|meta| meta.definition_path.or(Some(meta.canonical_path)))
+                    });
                 Some((info.path.clone(), definition, Vec::new()))
             }
             ResolvedType::Generic(name, args) => {
                 let SymbolKind::RustItem(info) = &self.lookup_symbol(name)?.kind else {
                     return None;
                 };
-                let definition = info.metadata.as_ref().and_then(|meta| meta.definition_path.clone());
+                let definition = info
+                    .metadata
+                    .as_ref()
+                    .and_then(|meta| meta.definition_path.clone())
+                    .or_else(|| {
+                        self.rust_item_metadata_for_path(info.path.as_str())
+                            .and_then(|meta| meta.definition_path.or(Some(meta.canonical_path)))
+                    });
                 Some((info.path.clone(), definition, args.clone()))
             }
             _ => None,
@@ -497,12 +559,32 @@ impl TypeChecker {
         }
         let (actual_path, actual_def, actual_args) = self.rust_identity_for_type(actual)?;
         let (expected_path, expected_def, expected_args) = self.rust_identity_for_type(expected)?;
-        let same_base = actual_path == expected_path;
+        let actual_norm = Self::strip_raw_ident_prefixes(actual_path.as_str());
+        let expected_norm = Self::strip_raw_ident_prefixes(expected_path.as_str());
+        let same_base = actual_norm == expected_norm;
+        let same_raw_wrapper_leaf = Self::normalize_raw_wrapper_leaf(actual_norm.as_str()) == expected_norm
+            || Self::normalize_raw_wrapper_leaf(expected_norm.as_str()) == actual_norm;
         let same_definition =
             actual_def.is_some() && expected_def.is_some() && actual_def.as_ref() == expected_def.as_ref();
-        let actual_resolves_to_expected = actual_def.as_deref() == Some(expected_path.as_str());
-        let expected_resolves_to_actual = expected_def.as_deref() == Some(actual_path.as_str());
-        if !same_base && !same_definition && !actual_resolves_to_expected && !expected_resolves_to_actual {
+        let actual_resolves_to_expected = actual_def
+            .as_deref()
+            .map(Self::strip_raw_ident_prefixes)
+            .as_deref()
+            == Some(expected_norm.as_str());
+        let expected_resolves_to_actual = expected_def
+            .as_deref()
+            .map(Self::strip_raw_ident_prefixes)
+            .as_deref()
+            == Some(actual_norm.as_str());
+        let same_suffix_namespace = actual_norm.ends_with(format!("::{expected_norm}").as_str())
+            || expected_norm.ends_with(format!("::{actual_norm}").as_str());
+        if !same_base
+            && !same_raw_wrapper_leaf
+            && !same_definition
+            && !actual_resolves_to_expected
+            && !expected_resolves_to_actual
+            && !same_suffix_namespace
+        {
             return Some(false);
         }
         if actual_args.len() != expected_args.len() {

@@ -1001,6 +1001,90 @@ fn test_types_compatible_accepts_rust_path_alias_with_attached_definition_metada
     );
 }
 
+#[test]
+fn test_types_compatible_accepts_rust_reexport_namespace_suffix_for_borrowed_param() {
+    let checker = TypeChecker::new();
+    let actual = ResolvedType::RustPath("datafusion_substrait::substrait::proto::Plan".to_string());
+    let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath("substrait::proto::Plan".to_string())));
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "Rust path compatibility should allow prefixed re-export namespace spellings for borrowed params"
+    );
+}
+
+#[test]
+fn test_types_compatible_normalizes_raw_identifier_segments_for_rust_paths() {
+    let checker = TypeChecker::new();
+    let actual = ResolvedType::RustPath("incan_stdlib::async::sync::Semaphore".to_string());
+    let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath(
+        "incan_stdlib::r#async::sync::Semaphore".to_string(),
+    )));
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "Rust path compatibility should treat `async` and `r#async` segment spellings as equivalent"
+    );
+}
+
+#[test]
+fn test_types_compatible_accepts_raw_wrapper_leaf_for_rust_paths() {
+    let checker = TypeChecker::new();
+    let actual = ResolvedType::RustPath("incan_stdlib::async::sync::RawSemaphore".to_string());
+    let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath(
+        "incan_stdlib::r#async::sync::Semaphore".to_string(),
+    )));
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "Rust path compatibility should treat Raw* wrapper leaves as compatible with their canonical counterpart"
+    );
+}
+
+#[cfg(feature = "rust-metadata")]
+#[test]
+fn test_types_compatible_accepts_named_rust_alias_via_lazy_metadata_definition_lookup()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_metadata_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_metadata_manifest_dir(manifest_dir.clone());
+
+    checker
+        .rust_metadata_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::AliasPlan".to_string(),
+                definition_path: Some("substrait::proto::Plan".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    fields: Vec::new(),
+                    methods: Vec::new(),
+                    variants: Vec::new(),
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed alias metadata: {e}")))?;
+
+    checker.symbols.define(Symbol {
+        name: "AliasPlan".to_string(),
+        kind: SymbolKind::RustItem(RustItemInfo {
+            crate_name: "demo".to_string(),
+            path: "demo::AliasPlan".to_string(),
+            binding: RustImportBindingKind::FromImport,
+            metadata: None,
+        }),
+        span: Span::default(),
+        scope: 0,
+    });
+
+    let actual = ResolvedType::Named("AliasPlan".to_string());
+    let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath("substrait::proto::Plan".to_string())));
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "Named rust imports should recover definition paths from metadata cache when symbol-local metadata is absent"
+    );
+    Ok(())
+}
+
 #[cfg(feature = "rust-metadata")]
 #[test]
 fn test_rust_metadata_resolves_type_associated_function_field_access() -> Result<(), Box<dyn std::error::Error>> {

@@ -1,6 +1,6 @@
 //! In-memory cache: one loaded workspace per manifest directory, plus per-item metadata.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry;
 use std::fs;
 use std::io::ErrorKind;
@@ -34,6 +34,7 @@ pub struct RustMetadataCache {
 struct CacheInner {
     workspaces: HashMap<(PathBuf, bool), RustWorkspace>,
     items: HashMap<(PathBuf, String), Arc<RustItemMetadata>>,
+    missing_items: HashSet<(PathBuf, String)>,
     disk_cache_state: HashMap<PathBuf, DiskCacheState>,
 }
 
@@ -520,18 +521,29 @@ impl RustMetadataCache {
         if let Some(hit) = inner.items.get(&key_item) {
             return Ok(Arc::clone(hit));
         }
+        if inner.missing_items.contains(&key_item) {
+            return Err(RustMetadataError::CrateNotFound(
+                crate_name_for_path(canonical_path).to_string(),
+            ));
+        }
 
         let mut last_err = None;
         let mut meta = None;
+        let mut attempted_keys = Vec::new();
         for candidate in canonical_path_candidates(canonical_path) {
             let candidate_key = (root.clone(), candidate.clone());
+            attempted_keys.push(candidate_key.clone());
             if let Some(hit) = inner.items.get(&candidate_key) {
                 let mut aliased = (*hit.as_ref()).clone();
                 aliased.canonical_path = canonical_path.to_owned();
                 let arc = Arc::new(aliased);
                 inner.items.insert(key_item.clone(), Arc::clone(&arc));
+                inner.missing_items.remove(&key_item);
                 let _ = persist_item_to_disk_cache(&inner, &root, arc.as_ref());
                 return Ok(arc);
+            }
+            if inner.missing_items.contains(&candidate_key) {
+                continue;
             }
             match extract_in_workspace_set(&mut inner, &root, candidate.as_str(), registry_src_roots, progress) {
                 Ok(found) => {
@@ -541,13 +553,25 @@ impl RustMetadataCache {
                 Err(err) => last_err = Some(err),
             }
         }
-        let mut meta = meta.ok_or_else(|| {
-            last_err
-                .unwrap_or_else(|| RustMetadataError::CrateNotFound(crate_name_for_path(canonical_path).to_string()))
-        })?;
+        let mut meta = if let Some(meta) = meta {
+            meta
+        } else {
+            for attempted in attempted_keys {
+                inner.missing_items.insert(attempted);
+            }
+            inner.missing_items.insert((root.clone(), canonical_path.to_owned()));
+            return Err(
+                last_err.unwrap_or_else(|| {
+                    RustMetadataError::CrateNotFound(crate_name_for_path(canonical_path).to_string())
+                }),
+            );
+        };
         meta.canonical_path = canonical_path.to_owned();
         let arc = Arc::new(meta);
         inner.items.insert(key_item, Arc::clone(&arc));
+        for attempted in attempted_keys {
+            inner.missing_items.remove(&attempted);
+        }
         let _ = persist_item_to_disk_cache(&inner, &root, arc.as_ref());
         Ok(arc)
     }

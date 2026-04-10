@@ -1484,7 +1484,11 @@ impl TypeChecker {
                         return self.validate_function_call(name, &func_info, args, span);
                     }
                     SymbolKind::RustItem(info) => {
-                        if let Some(meta) = &info.metadata
+                        let metadata = info
+                            .metadata
+                            .clone()
+                            .or_else(|| self.rust_item_metadata_for_path(info.path.as_str()));
+                        if let Some(meta) = &metadata
                             && let incan_core::interop::RustItemKind::Function(sig) = &meta.kind
                         {
                             let error_count_before = self.errors.len();

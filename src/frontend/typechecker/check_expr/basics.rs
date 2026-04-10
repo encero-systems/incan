@@ -53,7 +53,11 @@ impl TypeChecker {
             }
             SymbolKind::Trait(_) => (IdentKind::Trait, ResolvedType::Named(name.to_string())),
             SymbolKind::RustItem(info) => {
-                if let Some(meta) = &info.metadata
+                let metadata = info
+                    .metadata
+                    .clone()
+                    .or_else(|| self.rust_item_metadata_for_path(info.path.as_str()));
+                if let Some(meta) = &metadata
                     && meta.visibility == incan_core::interop::RustVisibility::Restricted
                 {
                     self.errors
@@ -64,7 +68,7 @@ impl TypeChecker {
                     return ResolvedType::Unknown;
                 }
                 // RFC 041: carry canonical Rust path and (when available) extracted Rust metadata.
-                let resolved = match &info.metadata {
+                let resolved = match &metadata {
                     Some(meta) => match &meta.kind {
                         incan_core::interop::RustItemKind::Function(sig) => {
                             let params = sig
@@ -86,7 +90,11 @@ impl TypeChecker {
                             ));
                             ResolvedType::Unknown
                         }
-                        _ => ResolvedType::RustPath(info.path.clone()),
+                        _ => ResolvedType::RustPath(
+                            meta.definition_path
+                                .clone()
+                                .unwrap_or_else(|| meta.canonical_path.clone()),
+                        ),
                     },
                     None => ResolvedType::RustPath(info.path.clone()),
                 };

@@ -303,7 +303,7 @@ impl TypeChecker {
                     crate_name: crate_name.clone(),
                     path: canonical_path.clone(),
                     binding,
-                    metadata: self.rust_item_metadata_for_path(&canonical_path),
+                    metadata: None,
                 };
                 self.define_rust_import_binding(name, info, span);
             }
@@ -326,7 +326,7 @@ impl TypeChecker {
                         crate_name: crate_name.clone(),
                         path: canonical_path.clone(),
                         binding: RustImportBindingKind::FromImport,
-                        metadata: self.rust_item_metadata_for_path(&canonical_path),
+                        metadata: None,
                     };
                     self.define_rust_import_binding(name, info, span);
                 }
