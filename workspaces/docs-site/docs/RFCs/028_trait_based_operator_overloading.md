@@ -3,7 +3,7 @@
 - **Status:** Draft
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
-- **Related:** RFC 027 (vocab crate — block/desugaring substrate), RFC 024 (extensible derive protocol), RFC 040 (scoped DSL glyph surfaces)
+- **Related:** RFC 027 (vocab crate — block/desugaring substrate), RFC 024 (extensible derive protocol), RFC 040 (scoped DSL glyph surfaces), RFC 054 (explicit call-site generics)
 - **Target version:** v0.2
 
 ## Summary
@@ -217,6 +217,8 @@ This RFC treats symbolic operators and keyword operators as distinct. `a | b` is
 This RFC covers operator syntax and operator-like indexing forms. It does **not** define the broader object protocol surface such as `len(x)`, `str(x)`, `repr(x)`, `iter(x)`, `hash(x)`, or `bool(x)`.
 
 Those protocols may eventually exist in Incan, but they should be specified on their own terms rather than being forced into Rust-shaped traits like `Sized`.
+
+This RFC also does **not** define general callable overloading for function/method API surfaces. That route is tracked as a separate follow-on tied to RFC 054's optional/dynamic API boundary.
 
 The following language operators are also explicitly **not overloadable** in this RFC:
 

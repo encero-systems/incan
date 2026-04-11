@@ -22,12 +22,20 @@ description: Review an Incan RFC document for formatting, structural, and conten
 
 The RFC lifecycle has four statuses. Different sections are required — or forbidden — at each stage:
 
-| Status | Implementation Plan section | Checklist section | `Shipped in:` | "Unresolved questions" or "Design Decisions" |
-| ------------- | --------------------------- | ----------------- | ------------- | -------------------------------------------- |
-| `Draft` | ❌ Must NOT be present | ❌ Must NOT be present | `—` | Required: "Unresolved questions" |
-| `Planned` | ❌ Must NOT be present | ❌ Must NOT be present | `—` | Required: "Design Decisions" (renamed) |
-| `In Progress` | ✅ Must be present | ✅ Must be present | `—` | "Design Decisions" (already renamed) |
-| `Done` | ✅ Present | ✅ All items `[x]` | ✅ Filled | "Design Decisions" (already renamed) |
+| Status        | Implementation Plan section | Checklist section      | `Shipped in:` | Design-status tail |
+| ------------- | --------------------------- | ---------------------- | ------------- | ------------------ |
+| `Draft`       | ❌ Must NOT be present      | ❌ Must NOT be present | `—`           | **`## Unresolved questions`** and/or **`## Design Decisions`** (either order; both OK) |
+| `Planned`     | ❌ Must NOT be present      | ❌ Must NOT be present | `—`           | **`## Design Decisions`** only — **Planned+ rule** |
+| `In Progress` | ✅ Must be present          | ✅ Must be present     | `—`           | **Planned+ rule**  |
+| `Done`        | ✅ Present                  | ✅ All items `[x]`     | ✅ Filled     | **Planned+ rule**  |
+
+**Planned+ rule** (`Planned`, `In Progress`, `Done`): the document must **not** contain a **`## Unresolved questions`** heading. The design tail is **`## Design Decisions`** only — remove or merge **`## Unresolved questions`** at **`Draft` → `Planned`** (`/bump-rfc`).
+
+**Draft:** may use **`## Unresolved questions`** (open), **`## Design Decisions`** (settled), or **both**. Keep roles honest (no open items under **Design Decisions**). May stay **Draft** with no open design work while review continues; do **not** invent questions.
+
+**HTML comment (Draft only):** if **`## Unresolved questions`** appears anywhere, include the EOF comment in Checklist 1; otherwise omit it.
+
+**`Draft` → `Planned`:** nothing still open under **`## Unresolved questions`**; **`## Design Decisions`** holds the settled record; apply **Planned+ rule** via `/bump-rfc`.
 
 ---
 
@@ -36,11 +44,11 @@ The RFC lifecycle has four statuses. Different sections are required — or forb
 - [ ] Header block present with all eight fields: Status, Created, Author(s), Related, Issue, RFC PR, Written against, Shipped in.
 - [ ] `Written against:` reflects the Incan version that was current when the RFC was authored (never a future or planned version).
 - [ ] `Shipped in:` is `—` for Draft/Planned/In Progress; only filled for Done.
-- [ ] Sections follow canonical order: Summary → (Core model) → Motivation → Goals → Non-Goals → Guide-level explanation → Reference-level explanation → Design details → Alternatives considered → Drawbacks → (Implementation architecture) → **Layers affected** → (Implementation Plan + Checklist, In Progress/Done only) → Unresolved questions / Design Decisions.
+- [ ] Sections follow canonical order: Summary → (Core model) → Motivation → Goals → Non-Goals → Guide-level explanation → Reference-level explanation → Design details → Alternatives considered → Drawbacks → (Implementation architecture) → **Layers affected** → (Implementation Plan + Checklist, In Progress/Done only) → **Design Decisions** / **Unresolved questions** (Draft: one or both, any order; **Planned+ rule** after that).
 - [ ] **Draft/Planned only: No section named "Implementation Plan", "Suggested rollout", or similar.** Prescriptive task steps belong in the GitHub issue or are added when the RFC moves to In Progress.
 - [ ] **In Progress/Done only: "Implementation Plan" section present** with phases or layer-grouped tasks.
 - [ ] **In Progress/Done only: "Checklist" (or "Progress Checklist") section present** with `- [ ]` / `- [x]` items.
-- [ ] Closing comment present at end of file for Draft: `<!-- Rename this section to "Design Decisions" once all questions have been resolved... -->`.
+- [ ] **Status: Draft** and **`## Unresolved questions`** present → EOF HTML comment: `<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->`
 
 ---
 
@@ -93,17 +101,16 @@ The RFC lifecycle has four statuses. Different sections are required — or forb
 
 ## Checklist 6 — Draft-specific
 
-- [ ] "Unresolved questions" section present with at least one open design question.
-- [ ] Closing comment present: `<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->`
-- [ ] Status is `Draft` (not `Planned` while questions are still open).
+- [ ] **`## Unresolved questions`** and/or **`## Design Decisions`** — open vs settled as in **Status-aware checks**; no invented questions.
+- [ ] EOF HTML comment matches Checklist 1 iff **`## Unresolved questions`** exists.
+- [ ] Do not use **`Planned`** while **`## Unresolved questions`** still lists open items.
 
 ---
 
 ## Checklist 7 — Planned-specific
 
-- [ ] "Unresolved questions" has been renamed to "Design Decisions".
-- [ ] All questions in "Design Decisions" have accepted answers (no open bullets without resolution).
-- [ ] GitHub issue is labeled `feature` (not `RFC`).
+- [ ] **Planned+ rule** satisfied (**bump-rfc**); **Design Decisions** has no open bullets.
+- [ ] GitHub issue labeled `feature` (not `RFC`).
 
 ---
 
@@ -126,23 +133,24 @@ The RFC lifecycle has four statuses. Different sections are required — or forb
 
 ## Common issues found in practice
 
-|                                      Issue                                      |                                              Fix                                              |
-| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `[RFC NNN]` reference links without definitions                                 | Convert to plain text `RFC NNN`                                                               |
-| Section named "Implementation plan" in a Draft or Planned RFC                  | Remove or defer to GitHub issue; keep only "Layers affected"                                  |
-| Missing "Implementation Plan" + "Checklist" in an In Progress RFC              | Add both sections; use `/bump-rfc` skill to generate them from "Layers affected"              |
-| Prose references specific files or functions (`calls.rs`, `FunctionInfo`, etc.) | Rewrite as a normative contract statement or remove (OK in Implementation Plan, not in design)|
-| Hard-wrapped prose (lines ending mid-sentence)                                  | Reflow each paragraph to a single line                                                        |
-| `Shipped in:` filled for a Draft/Planned/In Progress RFC                        | Set to `—`; only fill once the feature is released                                            |
-| `Shipped in:` still `—` for a Done RFC                                          | Fill with the actual release version                                                          |
-| Missing "Layers affected" section                                               | Add with affected layers from Parser, Typechecker, Lowering, Emission, Stdlib, Formatter, LSP |
-| "Unresolved questions" not renamed in Planned RFC                               | Rename to "Design Decisions"; ensure all questions have answers                               |
-| `<!-- REVIEW: ... -->` comment left in file                                     | Address the comment and remove it                                                             |
-| Internal project name mentioned                                                 | Replace with a generic description                                                            |
-| Link to internal path (`__strategy__/`, research notes)                         | Remove the link; describe the concept inline                                                  |
-| Code blocks untagged or wrongly tagged                                          | Add `incan` language tag                                                                      |
-| One RFC mixes a general feature and a specific library proposal                 | Recommend split/supersession or justify the coupling explicitly                               |
-| RFC file moved or status changed but docs index still points at old path        | Update references and regenerate RFC snippets/index                                           |
+| Issue                                                                           | Fix                                                                                                    |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `[RFC NNN]` reference links without definitions                                 | Convert to plain text `RFC NNN`                                                                        |
+| Section named "Implementation plan" in a Draft or Planned RFC                   | Remove or defer to GitHub issue; keep only "Layers affected"                                           |
+| Missing "Implementation Plan" + "Checklist" in an In Progress RFC               | Add both sections; use `/bump-rfc` skill to generate them from "Layers affected"                       |
+| Prose references specific files or functions (`calls.rs`, `FunctionInfo`, etc.) | Rewrite as a normative contract statement or remove (OK in Implementation Plan, not in design)         |
+| Hard-wrapped prose (lines ending mid-sentence)                                  | Reflow each paragraph to a single line                                                                 |
+| `Shipped in:` filled for a Draft/Planned/In Progress RFC                        | Set to `—`; only fill once the feature is released                                                     |
+| `Shipped in:` still `—` for a Done RFC                                          | Fill with the actual release version                                                                   |
+| Missing "Layers affected" section                                               | Add with affected layers from Parser, Typechecker, Lowering, Emission, Stdlib, Formatter, LSP          |
+| **Planned+** still has **`## Unresolved questions`**                             | **Planned+ rule** — fix via **bump-rfc** merge/rename steps |
+| `<!-- REVIEW: ... -->` comment left in file                                     | Address the comment and remove it                                                                      |
+| Internal project name mentioned                                                 | Replace with a generic description                                                                     |
+| Link to internal path (`__strategy__/`, research notes)                         | Remove the link; describe the concept inline                                                           |
+| Code blocks untagged or wrongly tagged                                          | Add `incan` language tag                                                                               |
+| One RFC mixes a general feature and a specific library proposal                 | Recommend split/supersession or justify the coupling explicitly                                        |
+| RFC file moved or status changed but docs index still points at old path        | Update references and regenerate RFC snippets/index                                                    |
+| Review flags Draft for "no open questions"                                      | Valid during review; **Draft** rules above |
 
 ---
 
@@ -167,11 +175,11 @@ Once the issue is created, record its URL in the RFC's `Issue:` header field.
 
 ## RFC lifecycle
 
-| Status | Meaning | Trigger |
-| ------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `Draft` | Active design work; unresolved questions remain | Initial state for all new RFCs |
-| `Planned` | Design settled; ready for implementation | All questions answered, review complete, user confirms (use `/bump-rfc`) |
-| `In Progress` | Active implementation underway | At least one PR open; Implementation Plan + Checklist added (use `/bump-rfc`) |
-| `Done` | Implementation complete and shipped | All checklist items checked, `Shipped in:` filled, release notes updated (use `/bump-rfc`) |
+| Status        | Meaning                                  | Trigger                                                                                              |
+| ------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `Draft`       | Design and/or review in flight           | New RFCs start here; may list open questions, or none while settled design awaits review before bump |
+| `Planned`     | Design settled; ready for implementation | **Planned+ rule**; review complete; user confirms (`/bump-rfc`) |
+| `In Progress` | Active implementation underway           | At least one PR open; Implementation Plan + Checklist added (use `/bump-rfc`)                        |
+| `Done`        | Implementation complete and shipped      | All checklist items checked, `Shipped in:` filled, release notes updated (use `/bump-rfc`)           |
 
 Use the `/bump-rfc` skill to perform status transitions correctly.

@@ -11,7 +11,7 @@ RFCs move through four statuses. Each transition requires specific file edits, G
 
 | Status        | Meaning                                         |
 | ------------- | ----------------------------------------------- |
-| `Draft`       | Active design work; unresolved questions remain |
+| `Draft`       | Design and/or review in flight (may have open questions, or none while awaiting review before Planned) |
 | `Planned`     | Design settled; ready for implementation        |
 | `In Progress` | Active implementation underway                  |
 | `Implemented` | Implementation complete and shipped             |
@@ -24,18 +24,25 @@ Read the RFC's current `Status:` field, then follow the matching section below.
 
 ### Prerequisites
 
+**All answered:** nothing open under **`## Unresolved questions`**; settled record under **`## Design Decisions`** (see **review-rfc** → **Planned+ rule**). No fake questions.
+
 Before bumping, verify:
 
-- [ ] All "Unresolved questions" have accepted answers — no open bullets without resolution.
+- [ ] No open bullets under **`## Unresolved questions`** (if present). No disguised open items under **Design Decisions**.
 - [ ] At least one review round has been completed (use `/review-rfc` if not done).
 - [ ] GitHub issue exists and is linked in the RFC header.
 - [ ] User has confirmed the bump (ask if unclear).
+- [ ] Discuss any open design decisions with the user.
 
 ### File changes
 
-1. Rename the section `## Unresolved questions` → `## Design Decisions`. Keep all the Q&A content; just rename the heading.
-2. Remove the closing `<!-- Rename this section to "Design Decisions"... -->` comment from the end of the file.
-3. Update the header: `Status: Draft` → `Status: Planned`.
+**Outcome:** **Planned+ rule** — no **`## Unresolved questions`**; tail is **`## Design Decisions`** only.
+
+1. Both **`## Design Decisions`** and **`## Unresolved questions`:** merge remainder into **Design Decisions**, drop **`## Unresolved questions`**.
+2. Only **`## Unresolved questions`:** rename → **`## Design Decisions`**.
+3. Only **`## Design Decisions`:** leave as-is.
+4. Strip EOF `<!-- Rename this section to "Design Decisions"... -->` if present.
+5. `Status: Draft` → `Status: Planned`.
 
 ### GitHub actions
 
@@ -197,6 +204,6 @@ Add an entry to `workspaces/docs-site/docs/release_notes/<vX_Y>.md` following th
 
 | From | To | Key file change | Key GitHub action |
 | ------------- | ------------- | ------------------------------------------------- | ------------------------------------------- |
-| `Draft` | `Planned` | Rename "Unresolved questions" → "Design Decisions"; update Status | Relabel `RFC` → `feature` |
+| `Draft` | `Planned` | **Planned+ rule** (**File changes** above); update Status | Relabel `RFC` → `feature` |
 | `Planned` | `In Progress` | Add Implementation Plan + Progress Checklist; update Status | Post plan as issue comment |
 | `In Progress` | `Implemented` | Update Status; fill release field; move file to `closed/implemented/`; optionally rename checklist to log | Close issue with release version |
