@@ -560,6 +560,7 @@ impl AstLowering {
         let call = TypedExpr::new(
             IrExprKind::Call {
                 func: Box::new(callee),
+                type_args: Vec::new(),
                 args: call_args,
                 canonical_path: Some(lowered.canonical_path),
             },
@@ -687,7 +688,7 @@ impl AstLowering {
                 self.count_expr_ident_reads(&right.node, counts);
             }
             ast::Expr::Unary(_, inner) => self.count_expr_ident_reads(&inner.node, counts),
-            ast::Expr::Call(func, args) => {
+            ast::Expr::Call(func, _type_args, args) => {
                 self.count_expr_ident_reads(&func.node, counts);
                 self.count_call_args_ident_reads(args, counts);
             }
@@ -708,7 +709,7 @@ impl AstLowering {
                 }
             }
             ast::Expr::Field(object, _) => self.count_expr_ident_reads(&object.node, counts),
-            ast::Expr::MethodCall(receiver, _, args) => {
+            ast::Expr::MethodCall(receiver, _, _type_args, args) => {
                 self.count_expr_ident_reads(&receiver.node, counts);
                 self.count_call_args_ident_reads(args, counts);
             }

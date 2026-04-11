@@ -393,21 +393,63 @@ impl TypeChecker {
         methods: &std::collections::HashMap<String, MethodInfo>,
         traits: Option<&[String]>,
         method: &str,
+        explicit_type_args: &[Spanned<Type>],
         args: &[CallArg],
         arg_types: &[ResolvedType],
         call_site_span: Span,
         receiver_ty: &ResolvedType,
     ) -> Option<ResolvedType> {
         if let Some(method_info) = methods.get(method) {
-            let (params, return_type) = self.method_types_substituting_call_site_self(method_info, receiver_ty);
+            let mut method_info = method_info.clone();
+            if !explicit_type_args.is_empty() {
+                if explicit_type_args.len() != method_info.type_params.len() {
+                    self.errors.push(errors::explicit_type_arg_arity(
+                        method,
+                        method_info.type_params.len(),
+                        explicit_type_args.len(),
+                        call_site_span,
+                    ));
+                } else {
+                    let resolved: Vec<ResolvedType> =
+                        explicit_type_args.iter().map(|ty| self.resolve_type_checked(ty)).collect();
+                    let subst = type_param_subst_map(&method_info.type_params, &resolved);
+                    method_info.params = method_info
+                        .params
+                        .iter()
+                        .map(|(name, ty)| (name.clone(), substitute_resolved_type(ty, &subst)))
+                        .collect();
+                    method_info.return_type = substitute_resolved_type(&method_info.return_type, &subst);
+                }
+            }
+            let (params, return_type) = self.method_types_substituting_call_site_self(&method_info, receiver_ty);
             self.validate_method_call_args(&params, args, arg_types);
             return Some(return_type);
         }
         if let Some(traits) = traits {
             for trait_name in traits {
                 if let Some(method_info) = self.trait_method_info_resolved(trait_name, method, call_site_span) {
-                    let (params, return_type) =
-                        self.method_types_substituting_call_site_self(&method_info, receiver_ty);
+                    let mut method_info = method_info;
+                    if !explicit_type_args.is_empty() {
+                        if explicit_type_args.len() != method_info.type_params.len() {
+                            self.errors.push(errors::explicit_type_arg_arity(
+                                method,
+                                method_info.type_params.len(),
+                                explicit_type_args.len(),
+                                call_site_span,
+                            ));
+                        } else {
+                            let resolved: Vec<ResolvedType> =
+                                explicit_type_args.iter().map(|ty| self.resolve_type_checked(ty)).collect();
+                            let subst = type_param_subst_map(&method_info.type_params, &resolved);
+                            method_info.params = method_info
+                                .params
+                                .iter()
+                                .map(|(name, ty)| (name.clone(), substitute_resolved_type(ty, &subst)))
+                                .collect();
+                            method_info.return_type = substitute_resolved_type(&method_info.return_type, &subst);
+                        }
+                    }
+                    let (params, return_type) = self.method_types_substituting_call_site_self(&method_info, receiver_ty);
                     self.validate_method_call_args(&params, args, arg_types);
                     return Some(return_type);
                 }
@@ -748,6 +790,7 @@ impl TypeChecker {
         &mut self,
         base: &Spanned<Expr>,
         method: &str,
+        type_args: &[Spanned<Type>],
         args: &[CallArg],
         span: Span,
     ) -> ResolvedType {
@@ -1000,6 +1043,7 @@ impl TypeChecker {
                         &model.methods,
                         Some(&traits),
                         method,
+                        type_args,
                         args,
                         &arg_types,
                         span,
@@ -1014,6 +1058,7 @@ impl TypeChecker {
                         &class.methods,
                         Some(&traits),
                         method,
+                        type_args,
                         args,
                         &arg_types,
                         span,
@@ -1028,6 +1073,7 @@ impl TypeChecker {
                         &std::collections::HashMap::new(),
                         Some(&traits),
                         method,
+                        type_args,
                         args,
                         &arg_types,
                         span,
@@ -1042,6 +1088,7 @@ impl TypeChecker {
                         &newtype.methods,
                         None,
                         resolved_method,
+                        type_args,
                         args,
                         &arg_types,
                         span,
@@ -1080,6 +1127,7 @@ impl TypeChecker {
                             &model.methods,
                             Some(&traits),
                             method,
+                            type_args,
                             args,
                             &arg_types,
                             span,
@@ -1094,6 +1142,7 @@ impl TypeChecker {
                             &class.methods,
                             Some(&traits),
                             method,
+                            type_args,
                             args,
                             &arg_types,
                             span,
@@ -1111,6 +1160,7 @@ impl TypeChecker {
                             &std::collections::HashMap::new(),
                             Some(&traits),
                             method,
+                            type_args,
                             args,
                             &arg_types,
                             span,
@@ -1125,6 +1175,7 @@ impl TypeChecker {
                             &nt.methods,
                             None,
                             resolved_method,
+                            type_args,
                             args,
                             &arg_types,
                             span,

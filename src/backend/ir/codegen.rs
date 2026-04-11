@@ -1881,4 +1881,40 @@ async def run(state: State, plan: Plan) -> None:
         );
         Ok(())
     }
+
+    #[test]
+    fn test_codegen_emits_explicit_function_call_type_args() {
+        let source = r#"
+def id[T](x: T) -> T:
+  return x
+
+def run() -> int:
+  return id[int](1)
+"#;
+        let ast = parse_program(source);
+        let code = must_ok(IrCodegen::new().try_generate(&ast));
+        assert!(
+            code.contains("id::<i64>(1)") || code.contains("id :: < i64 > (1)"),
+            "expected explicit function type args to emit Rust turbofish, got:\n{code}"
+        );
+    }
+
+    #[test]
+    fn test_codegen_emits_explicit_method_call_type_args() {
+        let source = r#"
+class Box:
+  def pick[T](self, value: T) -> T:
+    return value
+
+def run() -> int:
+  let b = Box()
+  return b.pick[int](1)
+"#;
+        let ast = parse_program(source);
+        let code = must_ok(IrCodegen::new().try_generate(&ast));
+        assert!(
+            code.contains("pick::<i64>") || code.contains("pick :: < i64 >"),
+            "expected explicit method type args to emit Rust turbofish, got:\n{code}"
+        );
+    }
 }

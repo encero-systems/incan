@@ -272,16 +272,18 @@ impl<'a> IrEmitter<'a> {
 
             IrExprKind::Call {
                 func,
+                type_args,
                 args,
                 canonical_path,
-            } => self.emit_call_expr(func, args, canonical_path.as_deref()),
+            } => self.emit_call_expr(func, type_args, args, canonical_path.as_deref()),
             IrExprKind::BuiltinCall { func, args } => self.emit_builtin_call(func, args),
             IrExprKind::MethodCall {
                 receiver,
                 method,
+                type_args,
                 args,
                 arg_policy,
-            } => self.emit_method_call_expr(receiver, method, args, *arg_policy),
+            } => self.emit_method_call_expr(receiver, method, type_args, args, *arg_policy),
             IrExprKind::KnownMethodCall { receiver, kind, args } => self.emit_known_method_call(receiver, kind, args),
 
             IrExprKind::Field { object, field } => self.emit_field_expr(object, field),
@@ -538,6 +540,7 @@ mod tests {
                     IrType::Struct("Response".to_string()),
                 )),
                 method: "html".to_string(),
+                type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
                     expr: TypedExpr::new(
@@ -661,6 +664,7 @@ mod tests {
                     IrType::Struct("Dataset".to_string()),
                 )),
                 method: "join".to_string(),
+                type_args: Vec::new(),
                 args: vec![
                     IrCallArg {
                         name: None,
@@ -758,6 +762,7 @@ mod tests {
                     IrType::Struct("std::collections::HashMap".to_string()),
                 )),
                 method: "get".to_string(),
+                type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
                     expr: TypedExpr::new(IrExprKind::String("the".to_string()), IrType::String),
@@ -831,6 +836,7 @@ mod tests {
                     IrType::Struct("ExternalBuilder".to_string()),
                 )),
                 method: "rename".to_string(),
+                type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
                     expr: TypedExpr::new(IrExprKind::String("logs".to_string()), IrType::String),
@@ -870,6 +876,7 @@ mod tests {
                     IrType::Struct("widgets".to_string()),
                 )),
                 method: "make_widget".to_string(),
+                type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
                     expr: TypedExpr::new(
@@ -921,6 +928,7 @@ mod tests {
                     IrType::Struct("Name".to_string()),
                 )),
                 method: "parse".to_string(),
+                type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
                     expr: TypedExpr::new(IrExprKind::String("alice@example.com".to_string()), IrType::String),

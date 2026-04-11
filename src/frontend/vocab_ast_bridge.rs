@@ -461,7 +461,7 @@ fn internal_expr_to_public(expr: &ast::Expr) -> Result<incan_vocab::IncanExpr, V
             map_internal_binary_op(*op)?,
             Box::new(internal_expr_to_public(&right.node)?),
         )),
-        ast::Expr::Call(callee, args) => {
+        ast::Expr::Call(callee, _type_args, args) => {
             let mut mapped_args = Vec::new();
             for arg in args {
                 let value = match arg {
@@ -574,6 +574,7 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
                     public_expr_to_internal(callee)?,
                     ast::Span::default(),
                 )),
+                Vec::new(),
                 mapped,
             ))
         }

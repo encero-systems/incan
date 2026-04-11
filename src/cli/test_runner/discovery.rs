@@ -197,7 +197,7 @@ fn expr_has_yield(expr: &Expr) -> bool {
         Expr::Yield(_) => true,
         Expr::Binary(left, _, right) => expr_has_yield(&left.node) || expr_has_yield(&right.node),
         Expr::Unary(_, operand) => expr_has_yield(&operand.node),
-        Expr::Call(callee, args) => {
+        Expr::Call(callee, _type_args, args) => {
             expr_has_yield(&callee.node)
                 || args.iter().any(|a| match a {
                     crate::frontend::ast::CallArg::Positional(e) => expr_has_yield(&e.node),

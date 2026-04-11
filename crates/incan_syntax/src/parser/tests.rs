@@ -305,7 +305,7 @@ def f(a: Foo) -> int:
         };
         let call_expr = match &func.body[0].node {
             Statement::Assignment(stmt) => match &stmt.value.node {
-                Expr::Call(_, args) => args,
+                Expr::Call(_, _, args) => args,
                 _ => panic!("Expected call expression"),
             },
             _ => panic!("Expected assignment statement"),
@@ -1791,7 +1791,7 @@ def main() -> int:
         );
 
         let (base, method, args) = match &interpolation.node {
-            Expr::MethodCall(base, method, args) => (base, method, args),
+            Expr::MethodCall(base, method, _, args) => (base, method, args),
             _ => panic!("Expected method call interpolation"),
         };
         assert_eq!(method, "upper");
@@ -1813,6 +1813,55 @@ def main() -> int:
         assert_eq!(index.span.start, expected_index_start);
         assert_eq!(index.span.end, expected_index_start + "unknown_idx".len());
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_function_call_with_explicit_type_args() -> Result<(), Vec<CompileError>> {
+        let source = "def run() -> int:\n  return id[int](1)\n";
+        let program = parse_str(source)?;
+        let function = match &program.declarations[0].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function"),
+        };
+        let return_expr = match &function.body[0].node {
+            Statement::Return(Some(expr)) => expr,
+            _ => panic!("Expected return expression"),
+        };
+        match &return_expr.node {
+            Expr::Call(callee, type_args, args) => {
+                assert!(matches!(callee.node, Expr::Ident(ref name) if name == "id"));
+                assert_eq!(type_args.len(), 1);
+                assert!(matches!(type_args[0].node, Type::Simple(ref name) if name == "int"));
+                assert_eq!(args.len(), 1);
+            }
+            other => panic!("Expected explicit-generic call, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_method_call_with_explicit_type_args() -> Result<(), Vec<CompileError>> {
+        let source = "def run(box: Boxed[int]) -> int:\n  return box.get[int]()\n";
+        let program = parse_str(source)?;
+        let function = match &program.declarations[0].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function"),
+        };
+        let return_expr = match &function.body[0].node {
+            Statement::Return(Some(expr)) => expr,
+            _ => panic!("Expected return expression"),
+        };
+        match &return_expr.node {
+            Expr::MethodCall(base, method, type_args, args) => {
+                assert!(matches!(base.node, Expr::Ident(ref name) if name == "box"));
+                assert_eq!(method, "get");
+                assert_eq!(type_args.len(), 1);
+                assert!(matches!(type_args[0].node, Type::Simple(ref name) if name == "int"));
+                assert!(args.is_empty());
+            }
+            other => panic!("Expected explicit-generic method call, got {other:?}"),
+        }
         Ok(())
     }
 
@@ -1860,7 +1909,7 @@ def main() -> int:
             None => panic!("Expected list comprehension filter"),
         };
         let callee = match &filter.node {
-            Expr::Call(callee, _args) => callee,
+            Expr::Call(callee, _, _args) => callee,
             _ => panic!("Expected filter call expression"),
         };
 

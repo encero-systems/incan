@@ -5416,3 +5416,65 @@ def main() -> None:
 "#;
     assert_check_ok(source);
 }
+
+#[test]
+fn explicit_call_type_args_specialize_generic_function_params() {
+    assert_check_ok(
+        r#"
+def id[T](x: T) -> T:
+  return x
+
+def run() -> int:
+  return id[int](1)
+"#,
+    );
+}
+
+#[test]
+fn explicit_call_type_args_enforce_function_type_arg_arity() {
+    let source = r#"
+def id[T](x: T) -> T:
+  return x
+
+def run() -> int:
+  return id[int, str](1)
+"#;
+    let errs = check_str(source).expect_err("expected explicit type arg arity error");
+    assert!(
+        errs.iter().any(|e| e.message.contains("expects 1 explicit type argument(s), got 2")),
+        "expected explicit type argument arity diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn explicit_method_type_args_specialize_generic_method_params() {
+    assert_check_ok(
+        r#"
+class Box:
+  def get[T](self, value: T) -> T:
+    return value
+
+def run() -> int:
+  let b = Box()
+  return b.get[int](1)
+"#,
+    );
+}
+
+#[test]
+fn explicit_method_type_args_enforce_generic_contract() {
+    let source = r#"
+class Box:
+  def get[T](self, value: T) -> T:
+    return value
+
+def run() -> int:
+  let b = Box()
+  return b.get[int](str("x"))
+"#;
+    let errs = check_str(source).expect_err("expected explicit method type arg mismatch");
+    assert!(
+        errs.iter().any(|e| e.message.contains("expected 'int', found 'str'")),
+        "expected type mismatch after explicit method type specialization, got {errs:?}"
+    );
+}

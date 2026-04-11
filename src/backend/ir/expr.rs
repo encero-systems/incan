@@ -130,6 +130,8 @@ pub enum IrExprKind {
     // Function call (unknown/user-defined function)
     Call {
         func: Box<IrExpr>,
+        /// Explicit call-site type arguments (`f[T](...)`) when provided.
+        type_args: Vec<IrType>,
         args: Vec<IrCallArg>,
         /// Canonical callee path when known (e.g. `["std","testing","assert_eq"]`).
         /// This lets emission/type-directed policies resolve calls independent of local import style.
@@ -148,6 +150,8 @@ pub enum IrExprKind {
     MethodCall {
         receiver: Box<IrExpr>,
         method: String,
+        /// Explicit call-site type arguments (`obj.method[T](...)`) when provided.
+        type_args: Vec<IrType>,
         args: Vec<IrCallArg>,
         arg_policy: MethodCallArgPolicy,
     },

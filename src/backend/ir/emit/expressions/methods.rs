@@ -181,13 +181,15 @@ impl<'a> IrEmitter<'a> {
         &self,
         receiver: &TypedExpr,
         method: &str,
+        type_args: &[IrType],
         args: &[IrCallArg],
         arg_policy: MethodCallArgPolicy,
     ) -> Result<TokenStream, EmitError> {
         if Self::expr_is_storage_rooted(receiver) {
             let (arg_bindings, rewritten_args) = self.materialize_storage_rooted_args(args)?;
             let rewritten_receiver = Self::rewrite_storage_root_expr(receiver, "__incan_static_value");
-            let inner = self.emit_method_call_expr(&rewritten_receiver, method, &rewritten_args, arg_policy)?;
+            let inner =
+                self.emit_method_call_expr(&rewritten_receiver, method, type_args, &rewritten_args, arg_policy)?;
             let wrapped = if matches!(arg_policy, MethodCallArgPolicy::PreserveShape) {
                 self.emit_storage_with_ref(receiver, inner)
             } else {
@@ -202,6 +204,12 @@ impl<'a> IrEmitter<'a> {
         let r0 = self.emit_expr(receiver)?;
         let info = ReceiverInfo::new(&receiver.ty, r0);
         let r = &info.r;
+        let method_turbofish = if type_args.is_empty() {
+            quote! {}
+        } else {
+            let emitted: Vec<TokenStream> = type_args.iter().map(|ty| self.emit_type(ty)).collect();
+            quote! { ::<#(#emitted),*> }
+        };
         let arg_exprs: Vec<TypedExpr> = args.iter().map(|a| a.expr.clone()).collect();
 
         // Check if this is an enum variant construction.
@@ -284,7 +292,7 @@ impl<'a> IrEmitter<'a> {
                         })
                         .collect::<Result<_, _>>()?
                 };
-                return Ok(quote! { #type_ident::#m(#(#arg_tokens),*) });
+                return Ok(quote! { #type_ident::#m #method_turbofish (#(#arg_tokens),*) });
             }
         }
 
@@ -328,7 +336,7 @@ impl<'a> IrEmitter<'a> {
                 Ok(conv.apply(emitted))
             })
             .collect::<Result<_, _>>()?;
-        Ok(quote! { #r.#m(#(#arg_tokens),*) })
+        Ok(quote! { #r.#m #method_turbofish (#(#arg_tokens),*) })
     }
 
     /// Emit a runtime string slice call using shared stdlib/semantics helpers.

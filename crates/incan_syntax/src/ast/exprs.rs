@@ -4,7 +4,7 @@ use std::fmt;
 
 use incan_semantics_core::SurfaceFeatureKey;
 
-use super::{Ident, Param, Spanned, Statement};
+use super::{Ident, Param, Spanned, Statement, Type};
 
 // ============================================================================
 // Expressions
@@ -31,16 +31,16 @@ pub enum Expr {
     Binary(Box<Spanned<Expr>>, BinaryOp, Box<Spanned<Expr>>),
     /// Unary operation: `-x`, `not x`
     Unary(UnaryOp, Box<Spanned<Expr>>),
-    /// Function/method call: `f(a, b)`
-    Call(Box<Spanned<Expr>>, Vec<CallArg>),
+    /// Function/method call: `f(a, b)` or `f[T](a, b)`
+    Call(Box<Spanned<Expr>>, Vec<Spanned<Type>>, Vec<CallArg>),
     /// Index: `x[i]`
     Index(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     /// Slice: `x[start:end]` or `x[start:end:step]`
     Slice(Box<Spanned<Expr>>, SliceExpr),
     /// Field access: `x.field`
     Field(Box<Spanned<Expr>>, Ident),
-    /// Method call: `x.method(args)`
-    MethodCall(Box<Spanned<Expr>>, Ident, Vec<CallArg>),
+    /// Method call: `x.method(args)` or `x.method[T](args)`
+    MethodCall(Box<Spanned<Expr>>, Ident, Vec<Spanned<Type>>, Vec<CallArg>),
     /// `expr?` (try/propagate)
     Try(Box<Spanned<Expr>>),
     /// Match expression

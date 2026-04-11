@@ -151,6 +151,13 @@ pub fn builtin_arity(name: &str, expected: usize, found: usize, span: Span) -> C
     CompileError::type_error(format!("{name}() expects {expected} argument(s), got {found}"), span)
 }
 
+pub fn explicit_type_arg_arity(name: &str, expected: usize, found: usize, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("{name} expects {expected} explicit type argument(s), got {found}"),
+        span,
+    )
+}
+
 pub fn builtin_expects_list(name: &str, found: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("{name}() expects a list, got {}", found), span)
 }

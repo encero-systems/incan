@@ -67,11 +67,13 @@ impl TypeChecker {
             Expr::SelfExpr => self.check_self(expr.span),
             Expr::Binary(left, op, right) => self.check_binary(left, *op, right, expr.span),
             Expr::Unary(op, operand) => self.check_unary(*op, operand, expr.span),
-            Expr::Call(callee, args) => self.check_call(callee, args, expr.span),
+            Expr::Call(callee, type_args, args) => self.check_call(callee, type_args, args, expr.span),
             Expr::Index(base, index) => self.check_index(base, index, expr.span),
             Expr::Slice(base, slice) => self.check_slice(base, slice, expr.span),
             Expr::Field(base, field) => self.check_field(base, field, expr.span),
-            Expr::MethodCall(base, method, args) => self.check_method_call(base, method, args, expr.span),
+            Expr::MethodCall(base, method, type_args, args) => {
+                self.check_method_call(base, method, type_args, args, expr.span)
+            }
             Expr::Surface(surface_expr) => self.check_surface_expr(surface_expr, expr.span),
             Expr::Try(inner) => self.check_try(inner, expr.span),
             Expr::Match(subject, arms) => self.check_match(subject, arms, expr.span),

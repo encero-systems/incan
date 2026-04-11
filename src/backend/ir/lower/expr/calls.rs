@@ -156,6 +156,7 @@ impl AstLowering {
     pub(in crate::backend::ir::lower) fn lower_call_expr(
         &mut self,
         f: &ast::Spanned<ast::Expr>,
+        type_args: &[ast::Spanned<ast::Type>],
         args: &[ast::CallArg],
     ) -> Result<(IrExprKind, IrType), LoweringError> {
         // Check if this is a struct/model/class constructor call
@@ -186,6 +187,7 @@ impl AstLowering {
         // Regular function call (user-defined or unknown)
         let func = self.lower_expr_spanned(f)?;
         let mut args_ir = self.lower_call_args(args)?;
+        let lowered_type_args = type_args.iter().map(|ty| self.lower_type(&ty.node)).collect();
         for (arg_ir, arg_ast) in args_ir.iter_mut().zip(args.iter()) {
             let arg_span = Self::call_arg_expr(arg_ast).span;
             arg_ir.expr = self.wrap_with_rust_arg_coercion(arg_ir.expr.clone(), arg_span)?;
@@ -198,6 +200,7 @@ impl AstLowering {
         Ok((
             IrExprKind::Call {
                 func: Box::new(func),
+                type_args: lowered_type_args,
                 args: args_ir,
                 canonical_path: None,
             },
@@ -245,6 +248,7 @@ impl AstLowering {
                 IrExprKind::MethodCall {
                     receiver: Box::new(receiver),
                     method: ctor.clone(),
+                    type_args: Vec::new(),
                     args: vec![IrCallArg {
                         name: None,
                         expr: lowered_value,
@@ -265,6 +269,7 @@ impl AstLowering {
                 IrExprKind::MethodCall {
                     receiver: Box::new(from_underlying_call),
                     method: "expect".to_string(),
+                    type_args: Vec::new(),
                     args: vec![IrCallArg { name: None, expr: msg }],
                     arg_policy: MethodCallArgPolicy::Default,
                 },
@@ -408,6 +413,7 @@ mod tests {
         let expr = Expr::MethodCall(
             Box::new(Spanned::new(Expr::Ident("value".to_string()), Span::new(0, 5))),
             "coerce_me".to_string(),
+            Vec::new(),
             vec![CallArg::Positional(Spanned::new(
                 Expr::Literal(Literal::String("hello".to_string())),
                 arg_span,
@@ -443,6 +449,7 @@ mod tests {
         let expr = Expr::MethodCall(
             Box::new(Spanned::new(Expr::Ident("value".to_string()), receiver_span)),
             "get".to_string(),
+            Vec::new(),
             vec![CallArg::Positional(Spanned::new(
                 Expr::Literal(Literal::String("hello".to_string())),
                 Span::new(10, 17),

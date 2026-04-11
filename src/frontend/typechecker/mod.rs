@@ -1222,7 +1222,7 @@ impl TypeChecker {
                 self.collect_static_dependencies_from_expr(&inner.node, deps, visiting_functions);
             }
             Expr::Yield(None) => {}
-            Expr::Call(func, args) => {
+            Expr::Call(func, _type_args, args) => {
                 self.collect_static_dependencies_from_expr(&func.node, deps, visiting_functions);
                 self.collect_static_dependencies_from_call_args(args, deps, visiting_functions);
                 if let Expr::Ident(function_name) = &func.node
@@ -1254,7 +1254,7 @@ impl TypeChecker {
             Expr::Field(object, _) => {
                 self.collect_static_dependencies_from_expr(&object.node, deps, visiting_functions);
             }
-            Expr::MethodCall(object, _, args) => {
+            Expr::MethodCall(object, _, _type_args, args) => {
                 self.collect_static_dependencies_from_expr(&object.node, deps, visiting_functions);
                 self.collect_static_dependencies_from_call_args(args, deps, visiting_functions);
             }
@@ -1371,7 +1371,7 @@ impl TypeChecker {
             Expr::Unary(_, inner) | Expr::Try(inner) | Expr::Paren(inner) | Expr::Yield(Some(inner)) => {
                 self.collect_static_initializer_static_writes_from_expr(inner, current_static, visiting_functions);
             }
-            Expr::Call(func, args) => {
+            Expr::Call(func, _type_args, args) => {
                 self.collect_static_initializer_static_writes_from_expr(func, current_static, visiting_functions);
                 self.collect_static_initializer_static_writes_from_call_args(args, current_static, visiting_functions);
                 if let Expr::Ident(function_name) = &func.node
@@ -1388,7 +1388,7 @@ impl TypeChecker {
                     visiting_functions.remove(function_name);
                 }
             }
-            Expr::MethodCall(object, _, args) => {
+            Expr::MethodCall(object, _, _type_args, args) => {
                 self.collect_static_initializer_static_writes_from_expr(object, current_static, visiting_functions);
                 self.collect_static_initializer_static_writes_from_call_args(args, current_static, visiting_functions);
             }

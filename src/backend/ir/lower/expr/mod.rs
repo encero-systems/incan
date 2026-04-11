@@ -188,6 +188,7 @@ impl AstLowering {
                             IrExprKind::MethodCall {
                                 receiver: Box::new(collection),
                                 method: "contains".to_string(),
+                                type_args: Vec::new(),
                                 args: contains_args,
                                 arg_policy,
                             }
@@ -245,12 +246,15 @@ impl AstLowering {
             }
 
             // ---- Function / constructor calls (delegated to calls submodule) ----
-            ast::Expr::Call(f, args) => return self.lower_call_expr(f, args).map(|(k, t)| TypedExpr::new(k, t)),
+            ast::Expr::Call(f, type_args, args) => {
+                return self.lower_call_expr(f, type_args, args).map(|(k, t)| TypedExpr::new(k, t));
+            }
 
             // ---- Method calls ----
-            ast::Expr::MethodCall(o, m, args) => {
+            ast::Expr::MethodCall(o, m, type_args, args) => {
                 let receiver = self.lower_expr_spanned(o)?;
                 let mut args_ir = self.lower_call_args(args)?;
+                let lowered_type_args = type_args.iter().map(|ty| self.lower_type(&ty.node)).collect();
                 for (arg_ir, arg_ast) in args_ir.iter_mut().zip(args.iter()) {
                     let arg_span = match arg_ast {
                         ast::CallArg::Positional(expr) | ast::CallArg::Named(_, expr) => expr.span,
@@ -276,6 +280,7 @@ impl AstLowering {
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),
                             method: method_name,
+                            type_args: lowered_type_args,
                             args: args_ir,
                             arg_policy,
                         },

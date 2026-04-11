@@ -23,8 +23,18 @@ impl Formatter {
                 self.format_unary_op(op);
                 self.format_expr(&operand.node);
             }
-            Expr::Call(callee, args) => {
+            Expr::Call(callee, type_args, args) => {
                 self.format_expr(&callee.node);
+                if !type_args.is_empty() {
+                    self.writer.write("[");
+                    for (i, arg) in type_args.iter().enumerate() {
+                        if i > 0 {
+                            self.writer.write(", ");
+                        }
+                        self.format_type(&arg.node);
+                    }
+                    self.writer.write("]");
+                }
                 self.writer.write("(");
                 self.format_call_args(args);
                 self.writer.write(")");
@@ -56,10 +66,20 @@ impl Formatter {
                 self.writer.write(".");
                 self.writer.write(field);
             }
-            Expr::MethodCall(receiver, method, args) => {
+            Expr::MethodCall(receiver, method, type_args, args) => {
                 self.format_expr(&receiver.node);
                 self.writer.write(".");
                 self.writer.write(method);
+                if !type_args.is_empty() {
+                    self.writer.write("[");
+                    for (i, arg) in type_args.iter().enumerate() {
+                        if i > 0 {
+                            self.writer.write(", ");
+                        }
+                        self.format_type(&arg.node);
+                    }
+                    self.writer.write("]");
+                }
                 self.writer.write("(");
                 self.format_call_args(args);
                 self.writer.write(")");

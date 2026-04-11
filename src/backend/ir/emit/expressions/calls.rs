@@ -254,6 +254,7 @@ impl<'a> IrEmitter<'a> {
     pub(in super::super) fn emit_call_expr(
         &self,
         func: &TypedExpr,
+        type_args: &[IrType],
         args: &[IrCallArg],
         canonical_path: Option<&[String]>,
     ) -> Result<TokenStream, EmitError> {
@@ -284,6 +285,12 @@ impl<'a> IrEmitter<'a> {
             self.emit_canonical_callee_path(path)?.unwrap_or(self.emit_expr(func)?)
         } else {
             self.emit_expr(func)?
+        };
+        let turbofish = if type_args.is_empty() {
+            quote! {}
+        } else {
+            let emitted: Vec<TokenStream> = type_args.iter().map(|ty| self.emit_type(ty)).collect();
+            quote! { ::<#(#emitted),*> }
         };
 
         // Look up function signature
@@ -442,7 +449,7 @@ impl<'a> IrEmitter<'a> {
             })
             .collect::<Result<_, _>>()?;
 
-        Ok(quote! { #f(#(#arg_tokens),*) })
+        Ok(quote! { #f #turbofish (#(#arg_tokens),*) })
     }
 
     fn emit_canonical_callee_path(&self, canonical_path: &[String]) -> Result<Option<TokenStream>, EmitError> {
@@ -606,7 +613,7 @@ mod tests {
         let func = rust_call_target("takes_ref");
         let arg = local_arg("thing", IrType::Struct("demo::Thing".to_string()));
         let tokens = emitter
-            .emit_call_expr(&func, &[IrCallArg { name: None, expr: arg }], None)
+            .emit_call_expr(&func, &[], &[IrCallArg { name: None, expr: arg }], None)
             .map_err(|err| {
                 std::io::Error::other(format!(
                     "emit_call_expr should succeed for borrowed rust arg regression: {err:?}"
@@ -634,7 +641,7 @@ mod tests {
         let func = rust_call_target("takes_ref_mut");
         let arg = local_arg("thing", IrType::Struct("demo::Thing".to_string()));
         let tokens = emitter
-            .emit_call_expr(&func, &[IrCallArg { name: None, expr: arg }], None)
+            .emit_call_expr(&func, &[], &[IrCallArg { name: None, expr: arg }], None)
             .map_err(|err| {
                 std::io::Error::other(format!(
                     "emit_call_expr should succeed for mutable borrowed rust arg regression: {err:?}"
@@ -662,7 +669,7 @@ mod tests {
         let func = rust_call_target("takes_ref");
         let arg = local_arg("value", IrType::Int);
         let tokens = emitter
-            .emit_call_expr(&func, &[IrCallArg { name: None, expr: arg }], None)
+            .emit_call_expr(&func, &[], &[IrCallArg { name: None, expr: arg }], None)
             .map_err(|err| {
                 std::io::Error::other(format!("emit_call_expr should borrow copy args for rust refs: {err:?}"))
             })?;
@@ -686,6 +693,7 @@ mod tests {
         let tokens = emitter
             .emit_call_expr(
                 &func,
+                &[],
                 &[
                     IrCallArg {
                         name: None,

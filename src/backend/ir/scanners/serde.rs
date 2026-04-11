@@ -132,7 +132,7 @@ fn stmt_has_call(stmt: &Spanned<Statement>, target: BuiltinFnId) -> bool {
 /// Compact recursive expression check — does any sub-expression call the target builtin?
 fn expr_has_call(expr: &Expr, target: BuiltinFnId) -> bool {
     match expr {
-        Expr::Call(f, args) => {
+        Expr::Call(f, _type_args, args) => {
             if let Expr::Ident(name) = &f.node
                 && builtins::from_str(name.as_str()) == Some(target)
             {
@@ -140,7 +140,7 @@ fn expr_has_call(expr: &Expr, target: BuiltinFnId) -> bool {
             }
             expr_has_call(&f.node, target) || args.iter().any(|a| call_arg_has(a, target))
         }
-        Expr::MethodCall(base, _, args) => {
+        Expr::MethodCall(base, _, _type_args, args) => {
             expr_has_call(&base.node, target) || args.iter().any(|a| call_arg_has(a, target))
         }
         Expr::Constructor(_, args) => args.iter().any(|a| call_arg_has(a, target)),

@@ -14,6 +14,7 @@
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
+use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::*;
 use crate::frontend::typechecker::helpers::{collection_type_id, dict_ty, list_ty, option_ty, result_ty, set_ty};
 use incan_core::interop::{CoercionPolicy, RustFunctionSig, admitted_builtin_coercion, is_rust_capability_bound};
@@ -579,10 +580,32 @@ impl TypeChecker {
         &mut self,
         func_name: &str,
         info: &FunctionInfo,
+        explicit_type_args: &[Spanned<Type>],
         args: &[CallArg],
         call_span: Span,
     ) -> ResolvedType {
-        let arg_types = self.check_call_arg_types_for_params(args, &info.params);
+        let mut seeded_type_bindings: std::collections::HashMap<String, ResolvedType> =
+            std::collections::HashMap::new();
+        if !explicit_type_args.is_empty() {
+            if explicit_type_args.len() != info.type_params.len() {
+                self.errors.push(errors::explicit_type_arg_arity(
+                    func_name,
+                    info.type_params.len(),
+                    explicit_type_args.len(),
+                    call_span,
+                ));
+            } else {
+                let resolved_explicit: Vec<ResolvedType> =
+                    explicit_type_args.iter().map(|ty| self.resolve_type_checked(ty)).collect();
+                seeded_type_bindings = type_param_subst_map(&info.type_params, &resolved_explicit);
+            }
+        }
+        let params_with_explicit: Vec<(String, ResolvedType)> = info
+            .params
+            .iter()
+            .map(|(name, ty)| (name.clone(), substitute_resolved_type(ty, &seeded_type_bindings)))
+            .collect();
+        let arg_types = self.check_call_arg_types_for_params(args, &params_with_explicit);
         let mut positional: Vec<(ResolvedType, Span)> = Vec::new();
         let mut named: std::collections::HashMap<&str, (ResolvedType, Span)> = std::collections::HashMap::new();
 
@@ -597,8 +620,8 @@ impl TypeChecker {
         }
 
         let mut pos_idx = 0usize;
-        let mut type_bindings: std::collections::HashMap<String, ResolvedType> = std::collections::HashMap::new();
-        for (param_name, param_ty) in &info.params {
+        let mut type_bindings = seeded_type_bindings;
+        for (param_name, param_ty) in &params_with_explicit {
             let arg = if let Some(v) = named.get(param_name.as_str()) {
                 Some(v)
             } else if pos_idx < positional.len() {
@@ -622,7 +645,7 @@ impl TypeChecker {
         }
         self.emit_explicit_bound_errors(func_name, &info.type_param_bounds, &type_bindings, call_span);
 
-        info.return_type.clone()
+        substitute_resolved_type(&info.return_type, &type_bindings)
     }
 
     /// Infer concrete type bindings for generic type parameters from a parameter/argument type pair.
@@ -1432,6 +1455,7 @@ impl TypeChecker {
     pub(in crate::frontend::typechecker::check_expr) fn check_call(
         &mut self,
         callee: &Spanned<Expr>,
+        type_args: &[Spanned<Type>],
         args: &[CallArg],
         span: Span,
     ) -> ResolvedType {
@@ -1481,7 +1505,7 @@ impl TypeChecker {
             if let Some(sym) = self.lookup_symbol(name).cloned() {
                 match sym.kind {
                     SymbolKind::Function(func_info) => {
-                        return self.validate_function_call(name, &func_info, args, span);
+                        return self.validate_function_call(name, &func_info, type_args, args, span);
                     }
                     SymbolKind::RustItem(info) => {
                         if let Some(meta) = &info.metadata

@@ -208,20 +208,52 @@ impl<'a> Parser<'a> {
                 } else {
                     // Allow keywords like "None" as field/variant names
                     let name = self.identifier_or_any_keyword()?;
-                    if self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)) {
+                    let type_args = self.call_site_type_args()?;
+                    if !type_args.is_empty() && !self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)) {
+                        return Err(errors::expected_token_message(
+                            "Expected '(' after explicit method type arguments",
+                            &format!("{:?}", self.peek().kind),
+                            self.peek().span,
+                        ));
+                    }
+                    if type_args.is_empty() && self.match_token(&TokenKind::Punctuation(PunctuationId::LParen))
+                        || !type_args.is_empty()
+                    {
                         let args = self.call_args()?;
                         self.expect(
                             &TokenKind::Punctuation(PunctuationId::RParen),
                             "Expected ')' after arguments",
                         )?;
                         let span = Span::new(expr.span.start, self.tokens[self.pos - 1].span.end);
-                        expr = Spanned::new(Expr::MethodCall(Box::new(expr), name, args), span);
+                        expr = Spanned::new(Expr::MethodCall(Box::new(expr), name, type_args, args), span);
                     } else {
                         let span = Span::new(expr.span.start, self.tokens[self.pos - 1].span.end);
                         expr = Spanned::new(Expr::Field(Box::new(expr), name), span);
                     }
                 }
-            } else if self.match_token(&TokenKind::Punctuation(PunctuationId::LBracket)) {
+            } else if self.check(&TokenKind::Punctuation(PunctuationId::LBracket)) {
+                if matches!(expr.node, Expr::Ident(_) | Expr::Field(_, _)) {
+                    let type_args = self.call_site_type_args()?;
+                    if !type_args.is_empty() {
+                        self.expect(
+                            &TokenKind::Punctuation(PunctuationId::LParen),
+                            "Expected '(' after explicit function type arguments",
+                        )?;
+                        let args = self.call_args()?;
+                        self.expect(
+                            &TokenKind::Punctuation(PunctuationId::RParen),
+                            "Expected ')' after arguments",
+                        )?;
+                        let span = Span::new(expr.span.start, self.tokens[self.pos - 1].span.end);
+                        expr = Spanned::new(Expr::Call(Box::new(expr), type_args, args), span);
+                        continue;
+                    }
+                }
+
+                self.expect(
+                    &TokenKind::Punctuation(PunctuationId::LBracket),
+                    "Expected '[' before index/slice",
+                )?;
                 // Check for slice syntax: [start:end] or [start:end:step]
                 let result = self.index_or_slice()?;
                 self.expect(
@@ -240,13 +272,71 @@ impl<'a> Parser<'a> {
                     "Expected ')' after arguments",
                 )?;
                 let span = Span::new(expr.span.start, self.tokens[self.pos - 1].span.end);
-                expr = Spanned::new(Expr::Call(Box::new(expr), args), span);
+                expr = Spanned::new(Expr::Call(Box::new(expr), Vec::new(), args), span);
             } else {
                 break;
             }
         }
 
         Ok(expr)
+    }
+
+    /// Parse optional explicit call-site type arguments (`[T, U]`) without consuming non-call brackets.
+    ///
+    /// This is intentionally conservative: we only treat brackets as call-site type args when the matching `]` is followed immediately by `(`.
+    fn call_site_type_args(&mut self) -> Result<Vec<Spanned<Type>>, CompileError> {
+        if !self.check(&TokenKind::Punctuation(PunctuationId::LBracket)) {
+            return Ok(Vec::new());
+        }
+
+        // Cheap lookahead: only attempt type parsing when the matching `]` is followed by `(`.
+        // This prevents speculative type parsing from consuming ordinary index expressions like `arr[0]`.
+        let mut depth: isize = 0;
+        let mut i = self.pos;
+        let mut closing: Option<usize> = None;
+        while i < self.tokens.len() {
+            match self.tokens[i].kind {
+                TokenKind::Punctuation(PunctuationId::LBracket) => depth += 1,
+                TokenKind::Punctuation(PunctuationId::RBracket) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        closing = Some(i);
+                        break;
+                    }
+                }
+                TokenKind::Eof => break,
+                _ => {}
+            }
+            i += 1;
+        }
+        let Some(close_idx) = closing else {
+            return Ok(Vec::new());
+        };
+        let next_idx = close_idx + 1;
+        if next_idx >= self.tokens.len()
+            || self.tokens[next_idx].kind != TokenKind::Punctuation(PunctuationId::LParen)
+        {
+            return Ok(Vec::new());
+        }
+
+        self.advance(); // consume `[`
+        let mut args = Vec::new();
+        if !self.check(&TokenKind::Punctuation(PunctuationId::RBracket)) {
+            loop {
+                args.push(self.type_expr()?);
+                if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                    break;
+                }
+                if self.check(&TokenKind::Punctuation(PunctuationId::RBracket)) {
+                    break;
+                }
+            }
+        }
+        self.expect(
+            &TokenKind::Punctuation(PunctuationId::RBracket),
+            "Expected ']' after explicit call type arguments",
+        )?;
+        Ok(args)
     }
 
     /// Parse index or slice expression inside brackets
@@ -455,7 +545,7 @@ impl<'a> Parser<'a> {
             Expr::Unary(_, operand) | Expr::Try(operand) | Expr::Paren(operand) => {
                 self.shift_spanned_expr(operand, offset);
             }
-            Expr::Call(callee, args) => {
+            Expr::Call(callee, _type_args, args) => {
                 self.shift_spanned_expr(callee, offset);
                 for arg in args {
                     match arg {
@@ -484,7 +574,7 @@ impl<'a> Parser<'a> {
             Expr::Field(base, _) => {
                 self.shift_spanned_expr(base, offset);
             }
-            Expr::MethodCall(base, _, args) => {
+            Expr::MethodCall(base, _, _type_args, args) => {
                 self.shift_spanned_expr(base, offset);
                 for arg in args {
                     match arg {
@@ -1178,4 +1268,3 @@ impl<'a> Parser<'a> {
     }
 
 }
-
