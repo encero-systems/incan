@@ -11,25 +11,25 @@
       
       
       
-        <link rel="prev" href="../02_values_variables_and_types/">
+        <link rel="prev" href="../derives_and_traits/">
       
       
-        <link rel="next" href="../04_control_flow/">
+        <link rel="next" href="../how_derives_work/">
       
       
-      <link rel="icon" href="../../../../assets/images/favicon.png">
+      <link rel="icon" href="../../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>3. Functions - Incan Documentation</title>
+        <title>Why call-site type args exist - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../../../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -48,9 +48,9 @@
       
     
     
-      <link rel="stylesheet" href="../../../../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#3-functions" class="md-skip">
+        <a href="#why-call-site-type-arguments-exist" class="md-skip">
           Skip to content
         </a>
       
@@ -96,7 +96,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              3. Functions
+              Why call-site type args exist
             
           </span>
         </div>
@@ -239,7 +239,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -269,7 +269,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../.." class="md-nav__link">
+      <a href="../../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -320,7 +320,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../../start_here/" class="md-nav__link ">
+            <a href="../../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -353,7 +353,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -374,7 +374,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -395,7 +395,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -416,7 +416,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../start_here/beginner/" class="md-nav__link">
+      <a href="../../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -477,7 +477,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../" class="md-nav__link ">
+            <a href="../../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -507,10 +507,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -525,11 +523,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
         
           
           <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
@@ -543,7 +541,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_2">
             <span class="md-nav__icon md-icon"></span>
             Tutorials
@@ -554,8 +552,6 @@
                 
   
   
-    
-  
   
   
     
@@ -596,16 +592,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_1" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_1" >
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -622,7 +618,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_1_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_1_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_2_1">
             <span class="md-nav__icon md-icon"></span>
             The Incan Book (Basics)
@@ -638,7 +634,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../01_hello_world/" class="md-nav__link">
+      <a href="../../tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -659,7 +655,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -677,30 +673,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  <span class="md-ellipsis">
-    3. Functions
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -709,113 +685,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#defining-a-function" class="md-nav__link">
-    <span class="md-ellipsis">
-      Defining a function
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#calling-a-function" class="md-nav__link">
-    <span class="md-ellipsis">
-      Calling a function
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Calling a function">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#program-entry-point-main" class="md-nav__link">
-    <span class="md-ellipsis">
-      Program entry point: main
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#docstrings" class="md-nav__link">
-    <span class="md-ellipsis">
-      Docstrings
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#multiple-returns-with-result" class="md-nav__link">
-    <span class="md-ellipsis">
-      Multiple returns (with Result)
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#try-it" class="md-nav__link">
-    <span class="md-ellipsis">
-      Try it
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#functions-as-values" class="md-nav__link">
-    <span class="md-ellipsis">
-      Functions as values
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-to-learn-next" class="md-nav__link">
-    <span class="md-ellipsis">
-      What to learn next
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#next" class="md-nav__link">
-    <span class="md-ellipsis">
-      Next
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -828,7 +697,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../04_control_flow/" class="md-nav__link">
+      <a href="../../tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -849,7 +718,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../05_modules_and_imports/" class="md-nav__link">
+      <a href="../../tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -870,7 +739,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../06_errors/" class="md-nav__link">
+      <a href="../../tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -891,7 +760,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -912,7 +781,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -933,7 +802,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../09_enums/" class="md-nav__link">
+      <a href="../../tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -954,7 +823,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../10_models_vs_classes/" class="md-nav__link">
+      <a href="../../tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -975,7 +844,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../11_traits_and_derives/" class="md-nav__link">
+      <a href="../../tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -996,7 +865,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../12_newtypes/" class="md-nav__link">
+      <a href="../../tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1017,7 +886,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../13_unit_tests/" class="md-nav__link">
+      <a href="../../tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1046,7 +915,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../build_your_first_api/" class="md-nav__link">
+      <a href="../../tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1067,7 +936,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../web_framework/" class="md-nav__link">
+      <a href="../../tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1161,7 +1030,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../how-to/async_programming/" class="md-nav__link">
+      <a href="../../how-to/async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1182,7 +1051,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1203,7 +1072,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../how-to/error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1224,7 +1093,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../how-to/error_messages/" class="md-nav__link">
+      <a href="../../how-to/error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1245,7 +1114,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../how-to/file_io/" class="md-nav__link">
+      <a href="../../how-to/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1266,7 +1135,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../how-to/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1287,7 +1156,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../how-to/module_state/" class="md-nav__link">
+      <a href="../../how-to/module_state/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1308,7 +1177,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../how-to/modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1329,7 +1198,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../how-to/testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1350,7 +1219,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../how-to/string_processing/" class="md-nav__link">
+      <a href="../../how-to/string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1371,7 +1240,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../how-to/performance/" class="md-nav__link">
+      <a href="../../how-to/performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1392,7 +1261,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../how-to/rust_interop/" class="md-nav__link">
+      <a href="../../how-to/rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1413,7 +1282,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1486,7 +1355,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../reference/" class="md-nav__link ">
+            <a href="../../reference/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1519,7 +1388,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/language/" class="md-nav__link">
+      <a href="../../reference/language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1540,7 +1409,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/glossary/" class="md-nav__link">
+      <a href="../../reference/glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1561,7 +1430,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/file_io/" class="md-nav__link">
+      <a href="../../reference/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1582,7 +1451,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../reference/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1603,7 +1472,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/static_storage/" class="md-nav__link">
+      <a href="../../reference/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1624,7 +1493,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../reference/numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1645,7 +1514,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/strings/" class="md-nav__link">
+      <a href="../../reference/strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1666,7 +1535,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/testing/" class="md-nav__link">
+      <a href="../../reference/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1687,7 +1556,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/reflection/" class="md-nav__link">
+      <a href="../../reference/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1708,7 +1577,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../reference/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1761,7 +1630,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../reference/stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1794,7 +1663,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1815,7 +1684,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1836,7 +1705,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1857,7 +1726,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1878,7 +1747,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1899,7 +1768,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1979,7 +1848,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../reference/derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2000,7 +1869,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/derives/comparison/" class="md-nav__link">
+      <a href="../../reference/derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2021,7 +1890,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../reference/derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2042,7 +1911,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/derives/serialization/" class="md-nav__link">
+      <a href="../../reference/derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2063,7 +1932,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/derives/validation/" class="md-nav__link">
+      <a href="../../reference/derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2084,7 +1953,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../reference/derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2118,8 +1987,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -2160,11 +2031,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" checked>
         
           
           <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
@@ -2178,7 +2049,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_5">
             <span class="md-nav__icon md-icon"></span>
             Explanation
@@ -2192,7 +2063,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../explanation/why_incan/" class="md-nav__link">
+      <a href="../why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2213,7 +2084,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2234,7 +2105,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../explanation/how_incan_works/" class="md-nav__link">
+      <a href="../how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2255,7 +2126,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../explanation/control_flow/" class="md-nav__link">
+      <a href="../control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2276,7 +2147,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../explanation/closures/" class="md-nav__link">
+      <a href="../closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2297,7 +2168,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../explanation/consts/" class="md-nav__link">
+      <a href="../consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2318,7 +2189,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../explanation/static_storage/" class="md-nav__link">
+      <a href="../static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2339,7 +2210,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2357,10 +2228,30 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../../explanation/call_site_type_arguments/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    Why call-site type args exist
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   <span class="md-ellipsis">
@@ -2369,6 +2260,71 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-problem-this-solves" class="md-nav__link">
+    <span class="md-ellipsis">
+      The problem this solves
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-explicit-call-site-arguments-add" class="md-nav__link">
+    <span class="md-ellipsis">
+      What explicit call-site arguments add
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-_-exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why _ exists
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-this-feature-is-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      What this feature is not
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#practical-guidance" class="md-nav__link">
+    <span class="md-ellipsis">
+      Practical guidance
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2381,7 +2337,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../explanation/how_derives_work/" class="md-nav__link">
+      <a href="../how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2402,7 +2358,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../explanation/enums/" class="md-nav__link">
+      <a href="../enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2423,7 +2379,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../explanation/error_handling/" class="md-nav__link">
+      <a href="../error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2444,7 +2400,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2489,7 +2445,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2522,7 +2478,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2543,7 +2499,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2572,7 +2528,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2593,7 +2549,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2660,7 +2616,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../../tooling/" class="md-nav__link ">
+            <a href="../../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2738,7 +2694,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2759,7 +2715,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2780,7 +2736,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2864,7 +2820,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2885,7 +2841,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2906,7 +2862,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2927,7 +2883,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2948,7 +2904,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2969,7 +2925,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2990,7 +2946,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3011,7 +2967,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3083,7 +3039,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3104,7 +3060,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3178,7 +3134,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3199,7 +3155,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3220,7 +3176,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3289,7 +3245,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../../contributing/" class="md-nav__link ">
+            <a href="../../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3399,7 +3355,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3432,7 +3388,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3453,7 +3409,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3474,7 +3430,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3495,7 +3451,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3516,7 +3472,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3537,7 +3493,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3558,7 +3514,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3579,7 +3535,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3665,7 +3621,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3686,7 +3642,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3707,7 +3663,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3728,7 +3684,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3749,7 +3705,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3825,7 +3781,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3846,7 +3802,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3867,7 +3823,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3888,7 +3844,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3917,7 +3873,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../RFCs/" class="md-nav__link">
+      <a href="../../../RFCs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3972,7 +3928,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../../release_notes/" class="md-nav__link ">
+            <a href="../../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4005,7 +3961,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../release_notes/0_2/" class="md-nav__link">
+      <a href="../../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4026,7 +3982,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../release_notes/0_1/" class="md-nav__link">
+      <a href="../../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4054,7 +4010,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../roadmap/" class="md-nav__link">
+      <a href="../../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4074,7 +4030,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../stability/" class="md-nav__link">
+      <a href="../../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4114,87 +4070,45 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#defining-a-function" class="md-nav__link">
+  <a href="#the-problem-this-solves" class="md-nav__link">
     <span class="md-ellipsis">
-      Defining a function
+      The problem this solves
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#calling-a-function" class="md-nav__link">
+  <a href="#what-explicit-call-site-arguments-add" class="md-nav__link">
     <span class="md-ellipsis">
-      Calling a function
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Calling a function">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#program-entry-point-main" class="md-nav__link">
-    <span class="md-ellipsis">
-      Program entry point: main
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#docstrings" class="md-nav__link">
-    <span class="md-ellipsis">
-      Docstrings
+      What explicit call-site arguments add
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#multiple-returns-with-result" class="md-nav__link">
+  <a href="#why-_-exists" class="md-nav__link">
     <span class="md-ellipsis">
-      Multiple returns (with Result)
+      Why _ exists
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#try-it" class="md-nav__link">
+  <a href="#what-this-feature-is-not" class="md-nav__link">
     <span class="md-ellipsis">
-      Try it
+      What this feature is not
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#functions-as-values" class="md-nav__link">
+  <a href="#practical-guidance" class="md-nav__link">
     <span class="md-ellipsis">
-      Functions as values
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-to-learn-next" class="md-nav__link">
-    <span class="md-ellipsis">
-      What to learn next
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#next" class="md-nav__link">
-    <span class="md-ellipsis">
-      Next
+      Practical guidance
     </span>
   </a>
   
@@ -4218,102 +4132,55 @@
   
 
 
-<h1 id="3-functions">3. Functions<a class="headerlink" href="#3-functions" title="Permanent link">&para;</a></h1>
-<p>Functions are named, reusable blocks of code.</p>
-<h2 id="defining-a-function">Defining a function<a class="headerlink" href="#defining-a-function" title="Permanent link">&para;</a></h2>
-<p>Function parameters and return types are explicit:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
-</code></pre></div>
+<h1 id="why-call-site-type-arguments-exist">Why Call-Site Type Arguments Exist<a class="headerlink" href="#why-call-site-type-arguments-exist" title="Permanent link">&para;</a></h1>
+<p>This page explains the design intent behind explicit call-site type arguments (<code>f[T](...)</code>, <code>obj.m[T](...)</code>).</p>
+<p>For exact syntax and rules, see:</p>
 <ul>
-<li>Parameters use <code>name: Type</code>.</li>
-<li>Return type uses <code>-&gt; Type</code>.</li>
-<li>Use <code>-&gt; None</code> for “returns nothing”.</li>
+<li><a href="../../reference/derives_and_traits/#call-site-type-arguments">Derives and traits (Reference)</a></li>
 </ul>
-<h2 id="calling-a-function">Calling a function<a class="headerlink" href="#calling-a-function" title="Permanent link">&para;</a></h2>
-<h3 id="program-entry-point-main">Program entry point: <code>main</code><a class="headerlink" href="#program-entry-point-main" title="Permanent link">&para;</a></h3>
-<p>Most runnable programs define a <code>main</code> function. When you run a file with <code>incan run ...</code>, execution starts at:</p>
+<h2 id="the-problem-this-solves">The problem this solves<a class="headerlink" href="#the-problem-this-solves" title="Permanent link">&para;</a></h2>
+<p>Incan normally infers generic type parameters from value arguments.</p>
+<p>That works well when value arguments fully constrain type parameters.</p>
+<p>It breaks down when one or more type parameters are underconstrained at the call site, or when inference picks a type that is valid but not what you intend.</p>
+<p>Common case: APIs where row/model type matters for downstream typing, but value arguments (like file paths) do not uniquely pin that type.</p>
+<h2 id="what-explicit-call-site-arguments-add">What explicit call-site arguments add<a class="headerlink" href="#what-explicit-call-site-arguments-add" title="Permanent link">&para;</a></h2>
+<p>Call-site type arguments let the caller lock the generic instantiation directly.</p>
+<p><em>Definition side</em>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Session</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">read_csv</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">List</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
+        <span class="o">...</span>
+</code></pre></div>
+<p><em>Caller side</em>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">rows</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">read_csv</span><span class="p">[</span><span class="nc">Order</span><span class="p">](</span><span class="s2">&quot;orders.csv&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><code>read_csv[T]</code> defines a generic contract: “for any <code>T</code>, return <code>List[T]</code>”.
+<code>read_csv[Order](...)</code> specializes that contract at the call site, so <code>rows</code> is typed as <code>List[Order]</code>.</p>
+<p>This keeps normal signature typing intact while letting callers pin ambiguous generic slots at API boundaries.</p>
+<h2 id="why-_-exists">Why <code>_</code> exists<a class="headerlink" href="#why-_-exists" title="Permanent link">&para;</a></h2>
+<p>Sometimes you only care about one slot and want the rest inferred.</p>
+<p><em>Definition side</em>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">validate_rows</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">E</span><span class="p">](</span><span class="n">rows</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nc">T</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">List</span><span class="p">[</span><span class="nc">T</span><span class="p">],</span> <span class="nc">E</span><span class="p">]:</span>
+    <span class="o">...</span>
+</code></pre></div>
+<p><em>Caller side</em>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">a</span> <span class="o">=</span> <span class="n">validate_rows</span><span class="p">[</span><span class="nc">Order</span><span class="p">,</span> <span class="n">_</span><span class="p">](</span><span class="n">rows</span><span class="p">)</span>         <span class="c1"># pin T, infer E</span>
+<span class="n">b</span> <span class="o">=</span> <span class="n">validate_rows</span><span class="p">(</span><span class="n">_</span><span class="p">,</span> <span class="ne">RuntimeError</span><span class="p">)(</span><span class="n">rows</span><span class="p">)</span>  <span class="c1"># pin E, infer T</span>
+</code></pre></div>
+<p>Here <code>T</code> is fixed to <code>Order</code>, while <code>E</code> is left as <code>_</code> and inferred.
+This avoids forcing callers to spell every type argument when only one slot needs pinning.</p>
+<p><code>_</code> keeps partial explicitness concise while preserving arity checks.</p>
+<h2 id="what-this-feature-is-not">What this feature is not<a class="headerlink" href="#what-this-feature-is-not" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>def main() -&gt; None:</code></li>
-<li><code>-&gt; None</code> means it doesn’t return a value.</li>
+<li>It does not replace normal function/method signatures (<code>def f(x: T) -&gt; U</code> remains the default form).</li>
+<li>It does not require callers to always be explicit.</li>
+<li>It does not provide overload-based "optional static/dynamic entrypoint" behavior by itself. That route belongs to RFC 028-style overloading design.</li>
 </ul>
-<p>In order to run an incan file, you must define a <code>main</code> function:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">total</span> <span class="o">=</span> <span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
-    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;total=</span><span class="si">{</span><span class="n">total</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</code></pre></div>
-<div class="admonition tip">
-<p class="admonition-title">Coming from Python?</p>
-<p>In Python, a common pattern is:</p>
-<div class="language-python highlight"><pre><span></span><code><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
-    <span class="n">main</span><span class="p">()</span>
-</code></pre></div>
-<p>In Incan, <code>main</code> is the program entry point when you run a file (e.g. <code>incan run ...</code>), so you don’t need an
-<code>__name__</code> guard - it's implicit in Incan. It is, however, still good practice to keep “do work” code inside <code>main</code>,
-and keep other files as imported helper modules.</p>
-</div>
-<h2 id="docstrings">Docstrings<a class="headerlink" href="#docstrings" title="Permanent link">&para;</a></h2>
-<p>Use docstrings to describe intent (especially for public helpers):</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">normalize_name</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Normalize a user name for consistent comparisons.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">return</span> <span class="n">name</span><span class="o">.</span><span class="nb">strip</span><span class="p">()</span><span class="o">.</span><span class="nb">lower</span><span class="p">()</span>
-</code></pre></div>
-<h2 id="multiple-returns-with-result">Multiple returns (with <code>Result</code>)<a class="headerlink" href="#multiple-returns-with-result" title="Permanent link">&para;</a></h2>
-<p>Many “can fail” functions return <code>Result[T, E]</code> instead of throwing exceptions:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">parse_port</span><span class="p">(</span><span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="nb">strip</span><span class="p">())</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="s2">&quot;port must not be empty&quot;</span><span class="p">)</span>
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">s</span><span class="p">))</span>
-</code></pre></div>
-<p>You’ll learn the <code>Result</code> pattern in Chapter 6.</p>
-<h2 id="try-it">Try it<a class="headerlink" href="#try-it" title="Permanent link">&para;</a></h2>
-<ol>
-<li>Write <code>def is_even(n: int) -&gt; bool</code> and print the result for a few values.</li>
-<li>Write <code>def greet(name: str) -&gt; str</code> that trims whitespace and returns <code>"Hello, &lt;name&gt;!"</code>.</li>
-<li>(Stretch) Write <code>def safe_div(a: int, b: int) -&gt; Result[float, str]</code>.</li>
-</ol>
-<details class="example">
-<summary>One possible solution</summary>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">is_even</span><span class="p">(</span><span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">n</span> <span class="o">%</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">0</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">greet</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="n">cleaned</span> <span class="o">=</span> <span class="n">name</span><span class="o">.</span><span class="nb">strip</span><span class="p">()</span>
-    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Hello, </span><span class="si">{</span><span class="n">cleaned</span><span class="si">}</span><span class="s2">!&quot;</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">safe_div</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-    <span class="k">if</span> <span class="n">b</span> <span class="o">==</span> <span class="mf">0.0</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="s2">&quot;division by zero&quot;</span><span class="p">)</span>
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">a</span> <span class="o">/</span> <span class="n">b</span><span class="p">)</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;is_even(2)=</span><span class="si">{</span><span class="n">is_even</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;is_even(3)=</span><span class="si">{</span><span class="n">is_even</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="nb">println</span><span class="p">(</span><span class="n">greet</span><span class="p">(</span><span class="s2">&quot;  Alice  &quot;</span><span class="p">))</span>
-</code></pre></div>
-</details>
-<h2 id="functions-as-values">Functions as values<a class="headerlink" href="#functions-as-values" title="Permanent link">&para;</a></h2>
-<p>Named functions are first-class values — you can pass them by name to other functions, store them in variables, or put them in collections:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">double</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">x</span> <span class="o">*</span> <span class="mi">2</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">apply</span><span class="p">(</span><span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">f</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
-
-<span class="kt">result</span> <span class="o">=</span> <span class="n">apply</span><span class="p">(</span><span class="n">double</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>   <span class="c1"># → 10</span>
-</code></pre></div>
-<p>You'll explore this more in the <a href="../../../explanation/closures/">Closures</a> chapter.</p>
-<h2 id="what-to-learn-next">What to learn next<a class="headerlink" href="#what-to-learn-next" title="Permanent link">&para;</a></h2>
+<h2 id="practical-guidance">Practical guidance<a class="headerlink" href="#practical-guidance" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Function definitions and signatures: <a href="../../../reference/language/#builtin-functions">Language reference (generated)</a></li>
-<li>Function scoping and name lookup: <a href="../../../explanation/scopes_and_name_resolution/">Scopes &amp; Name Resolution</a></li>
-<li>Closures and higher-order patterns: <a href="../../../explanation/closures/">Closures</a></li>
+<li>Prefer inference by default.</li>
+<li>Use explicit call-site args when API boundaries or readability benefit from locking the type.</li>
+<li>Use <code>_</code> when only some type parameters need to be pinned.</li>
 </ul>
-<h2 id="next">Next<a class="headerlink" href="#next" title="Permanent link">&para;</a></h2>
-<p>Back: <a href="../02_values_variables_and_types/">2. Values, variables, and types</a></p>
-<p>Next chapter: <a href="../04_control_flow/">4. Control flow</a></p>
 
 
 
@@ -4362,18 +4229,18 @@ and keep other files as imported helper modules.</p>
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "../../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="../../../../_snippets/javascripts/mathjax.js"></script>
+        <script src="../../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../../../../_snippets/javascripts/tablesort.js"></script>
+        <script src="../../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../../../../_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>

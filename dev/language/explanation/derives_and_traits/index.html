@@ -14,7 +14,7 @@
         <link rel="prev" href="../static_storage/">
       
       
-        <link rel="next" href="../how_derives_work/">
+        <link rel="next" href="../call_site_type_arguments/">
       
       
       <link rel="icon" href="../../../assets/images/favicon.png">
@@ -2024,6 +2024,8 @@
       
         
       
+        
+      
     
     
       
@@ -2356,6 +2358,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../call_site_type_arguments/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why call-site type args exist
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../how_derives_work/" class="md-nav__link">
         
   
@@ -2459,7 +2482,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_13" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_14" >
         
           
           
@@ -2475,14 +2498,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_13" id="__nav_3_5_13_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_14" id="__nav_3_5_14_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_13_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_13">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_14">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -4245,6 +4268,10 @@ general language feature for authoring reusable behavior.</p>
         <span class="k">return</span> <span class="n">value</span>
 </code></pre></div>
 <p>The important distinction is that these are method-scoped type parameters, not hidden type parameters on the enclosing type. A generic <code>model Shelf[U]</code> may still define a method like <code>def swap[T](...)</code>, where <code>U</code> belongs to the type and <code>T</code> belongs only to that method.</p>
+<p>For the rationale behind explicit call-site generics (<code>f[T](...)</code> / <code>obj.m[T](...)</code>), see:</p>
+<ul>
+<li><a href="../call_site_type_arguments/">Why call-site type arguments exist</a></li>
+</ul>
 <h2 id="debug-vs-display-two-string-representations">Debug vs Display: two string representations<a class="headerlink" href="#debug-vs-display-two-string-representations" title="Permanent link">&para;</a></h2>
 <p>Incan intentionally separates two kinds of “stringification”:</p>
 <ul>

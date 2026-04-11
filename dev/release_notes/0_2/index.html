@@ -2020,6 +2020,8 @@
       
         
       
+        
+      
     
     
       
@@ -2225,6 +2227,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why call-site type args exist
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
         
   
@@ -2328,7 +2351,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_13" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_14" >
         
           
           
@@ -2344,14 +2367,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_13" id="__nav_3_5_13_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_14" id="__nav_3_5_14_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_13_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_13">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_14">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -3948,6 +3971,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#call-site-type-arguments" class="md-nav__link">
+    <span class="md-ellipsis">
+      Call-site type arguments (RFC 054, #266)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#migrating-from-01" class="md-nav__link">
     <span class="md-ellipsis">
       Migrating from 0.1
@@ -4207,6 +4239,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#call-site-type-arguments" class="md-nav__link">
+    <span class="md-ellipsis">
+      Call-site type arguments (RFC 054, #266)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#migrating-from-01" class="md-nav__link">
     <span class="md-ellipsis">
       Migrating from 0.1
@@ -4379,6 +4420,8 @@
     <span class="n">record_hit</span><span class="p">()</span>
     <span class="nb">println</span><span class="p">(</span><span class="n">hits</span><span class="p">)</span>  <span class="c1"># reads the current live value</span>
 </code></pre></div>
+<h2 id="call-site-type-arguments">Call-site type arguments (<a href="/dev/RFCs/closed/implemented/054_explicit_call_site_generics">RFC 054</a>, #266)<a class="headerlink" href="#call-site-type-arguments" title="Permanent link">&para;</a></h2>
+<p>Calls and method calls may supply generic type arguments in brackets immediately before the value argument list, for example <code>id[int](1)</code> or <code>box.get[int](1)</code>. The <code>_</code> placeholder stands for a type parameter position that should still be inferred from value arguments (for example <code>pair_map[int, _](1, 2)</code>). If you use explicit brackets on a call form the compiler does not support, you now get a clear error instead of the arguments being ignored. See <a href="../../language/reference/derives_and_traits/#call-site-type-arguments">Call-site type arguments</a> in the language reference for the normative rules and examples.</p>
 <h2 id="migrating-from-01">Migrating from 0.1<a class="headerlink" href="#migrating-from-01" title="Permanent link">&para;</a></h2>
 <p>Use this checklist when moving a 0.1 codebase to 0.2.</p>
 <h3 id="import-paths">Import paths<a class="headerlink" href="#import-paths" title="Permanent link">&para;</a></h3>
@@ -4450,6 +4493,7 @@
 <li><strong>Compiler</strong>: Surface Semantics Engine — soft keywords (<code>assert</code>, <code>async</code>, <code>await</code>) and decorator semantics are routed through a registry-driven dispatch system (<code>SurfaceSemanticsPack</code>). The parser emits generic <code>Surface</code> AST nodes keyed by <code>SurfaceFeatureKey</code>; downstream stages dispatch on that key rather than per-keyword AST variants. Adding a new soft keyword requires no parser, AST, or IR changes — only a keyword descriptor and a semantics-pack handler (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Compiler</strong>: <code>incan-vocab</code> establishes a standalone, registry-driven keyword/manifest/desugaring contract for future library vocabulary extensions, and core tooling consumers now read keyword surface data through that shared registry path (<a href="/dev/RFCs/closed/implemented/027_incan_vocab_crate">RFC 027</a>, #161).</li>
 <li><strong>Compiler</strong>: First-class named function references — named <code>def</code> functions can now be passed as values, stored in variables, and placed in collections without wrapping in a closure. <code>Callable[Params, R]</code> is accepted as syntactic sugar for <code>(Params) -&gt; R</code> and desugared at parse time. Generic function references are explicitly rejected with a clear diagnostic (<a href="/dev/RFCs/closed/implemented/035_first_class_function_references">RFC 035</a>, #169).</li>
+<li><strong>Compiler</strong>: Explicit call-site type arguments on direct calls and method calls (<code>name[T](...)</code>, <code>recv.method[T](...)</code>), including <code>_</code> placeholders for positions inferred from value arguments; unsupported call forms error instead of ignoring brackets (<a href="/dev/RFCs/closed/implemented/054_explicit_call_site_generics">RFC 054</a>, #266). See <a href="#call-site-type-arguments">Call-site type arguments</a>.</li>
 <li><strong>Compiler</strong>: Traits are now always abstract, trait names and generic trait instantiations are valid annotation types, and traits may adopt supertraits with <code>with</code>, enabling transitive capability hierarchies like <code>DataSet[T]</code> / <code>BoundedDataSet[T]</code> (<a href="/dev/RFCs/closed/implemented/042_traits_are_always_abstract">RFC 042</a>, #179).</li>
 <li><strong>Compiler</strong>: Namespaced decorator resolution — decorators resolved by module path (e.g., <code>from std.web.routing import route</code> enables <code>@route(...)</code>) with alias support (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>).</li>
 <li><strong>Compiler</strong>: <code>@rust.extern</code> marker for Rust-backed function stubs, replacing the internal <code>@std.builtin</code> decorator (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>, <a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
@@ -4538,6 +4582,7 @@
 <li>Precise f-string interpolation diagnostics: <a href="/dev/RFCs/closed/implemented/011_fstring_error_spans">RFC 011</a></li>
 <li>Trait supertrait assignability and generic upcasts: <a href="/dev/RFCs/closed/implemented/042_traits_are_always_abstract">RFC 042</a></li>
 <li>Trait bound inference for trait/impl methods and return types: <a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a></li>
+<li>Explicit call-site generic arguments (including <code>_</code> inference placeholders): <a href="/dev/RFCs/closed/implemented/054_explicit_call_site_generics">RFC 054</a></li>
 </ul>
 <!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
 

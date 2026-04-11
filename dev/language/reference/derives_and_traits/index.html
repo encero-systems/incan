@@ -1733,6 +1733,21 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Generic instance methods">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#call-site-type-arguments" class="md-nav__link">
+    <span class="md-ellipsis">
+      Call-site type arguments
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2340,6 +2355,8 @@
       
         
       
+        
+      
     
     
       
@@ -2545,6 +2562,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/call_site_type_arguments/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why call-site type args exist
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/how_derives_work/" class="md-nav__link">
         
   
@@ -2648,7 +2686,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_13" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_14" >
         
           
           
@@ -2664,14 +2702,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_13" id="__nav_3_5_13_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_14" id="__nav_3_5_14_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_13_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_13">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_14">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -4386,6 +4424,21 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Generic instance methods">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#call-site-type-arguments" class="md-nav__link">
+    <span class="md-ellipsis">
+      Call-site type arguments
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4816,13 +4869,16 @@ Rust interop decorator (see <a href="/dev/RFCs/closed/implemented/023_compilable
 <p>Covered below in <a href="#requires-adopter-contract">Traits (authoring)</a>.</p>
 <hr />
 <h2 id="generic-instance-methods">Generic instance methods<a class="headerlink" href="#generic-instance-methods" title="Permanent link">&para;</a></h2>
-<p>Instance methods on <code>class</code>, <code>model</code>, <code>trait</code>, and <code>newtype</code> declarations may declare their own type parameters using
-the same syntax as top-level generic functions:</p>
+<p>Instance methods on <code>class</code>, <code>model</code>, <code>trait</code>, and <code>newtype</code> may declare method-level type parameters using the same syntax as top-level generic functions:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Box</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">get</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">value</span>
 </code></pre></div>
-<p>This is method-level polymorphism. The type parameters belong to the method, not to the enclosing type.</p>
+<p>This is method-level polymorphism: method type parameters belong to the method, not to the enclosing type.</p>
+<p>This does <strong>not</strong> replace normal method signatures. Non-generic methods still use the standard form:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">verbose</span><span class="p">:</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="o">...</span>
+</code></pre></div>
 <p>Rules to keep in mind:</p>
 <ul>
 <li>Method type parameters appear after the method name: <code>def name[T, U with Trait](...)</code>.</li>
@@ -4845,7 +4901,42 @@ the same syntax as top-level generic functions:</p>
     <span class="k">def</span><span class="w"> </span><span class="nf">echo</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">value</span>
 </code></pre></div>
-<p>Method generic syntax is intentionally aligned with function generic syntax. If you already know how to read <code>def f[T](...)</code>, you already know how to read <code>def method[T](...)</code>.</p>
+<p>Method generic syntax is additive and aligned with function generics: <code>def method[T](...)</code> extends, but does not replace, <code>def method(...)</code>.</p>
+<h3 id="call-site-type-arguments">Call-site type arguments<a class="headerlink" href="#call-site-type-arguments" title="Permanent link">&para;</a></h3>
+<p>Generic calls normally infer type parameters from value arguments. You may also provide explicit type arguments at the call site.</p>
+<p>Why this feature exists (design rationale):</p>
+<ul>
+<li><a href="../../explanation/call_site_type_arguments/">Why call-site type arguments exist</a></li>
+</ul>
+<p>Call-site type arguments go in square brackets immediately after the function or method name and before value arguments.</p>
+<p><strong>Syntax</strong>:</p>
+<ul>
+<li>Function: <code>callee[type_args](value_args...)</code></li>
+<li>Method: <code>receiver.method[type_args](value_args...)</code></li>
+</ul>
+<p><code>type_args</code> is comma-separated. Each entry is either a type expression or <code>_</code>. If brackets are present, arity must match the callee's type parameter count, including <code>_</code> slots.</p>
+<p><strong>Single type parameter</strong>:</p>
+<p>You may call with no brackets (fully inferred) or one explicit type argument:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">rows_inferred</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="s2">&quot;orders.csv&quot;</span><span class="p">))</span>         <span class="c1"># inferred when context/value args are enough</span>
+<span class="n">rows_typed</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">read_csv</span><span class="p">[</span><span class="nc">Order</span><span class="p">](</span><span class="nb">str</span><span class="p">(</span><span class="s2">&quot;orders.csv&quot;</span><span class="p">))</span>     <span class="c1"># explicit row type at the API boundary</span>
+</code></pre></div>
+<p><strong>Multiple type parameters</strong>:</p>
+<p>For multi-parameter generics, either infer all slots or provide one bracket entry per slot:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">parsed</span> <span class="o">=</span> <span class="n">decode_rows</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="s2">&quot;orders.csv&quot;</span><span class="p">))</span>                                 <span class="c1"># T and E inferred</span>
+<span class="n">parsed_typed</span> <span class="o">=</span> <span class="n">decode_rows</span><span class="p">[</span><span class="nc">Order</span><span class="p">,</span> <span class="nc">CsvDecodeError</span><span class="p">](</span><span class="nb">str</span><span class="p">(</span><span class="s2">&quot;orders.csv&quot;</span><span class="p">))</span>    <span class="c1"># both explicit</span>
+<span class="n">parsed_partial</span> <span class="o">=</span> <span class="n">decode_rows</span><span class="p">[</span><span class="nc">Order</span><span class="p">,</span> <span class="n">_</span><span class="p">](</span><span class="nb">str</span><span class="p">(</span><span class="s2">&quot;orders.csv&quot;</span><span class="p">))</span>               <span class="c1"># T explicit, E inferred via `_`</span>
+</code></pre></div>
+<p><strong>The <code>_</code> placeholder</strong>:</p>
+<p><code>_</code> means "infer this slot". It still counts toward arity: <code>decode_rows[Order](...)</code> is invalid for a two-parameter generic, while <code>decode_rows[Order, _](...)</code> is valid.</p>
+<p><strong>Type checking order</strong>:</p>
+<p>Explicit slots are applied first. <code>_</code> slots are inferred from value arguments and normal compatibility checks. If a slot remains unresolved, the compiler reports a call-site type error.</p>
+<p><strong>What is not supported</strong>:</p>
+<p>Explicit brackets are supported only for direct calls resolved as Incan functions/methods. Using brackets on other call shapes is an error (not ignored), for example:</p>
+<ul>
+<li>Built-in calls like <code>len[int](...)</code></li>
+<li>Calls to functions imported from Rust (<code>from rust::...</code>)</li>
+<li>Calling a generic function <strong>through a variable</strong> (e.g. <code>read = session.read_csv; read[Order](...)</code>), where the callee is not a direct name or method</li>
+</ul>
 <hr />
 <h2 id="traits-authoring">Traits (authoring)<a class="headerlink" href="#traits-authoring" title="Permanent link">&para;</a></h2>
 <p>Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with <code>with TraitName</code>, and you may also use the trait name itself directly in annotations. Methods can be required (<code>...</code>) or have defaults.</p>
