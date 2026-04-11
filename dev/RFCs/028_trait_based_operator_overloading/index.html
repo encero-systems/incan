@@ -4270,7 +4270,7 @@
 <li><strong>Status:</strong> Draft</li>
 <li><strong>Created:</strong> 2026-03-06</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Related:</strong> RFC 027 (vocab crate — block/desugaring substrate), RFC 024 (extensible derive protocol), RFC 040 (scoped DSL glyph surfaces)</li>
+<li><strong>Related:</strong> RFC 027 (vocab crate — block/desugaring substrate), RFC 024 (extensible derive protocol), RFC 040 (scoped DSL glyph surfaces), RFC 054 (explicit call-site generics)</li>
 <li><strong>Target version:</strong> v0.2</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
@@ -4639,6 +4639,7 @@
 <h3 id="non-goals">Non-goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h3>
 <p>This RFC covers operator syntax and operator-like indexing forms. It does <strong>not</strong> define the broader object protocol surface such as <code>len(x)</code>, <code>str(x)</code>, <code>repr(x)</code>, <code>iter(x)</code>, <code>hash(x)</code>, or <code>bool(x)</code>.</p>
 <p>Those protocols may eventually exist in Incan, but they should be specified on their own terms rather than being forced into Rust-shaped traits like <code>Sized</code>.</p>
+<p>This RFC also does <strong>not</strong> define general callable overloading for function/method API surfaces. That route is tracked as a separate follow-on tied to RFC 054's optional/dynamic API boundary.</p>
 <p>The following language operators are also explicitly <strong>not overloadable</strong> in this RFC:</p>
 <ul>
 <li><code>is</code></li>
