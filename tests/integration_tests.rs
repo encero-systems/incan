@@ -45,8 +45,14 @@ fn strip_ansi_escapes(text: &str) -> String {
     out
 }
 
-/// Locate the `incan` debug binary, respecting `CARGO_TARGET_DIR` when set.
+/// Locate the `incan` binary for subprocess tests.
+///
+/// Uses `CARGO_BIN_EXE_incan` when present (integration tests under `cargo test`) so we always run the artifact from
+/// the current build, including when `CARGO_TARGET_DIR` is not the default `target/`.
 fn incan_debug_binary() -> std::path::PathBuf {
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_incan") {
+        return path.into();
+    }
     if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
         let p = std::path::PathBuf::from(&target_dir).join("debug/incan");
         if p.exists() {
@@ -2147,10 +2153,7 @@ mod rfc031_pub_import_integration_tests {
     use sha2::{Digest, Sha256};
 
     fn incan_bin_path() -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("debug")
-            .join("incan")
+        super::incan_debug_binary()
     }
 
     fn write_project_files(

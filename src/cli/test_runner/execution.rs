@@ -1,22 +1,27 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::cli::commands;
 use crate::cli::commands::common;
+use crate::cli::commands::common::ProjectRequirements;
 #[cfg(feature = "rust_inspect")]
 use crate::cli::commands::common::{
     collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace,
 };
 use crate::cli::prelude::ParsedModule;
+use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::resolve_dependencies;
+use crate::frontend::ast::Program;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{lexer, parser};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
+use sha2::{Digest, Sha256};
 
 use super::module_graph::collect_source_modules_for_test;
 use super::types::{ParametrizeCall, TestInfo, TestResult};
@@ -39,9 +44,83 @@ fn shared_cargo_target_dir(project_root: &Path) -> PathBuf {
     absolute_project_root.join("target").join("incan_test_runner")
 }
 
+/// Shared front-end + dependency work for one test file, reused across parametrized variants and multiple tests in the
+/// same `.incn` file within a single `incan test` session.
+pub(super) struct PreparedTestFile {
+    pub library_manifest_index: LibraryManifestIndex,
+    pub ast: Program,
+    pub source_modules: Vec<ParsedModule>,
+    pub project_root: PathBuf,
+    pub resolved: ResolvedDependencies,
+    pub project_requirements: ProjectRequirements,
+    pub lock_payload: Option<String>,
+    #[cfg(feature = "rust_inspect")]
+    pub rust_inspect_manifest_dir: PathBuf,
+}
+
+fn canonical_path_for_cache_key(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn compute_test_prep_cache_key(
+    test_path: &Path,
+    source: &str,
+    source_modules: &[ParsedModule],
+    manifest: Option<&ProjectManifest>,
+    cargo: &CargoFeatureSelection,
+    locked: bool,
+    frozen: bool,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"incan_test_prep/1\0");
+    hasher.update(canonical_path_for_cache_key(test_path).to_string_lossy().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(source.as_bytes());
+    hasher.update(b"\0");
+
+    let mut sorted_mods: Vec<&ParsedModule> = source_modules.iter().collect();
+    sorted_mods.sort_by(|a, b| a.file_path.cmp(&b.file_path));
+    for m in sorted_mods {
+        hasher.update(canonical_path_for_cache_key(&m.file_path).to_string_lossy().as_bytes());
+        hasher.update(b"\0");
+        hasher.update(m.source.as_bytes());
+        hasher.update(b"\0|\0");
+    }
+
+    match manifest {
+        Some(m) => {
+            hasher.update(b"manifest\0");
+            hasher.update(m.path().to_string_lossy().as_bytes());
+            hasher.update(b"\0");
+            // Distinguish read errors from an empty manifest file (both would otherwise contribute no bytes).
+            match fs::read_to_string(m.path()) {
+                Ok(body) => {
+                    hasher.update(b"ok\0");
+                    hasher.update(body.as_bytes());
+                }
+                Err(_) => hasher.update(b"err\0"),
+            }
+            hasher.update(b"\0");
+        }
+        None => hasher.update(b"nomanifest\0"),
+    }
+
+    for f in &cargo.cargo_features {
+        hasher.update(f.as_bytes());
+        hasher.update(b"\0");
+    }
+    hasher.update([cargo.cargo_no_default_features as u8]);
+    hasher.update([cargo.cargo_all_features as u8]);
+    hasher.update([locked as u8]);
+    hasher.update([frozen as u8]);
+
+    format!("v1:{}", hex::encode(hasher.finalize()))
+}
+
 /// Run a single test.
 pub(super) fn run_single_test(
     test: &TestInfo,
+    prep_cache: &mut HashMap<String, Arc<PreparedTestFile>>,
     locked: bool,
     frozen: bool,
     cargo_features: &[String],
@@ -50,6 +129,7 @@ pub(super) fn run_single_test(
 ) -> TestResult {
     let start = Instant::now();
 
+    // ---- Context: load test source, discover manifest, parse and vocab-desugar the test file ----
     let source = match fs::read_to_string(&test.file_path) {
         Ok(s) => s,
         Err(e) => {
@@ -86,14 +166,6 @@ pub(super) fn run_single_test(
         return TestResult::Failed(start.elapsed(), format!("Vocab desugar error: {:?}", errors));
     }
 
-    let module_for_imports = ParsedModule {
-        name: "test".to_string(),
-        path_segments: vec!["test".to_string()],
-        file_path: test.file_path.clone(),
-        source: source.clone(),
-        ast: ast.clone(),
-    };
-
     let cargo_feature_selection = CargoFeatureSelection {
         cargo_features: cargo_features.to_vec(),
         cargo_no_default_features,
@@ -101,7 +173,7 @@ pub(super) fn run_single_test(
     }
     .normalized();
 
-    // ---- Collect source modules referenced by the test ----
+    // ---- Context: resolve project paths and collect transitive Incan modules for the test ----
     let project_root = manifest
         .as_ref()
         .map(|m| m.project_root().to_path_buf())
@@ -119,98 +191,142 @@ pub(super) fn run_single_test(
         }
     };
 
-    // ---- Collect dependency imports from test + transitive source modules ----
-    let mut dependency_modules: Vec<ParsedModule> = Vec::with_capacity(1 + source_modules.len());
-    dependency_modules.push(module_for_imports);
-    dependency_modules.extend(source_modules.iter().map(|m| ParsedModule {
-        name: m.name.clone(),
-        path_segments: m.path_segments.clone(),
-        file_path: m.file_path.clone(),
-        source: m.source.clone(),
-        ast: m.ast.clone(),
-    }));
-
-    let mut inline_imports = Vec::new();
-    for module in &dependency_modules {
-        inline_imports.extend(common::collect_inline_rust_imports(module, true));
-    }
-
-    let project_requirements = match common::collect_project_requirements(&dependency_modules, &library_manifest_index)
-    {
-        Ok(requirements) => requirements,
-        Err(err) => {
-            return TestResult::Failed(start.elapsed(), err.message);
-        }
-    };
-
-    let mut resolved = match resolve_dependencies(manifest.as_ref(), &inline_imports, true, &cargo_feature_selection) {
-        Ok(resolved) => resolved,
-        Err(errors) => {
-            let mut sources = HashMap::new();
-            sources.insert(test.file_path.clone(), source.clone());
-            let mut msg = String::new();
-            for err in &errors {
-                msg.push_str(&common::format_dependency_error(err, &sources));
-            }
-            return TestResult::Failed(start.elapsed(), msg);
-        }
-    };
-    if let Err(err) = common::merge_project_requirement_dependencies(&mut resolved, &project_requirements) {
-        return TestResult::Failed(start.elapsed(), err.message);
-    }
-
-    let project_name = manifest
-        .as_ref()
-        .and_then(|m| m.project.as_ref().and_then(|p| p.name.clone()))
-        .or_else(|| {
-            test.file_path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .map(|s| s.to_string())
-        })
-        .unwrap_or_else(|| "incan_test".to_string());
-    let lock_payload = match commands::resolve_lock_payload(commands::LockResolutionRequest {
-        project_root: &project_root,
-        project_name: &project_name,
-        manifest: manifest.as_ref(),
-        resolved: &resolved,
-        project_requirements: &project_requirements,
-        cargo_features: &cargo_feature_selection,
+    // ---- Context: session prep cache — reuse deps / lock / rust-inspect when key matches ----
+    let cache_key = compute_test_prep_cache_key(
+        &test.file_path,
+        &source,
+        &source_modules,
+        manifest.as_ref(),
+        &cargo_feature_selection,
         locked,
         frozen,
-    }) {
-        Ok(payload) => payload,
-        Err(err) => {
+    );
+
+    let prepared: Arc<PreparedTestFile> = if let Some(hit) = prep_cache.get(&cache_key) {
+        Arc::clone(hit)
+    } else {
+        // ---- Context: cold prep — inline imports, resolve and merge Cargo deps, lock + rust-inspect workspace ----
+        let module_for_imports = ParsedModule {
+            name: "test".to_string(),
+            path_segments: vec!["test".to_string()],
+            file_path: test.file_path.clone(),
+            source: source.clone(),
+            ast: ast.clone(),
+        };
+
+        let mut dependency_modules: Vec<ParsedModule> = Vec::with_capacity(1 + source_modules.len());
+        dependency_modules.push(module_for_imports);
+        dependency_modules.extend(source_modules.iter().map(|m| ParsedModule {
+            name: m.name.clone(),
+            path_segments: m.path_segments.clone(),
+            file_path: m.file_path.clone(),
+            source: m.source.clone(),
+            ast: m.ast.clone(),
+        }));
+
+        let mut inline_imports = Vec::new();
+        for module in &dependency_modules {
+            inline_imports.extend(common::collect_inline_rust_imports(module, true));
+        }
+
+        let project_requirements =
+            match common::collect_project_requirements(&dependency_modules, &library_manifest_index) {
+                Ok(requirements) => requirements,
+                Err(err) => {
+                    return TestResult::Failed(start.elapsed(), err.message);
+                }
+            };
+
+        let mut resolved =
+            match resolve_dependencies(manifest.as_ref(), &inline_imports, true, &cargo_feature_selection) {
+                Ok(resolved) => resolved,
+                Err(errors) => {
+                    let mut sources = HashMap::new();
+                    sources.insert(test.file_path.clone(), source.clone());
+                    let mut msg = String::new();
+                    for err in &errors {
+                        msg.push_str(&common::format_dependency_error(err, &sources));
+                    }
+                    return TestResult::Failed(start.elapsed(), msg);
+                }
+            };
+        if let Err(err) = common::merge_project_requirement_dependencies(&mut resolved, &project_requirements) {
             return TestResult::Failed(start.elapsed(), err.message);
         }
+
+        let project_name = manifest
+            .as_ref()
+            .and_then(|m| m.project.as_ref().and_then(|p| p.name.clone()))
+            .or_else(|| {
+                test.file_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| "incan_test".to_string());
+        let lock_payload = match commands::resolve_lock_payload(commands::LockResolutionRequest {
+            project_root: &project_root,
+            project_name: &project_name,
+            manifest: manifest.as_ref(),
+            resolved: &resolved,
+            project_requirements: &project_requirements,
+            cargo_features: &cargo_feature_selection,
+            locked,
+            frozen,
+        }) {
+            Ok(payload) => payload,
+            Err(err) => {
+                return TestResult::Failed(start.elapsed(), err.message);
+            }
+        };
+
+        #[cfg(feature = "rust_inspect")]
+        let rust_inspect_manifest_dir = {
+            let metadata_query_paths = collect_rust_inspect_query_paths(&dependency_modules);
+            let rust_inspect_manifest_dir = match ensure_rust_inspect_workspace(
+                &project_root,
+                &project_name,
+                manifest
+                    .as_ref()
+                    .and_then(|m| m.build.as_ref().and_then(|build| build.rust_edition.clone())),
+                &resolved,
+                &project_requirements,
+                lock_payload.clone(),
+            ) {
+                Ok(dir) => dir,
+                Err(err) => return TestResult::Failed(start.elapsed(), err.message),
+            };
+            if let Err(err) = prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, &metadata_query_paths) {
+                return TestResult::Failed(start.elapsed(), err.message);
+            }
+            rust_inspect_manifest_dir
+        };
+
+        let prepared = PreparedTestFile {
+            library_manifest_index,
+            ast,
+            source_modules,
+            project_root,
+            resolved,
+            project_requirements,
+            lock_payload,
+            #[cfg(feature = "rust_inspect")]
+            rust_inspect_manifest_dir,
+        };
+        let arc = Arc::new(prepared);
+        prep_cache.insert(cache_key, Arc::clone(&arc));
+        arc
     };
 
     // ---- Setup codegen ----
     let mut codegen = IrCodegen::new();
-    codegen.set_library_manifest_index(library_manifest_index.clone());
+    codegen.set_library_manifest_index(prepared.library_manifest_index.clone());
     #[cfg(feature = "rust_inspect")]
     {
-        let metadata_query_paths = collect_rust_inspect_query_paths(&dependency_modules);
-        let rust_inspect_manifest_dir = match ensure_rust_inspect_workspace(
-            &project_root,
-            &project_name,
-            manifest
-                .as_ref()
-                .and_then(|m| m.build.as_ref().and_then(|build| build.rust_edition.clone())),
-            &resolved,
-            &project_requirements,
-            lock_payload.clone(),
-        ) {
-            Ok(dir) => dir,
-            Err(err) => return TestResult::Failed(start.elapsed(), err.message),
-        };
-        if let Err(err) = prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, &metadata_query_paths) {
-            return TestResult::Failed(start.elapsed(), err.message);
-        }
-        codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir);
+        codegen.set_rust_inspect_manifest_dir(prepared.rust_inspect_manifest_dir.clone());
     }
 
-    for module in &source_modules {
+    for module in &prepared.source_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
 
@@ -224,16 +340,16 @@ pub(super) fn run_single_test(
     let temp_dir = format!("target/incan_tests/{}", dir_suffix);
 
     let mut generator = ProjectGenerator::new(&temp_dir, "test_runner", true);
-    generator.set_stdlib_features(project_requirements.stdlib_features.clone());
+    generator.set_stdlib_features(prepared.project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(true);
-    generator.set_dependencies(resolved.dependencies);
-    generator.set_dev_dependencies(resolved.dev_dependencies);
-    generator.set_cargo_lock_payload(lock_payload);
+    generator.set_dependencies(prepared.resolved.dependencies.clone());
+    generator.set_dev_dependencies(prepared.resolved.dev_dependencies.clone());
+    generator.set_cargo_lock_payload(prepared.lock_payload.clone());
     generator.set_cargo_policy_flags(common::cargo_command_flags(locked, frozen, &cargo_feature_selection));
 
     // ---- Generate project (multi-file when source modules are present) ----
-    if source_modules.is_empty() {
-        let rust_code = match codegen.try_generate(&ast) {
+    if prepared.source_modules.is_empty() {
+        let rust_code = match codegen.try_generate(&prepared.ast) {
             Ok(code) => code,
             Err(e) => {
                 return TestResult::Failed(start.elapsed(), format!("Code generation error: {}", e));
@@ -244,8 +360,12 @@ pub(super) fn run_single_test(
             return TestResult::Failed(start.elapsed(), format!("Failed to generate project: {}", e));
         }
     } else {
-        let module_paths: Vec<Vec<String>> = source_modules.iter().map(|m| m.path_segments.clone()).collect();
-        let (main_code, rust_modules) = match codegen.try_generate_multi_file_nested(&ast, &module_paths) {
+        let module_paths: Vec<Vec<String>> = prepared
+            .source_modules
+            .iter()
+            .map(|m| m.path_segments.clone())
+            .collect();
+        let (main_code, rust_modules) = match codegen.try_generate_multi_file_nested(&prepared.ast, &module_paths) {
             Ok(result) => result,
             Err(e) => {
                 return TestResult::Failed(start.elapsed(), format!("Code generation error: {}", e));
@@ -260,7 +380,7 @@ pub(super) fn run_single_test(
     // ---- Run the generated project ----
     // Use `cargo run` rather than `cargo test` — the injected `fn main()` calls the test function directly. A panic
     // (assertion failure) exits non-zero; a clean return exits zero.
-    let shared_target_dir = shared_cargo_target_dir(&project_root);
+    let shared_target_dir = shared_cargo_target_dir(&prepared.project_root);
     let mut command = std::process::Command::new("cargo");
     command.arg("run");
     for flag in common::cargo_command_flags(locked, frozen, &cargo_feature_selection) {
@@ -397,5 +517,54 @@ mod tests {
             result.contains("test_sub(-1, 1, 0);"),
             "should call with negative int args"
         );
+    }
+
+    #[test]
+    fn prep_cache_key_stable_for_identical_inputs() {
+        let cargo = CargoFeatureSelection {
+            cargo_features: vec!["serde".to_string()],
+            cargo_no_default_features: false,
+            cargo_all_features: false,
+        }
+        .normalized();
+        let mods: Vec<ParsedModule> = Vec::new();
+        let k1 = compute_test_prep_cache_key(
+            Path::new("tests/test_x.incn"),
+            "source a",
+            &mods,
+            None,
+            &cargo,
+            false,
+            false,
+        );
+        let k2 = compute_test_prep_cache_key(
+            Path::new("tests/test_x.incn"),
+            "source a",
+            &mods,
+            None,
+            &cargo,
+            false,
+            false,
+        );
+        assert_eq!(k1, k2);
+        assert!(k1.starts_with("v1:"));
+    }
+
+    #[test]
+    fn prep_cache_key_changes_when_test_source_changes() {
+        let cargo = CargoFeatureSelection::default().normalized();
+        let mods: Vec<ParsedModule> = Vec::new();
+        let k1 = compute_test_prep_cache_key(Path::new("t.incn"), "a", &mods, None, &cargo, false, false);
+        let k2 = compute_test_prep_cache_key(Path::new("t.incn"), "b", &mods, None, &cargo, false, false);
+        assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn prep_cache_key_includes_locked_and_frozen_flags() {
+        let cargo = CargoFeatureSelection::default().normalized();
+        let mods: Vec<ParsedModule> = Vec::new();
+        let k_unlocked = compute_test_prep_cache_key(Path::new("t.incn"), "x", &mods, None, &cargo, false, false);
+        let k_locked = compute_test_prep_cache_key(Path::new("t.incn"), "x", &mods, None, &cargo, true, false);
+        assert_ne!(k_unlocked, k_locked);
     }
 }

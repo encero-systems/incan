@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::cli::{CliError, CliResult, ExitCode};
@@ -207,6 +208,8 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     println!("collected {} item(s)", filtered_tests.len());
     println!();
 
+    let mut prep_cache: HashMap<String, Arc<execution::PreparedTestFile>> = HashMap::new();
+
     let mut results: Vec<(TestInfo, TestResult)> = Vec::new();
     let mut passed = 0;
     let mut failed = 0;
@@ -227,6 +230,7 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
 
         let result = run_single_test(
             &test,
+            &mut prep_cache,
             locked,
             frozen,
             &cargo_features,
