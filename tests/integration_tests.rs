@@ -1,7 +1,7 @@
 //! Integration tests for the Incan compiler frontend
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -78,6 +78,48 @@ fn make_temp_test_dir() -> std::path::PathBuf {
         panic!("failed to create temp test dir");
     };
     dir
+}
+
+fn write_cycle_explicit_call_site_generics_project(dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let src_dir = dir.join("src");
+    std::fs::create_dir_all(&src_dir)?;
+    std::fs::write(
+        dir.join("incan.toml"),
+        r#"[project]
+name = "cycle_explicit_call_site_generics"
+version = "0.1.0"
+"#,
+    )?;
+    std::fs::write(
+        src_dir.join("dataset.incn"),
+        r#"from session import collect_with_active_session
+
+pub model DataSet[T]:
+  value: T
+
+pub def collect_with_dataset[T](dataset: DataSet[T]) -> T:
+  return collect_with_active_session[T](dataset)
+"#,
+    )?;
+    std::fs::write(
+        src_dir.join("session.incn"),
+        r#"from dataset import DataSet
+
+pub def collect_with_active_session[T](dataset: DataSet[T]) -> T:
+  return dataset.value
+"#,
+    )?;
+    let main_path = src_dir.join("main.incn");
+    std::fs::write(
+        &main_path,
+        r#"from dataset import DataSet, collect_with_dataset
+
+def main() -> None:
+  let ds = DataSet(value=1)
+  println(collect_with_dataset[int](ds))
+"#,
+    )?;
+    Ok(main_path)
 }
 
 /// Regression (GitHub #247): `incan fmt` on disk must preserve body docstrings for all public block-like type
@@ -1149,6 +1191,53 @@ async def main() -> None:
             "expected child field in __fields__; got:\n{}",
             stdout
         );
+    }
+
+    #[test]
+    fn test_check_cyclic_explicit_call_site_generics_cross_module_succeeds() -> Result<(), Box<dyn std::error::Error>> {
+        let project_dir = make_temp_dir("incan_cycle_explicit_call_site_check");
+        let main_path = super::write_cycle_explicit_call_site_generics_project(&project_dir)?;
+
+        let output = Command::new(incan_debug_binary())
+            .arg("--check")
+            .arg(main_path)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "incan --check cyclic explicit call-site generics failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_run_cyclic_explicit_call_site_generics_cross_module_succeeds() -> Result<(), Box<dyn std::error::Error>> {
+        let project_dir = make_temp_dir("incan_cycle_explicit_call_site_run");
+        let main_path = super::write_cycle_explicit_call_site_generics_project(&project_dir)?;
+
+        let output = Command::new(incan_debug_binary())
+            .arg("run")
+            .arg(main_path)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "incan run cyclic explicit call-site generics failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains('1'),
+            "expected runtime output to contain 1, got:\n{}",
+            stdout
+        );
+        Ok(())
     }
 
     #[test]

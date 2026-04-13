@@ -14,9 +14,9 @@ use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult};
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::{DependencyError, InlineRustImport};
-use crate::frontend::ast::{ImportKind, Span};
+use crate::frontend::ast::{ImportKind, Program, Span};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
-use crate::frontend::module::resolve_source_module_from_base;
+use crate::frontend::module::{canonicalize_source_module_segments, resolve_source_module_from_base};
 use crate::frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
@@ -1193,6 +1193,78 @@ pub(crate) fn cargo_command_flags(locked: bool, frozen: bool, cargo_features: &C
     flags
 }
 
+/// Build a lookup map from canonical module key (`a_b_c`) to module index in `collect_modules` output.
+pub(crate) fn module_key_index(modules: &[ParsedModule]) -> HashMap<String, usize> {
+    let mut module_idx_by_key: HashMap<String, usize> = HashMap::new();
+    for (idx, module) in modules.iter().enumerate() {
+        let key = canonicalize_source_module_segments(&module.path_segments).join("_");
+        module_idx_by_key.insert(key, idx);
+    }
+    module_idx_by_key
+}
+
+/// Resolve imported source-module dependencies for one collected module using a precomputed module key index.
+///
+/// Use this variant inside per-module loops to avoid rebuilding the module key map on every iteration.
+pub(crate) fn imported_module_deps_for_with_index<'m>(
+    modules: &'m [ParsedModule],
+    module_index: usize,
+    module_idx_by_key: &HashMap<String, usize>,
+) -> Vec<(&'m str, &'m Program)> {
+    // ---- Context: bounds and setup ----
+    if module_index >= modules.len() {
+        return Vec::new();
+    }
+
+    // ---- Context: collect dependency module indexes from import declarations ----
+    let mut dep_indexes: BTreeSet<usize> = BTreeSet::new();
+    for decl in &modules[module_index].ast.declarations {
+        let crate::frontend::ast::Declaration::Import(import) = &decl.node else {
+            continue;
+        };
+        match &import.kind {
+            ImportKind::From { module, .. } => {
+                if module.parent_levels > 0 || module.is_absolute || module.segments.is_empty() {
+                    continue;
+                }
+                let key = canonicalize_source_module_segments(&module.segments).join("_");
+                if let Some(dep_idx) = module_idx_by_key.get(&key).copied()
+                    && dep_idx != module_index
+                {
+                    dep_indexes.insert(dep_idx);
+                }
+            }
+            ImportKind::Module(path) => {
+                if path.parent_levels > 0 || path.is_absolute || path.segments.is_empty() {
+                    continue;
+                }
+                let full_key = canonicalize_source_module_segments(&path.segments).join("_");
+                if let Some(dep_idx) = module_idx_by_key.get(&full_key).copied()
+                    && dep_idx != module_index
+                {
+                    dep_indexes.insert(dep_idx);
+                }
+                if path.segments.len() > 1 {
+                    let parent_key =
+                        canonicalize_source_module_segments(&path.segments[..path.segments.len() - 1]).join("_");
+                    if let Some(dep_idx) = module_idx_by_key.get(&parent_key).copied()
+                        && dep_idx != module_index
+                    {
+                        dep_indexes.insert(dep_idx);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // ---- Context: materialize dependency pairs for typechecker.check_with_imports ----
+    dep_indexes
+        .into_iter()
+        .map(|idx| (modules[idx].name.as_str(), &modules[idx].ast))
+        .collect()
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -1632,9 +1704,9 @@ pub def probe() -> SubstraitPlan:
         )?;
 
         let modules = collect_modules(entry.to_string_lossy().as_ref())?;
+        let module_idx_by_key = module_key_index(&modules);
         for (idx, module) in modules.iter().enumerate() {
-            let deps: Vec<(&str, &crate::frontend::ast::Program)> =
-                modules[..idx].iter().map(|m| (m.name.as_str(), &m.ast)).collect();
+            let deps = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
             let mut checker = typechecker::TypeChecker::new();
             if let Err(errs) = checker.check_with_imports(&module.ast, &deps) {
                 return Err(format!(
@@ -1645,6 +1717,62 @@ pub def probe() -> SubstraitPlan:
                 .into());
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn imported_module_deps_for_includes_forward_edge_in_cycle() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        std::fs::write(
+            project_root.join("incan.toml"),
+            r#"[project]
+name = "cycle_dep_resolver_demo"
+version = "0.1.0"
+"#,
+        )?;
+        let src_dir = project_root.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::write(
+            src_dir.join("a.incn"),
+            r#"from b import pong
+
+pub def ping() -> int:
+    return pong()
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("b.incn"),
+            r#"from a import ping
+
+pub def pong() -> int:
+    return 1
+"#,
+        )?;
+        let entry = src_dir.join("main.incn");
+        std::fs::write(
+            &entry,
+            r#"from a import ping
+
+pub def main() -> int:
+    return ping()
+"#,
+        )?;
+
+        let modules = collect_modules(entry.to_string_lossy().as_ref())?;
+        let Some(b_index) = modules
+            .iter()
+            .position(|module| module.file_path.ends_with("src/b.incn"))
+        else {
+            panic!("expected src/b.incn module");
+        };
+        let module_idx_by_key = module_key_index(&modules);
+        let deps = imported_module_deps_for_with_index(&modules, b_index, &module_idx_by_key);
+        assert!(
+            deps.iter().any(|(name, _)| *name == "a"),
+            "expected cyclic forward dependency `b -> a` to be resolved, got: {:?}",
+            deps.iter().map(|(name, _)| (*name).to_string()).collect::<Vec<_>>()
+        );
         Ok(())
     }
 

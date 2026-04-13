@@ -4,13 +4,14 @@
 
 use crate::backend::IrCodegen;
 use crate::cli::{CliError, CliResult, ExitCode};
-use crate::frontend::ast::Program;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser, typechecker};
 use crate::manifest::ProjectManifest;
 use std::path::Path;
 
-use super::common::{collect_modules, read_source, resolve_project_root};
+use super::common::{
+    collect_modules, imported_module_deps_for_with_index, module_key_index, read_source, resolve_project_root,
+};
 
 /// Lex and display tokens.
 pub fn lex_file(file_path: &str) -> CliResult<ExitCode> {
@@ -74,8 +75,9 @@ pub fn check_file(file_path: &str) -> CliResult<ExitCode> {
         .unwrap_or_default();
 
     let mut all_errors: String = String::new();
+    let module_idx_by_key = module_key_index(&modules);
     for (idx, module) in modules.iter().enumerate() {
-        let deps_for_module: Vec<(&str, &Program)> = modules[..idx].iter().map(|m| (m.name.as_str(), &m.ast)).collect();
+        let deps_for_module = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
 
         let mut checker = typechecker::TypeChecker::new();
         if let Some(names) = declared.clone() {

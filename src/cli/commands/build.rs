@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::dependency_resolver::resolve_dependencies;
-use crate::frontend::ast::Program;
 use crate::frontend::ast::{Declaration, Decorator, ImportKind, Span, Spanned};
 use crate::frontend::library_exports::{CheckedExportKind, CheckedNamedExport, collect_checked_public_exports};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
@@ -23,7 +22,8 @@ use std::collections::{HashMap, HashSet};
 
 use super::common::{
     build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_modules, collect_project_requirements,
-    format_dependency_error, merge_project_requirement_dependencies, resolve_project_root, validate_output_dir,
+    format_dependency_error, imported_module_deps_for_with_index, merge_project_requirement_dependencies,
+    module_key_index, resolve_project_root, validate_output_dir,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace};
@@ -370,9 +370,9 @@ fn prepare_project(
     // Type check all modules (dependencies + stdlib first), so diagnostics are associated with the correct file.
     let declared = manifest.as_ref().map(|m| m.declared_rust_crate_names());
     let mut all_errors: String = String::new();
+    let module_idx_by_key = module_key_index(&modules);
     for (idx, module) in modules.iter().enumerate() {
-        let deps_for_module: Vec<(&str, &Program)> = modules[..idx].iter().map(|m| (m.name.as_str(), &m.ast)).collect();
-
+        let deps_for_module = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
         let mut checker = typechecker::TypeChecker::new();
         if let Some(names) = declared.clone() {
             checker.set_declared_crate_names(names);
@@ -679,10 +679,10 @@ pub fn build_library(
 
     let mut all_errors = String::new();
     let mut checked_exports_by_module: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
+    let module_idx_by_key = module_key_index(&modules);
 
     for (idx, module) in modules.iter().enumerate() {
-        let deps_for_module: Vec<(&str, &Program)> = modules[..idx].iter().map(|m| (m.name.as_str(), &m.ast)).collect();
-
+        let deps_for_module = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
         let mut checker = typechecker::TypeChecker::new();
         checker.set_declared_crate_names(declared.clone());
         checker.set_library_manifest_index(library_manifest_index.clone());
