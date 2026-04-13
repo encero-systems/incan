@@ -481,6 +481,11 @@ pub struct TraitInfo {
 pub struct ModuleInfo {
     pub path: Vec<String>,
     pub is_python: bool,
+    /// `true` when the binding came from `from module import item` fallback placeholder collection.
+    ///
+    /// These placeholders keep unresolved imports representable in the symbol table and are distinct from direct
+    /// module aliases (`import module as alias`).
+    pub is_from_import_item: bool,
 }
 
 /// Variant information

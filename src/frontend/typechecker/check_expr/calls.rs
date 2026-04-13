@@ -1625,6 +1625,11 @@ impl TypeChecker {
         args: &[CallArg],
         span: Span,
     ) -> ResolvedType {
+        // RFC 054: keep explicit call-site type arguments available for unresolved import-proxy identifier calls
+        // (`from mod import fn` collected as a temporary `SymbolKind::Module` placeholder). These remain Unknown-typed
+        // until import resolution succeeds, but should not be rejected as an unsupported call form.
+        let mut allow_call_site_type_args_for_import_proxy = false;
+
         // Special-case: Enum variant constructor syntax `Enum.Variant(...)`.
         // If callee is a field access where the base resolves to a known enum type
         // and the field name matches a variant, treat this as a constructor and
@@ -1716,6 +1721,13 @@ impl TypeChecker {
                         self.errors.push(errors::cannot_instantiate_trait(name, span));
                         return ResolvedType::Unknown;
                     }
+                    SymbolKind::Module(info) => {
+                        // Keep module-call rejection for real module aliases (`import foo.bar as baz`), but do not
+                        // emit the unsupported-call-form diagnostic for unresolved `from ... import ...` placeholders.
+                        if info.is_from_import_item {
+                            allow_call_site_type_args_for_import_proxy = true;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -1766,7 +1778,7 @@ impl TypeChecker {
             }
         }
 
-        if !type_args.is_empty() {
+        if !type_args.is_empty() && !allow_call_site_type_args_for_import_proxy {
             self.errors
                 .push(errors::explicit_call_site_type_args_not_supported(span));
         }

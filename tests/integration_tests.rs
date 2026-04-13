@@ -2715,6 +2715,50 @@ mod rfc031_pub_import_integration_tests {
     }
 
     #[test]
+    fn build_accepts_explicit_type_args_for_imported_free_function_calls() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"app\"\nversion = \"0.1.0\"\n",
+            r#"
+from caller import call_id
+
+def main() -> None:
+    value: int = call_id[int](1)
+    println(value)
+"#,
+        )?;
+
+        let src_dir = tmp.path().join("src");
+        std::fs::write(
+            src_dir.join("helper.incn"),
+            r#"
+pub def id[T](x: T) -> T:
+    return x
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("caller.incn"),
+            r#"
+from helper import id
+
+pub def call_id[T](x: T) -> T:
+    return id[T](x)
+"#,
+        )?;
+
+        let out_dir = tmp.path().join("out");
+        let output = run_build(&main_path, &out_dir)?;
+        assert!(
+            output.status.success(),
+            "expected build with imported free-function explicit type args to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn check_reports_unknown_pub_library() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let main_path = write_project_files(

@@ -68,7 +68,7 @@ impl TypeChecker {
                     self.validate_root_namespace(&name, span);
                 }
                 let normalized_path = canonicalize_source_module_segments(&path.segments);
-                self.define_import_symbol(name, normalized_path, false, span);
+                self.define_import_symbol(name, normalized_path, false, false, span);
             }
             ImportKind::From { module, items } => {
                 // Reject unknown stdlib module, e.g. `from std.f64.consts import PI`;
@@ -265,14 +265,14 @@ impl TypeChecker {
                     self.validate_root_namespace(&name, span);
                     let mut path = canonicalize_source_module_segments(&module.segments);
                     path.push(item.name.clone());
-                    self.define_import_symbol(name, path, false, span);
+                    self.define_import_symbol(name, path, false, true, span);
                 }
             }
             ImportKind::PubLibrary { library } => {
                 let name = import.alias.clone().unwrap_or_else(|| library.clone());
                 self.validate_root_namespace(&name, span);
                 self.validate_pub_library_entry(library, span);
-                self.define_import_symbol(name, vec!["pub".to_string(), library.clone()], false, span);
+                self.define_import_symbol(name, vec!["pub".to_string(), library.clone()], false, false, span);
             }
             ImportKind::PubFrom { library, items } => {
                 self.collect_pub_imports(library, items, span);
@@ -280,7 +280,7 @@ impl TypeChecker {
             ImportKind::Python(pkg) => {
                 let name = import.alias.clone().unwrap_or_else(|| pkg.clone());
                 self.validate_root_namespace(&name, span);
-                self.define_import_symbol(name, vec![pkg.clone()], true, span);
+                self.define_import_symbol(name, vec![pkg.clone()], true, false, span);
             }
             ImportKind::RustCrate { crate_name, path, .. } => {
                 if self.reject_unsupported_rust_core_alloc(crate_name, span) {
@@ -1016,13 +1016,24 @@ impl TypeChecker {
     }
 
     /// Define a symbol for a module import, skipping if a real definition exists.
-    fn define_import_symbol(&mut self, name: Ident, path: Vec<Ident>, is_python: bool, span: Span) {
+    fn define_import_symbol(
+        &mut self,
+        name: Ident,
+        path: Vec<Ident>,
+        is_python: bool,
+        is_from_import_item: bool,
+        span: Span,
+    ) {
         if self.has_real_definition(&name) {
             return;
         }
         self.symbols.define(Symbol {
             name,
-            kind: SymbolKind::Module(ModuleInfo { path, is_python }),
+            kind: SymbolKind::Module(ModuleInfo {
+                path,
+                is_python,
+                is_from_import_item,
+            }),
             span,
             scope: 0,
         });

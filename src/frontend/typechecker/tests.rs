@@ -5554,3 +5554,63 @@ def run() -> int:
         "expected unsupported call-site type args diagnostic, got {errs:?}"
     );
 }
+
+#[test]
+fn explicit_call_type_args_rejected_on_module_alias_call() {
+    let source = r#"
+import math as m
+
+def run() -> int:
+  return m[int](1)
+"#;
+    match check_str(source) {
+        Ok(()) => panic!("expected unsupported explicit type args on module call"),
+        Err(errs) => {
+            assert!(
+                errs.iter()
+                    .any(|e| e.message.contains("not supported for this call form")),
+                "expected unsupported call-site type args diagnostic, got {errs:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn explicit_call_type_args_rejected_on_multi_segment_module_alias_call() {
+    let source = r#"
+import std.async.time as t
+
+def run() -> None:
+  t[int](1)
+"#;
+    match check_str(source) {
+        Ok(()) => panic!("expected unsupported explicit type args on module call"),
+        Err(errs) => {
+            assert!(
+                errs.iter()
+                    .any(|e| e.message.contains("not supported for this call form")),
+                "expected unsupported call-site type args diagnostic, got {errs:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn explicit_call_type_args_not_rejected_for_import_proxy_free_function_call() {
+    let source = r#"
+from missingmod import collect_with_active_session
+
+def run[T](x: T) -> T:
+  return collect_with_active_session[T](x)
+"#;
+    match check_str(source) {
+        Ok(()) => {}
+        Err(errs) => {
+            assert!(
+                errs.iter()
+                    .all(|e| !e.message.contains("not supported for this call form")),
+                "did not expect unsupported call-form diagnostic for import proxy free-function call, got {errs:?}"
+            );
+        }
+    }
+}
