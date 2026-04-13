@@ -4541,7 +4541,6 @@
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Compiler</strong>: Explicit call-site type arguments on imported free-function call forms (<code>from module import fn</code> + <code>fn[T](...)</code>) no longer fail with a false “not supported for this call form” diagnostic; builtin callees and indirect function-value calls keep the existing rejection behavior (#274).</li>
 <li><strong>Compiler</strong>: rust-inspect now recovers concrete borrowed function parameter pointee types from source when rust-analyzer degrades them to placeholders like <code>&amp;?</code>, so imported Rust calls keep exact borrowed contracts during typechecking and generated-lock workspace interop paths (#259).</li>
 <li><strong>Compiler</strong>: Generic instance methods on classes, traits, models, and newtypes now parse and flow through formatting, typechecking, lowering, and library export metadata correctly (#253).</li>
 <li><strong>Compiler</strong>: Locals initialized from call expressions now preserve the callee's declared result type through later field access, method chaining, and <code>match</code> scrutinees. This fixes false receiver-typed errors after static factory calls such as <code>Session.default()</code> and the related local-inference family regressions (#252, #255).</li>
