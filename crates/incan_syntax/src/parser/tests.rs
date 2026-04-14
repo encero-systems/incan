@@ -1045,13 +1045,60 @@ def add(a: int, b: int) -> int:
     }
 
     #[test]
-    fn test_parse_pub_from_outside_src_lib_is_error() {
+    fn test_parse_pub_from_in_src_main_is_public_reexport() -> Result<(), Vec<CompileError>> {
         let source = "pub from widgets import Widget\n";
-        let result = parse_str_with_module_path(source, Some("project/src/main.incn"));
-        assert!(result.is_err(), "Expected parser to reject `pub from` outside src/lib.incn");
+        let program = parse_str_with_module_path(source, Some("project/src/main.incn"))?;
+        assert_eq!(program.declarations.len(), 1);
+
+        let Declaration::Import(import) = &program.declarations[0].node else {
+            panic!("Expected import declaration");
+        };
+        assert!(matches!(import.visibility, Visibility::Public));
+        let ImportKind::From { module, items } = &import.kind else {
+            panic!("Expected from-import");
+        };
+        assert_eq!(module.segments, vec!["widgets".to_string()]);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "Widget");
+        assert_eq!(items[0].alias, None);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_pub_from_rust_in_src_module_is_public_reexport() -> Result<(), Vec<CompileError>> {
+        let source = "pub from rust::time import Instant\n";
+        let program = parse_str_with_module_path(source, Some("project/src/session/mod.incn"))?;
+        assert_eq!(program.declarations.len(), 1);
+
+        let Declaration::Import(import) = &program.declarations[0].node else {
+            panic!("Expected import declaration");
+        };
+        assert!(matches!(import.visibility, Visibility::Public));
+        let ImportKind::RustFrom {
+            crate_name,
+            path,
+            items,
+            ..
+        } = &import.kind
+        else {
+            panic!("Expected rust from-import");
+        };
+        assert_eq!(crate_name, "time");
+        assert!(path.is_empty());
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "Instant");
+        assert_eq!(items[0].alias, None);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_pub_from_outside_src_is_error() {
+        let source = "pub from widgets import Widget\n";
+        let result = parse_str_with_module_path(source, Some("project/tests/test_main.incn"));
+        assert!(result.is_err(), "Expected parser to reject `pub from` outside src/");
         let err = result.err().unwrap_or_default();
         assert!(
-            err[0].message.contains("only valid in `src/lib.incn`"),
+            err[0].message.contains("only valid in modules under `src/`"),
             "Unexpected error: {}",
             err[0].message
         );

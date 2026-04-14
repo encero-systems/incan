@@ -82,15 +82,15 @@ pub fn pub_modifier_not_allowed_on_import(span: Span) -> CompileError {
         "The 'pub' modifier is only supported on `from ... import ...` re-exports".to_string(),
         span,
     )
-    .with_hint("Use `pub from module import Name` in `src/lib.incn`, or remove `pub`")
+    .with_hint("Use `pub from module import Name` in `src/`, or remove `pub`")
 }
 
-pub fn pub_reexport_only_allowed_in_library_entrypoint(span: Span) -> CompileError {
+pub fn pub_reexport_only_allowed_in_src_modules(span: Span) -> CompileError {
     CompileError::syntax(
-        "`pub from ... import ...` is only valid in `src/lib.incn`".to_string(),
+        "`pub from ... import ...` is only valid in modules under `src/`".to_string(),
         span,
     )
-    .with_hint("Move this re-export to `src/lib.incn`, or remove `pub` for an internal import")
+    .with_hint("Move this re-export into `src/`, or remove `pub` for an internal import")
 }
 
 pub fn decorator_path_expected(span: Span) -> CompileError {

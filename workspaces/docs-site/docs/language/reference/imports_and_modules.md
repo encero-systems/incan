@@ -355,9 +355,9 @@ Supported:
 - Parent navigation (`..` / `super`)
 - Root imports (`crate`)
 - Aliases (`as`)
+- Public re-exports in source modules: `pub from module import Item` (allowed in files under `src/`)
 
 Limitations (current):
 
 1. No wildcard imports (`from module import *`)
-2. No re-exports (cannot re-export imported items)
-3. No circular imports
+2. No circular imports

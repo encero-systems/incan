@@ -43,18 +43,18 @@ pub struct Parser<'a> {
     library_imported_vocab: ImportedLibraryVocab,
 }
 
-/// Compares the last path segment to an expected spelling for library entrypoint detection.
+/// Compares a path segment to an expected spelling for parser path-context checks.
 #[cfg(windows)]
-fn library_entrypoint_segment_eq(expected: &str, actual: &std::ffi::OsStr) -> bool {
+fn path_segment_eq(expected: &str, actual: &std::ffi::OsStr) -> bool {
     actual
         .to_str()
         .map(|value| value.eq_ignore_ascii_case(expected))
         .unwrap_or(false)
 }
 
-/// Compares the last path segment to an expected spelling for library entrypoint detection.
+/// Compares a path segment to an expected spelling for parser path-context checks.
 #[cfg(not(windows))]
-fn library_entrypoint_segment_eq(expected: &str, actual: &std::ffi::OsStr) -> bool {
+fn path_segment_eq(expected: &str, actual: &std::ffi::OsStr) -> bool {
     actual == std::ffi::OsStr::new(expected)
 }
 
@@ -198,31 +198,25 @@ impl<'a> Parser<'a> {
         Ok(Spanned::new(path, Span::new(start, end)))
     }
 
-    /// Whether the parser is currently parsing `src/lib.incn`.
+    /// Whether the parser is currently parsing a module under `src/`.
     ///
-    /// This gates [`Visibility::Public`] on `from ... import ...` (RFC 031). Callers must pass a
-    /// filesystem-style module path (as the CLI and LSP do) so the immediate parent directory is
-    /// `src` and the file name is `lib.incn`.
+    /// This gates [`Visibility::Public`] on `from ... import ...` (RFC 031). Callers must pass a filesystem-style module path (as the CLI and LSP do) so the parser can enforce that `pub from` appears only in source modules.
     ///
-    /// On Windows, the `src` / `lib.incn` segments are compared ASCII case-insensitively so editor
-    /// URIs that normalize path casing still match the library entrypoint rule.
-    fn is_library_entrypoint_module(&self) -> bool {
+    /// On Windows, path-segment checks are ASCII case-insensitive so editor URIs that normalize path casing still match.
+    fn is_src_module(&self) -> bool {
         let Some(module_path) = self.module_path.as_deref() else {
             return false;
         };
 
         let path = std::path::Path::new(module_path);
-        let Some(file_name) = path.file_name() else {
-            return false;
-        };
-        if !library_entrypoint_segment_eq("lib.incn", file_name) {
+        if path.file_name().is_none() {
             return false;
         }
 
-        let Some(parent_dir) = path.parent().and_then(std::path::Path::file_name) else {
-            return false;
-        };
-        library_entrypoint_segment_eq("src", parent_dir)
+        path.ancestors()
+            .skip(1)
+            .filter_map(std::path::Path::file_name)
+            .any(|segment| path_segment_eq("src", segment))
     }
 
     /// Activate soft keywords introduced by stdlib or library imports in this declaration.

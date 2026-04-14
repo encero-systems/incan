@@ -27,11 +27,8 @@ impl<'a> Parser<'a> {
         }
 
         let decl = if self.check_keyword(KeywordId::From) {
-            if visibility == Visibility::Public
-                && self.module_path.is_some()
-                && !self.is_library_entrypoint_module()
-            {
-                return Err(errors::pub_reexport_only_allowed_in_library_entrypoint(
+            if visibility == Visibility::Public && self.module_path.is_some() && !self.is_src_module() {
+                return Err(errors::pub_reexport_only_allowed_in_src_modules(
                     self.current_span(),
                 ));
             }

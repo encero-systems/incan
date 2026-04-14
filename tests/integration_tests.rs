@@ -3189,6 +3189,41 @@ pub def display[T](data: DataSet[T]) -> None:
     }
 
     #[test]
+    fn build_accepts_pub_from_reexport_in_src_submodule_facade() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path().join("session_facade_project");
+        std::fs::create_dir_all(project_root.join("src/session"))?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"session_facade\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            project_root.join("src/session/types.incn"),
+            "pub class Session:\n  id: int\n",
+        )?;
+        std::fs::write(
+            project_root.join("src/session/mod.incn"),
+            "pub from crate.session.types import Session\n",
+        )?;
+        let main_path = project_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            "from session import Session\n\ndef main() -> None:\n  s = Session(id=1)\n  print(s.id)\n",
+        )?;
+
+        let out_dir = project_root.join("out");
+        let project_build = run_build(&main_path, &out_dir)?;
+        assert!(
+            project_build.status.success(),
+            "expected `build` to accept src submodule facade re-export.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&project_build.stdout),
+            String::from_utf8_lossy(&project_build.stderr)
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn build_lib_with_vocab_companion_embeds_vocab_payload() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let producer_root = tmp.path().join("widgets_vocab_project");

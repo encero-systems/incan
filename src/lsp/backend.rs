@@ -126,10 +126,9 @@ impl IncanLanguageServer {
         // Step 2: Parse
         //
         // Pass the on-disk file path as `module_path` so context-sensitive syntax matches the CLI.
-        // In particular, `pub from ... import ...` is only accepted when this path resolves to a file
-        // named `lib.incn` whose parent directory is `src` (RFC 031 / `incan_syntax` parser).
-        // If `uri.to_file_path()` fails, `module_path` is omitted and those rules
-        // are skipped during parsing (prefer fixing the client URI scheme / workspace roots).
+        // In particular, `pub from ... import ...` is only accepted when this path resolves under `src/` (RFC 031 /
+        // `incan_syntax` parser). If `uri.to_file_path()` fails, `module_path` is omitted and those rules are
+        // skipped during parsing (prefer fixing the client URI scheme / workspace roots).
         let mut ast = match parser::parse_with_context(
             &tokens,
             module_path.as_deref().and_then(|path| path.to_str()),
