@@ -4541,6 +4541,7 @@
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Compiler</strong>: <code>pub from ... import ...</code> now works in any module under <code>src/</code> (not just <code>src/lib.incn</code>), which unblocks package submodule facades that re-export symbols for parent imports like <code>from session import Session</code> (#287).</li>
 <li><strong>Compiler</strong>: Cyclic cross-module projects now resolve imported dependencies during per-module typechecking by import graph (not discovery order), so direct explicit call-site generic calls like <code>collect_with_active_session[T](...)</code> no longer fail with a false unsupported-call-form diagnostic in <code>incan run</code> / <code>incan --check</code> flows (#279).</li>
 <li><strong>Tooling/Codegen</strong>: Generated projects now resolve relative entry paths correctly and emit cleaner Rust for internal module calls and module statics, reducing false errors and compiler-noise in real project workflows.</li>
 <li><strong>Compiler</strong>: rust-inspect now recovers concrete borrowed function parameter pointee types from source when rust-analyzer degrades them to placeholders like <code>&amp;?</code>, so imported Rust calls keep exact borrowed contracts during typechecking and generated-lock workspace interop paths (#259).</li>

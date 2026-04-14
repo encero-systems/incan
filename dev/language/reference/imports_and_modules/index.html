@@ -5061,11 +5061,11 @@ or feature annotations.</p>
 <li>Parent navigation (<code>..</code> / <code>super</code>)</li>
 <li>Root imports (<code>crate</code>)</li>
 <li>Aliases (<code>as</code>)</li>
+<li>Public re-exports in source modules: <code>pub from module import Item</code> (allowed in files under <code>src/</code>)</li>
 </ul>
 <p>Limitations (current):</p>
 <ol>
 <li>No wildcard imports (<code>from module import *</code>)</li>
-<li>No re-exports (cannot re-export imported items)</li>
 <li>No circular imports</li>
 </ol>
 
