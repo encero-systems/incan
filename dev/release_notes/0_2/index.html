@@ -4538,6 +4538,7 @@
 <li><strong>Docs</strong>: Contributor docs now describe the registry-driven keyword path, including <code>incan-vocab</code>, parser <code>Ident</code> keyword handling, and generated VS Code grammar synchronization (<a href="/dev/RFCs/closed/implemented/027_incan_vocab_crate">RFC 027</a>).</li>
 <li><strong>Codegen</strong>: String literals passed to external Rust type methods now emit <code>.into()</code> instead of <code>.to_string()</code>, letting the Rust compiler resolve custom string types (e.g. Polars' <code>PlSmallStr</code>) via the <code>Into</code> trait.</li>
 <li><strong>Compiler</strong>: MSRV bumped from 1.85 to 1.91 (required by the current compiler/runtime/tooling dependency set, including <code>wasmtime</code> 40.x and rust-analyzer metadata crates).</li>
+<li><strong>Compiler/Tooling</strong>: AST expression traversal for serde runtime detection and test-fixture teardown discovery is now centralized through a shared walker, closing false-negative gaps in contexts like <code>elif</code> branches and loop condition/iterator expressions (#123).</li>
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
