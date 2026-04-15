@@ -4967,6 +4967,11 @@ Rust interop decorator (see <a href="/dev/RFCs/closed/implemented/023_compilable
 <li>A value annotated as <code>Collection[int]</code> may be any concrete adopter of that trait instantiation.</li>
 <li>Supertrait relationships are transitive: if <code>OrderedCollection[T]</code> adopts <code>Collection[T]</code>, adopters of <code>OrderedCollection[T]</code> also satisfy <code>Collection[T]</code>.</li>
 </ul>
+<p>When an operation should only be available for values with specific capabilities, express that constraint in the type system with generic bounds instead of selectively hiding inherited trait methods:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">require_ordering</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="nc">OrderedCollection</span><span class="p">[</span><span class="nb">int</span><span class="p">]](</span><span class="nb">values</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nb">values</span>
+</code></pre></div>
+<p>The compiler enforces these bounds at call sites using nominal trait conformance, including transitive supertrait relationships.</p>
 <h3 id="requires-adopter-contract"><code>@requires(...)</code> (adopter contract)<a class="headerlink" href="#requires-adopter-contract" title="Permanent link">&para;</a></h3>
 <p><code>@requires(...)</code> is a decorator you can put on a <code>trait</code> to declare <strong>which adopter fields must exist</strong> (and what types
 they must have).</p>
