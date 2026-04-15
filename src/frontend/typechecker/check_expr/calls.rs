@@ -920,6 +920,12 @@ impl TypeChecker {
         if is_rust_capability_bound(bound) {
             return true;
         }
+        // For non-builtin traits, apply nominal trait/supertrait compatibility (RFC 042) directly.
+        //
+        // This keeps capability checks language-general and avoids ad hoc receiver-category gating.
+        if builtin_traits::from_str(bound).is_none() && self.lookup_semantic_trait_info(bound).is_some() {
+            return self.type_satisfies_nominal_trait_bound(ty, bound);
+        }
         match ty {
             // Unknown / still-generic types are kept permissive to avoid cascading errors.
             ResolvedType::Unknown
@@ -959,6 +965,54 @@ impl TypeChecker {
             ResolvedType::Named(type_name) => self.named_type_satisfies_bound(type_name, bound),
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.type_satisfies_explicit_bound(inner, bound),
             ResolvedType::Function(_, _) | ResolvedType::SelfType => false,
+        }
+    }
+
+    /// Check whether `ty` satisfies a nominal trait bound `bound_trait` under RFC 042 semantics.
+    ///
+    /// This path is used for non-builtin traits. It intentionally reuses existing trait compatibility helpers:
+    /// - concrete adopters satisfy direct and transitive supertraits via `type_implements_trait`
+    /// - trait-typed values satisfy broader traits via `trait_is_supertrait_of`
+    fn type_satisfies_nominal_trait_bound(&self, ty: &ResolvedType, bound_trait: &str) -> bool {
+        match ty {
+            // Keep unknown / generic placeholders permissive to avoid cascading diagnostics.
+            ResolvedType::Unknown
+            | ResolvedType::TypeVar(_)
+            | ResolvedType::RustPath(_)
+            | ResolvedType::CallSiteInfer => true,
+            ResolvedType::Named(type_name) => {
+                if self.lookup_semantic_trait_info(type_name).is_some() {
+                    self.trait_is_supertrait_of(type_name, bound_trait)
+                } else {
+                    self.type_implements_trait(type_name, bound_trait)
+                }
+            }
+            ResolvedType::Generic(type_name, _args) => {
+                if self.lookup_semantic_trait_info(type_name).is_some() {
+                    self.trait_is_supertrait_of(type_name, bound_trait)
+                } else if self.lookup_semantic_type_info(type_name).is_some() {
+                    self.type_implements_trait(type_name, bound_trait)
+                } else {
+                    false
+                }
+            }
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => {
+                self.type_satisfies_nominal_trait_bound(inner, bound_trait)
+            }
+            ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::Bytes
+            | ResolvedType::FrozenStr
+            | ResolvedType::FrozenBytes
+            | ResolvedType::Unit
+            | ResolvedType::Tuple(_)
+            | ResolvedType::FrozenList(_)
+            | ResolvedType::FrozenSet(_)
+            | ResolvedType::FrozenDict(_, _)
+            | ResolvedType::Function(_, _)
+            | ResolvedType::SelfType => false,
         }
     }
 

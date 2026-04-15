@@ -5497,6 +5497,124 @@ def main() -> float:
 }
 
 #[test]
+fn test_explicit_trait_bound_accepts_transitive_supertrait_adopter() {
+    let source = r#"
+trait Capability:
+  def capability(self) -> int: ...
+
+trait Ordered with Capability:
+  def ordered(self) -> int: ...
+
+model Carrier with Ordered:
+  value: int
+
+  def capability(self) -> int:
+    return self.value
+
+  def ordered(self) -> int:
+    return self.value
+
+def require_capability[T with Capability](value: T) -> T:
+  return value
+
+def main() -> Carrier:
+  return require_capability(Carrier(value=1))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_explicit_trait_bound_accepts_trait_typed_arguments() {
+    let source = r#"
+trait Capability:
+  def capability(self) -> int: ...
+
+trait Ordered with Capability:
+  def ordered(self) -> int: ...
+
+model Carrier with Ordered:
+  value: int
+
+  def capability(self) -> int:
+    return self.value
+
+  def ordered(self) -> int:
+    return self.value
+
+def as_ordered(value: Carrier) -> Ordered:
+  return value
+
+def require_capability[T with Capability](value: T) -> T:
+  return value
+
+def main() -> Ordered:
+  ordered = as_ordered(Carrier(value=1))
+  return require_capability(ordered)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_method_generic_bound_accepts_transitive_capability_adopter() {
+    let source = r#"
+trait Capability:
+  def capability(self) -> int: ...
+
+trait Ordered with Capability:
+  def ordered(self) -> int: ...
+
+model Carrier with Ordered:
+  value: int
+
+  def capability(self) -> int:
+    return self.value
+
+  def ordered(self) -> int:
+    return self.value
+
+class Helpers:
+  @staticmethod
+  def require_capability[T with Capability](value: T) -> T:
+    return value
+
+def main() -> Carrier:
+  return Helpers.require_capability(Carrier(value=1))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_explicit_trait_bound_rejects_missing_capability() {
+    let source = r#"
+trait Capability:
+  def capability(self) -> int: ...
+
+trait Other:
+  def other(self) -> int: ...
+
+model Plain with Other:
+  value: int
+
+  def other(self) -> int:
+    return self.value
+
+def require_capability[T with Capability](value: T) -> T:
+  return value
+
+def main() -> Plain:
+  return require_capability(Plain(value=1))
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("missing capability should fail explicit trait bound");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("violates generic bound")),
+        "Expected explicit generic bound error; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_static_initializer_requires_earlier_static() {
     let source = r#"
 static SECOND: int = FIRST
