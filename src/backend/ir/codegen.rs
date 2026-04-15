@@ -966,6 +966,14 @@ mod tests {
         must_ok(parser::parse(&tokens))
     }
 
+    /// Parse and scan a source snippet to determine whether serde runtime support is required.
+    fn detects_serde(source: &str) -> bool {
+        let ast = parse_program(source);
+        let mut codegen = IrCodegen::new();
+        codegen.update_serde_requirement(&ast);
+        codegen.needs_serde()
+    }
+
     #[cfg(feature = "rust_inspect")]
     fn seeded_rust_inspect_workspace() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
@@ -1114,11 +1122,7 @@ model User:
 model Config:
   name: str
 "#;
-        let tokens = must_ok(lexer::lex(source));
-        let ast = must_ok(parser::parse(&tokens));
-        let mut codegen = IrCodegen::new();
-        codegen.update_serde_requirement(&ast);
-        assert!(codegen.needs_serde());
+        assert!(detects_serde(source));
     }
 
     #[test]
@@ -1128,11 +1132,7 @@ model Config:
 model User:
   id: int
 "#;
-        let tokens = must_ok(lexer::lex(source));
-        let ast = must_ok(parser::parse(&tokens));
-        let mut codegen = IrCodegen::new();
-        codegen.update_serde_requirement(&ast);
-        assert!(codegen.needs_serde());
+        assert!(detects_serde(source));
     }
 
     #[test]
@@ -1142,11 +1142,7 @@ model User:
 model User:
   id: int
 "#;
-        let tokens = must_ok(lexer::lex(source));
-        let ast = must_ok(parser::parse(&tokens));
-        let mut codegen = IrCodegen::new();
-        codegen.update_serde_requirement(&ast);
-        assert!(!codegen.needs_serde());
+        assert!(!detects_serde(source));
     }
 
     #[test]
@@ -1155,11 +1151,49 @@ model User:
 def main() -> None:
   _ = json_stringify(123)
 "#;
-        let tokens = must_ok(lexer::lex(source));
-        let ast = must_ok(parser::parse(&tokens));
-        let mut codegen = IrCodegen::new();
-        codegen.update_serde_requirement(&ast);
-        assert!(codegen.needs_serde());
+        assert!(detects_serde(source));
+    }
+
+    #[test]
+    fn test_serde_detection_json_stringify_in_if_condition() {
+        let source = r#"
+def main() -> None:
+  if json_stringify(1) == "1":
+    pass
+"#;
+        assert!(detects_serde(source));
+    }
+
+    #[test]
+    fn test_serde_detection_json_stringify_in_elif_body() {
+        let source = r#"
+def main() -> None:
+  if true:
+    pass
+  elif false:
+    _ = json_stringify(1)
+"#;
+        assert!(detects_serde(source));
+    }
+
+    #[test]
+    fn test_serde_detection_json_stringify_in_while_condition() {
+        let source = r#"
+def main() -> None:
+  while json_stringify(1) == "1":
+    break
+"#;
+        assert!(detects_serde(source));
+    }
+
+    #[test]
+    fn test_serde_detection_json_stringify_in_for_iterator() {
+        let source = r#"
+def main() -> None:
+  for item in [json_stringify(1)]:
+    _ = item
+"#;
+        assert!(detects_serde(source));
     }
 
     #[test]

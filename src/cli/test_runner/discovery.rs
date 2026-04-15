@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::frontend::ast::{DecoratorArg, DecoratorArgValue, Expr, Literal, Statement};
+use crate::frontend::ast::{DecoratorArg, DecoratorArgValue, Expr, Literal};
+use crate::frontend::ast_walk::any_expr_in_body;
 use crate::frontend::testing_markers::{
     TestingMarkerKind, TestingMarkerSemantics, load_testing_marker_semantics, resolve_testing_marker_kind,
 };
@@ -165,48 +166,7 @@ fn extract_fixture_dependencies(
 
 /// Check if a function has a yield statement.
 fn function_has_yield(body: &[crate::frontend::ast::Spanned<crate::frontend::ast::Statement>]) -> bool {
-    for stmt in body {
-        if statement_has_yield(&stmt.node) {
-            return true;
-        }
-    }
-    false
-}
-
-/// Check if a statement has a yield expression.
-fn statement_has_yield(stmt: &Statement) -> bool {
-    match stmt {
-        Statement::Expr(expr) => expr_has_yield(&expr.node),
-        Statement::Return(Some(expr)) => expr_has_yield(&expr.node),
-        Statement::If(if_stmt) => {
-            if_stmt.then_body.iter().any(|s| statement_has_yield(&s.node))
-                || if_stmt
-                    .else_body
-                    .as_ref()
-                    .is_some_and(|b| b.iter().any(|s| statement_has_yield(&s.node)))
-        }
-        Statement::While(while_stmt) => while_stmt.body.iter().any(|s| statement_has_yield(&s.node)),
-        Statement::For(for_stmt) => for_stmt.body.iter().any(|s| statement_has_yield(&s.node)),
-        _ => false,
-    }
-}
-
-/// Check if an expression has a yield expression.
-fn expr_has_yield(expr: &Expr) -> bool {
-    match expr {
-        Expr::Yield(_) => true,
-        Expr::Binary(left, _, right) => expr_has_yield(&left.node) || expr_has_yield(&right.node),
-        Expr::Unary(_, operand) => expr_has_yield(&operand.node),
-        Expr::Call(callee, _type_args, args) => {
-            expr_has_yield(&callee.node)
-                || args.iter().any(|a| match a {
-                    crate::frontend::ast::CallArg::Positional(e) => expr_has_yield(&e.node),
-                    crate::frontend::ast::CallArg::Named(_, e) => expr_has_yield(&e.node),
-                })
-        }
-        Expr::Paren(inner) => expr_has_yield(&inner.node),
-        _ => false,
-    }
+    any_expr_in_body(body, |expr| matches!(expr, Expr::Yield(_)))
 }
 
 /// Get autouse fixtures for a given scope.
@@ -612,6 +572,27 @@ def temp_file() -> str:
 
         assert_eq!(result.fixtures.len(), 1);
         assert!(result.fixtures[0].has_teardown, "yield should be detected as teardown");
+        Ok(())
+    }
+
+    #[test]
+    fn discover_fixture_with_teardown_in_assignment_expression() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+from std.testing import fixture
+
+@fixture
+def temp_file() -> str:
+    path = (yield "tmp.txt")
+    return path
+"#;
+        let file = write_test_file(source)?;
+        let result = discover_tests_and_fixtures(file.path())?;
+
+        assert_eq!(result.fixtures.len(), 1);
+        assert!(
+            result.fixtures[0].has_teardown,
+            "yield used in assignment expression should still be detected as teardown"
+        );
         Ok(())
     }
 

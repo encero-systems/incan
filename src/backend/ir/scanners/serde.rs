@@ -8,7 +8,8 @@
 //! Once `json_stringify` is behind `from std.serde.json import json_stringify`, the
 //! builtin fallback here can be removed entirely.
 
-use crate::frontend::ast::{CallArg, Declaration, DecoratorArg, Expr, Program, Spanned, Statement};
+use crate::frontend::ast::{Declaration, DecoratorArg, Expr, Program};
+use crate::frontend::ast_walk::any_expr_in_program;
 use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_core::lang::decorators::DecoratorId;
 use incan_core::lang::derives::{self, DeriveId};
@@ -81,124 +82,13 @@ fn has_serde_derive(program: &Program) -> bool {
 // ---------------------------------------------------------------------------
 
 fn program_has_json_stringify(program: &Program) -> bool {
-    for decl in &program.declarations {
-        let bodies: Vec<&[Spanned<Statement>]> = match &decl.node {
-            Declaration::Function(f) => vec![&f.body],
-            Declaration::Model(m) => m.methods.iter().filter_map(|m| m.node.body.as_deref()).collect(),
-            Declaration::Class(c) => c.methods.iter().filter_map(|m| m.node.body.as_deref()).collect(),
-            _ => continue,
+    any_expr_in_program(program, |expr| {
+        let Expr::Call(callee, _type_args, _args) = expr else {
+            return false;
         };
-        for body in bodies {
-            if body_has_call_named(body, BuiltinFnId::JsonStringify) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn body_has_call_named(body: &[Spanned<Statement>], target: BuiltinFnId) -> bool {
-    body.iter().any(|s| stmt_has_call(s, target))
-}
-
-fn stmt_has_call(stmt: &Spanned<Statement>, target: BuiltinFnId) -> bool {
-    match &stmt.node {
-        Statement::Expr(e) | Statement::Return(Some(e)) => expr_has_call(&e.node, target),
-        Statement::Assignment(a) => expr_has_call(&a.value.node, target),
-        Statement::CompoundAssignment(a) => expr_has_call(&a.value.node, target),
-        Statement::FieldAssignment(a) => expr_has_call(&a.value.node, target),
-        Statement::IndexAssignment(a) => expr_has_call(&a.value.node, target),
-        Statement::TupleUnpack(u) => expr_has_call(&u.value.node, target),
-        Statement::TupleAssign(a) => expr_has_call(&a.value.node, target),
-        Statement::Surface(surface_stmt) => match &surface_stmt.payload {
-            crate::frontend::ast::SurfaceStmtPayload::KeywordArgs(args) => {
-                args.iter().any(|arg| expr_has_call(&arg.node, target))
-            }
-        },
-        Statement::VocabBlock(block) => {
-            block.header_args.iter().any(|arg| expr_has_call(&arg.node, target))
-                || body_has_call_named(&block.body, target)
-        }
-        Statement::If(s) => {
-            body_has_call_named(&s.then_body, target)
-                || s.else_body.as_ref().is_some_and(|b| body_has_call_named(b, target))
-        }
-        Statement::While(s) => body_has_call_named(&s.body, target),
-        Statement::For(s) => body_has_call_named(&s.body, target),
-        _ => false,
-    }
-}
-
-/// Compact recursive expression check — does any sub-expression call the target builtin?
-fn expr_has_call(expr: &Expr, target: BuiltinFnId) -> bool {
-    match expr {
-        Expr::Call(f, _type_args, args) => {
-            if let Expr::Ident(name) = &f.node
-                && builtins::from_str(name.as_str()) == Some(target)
-            {
-                return true;
-            }
-            expr_has_call(&f.node, target) || args.iter().any(|a| call_arg_has(a, target))
-        }
-        Expr::MethodCall(base, _, _type_args, args) => {
-            expr_has_call(&base.node, target) || args.iter().any(|a| call_arg_has(a, target))
-        }
-        Expr::Constructor(_, args) => args.iter().any(|a| call_arg_has(a, target)),
-        Expr::Binary(l, _, r) | Expr::Index(l, r) => expr_has_call(&l.node, target) || expr_has_call(&r.node, target),
-        Expr::Range { start, end, .. } => expr_has_call(&start.node, target) || expr_has_call(&end.node, target),
-        Expr::Unary(_, e) | Expr::Try(e) | Expr::Paren(e) | Expr::Field(e, _) => expr_has_call(&e.node, target),
-        Expr::Surface(surface_expr) => match &surface_expr.payload {
-            crate::frontend::ast::SurfaceExprPayload::PrefixUnary(inner) => expr_has_call(&inner.node, target),
-        },
-        Expr::Closure(_, body) => expr_has_call(&body.node, target),
-        Expr::Yield(Some(e)) => expr_has_call(&e.node, target),
-        Expr::List(items) | Expr::Tuple(items) | Expr::Set(items) => {
-            items.iter().any(|i| expr_has_call(&i.node, target))
-        }
-        Expr::Dict(pairs) => pairs
-            .iter()
-            .any(|(k, v)| expr_has_call(&k.node, target) || expr_has_call(&v.node, target)),
-        Expr::If(if_expr) => {
-            body_has_call_named(&if_expr.then_body, target)
-                || if_expr
-                    .else_body
-                    .as_ref()
-                    .is_some_and(|b| body_has_call_named(b, target))
-        }
-        Expr::Match(scrutinee, arms) => {
-            expr_has_call(&scrutinee.node, target)
-                || arms.iter().any(|arm| match &arm.node.body {
-                    crate::frontend::ast::MatchBody::Expr(e) => expr_has_call(&e.node, target),
-                    crate::frontend::ast::MatchBody::Block(stmts) => body_has_call_named(stmts, target),
-                })
-        }
-        Expr::Slice(base, slice) => {
-            expr_has_call(&base.node, target)
-                || slice.start.as_ref().is_some_and(|e| expr_has_call(&e.node, target))
-                || slice.end.as_ref().is_some_and(|e| expr_has_call(&e.node, target))
-                || slice.step.as_ref().is_some_and(|e| expr_has_call(&e.node, target))
-        }
-        Expr::ListComp(c) => {
-            expr_has_call(&c.expr.node, target)
-                || expr_has_call(&c.iter.node, target)
-                || c.filter.as_ref().is_some_and(|f| expr_has_call(&f.node, target))
-        }
-        Expr::DictComp(c) => {
-            expr_has_call(&c.key.node, target)
-                || expr_has_call(&c.value.node, target)
-                || expr_has_call(&c.iter.node, target)
-                || c.filter.as_ref().is_some_and(|f| expr_has_call(&f.node, target))
-        }
-        Expr::FString(parts) => parts.iter().any(|p| match p {
-            crate::frontend::ast::FStringPart::Literal(_) => false,
-            crate::frontend::ast::FStringPart::Expr(e) => expr_has_call(&e.node, target),
-        }),
-        _ => false,
-    }
-}
-
-fn call_arg_has(arg: &CallArg, target: BuiltinFnId) -> bool {
-    match arg {
-        CallArg::Positional(e) | CallArg::Named(_, e) => expr_has_call(&e.node, target),
-    }
+        let Expr::Ident(name) = &callee.node else {
+            return false;
+        };
+        builtins::from_str(name.as_str()) == Some(BuiltinFnId::JsonStringify)
+    })
 }
