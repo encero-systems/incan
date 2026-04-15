@@ -1,6 +1,7 @@
 //! Test runner implementation (pytest-style).
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -245,6 +246,15 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         }
 
         let batch = &filtered_tests[batch_start..idx];
+        println!(
+            "{}",
+            style(
+                format!("running {} ({} item(s))", file_path.display(), batch.len()),
+                "2",
+                use_color
+            )
+        );
+        let _ = std::io::stdout().flush();
         let batch_results = run_file_tests_batch(
             batch,
             &mut prep_cache,

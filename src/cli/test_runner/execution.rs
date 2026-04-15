@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -29,10 +29,16 @@ use super::types::{TestInfo, TestResult};
 /// Generated `#[cfg(test)]` module that wraps Incan test functions as Rust `#[test]` cases, one `cargo test` per file.
 const INCAN_FILE_TEST_MOD: &str = "__incan_file_tests";
 
-/// Shared Cargo `target/` directory for all generated test crates in a package (`target/incan_test_runner`).
+fn parse_isolated_target_env(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1" | "true" | "yes" | "on"))
+}
+
+/// Shared Cargo `target/` directory for generated test crates in a package.
 ///
-/// Every harness still gets its own generated tree under `target/incan_tests/`, but dependency crates are built once
-/// into this directory so repeated `cargo test` / `cargo run` invocations reuse artifacts.
+/// By default this reuses the project's main `target/` so existing dependency artifacts are shared across regular
+/// builds and `incan test` runs for better DX.
+///
+/// Set `INCAN_TEST_ISOLATED_TARGET_DIR` to one of `1|true|yes|on` to use `target/incan_test_runner` instead.
 fn shared_cargo_target_dir(project_root: &Path) -> PathBuf {
     let absolute_project_root = if project_root.is_absolute() {
         project_root.to_path_buf()
@@ -42,7 +48,11 @@ fn shared_cargo_target_dir(project_root: &Path) -> PathBuf {
         project_root.to_path_buf()
     };
 
-    absolute_project_root.join("target").join("incan_test_runner")
+    if parse_isolated_target_env(std::env::var("INCAN_TEST_ISOLATED_TARGET_DIR").ok().as_deref()) {
+        absolute_project_root.join("target").join("incan_test_runner")
+    } else {
+        absolute_project_root.join("target")
+    }
 }
 
 /// Shared front-end + dependency work for one test file, reused across parametrized variants and multiple tests in the
@@ -118,12 +128,57 @@ fn compute_test_prep_cache_key(
     format!("v1:{}", hex::encode(hasher.finalize()))
 }
 
+/// Merge stdlib feature flags from previously prepared files with the current file requirements.
+///
+/// The rust-inspect workspace lives under one shared `target/incan_lock` directory per package. If files in a single
+/// `incan test` session require different stdlib features, a non-monotonic feature set can cause workspace
+/// fingerprint churn and expensive mid-run rewrites. Keeping a session-local feature union avoids that churn.
+fn merge_rust_inspect_stdlib_features<'a>(
+    existing_feature_sets: impl Iterator<Item = &'a [String]>,
+    current_features: &[String],
+) -> Vec<String> {
+    let mut merged: BTreeSet<String> = current_features.iter().cloned().collect();
+    for features in existing_feature_sets {
+        merged.extend(features.iter().cloned());
+    }
+    merged.into_iter().collect()
+}
+
 fn file_batch_dir_suffix(file_path: &Path) -> String {
     let p = fs::canonicalize(file_path).unwrap_or_else(|_| file_path.to_path_buf());
     let mut hasher = Sha256::new();
     hasher.update(p.to_string_lossy().as_bytes());
     let digest = hex::encode(hasher.finalize());
     format!("batch_{}", &digest[..16])
+}
+
+/// Stable Rust crate name for one generated per-file test runner crate.
+///
+/// We derive this from the per-file batch suffix so shared `CARGO_TARGET_DIR` reuse does not alias crate identities
+/// across different `.incn` files.
+fn runner_crate_name_for_batch_suffix(batch_suffix: &str) -> String {
+    let normalized = batch_suffix
+        .strip_prefix("batch_")
+        .unwrap_or(batch_suffix)
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect::<String>();
+    format!("test_runner_{}", normalized)
+}
+
+/// Normalize a libtest test name by stripping any leading crate/module qualifiers before
+/// [`INCAN_FILE_TEST_MOD`].
+///
+/// Examples:
+/// - `__incan_file_tests::incan_harness_0_case` (unchanged)
+/// - `test_runner::__incan_file_tests::incan_harness_0_case` (crate prefix removed)
+fn normalize_libtest_test_name(name: &str) -> String {
+    let trimmed = name.trim();
+    if let Some(pos) = trimmed.find(INCAN_FILE_TEST_MOD) {
+        trimmed[pos..].to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Stable `#[test]` function name inside [`INCAN_FILE_TEST_MOD`] (indexed for guaranteed uniqueness).
@@ -188,7 +243,7 @@ fn parse_libtest_outcomes(combined: &str) -> HashMap<String, bool> {
         let passed = status.starts_with("ok");
         let failed = status.starts_with("FAILED");
         if passed || failed {
-            map.insert(name.to_string(), passed);
+            map.insert(normalize_libtest_test_name(name), passed);
         }
     }
     map
@@ -203,27 +258,22 @@ fn libtest_qualified_name(fn_name: &str) -> String {
 ///
 /// Looks for libtest `---- <qualified> stdout ----` sections, then falls back to panic/assertion heuristics or the
 /// full trimmed output.
-fn extract_libtest_failure_detail(combined: &str, fn_name: &str) -> String {
-    let needle = libtest_qualified_name(fn_name);
-    let header = format!("---- {needle} stdout ----");
-    if let Some(pos) = combined.find(&header) {
-        let after = &combined[pos + header.len()..];
-        let end = after
-            .find("\n---- ")
-            .unwrap_or_else(|| after.find("\nfailures:").unwrap_or(after.len()));
-        let body = after[..end].trim();
-        if !body.is_empty() {
-            return body.to_string();
-        }
-    }
-    let crate_needle = format!("test_runner::{needle}");
-    let header2 = format!("---- {crate_needle} stdout ----");
-    if let Some(pos) = combined.find(&header2) {
-        let after = &combined[pos + header2.len()..];
-        let end = after.find("\n---- ").unwrap_or(after.len());
-        let body = after[..end].trim();
-        if !body.is_empty() {
-            return body.to_string();
+fn extract_libtest_failure_detail(combined: &str, full_name: &str) -> String {
+    for line in combined.lines() {
+        let line = line.trim();
+        if line.starts_with("---- ")
+            && line.ends_with(" stdout ----")
+            && normalize_libtest_test_name(line).contains(full_name)
+            && let Some(pos) = combined.find(line)
+        {
+            let after = &combined[pos + line.len()..];
+            let end = after
+                .find("\n---- ")
+                .unwrap_or_else(|| after.find("\nfailures:").unwrap_or(after.len()));
+            let body = after[..end].trim();
+            if !body.is_empty() {
+                return body.to_string();
+            }
         }
     }
     if combined.contains("panicked at") {
@@ -245,6 +295,8 @@ fn map_batch_results(
     elapsed: std::time::Duration,
     compile_failed: bool,
     compile_message: &str,
+    manifest_path: &Path,
+    crate_name: &str,
 ) -> Vec<(TestInfo, TestResult)> {
     if compile_failed {
         let msg = compile_message.to_string();
@@ -266,14 +318,22 @@ fn map_batch_results(
             let result = match outcomes.get(&full) {
                 Some(true) => TestResult::Passed(std::time::Duration::from_millis(per_test_ms as u64)),
                 Some(false) => {
-                    let detail = extract_libtest_failure_detail(combined_output, &fname);
+                    let detail = extract_libtest_failure_detail(combined_output, &full);
                     TestResult::Failed(std::time::Duration::from_millis(per_test_ms as u64), detail)
                 }
                 None => TestResult::Failed(
                     elapsed,
-                    format!(
-                        "Test runner did not report outcome for `{full}` (see cargo output below)\n{combined_output}"
-                    ),
+                    if combined_output.contains(INCAN_FILE_TEST_MOD) {
+                        format!(
+                            "Test runner did not report outcome for `{full}`.\nmanifest=`{}` crate=`{}`\nThis may indicate stale/shared test-runner artifacts.\n{combined_output}",
+                            manifest_path.display(),
+                            crate_name,
+                        )
+                    } else {
+                        format!(
+                            "Test runner did not report outcome for `{full}` (see cargo output below)\n{combined_output}"
+                        )
+                    },
                 ),
             };
             (t.clone(), result)
@@ -530,6 +590,13 @@ pub(super) fn run_file_tests_batch(
         #[cfg(feature = "rust_inspect")]
         let rust_inspect_manifest_dir = {
             let metadata_query_paths = collect_rust_inspect_query_paths(&dependency_modules);
+            let mut rust_inspect_requirements = project_requirements.clone();
+            rust_inspect_requirements.stdlib_features = merge_rust_inspect_stdlib_features(
+                prep_cache
+                    .values()
+                    .map(|prepared| prepared.project_requirements.stdlib_features.as_slice()),
+                &project_requirements.stdlib_features,
+            );
             let rust_inspect_manifest_dir = match ensure_rust_inspect_workspace(
                 &project_root,
                 &project_name,
@@ -537,7 +604,7 @@ pub(super) fn run_file_tests_batch(
                     .as_ref()
                     .and_then(|m| m.build.as_ref().and_then(|build| build.rust_edition.clone())),
                 &resolved,
-                &project_requirements,
+                &rust_inspect_requirements,
                 lock_payload.clone(),
             ) {
                 Ok(dir) => dir,
@@ -586,9 +653,18 @@ pub(super) fn run_file_tests_batch(
     }
 
     let dir_suffix = file_batch_dir_suffix(&first.file_path);
+    let runner_crate_name = runner_crate_name_for_batch_suffix(&dir_suffix);
     let temp_dir = format!("target/incan_tests/{}", dir_suffix);
+    let temp_dir_path = PathBuf::from(&temp_dir);
+    let manifest_path = if temp_dir_path.is_absolute() {
+        temp_dir_path.join("Cargo.toml")
+    } else if let Ok(cwd) = std::env::current_dir() {
+        cwd.join(&temp_dir).join("Cargo.toml")
+    } else {
+        temp_dir_path.join("Cargo.toml")
+    };
 
-    let mut generator = ProjectGenerator::new(&temp_dir, "test_runner", false);
+    let mut generator = ProjectGenerator::new(&temp_dir, &runner_crate_name, false);
     generator.set_stdlib_features(prepared.project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(true);
     generator.set_dependencies(prepared.resolved.dependencies.clone());
@@ -631,6 +707,8 @@ pub(super) fn run_file_tests_batch(
     let shared_target_dir = shared_cargo_target_dir(&prepared.project_root);
     let mut command = std::process::Command::new("cargo");
     command.arg("test");
+    command.arg("--manifest-path");
+    command.arg(&manifest_path);
     for flag in common::cargo_command_flags(locked, frozen, &cargo_feature_selection) {
         command.arg(flag);
     }
@@ -674,10 +752,18 @@ pub(super) fn run_file_tests_batch(
             || combined.contains("error: aborting due to"));
 
     if compile_failed {
-        return map_batch_results(tests, &combined, elapsed, true, &combined);
+        return map_batch_results(
+            tests,
+            &combined,
+            elapsed,
+            true,
+            &combined,
+            &manifest_path,
+            &runner_crate_name,
+        );
     }
 
-    map_batch_results(tests, &combined, elapsed, false, "")
+    map_batch_results(tests, &combined, elapsed, false, "", &manifest_path, &runner_crate_name)
 }
 
 /// Inject a `fn main()` into generated Rust code that calls the test function (legacy single-case `cargo run` path).
@@ -737,7 +823,20 @@ mod tests {
     #[test]
     fn shared_target_dir_stays_under_project_target() {
         let target_dir = shared_cargo_target_dir(Path::new("/tmp/incan_project"));
-        assert_eq!(target_dir, PathBuf::from("/tmp/incan_project/target/incan_test_runner"));
+        assert_eq!(target_dir, PathBuf::from("/tmp/incan_project/target"));
+    }
+
+    #[test]
+    fn parse_isolated_target_env_requires_truthy_values() {
+        assert!(parse_isolated_target_env(Some("1")));
+        assert!(parse_isolated_target_env(Some("true")));
+        assert!(parse_isolated_target_env(Some(" yes ")));
+        assert!(parse_isolated_target_env(Some("on")));
+        assert!(!parse_isolated_target_env(None));
+        assert!(!parse_isolated_target_env(Some("0")));
+        assert!(!parse_isolated_target_env(Some("false")));
+        assert!(!parse_isolated_target_env(Some("off")));
+        assert!(!parse_isolated_target_env(Some("")));
     }
 
     #[test]
@@ -839,6 +938,27 @@ mod tests {
     }
 
     #[test]
+    fn merge_rust_inspect_stdlib_features_unions_and_sorts() {
+        let existing = [
+            vec!["json".to_string(), "async".to_string()],
+            vec!["web".to_string(), "async".to_string()],
+        ];
+        let merged = merge_rust_inspect_stdlib_features(
+            existing.iter().map(|set| set.as_slice()),
+            &["serde".to_string(), "json".to_string()],
+        );
+        assert_eq!(
+            merged,
+            vec![
+                "async".to_string(),
+                "json".to_string(),
+                "serde".to_string(),
+                "web".to_string()
+            ]
+        );
+    }
+
+    #[test]
     fn parse_libtest_outcomes_detects_ok_and_failed() {
         let out = r#"
 test __incan_file_tests::incan_harness_0_a ... ok
@@ -848,6 +968,23 @@ test result: FAILED. 1 passed; 1 failed
         let m = parse_libtest_outcomes(out);
         assert_eq!(m.get("__incan_file_tests::incan_harness_0_a"), Some(&true));
         assert_eq!(m.get("__incan_file_tests::incan_harness_1_b"), Some(&false));
+    }
+
+    #[test]
+    fn parse_libtest_outcomes_normalizes_prefixed_names() {
+        let out = r#"
+test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_0_a ... ok
+test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAILED
+"#;
+        let m = parse_libtest_outcomes(out);
+        assert_eq!(m.get("__incan_file_tests::incan_harness_0_a"), Some(&true));
+        assert_eq!(m.get("__incan_file_tests::incan_harness_1_b"), Some(&false));
+    }
+
+    #[test]
+    fn runner_crate_name_is_derived_from_batch_suffix() {
+        let name = runner_crate_name_for_batch_suffix("batch_76001490ba86f677");
+        assert_eq!(name, "test_runner_76001490ba86f677");
     }
 
     #[test]

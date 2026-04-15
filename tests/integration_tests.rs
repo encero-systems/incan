@@ -1546,6 +1546,7 @@ def main() -> None:
 /// expansion that unit tests cannot detect.
 mod test_runner_e2e {
     use super::incan_debug_binary;
+    use std::path::Path;
     use std::process::Command;
 
     /// Create a temp directory with a single test file and return the directory path.
@@ -1567,17 +1568,22 @@ mod test_runner_e2e {
         dir
     }
 
-    /// Run `incan test` on a directory and return the combined output.
-    fn run_incan_test(dir: &std::path::Path) -> std::process::Output {
+    /// Run `incan test` for the given path argument (file or directory).
+    fn run_incan_test_path(path: &Path) -> std::process::Output {
         Command::new(incan_debug_binary())
-            .args(["test", dir.to_string_lossy().as_ref()])
+            .args(["test", path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()
             .unwrap_or_else(|e| panic!("failed to run `incan test`: {}", e))
     }
 
+    /// Run `incan test` on a directory and return the combined output.
+    fn run_incan_test(dir: &Path) -> std::process::Output {
+        run_incan_test_path(dir)
+    }
+
     /// Run `incan test` with extra flags.
-    fn run_incan_test_with_args(dir: &std::path::Path, extra: &[&str]) -> std::process::Output {
+    fn run_incan_test_with_args(dir: &Path, extra: &[&str]) -> std::process::Output {
         let mut cmd = Command::new(incan_debug_binary());
         cmd.arg("test");
         for arg in extra {
@@ -1587,6 +1593,17 @@ mod test_runner_e2e {
         cmd.env("CARGO_NET_OFFLINE", "true");
         cmd.output()
             .unwrap_or_else(|e| panic!("failed to run `incan test`: {}", e))
+    }
+
+    /// Run `incan test` with `cwd` and a relative path argument.
+    fn run_incan_test_relative(cwd: &Path, relative_path: &str) -> std::process::Output {
+        Command::new(incan_debug_binary())
+            .arg("test")
+            .arg(relative_path)
+            .env("CARGO_NET_OFFLINE", "true")
+            .current_dir(cwd)
+            .output()
+            .unwrap_or_else(|e| panic!("failed to run `incan test {relative_path}`: {}", e))
     }
 
     // ---- Passing test ----
@@ -1654,6 +1671,158 @@ def test_two() -> None:
             stdout.match_indices("PASSED").count() >= 2,
             "expected two passing results (per-test PASSED lines).\nstdout:\n{}",
             stdout,
+        );
+    }
+
+    #[test]
+    fn e2e_sequential_single_file_runs_do_not_cross_wire_relative_paths() {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "session_isolation_relative"
+version = "0.1.0"
+"#,
+        );
+        let tests_dir = dir.join("tests");
+        if let Err(err) = std::fs::create_dir_all(&tests_dir) {
+            panic!("failed to create tests dir: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            tests_dir.join("test_alpha.incn"),
+            r#"
+from std.testing import assert_eq
+
+def test_alpha_one() -> None:
+    assert_eq(1, 1)
+
+def test_alpha_two() -> None:
+    assert_eq(2, 2)
+"#,
+        ) {
+            panic!("failed to write test_alpha.incn: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            tests_dir.join("test_beta.incn"),
+            r#"
+from std.testing import assert_eq
+
+def test_beta_only() -> None:
+    assert_eq(3, 3)
+"#,
+        ) {
+            panic!("failed to write test_beta.incn: {}", err);
+        }
+
+        let first = run_incan_test_relative(&dir, "tests/test_alpha.incn");
+        let first_stdout = String::from_utf8_lossy(&first.stdout);
+        let first_stderr = String::from_utf8_lossy(&first.stderr);
+        assert!(
+            first.status.success(),
+            "expected first single-file run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            first_stdout,
+            first_stderr,
+        );
+
+        let second = run_incan_test_relative(&dir, "tests/test_beta.incn");
+        let second_stdout = String::from_utf8_lossy(&second.stdout);
+        let second_stderr = String::from_utf8_lossy(&second.stderr);
+        let second_combined = format!("{second_stdout}\n{second_stderr}");
+        assert!(
+            second.status.success(),
+            "expected second single-file run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            second_stdout,
+            second_stderr,
+        );
+        assert!(
+            second_combined.contains("test_beta.incn::test_beta_only"),
+            "expected the requested beta test to run.\noutput:\n{}",
+            second_combined,
+        );
+        assert!(
+            !second_combined.contains("test_alpha.incn::test_alpha_one")
+                && !second_combined.contains("test_alpha.incn::test_alpha_two"),
+            "expected no alpha tests in second single-file run.\noutput:\n{}",
+            second_combined,
+        );
+        assert!(
+            !second_combined.contains("Test runner did not report outcome"),
+            "expected no missing-outcome diagnostic in second run.\noutput:\n{}",
+            second_combined,
+        );
+    }
+
+    #[test]
+    fn e2e_sequential_single_file_runs_do_not_cross_wire_absolute_paths() {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "session_isolation_absolute"
+version = "0.1.0"
+"#,
+        );
+        let tests_dir = dir.join("tests");
+        if let Err(err) = std::fs::create_dir_all(&tests_dir) {
+            panic!("failed to create tests dir: {}", err);
+        }
+        let alpha_path = tests_dir.join("test_alpha_abs.incn");
+        let beta_path = tests_dir.join("test_beta_abs.incn");
+        if let Err(err) = std::fs::write(
+            &alpha_path,
+            r#"
+from std.testing import assert_eq
+
+def test_alpha_abs_one() -> None:
+    assert_eq(10, 10)
+"#,
+        ) {
+            panic!("failed to write test_alpha_abs.incn: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            &beta_path,
+            r#"
+from std.testing import assert_eq
+
+def test_beta_abs_only() -> None:
+    assert_eq(20, 20)
+"#,
+        ) {
+            panic!("failed to write test_beta_abs.incn: {}", err);
+        }
+
+        let first = run_incan_test_path(&alpha_path);
+        let first_stdout = String::from_utf8_lossy(&first.stdout);
+        let first_stderr = String::from_utf8_lossy(&first.stderr);
+        assert!(
+            first.status.success(),
+            "expected first absolute-path run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            first_stdout,
+            first_stderr,
+        );
+
+        let second = run_incan_test_path(&beta_path);
+        let second_stdout = String::from_utf8_lossy(&second.stdout);
+        let second_stderr = String::from_utf8_lossy(&second.stderr);
+        let second_combined = format!("{second_stdout}\n{second_stderr}");
+        assert!(
+            second.status.success(),
+            "expected second absolute-path run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            second_stdout,
+            second_stderr,
+        );
+        assert!(
+            second_combined.contains("test_beta_abs.incn::test_beta_abs_only"),
+            "expected the requested absolute-path beta test to run.\noutput:\n{}",
+            second_combined,
+        );
+        assert!(
+            !second_combined.contains("test_alpha_abs.incn::test_alpha_abs_one"),
+            "expected no alpha absolute-path tests in second run.\noutput:\n{}",
+            second_combined,
+        );
+        assert!(
+            !second_combined.contains("Test runner did not report outcome"),
+            "expected no missing-outcome diagnostic in second absolute-path run.\noutput:\n{}",
+            second_combined,
         );
     }
 

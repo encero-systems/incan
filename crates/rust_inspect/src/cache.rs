@@ -5,6 +5,8 @@ use std::collections::hash_map::Entry;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+#[cfg(not(test))]
+use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -28,7 +30,7 @@ const INSPECTOR_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The entire cache is protected by one mutex so `RustWorkspace` (which is not `Sync` because of the retained `Vfs`)
 /// never has to live inside `Arc` for cross-thread sharing.
 pub struct RustMetadataCache {
-    inner: Mutex<CacheInner>,
+    inner: Arc<Mutex<CacheInner>>,
 }
 
 #[derive(Default)]
@@ -554,10 +556,22 @@ fn extract_in_workspace_set(
 }
 
 impl RustMetadataCache {
+    #[cfg(not(test))]
+    fn shared_inner() -> Arc<Mutex<CacheInner>> {
+        static SHARED_INNER: OnceLock<Arc<Mutex<CacheInner>>> = OnceLock::new();
+        Arc::clone(SHARED_INNER.get_or_init(|| Arc::new(Mutex::new(CacheInner::default()))))
+    }
+
+    #[cfg(test)]
+    fn shared_inner() -> Arc<Mutex<CacheInner>> {
+        // Keep unit tests isolated by default so assertions remain deterministic.
+        Arc::new(Mutex::new(CacheInner::default()))
+    }
+
     /// Create an empty cache.
     pub fn new() -> Self {
         Self {
-            inner: Mutex::new(CacheInner::default()),
+            inner: Self::shared_inner(),
         }
     }
 

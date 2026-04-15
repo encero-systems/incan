@@ -800,4 +800,18 @@ def test_len(input: str, expected: int) -> None:
         assert!(names.contains(&"math_test.incn".to_string()));
         Ok(())
     }
+
+    #[test]
+    fn discover_single_file_input_returns_only_that_file() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let first = dir.path().join("test_alpha.incn");
+        let second = dir.path().join("test_beta.incn");
+        std::fs::write(&first, "def test_alpha() -> None:\n    pass\n")?;
+        std::fs::write(&second, "def test_beta() -> None:\n    pass\n")?;
+
+        let files = discover_test_files(&first);
+        assert_eq!(files.len(), 1, "single-file input should not recurse the directory");
+        assert_eq!(files[0], first);
+        Ok(())
+    }
 }
