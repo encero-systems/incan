@@ -356,8 +356,16 @@ impl AstLowering {
 
                 match (action, &surface_expr.payload) {
                     (SurfaceExprLoweringAction::Await, ast::SurfaceExprPayload::PrefixUnary(inner)) => {
+                        // Preserve explicit grouping: `await (x?)` should keep the grouped `Try` operand shape
+                        // instead of applying await/try normalization for the unparenthesized `await x()?` case.
+                        let parenthesized_operand = matches!(&inner.node, ast::Expr::Paren(_));
                         let lowered_inner = self.lower_expr_spanned(inner)?;
-                        super::super::surface_semantics::lower_await_expression(lowered_inner)
+                        if parenthesized_operand {
+                            let ty = lowered_inner.ty.clone();
+                            (IrExprKind::Await(Box::new(lowered_inner)), ty)
+                        } else {
+                            super::super::surface_semantics::lower_await_expression(lowered_inner)
+                        }
                     }
                 }
             }

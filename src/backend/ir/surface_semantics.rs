@@ -52,8 +52,32 @@ pub fn desugar_assert_statement(condition: TypedExpr, message: Option<TypedExpr>
     }
 }
 
-/// Lower `await <expr>` into an IR `Await` expression.
+/// Lower `await <expr>` into IR while normalizing direct `await <expr>?` precedence.
+///
+/// The parser currently treats `?` as postfix and `await` as prefix, so `await x()?` arrives here as `Await(Try(x))`.
+/// Rust requires the opposite order for futures that resolve to `Result`: `x().await?`.
+///
+/// To keep semantics stable without changing parser precedence broadly, we canonicalize only the direct `Await(Try(x))`
+/// shape to `Try(Await(x))`. Parenthesized forms (for example `await (x?)`) keep their explicit AST shape and are not
+/// rewritten.
 pub fn lower_await_expression(inner: TypedExpr) -> (IrExprKind, IrType) {
+    if let TypedExpr {
+        kind: IrExprKind::Try(try_inner),
+        ty,
+        ownership,
+        span,
+    } = inner
+    {
+        let awaited_ty = try_inner.ty.clone();
+        let awaited = TypedExpr {
+            kind: IrExprKind::Await(try_inner),
+            ty: awaited_ty,
+            ownership,
+            span,
+        };
+        return (IrExprKind::Try(Box::new(awaited)), ty);
+    }
+
     let ty = inner.ty.clone();
     (IrExprKind::Await(Box::new(inner)), ty)
 }

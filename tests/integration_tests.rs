@@ -195,6 +195,38 @@ fn test_cli_fmt_preserves_block_decl_docstrings_and_export_doc_surface() -> Resu
     Ok(())
 }
 
+/// Regression (GitHub #289): `incan fmt` must preserve escaped newlines in f-strings as textual `\\n`.
+#[test]
+fn test_cli_fmt_preserves_fstring_escaped_newline_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = make_temp_test_dir();
+    let path = dir.join("fstring_escaped_newline.incn");
+    fs::write(
+        &path,
+        r#"def main() -> str:
+    return f"a\n{1}"
+"#,
+    )?;
+
+    let status = Command::new(incan_debug_binary()).arg("fmt").arg(&path).status()?;
+    assert!(status.success(), "incan fmt failed");
+
+    let formatted = fs::read_to_string(&path)?;
+    assert!(
+        formatted.contains(r#"f"a\n{1}""#),
+        "expected formatted output to preserve escaped newline text, got:\n{}",
+        formatted
+    );
+
+    let output = Command::new(incan_debug_binary()).arg("--check").arg(&path).output()?;
+    assert!(
+        output.status.success(),
+        "expected formatted file to parse/typecheck after CLI fmt; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    Ok(())
+}
+
 /// Regression: float compound-assign with int RHS should typecheck (Python-like / promotion).
 #[test]
 fn test_compound_assign_float_with_int_rhs() {
@@ -1026,6 +1058,62 @@ async def main() -> None:
             stdout.contains("3"),
             "expected oneshot receive output; got:\n{}",
             stdout
+        );
+    }
+
+    /// Regression (GitHub #289): `await expr?` must emit `.await?` (not `?.await`) in generated Rust.
+    #[test]
+    fn test_build_async_await_try_ordering_emits_await_before_try() {
+        let project_dir = make_temp_dir("incan_async_await_try_ordering");
+        let source_path = project_dir.join("async_await_try_ordering.incn");
+        let out_dir = project_dir.join("out");
+        let source = r#"
+import std.async
+
+async def register_sources() -> Result[None, str]:
+    return Ok(None)
+
+async def main() -> Result[None, str]:
+    await register_sources()?
+    return Ok(None)
+"#;
+        let Ok(()) = std::fs::write(&source_path, source) else {
+            panic!("failed to write source file");
+        };
+
+        let Ok(output) = Command::new(incan_debug_binary())
+            .args([
+                "build",
+                source_path.to_string_lossy().as_ref(),
+                out_dir.to_string_lossy().as_ref(),
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+        else {
+            panic!("failed to run incan build");
+        };
+
+        assert!(
+            output.status.success(),
+            "incan build await/try ordering regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let generated_main = out_dir.join("src/main.rs");
+        let Ok(main_rs) = std::fs::read_to_string(&generated_main) else {
+            panic!("failed to read generated Rust source");
+        };
+        let normalized: String = main_rs.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            normalized.contains("register_sources().await?;"),
+            "expected awaited-then-try ordering in generated Rust, got:\n{}",
+            main_rs
+        );
+        assert!(
+            !normalized.contains("register_sources()?.await;"),
+            "generated Rust must not apply `?` before `.await`, got:\n{}",
+            main_rs
         );
     }
 

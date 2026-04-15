@@ -673,6 +673,22 @@ def function() -> int:
         Ok(formatted)
     }
 
+    /// Regression (GitHub #289): escaped newlines inside f-strings must stay textual (`\\n`) after formatting.
+    #[test]
+    fn test_format_source_preserves_fstring_escaped_newline() -> Result<(), FormatError> {
+        let source = "def main() -> str:\n    return f\"a\\n{1}\"\n";
+        let formatted = assert_format_round_trip_lex_parse(source)?;
+        assert!(
+            formatted.contains(r#"f"a\n{1}""#),
+            "expected formatter to preserve escaped newline text in f-string, got: {formatted}"
+        );
+        assert!(
+            !formatted.contains("f\"a\n{1}\""),
+            "formatter must not materialize a physical newline in f-string output, got: {formatted}"
+        );
+        Ok(())
+    }
+
     /// Regression #235: qualified constructor patterns use `::` in the AST; the formatter must print Incansurface `.`.
     #[test]
     fn test_format_source_qualified_match_pattern_round_trip() -> Result<(), FormatError> {

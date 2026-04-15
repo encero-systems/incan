@@ -177,7 +177,7 @@ impl Formatter {
                 self.writer.write("f\"");
                 for part in parts {
                     match part {
-                        FStringPart::Literal(s) => self.writer.write(s),
+                        FStringPart::Literal(s) => self.writer.write(&escape_fstring_literal(s)),
                         FStringPart::Expr(expr) => {
                             self.writer.write("{");
                             self.format_expr(&expr.node);
@@ -451,6 +451,28 @@ fn escape_string(s: &str) -> String {
             '\t' => result.push_str("\\t"),
             '\\' => result.push_str("\\\\"),
             '"' => result.push_str("\\\""),
+            c => result.push(c),
+        }
+    }
+    result
+}
+
+/// Escape an f-string literal segment so formatter output stays parseable and semantically stable.
+///
+/// Unlike ordinary strings, `{` and `}` are control characters in f-strings and must be doubled when emitted as
+/// literal text. We also preserve escaped control characters (`\n`, `\r`, `\t`) as textual escapes instead of
+/// materializing physical whitespace in formatter output.
+fn escape_fstring_literal(s: &str) -> String {
+    let mut result = String::new();
+    for c in s.chars() {
+        match c {
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            '\\' => result.push_str("\\\\"),
+            '"' => result.push_str("\\\""),
+            '{' => result.push_str("{{"),
+            '}' => result.push_str("}}"),
             c => result.push(c),
         }
     }
