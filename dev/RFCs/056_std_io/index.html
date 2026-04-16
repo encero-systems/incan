@@ -13,19 +13,19 @@
       
       
       
-      <link rel="icon" href="../../../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>Rfcs index - Incan Documentation</title>
+        <title>RFC 056: std.io — in-memory byte streams and binary parsing helpers - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../../../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,9 +44,9 @@
       
     
     
-      <link rel="stylesheet" href="../../../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../stylesheets/pygments.css">
     
-    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -71,6 +71,11 @@
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
       
+        
+        <a href="#rfc-056-stdio-in-memory-byte-streams-and-binary-parsing-helpers" class="md-skip">
+          Skip to content
+        </a>
+      
     </div>
     <div data-md-component="announce">
       
@@ -87,7 +92,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -107,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Rfcs index
+              RFC 056: std.io — in-memory byte streams and binary parsing helpers
             
           </span>
         </div>
@@ -230,7 +235,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -260,7 +265,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../.." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -311,7 +316,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../start_here/" class="md-nav__link ">
+            <a href="../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -344,7 +349,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -365,7 +370,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -386,7 +391,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -407,7 +412,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../start_here/beginner/" class="md-nav__link">
+      <a href="../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -466,7 +471,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../language/" class="md-nav__link ">
+            <a href="../../language/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -590,7 +595,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../language/tutorials/book/" class="md-nav__link ">
+            <a href="../../language/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -623,7 +628,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -644,7 +649,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -665,7 +670,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -686,7 +691,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -707,7 +712,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -728,7 +733,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -749,7 +754,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -770,7 +775,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -791,7 +796,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -812,7 +817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -833,7 +838,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -854,7 +859,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -875,7 +880,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -904,7 +909,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -925,7 +930,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1019,7 +1024,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/async_programming/" class="md-nav__link">
+      <a href="../../language/how-to/async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1040,7 +1045,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1061,7 +1066,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1082,7 +1087,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/error_messages/" class="md-nav__link">
+      <a href="../../language/how-to/error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1103,7 +1108,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/file_io/" class="md-nav__link">
+      <a href="../../language/how-to/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1124,7 +1129,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1145,7 +1150,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/module_state/" class="md-nav__link">
+      <a href="../../language/how-to/module_state/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1166,7 +1171,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1187,7 +1192,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1208,7 +1213,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/string_processing/" class="md-nav__link">
+      <a href="../../language/how-to/string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1229,7 +1234,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/performance/" class="md-nav__link">
+      <a href="../../language/how-to/performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1250,7 +1255,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1271,7 +1276,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1346,7 +1351,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../language/reference/" class="md-nav__link ">
+            <a href="../../language/reference/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1379,7 +1384,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/language/" class="md-nav__link">
+      <a href="../../language/reference/language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1400,7 +1405,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/glossary/" class="md-nav__link">
+      <a href="../../language/reference/glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1421,7 +1426,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/file_io/" class="md-nav__link">
+      <a href="../../language/reference/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1442,7 +1447,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1463,7 +1468,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/static_storage/" class="md-nav__link">
+      <a href="../../language/reference/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1484,7 +1489,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1505,7 +1510,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/strings/" class="md-nav__link">
+      <a href="../../language/reference/strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1526,7 +1531,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/testing/" class="md-nav__link">
+      <a href="../../language/reference/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1547,7 +1552,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/reflection/" class="md-nav__link">
+      <a href="../../language/reference/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1568,7 +1573,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1613,7 +1618,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../language/reference/stdlib/" class="md-nav__link ">
+            <a href="../../language/reference/stdlib/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1646,7 +1651,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/async/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1667,7 +1672,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/math/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1728,7 +1733,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1761,7 +1766,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1782,7 +1787,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1803,7 +1808,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1824,7 +1829,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1845,7 +1850,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1866,7 +1871,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1946,7 +1951,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1967,7 +1972,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1988,7 +1993,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2009,7 +2014,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2030,7 +2035,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../language/reference/derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2051,7 +2056,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2159,7 +2164,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/why_incan/" class="md-nav__link">
+      <a href="../../language/explanation/why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2180,7 +2185,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2201,7 +2206,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2222,7 +2227,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/control_flow/" class="md-nav__link">
+      <a href="../../language/explanation/control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2243,7 +2248,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/closures/" class="md-nav__link">
+      <a href="../../language/explanation/closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2264,7 +2269,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/consts/" class="md-nav__link">
+      <a href="../../language/explanation/consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2285,7 +2290,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/static_storage/" class="md-nav__link">
+      <a href="../../language/explanation/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2306,7 +2311,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2327,7 +2332,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2348,7 +2353,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2369,7 +2374,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/enums/" class="md-nav__link">
+      <a href="../../language/explanation/enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2390,7 +2395,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/error_handling/" class="md-nav__link">
+      <a href="../../language/explanation/error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2411,7 +2416,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2456,7 +2461,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2489,7 +2494,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2510,7 +2515,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2539,7 +2544,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2560,7 +2565,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2627,7 +2632,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../tooling/" class="md-nav__link ">
+            <a href="../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2705,7 +2710,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2726,7 +2731,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2747,7 +2752,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2831,7 +2836,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2852,7 +2857,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2873,7 +2878,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2894,7 +2899,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2915,7 +2920,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2936,7 +2941,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2957,7 +2962,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2978,7 +2983,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3050,7 +3055,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3071,7 +3076,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3145,7 +3150,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3166,7 +3171,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3187,7 +3192,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3256,7 +3261,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../contributing/" class="md-nav__link ">
+            <a href="../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3366,7 +3371,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3399,7 +3404,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3420,7 +3425,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3441,7 +3446,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3462,7 +3467,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3483,7 +3488,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3504,7 +3509,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3525,7 +3530,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3546,7 +3551,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3632,7 +3637,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3653,7 +3658,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3674,7 +3679,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3695,7 +3700,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3716,7 +3721,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3792,7 +3797,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3813,7 +3818,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3834,7 +3839,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3855,7 +3860,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3884,7 +3889,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../RFCs/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3939,7 +3944,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../release_notes/" class="md-nav__link ">
+            <a href="../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3972,7 +3977,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../release_notes/0_2/" class="md-nav__link">
+      <a href="../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3993,7 +3998,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../release_notes/0_1/" class="md-nav__link">
+      <a href="../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4021,7 +4026,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../roadmap/" class="md-nav__link">
+      <a href="../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4041,7 +4046,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../stability/" class="md-nav__link">
+      <a href="../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4071,6 +4076,250 @@
   
   
   
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Summary
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#motivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Motivation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reference-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reference-level explanation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reference-level explanation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#module-split-and-compatibility-target" class="md-nav__link">
+    <span class="md-ellipsis">
+      Module split and compatibility target
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#required-capabilities-committed-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      Required capabilities (committed contract)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#normative-cursor-and-buffer-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Normative cursor and buffer semantics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#numeric-helper-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      Numeric helper surface
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#expected-api-shape-skeletal" class="md-nav__link">
+    <span class="md-ellipsis">
+      Expected API shape (skeletal)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Expected API shape (skeletal)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bytesio" class="md-nav__link">
+    <span class="md-ellipsis">
+      BytesIO
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#errors-and-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      Errors and compatibility
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-stdio-is-separate-from-stdfs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why std.io is separate from std.fs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#python-shaped-surface-rust-backed-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Python-shaped surface, Rust-backed semantics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-the-numeric-helper-surface-is-broad" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why the numeric helper surface is broad
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-getbuffer-and-generic-protocols-stay-out" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why getbuffer() and generic protocols stay out
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction-with-temporary-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interaction with temporary storage
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      Alternatives considered
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#drawbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Drawbacks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation architecture
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design Decisions
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
   
 </nav>
                   </div>
@@ -4084,438 +4333,218 @@
                 
                   
 
+  
+  
 
-  <h1>Rfcs index</h1>
 
-<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
+<h1 id="rfc-056-stdio-in-memory-byte-streams-and-binary-parsing-helpers">RFC 056: <code>std.io</code> — in-memory byte streams and binary parsing helpers<a class="headerlink" href="#rfc-056-stdio-in-memory-byte-streams-and-binary-parsing-helpers" title="Permanent link">&para;</a></h1>
+<ul>
+<li><strong>Status:</strong> Planned</li>
+<li><strong>Created:</strong> 2026-04-13</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong><ul>
+<li>RFC 005 (Rust interop)</li>
+<li>RFC 009 (sized integers)</li>
+<li>RFC 010 (temporary filesystem objects)</li>
+<li>RFC 022 (namespaced stdlib modules and compiler handoff)</li>
+<li>RFC 023 (compilable stdlib and Rust module binding)</li>
+<li>RFC 041 (first-class Rust interop authoring)</li>
+<li>RFC 055 (<code>std.fs</code> path-centric filesystem APIs)</li>
+</ul>
+</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/291</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> —</li>
+</ul>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>This RFC introduces <code>std.io</code> as Incan's in-memory binary I/O module. Its core abstraction is <code>BytesIO</code>, a writable and seekable byte stream over an in-memory <code>bytes</code> buffer for binary parsing, protocol work, fixtures, and transformation pipelines that should not depend on filesystem paths. The user-facing shape is intentionally recognizable to Python users coming from <code>io.BytesIO</code>, while the underlying semantics also take advantage of Rust's <code>Cursor</code> and <code>BufRead</code> model where that produces a cleaner complete contract for cursor movement, delimiter-based reads, and exact-width numeric helpers.</p>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>Not all binary input starts as a file on disk. Tests, network clients, generated fixtures, embedded assets, decompression stages, and parser pipelines often begin with a <code>bytes</code> value that is already in memory. Those users should not need to import <code>std.fs</code> or drop into <code>rust::std::io::Cursor</code> just to move a cursor, read exact byte counts, skip until a delimiter, or decode fixed-width numbers. <code>std.io</code> gives Incan a standard home for that in-memory story while staying separate from path and OS-file concerns. That separation matters for real binary formats: <code>std.fs</code> should get bytes into memory or stream them from a file, while <code>std.io.BytesIO</code> should make the parsing and re-encoding work itself possible in pure Incan.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Provide a <code>BytesIO</code>-like type over <code>bytes</code> for in-memory binary parsing and rewriting.</li>
+<li>Standardize cursor, exact-read, delimiter-read, and overwrite semantics so users do not hand-roll slicing logic for every parser.</li>
+<li>Commit to a complete exact-width numeric read and write surface aligned with RFC 009, including both endian families for multi-byte values.</li>
+<li>Keep <code>std.io</code> independent from filesystem path APIs; users should be able to parse a <code>bytes</code> value without importing <code>std.fs</code>.</li>
+<li>Make the pure-Incan binary parsing story strong enough for real format readers such as GGUF-style metadata and tensor-descriptor parsers.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Standardizing filesystem file handles; that belongs to RFC 055.</li>
+<li>Defining async networking or async stream protocols here.</li>
+<li>Mirroring Python's entire <code>io</code> hierarchy.</li>
+<li>Introducing spill-to-disk behavior in <code>BytesIO</code>; spooled temporary storage belongs in <code>std.tempfile</code>, not here.</li>
+<li>Defining general <code>Reader</code> / <code>Writer</code> protocol families in this RFC.</li>
+<li>Reproducing Rust <code>Read</code> / <code>Seek</code> / <code>BufRead</code> trait names one-to-one as the user-facing surface.</li>
+</ul>
+<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
+<p>Authors use <code>std.io.BytesIO</code> when they already have a <code>bytes</code> value and want to parse or rewrite it incrementally.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BytesIO</span>
 
-<!-- markdownlint-disable MD013 MD060 MD053 MD033 -->
-<!-- Include RFC reference links (DRY: reuse rfcs_refs.md) -->
-<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
+<span class="n">buf</span> <span class="o">=</span> <span class="nc">BytesIO</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+<span class="n">magic</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">read_exact</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span><span class="o">?</span>
+<span class="n">version</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">read_u32_le</span><span class="p">()</span><span class="o">?</span>
+<span class="n">metadata_count</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">read_u64_le</span><span class="p">()</span><span class="o">?</span>
 
-<!-- RFC reference links for reuse: '[RFC 018]' or '[RFC 018: Title][RFC 018]' -->
-<!-- RFCs index table -->
+<span class="n">payload</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">read_until</span><span class="p">(</span><span class="mi">0</span><span class="n">u8</span><span class="p">)</span><span class="o">?</span>
+<span class="n">remaining</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">remaining</span><span class="p">()</span>
+</code></pre></div>
+<p><code>BytesIO</code> is also writable. It overwrites from the current cursor position unless the caller explicitly seeks elsewhere first.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BytesIO</span>
 
-<!-- RFC index filter UI -->
+<span class="n">out</span> <span class="o">=</span> <span class="nc">BytesIO</span><span class="p">()</span>
+<span class="n">out</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;GGUF&quot;</span><span class="p">)</span><span class="o">?</span>
+<span class="n">out</span><span class="o">.</span><span class="n">write_u32_le</span><span class="p">(</span><span class="mi">3</span><span class="n">u32</span><span class="p">)</span><span class="o">?</span>
+<span class="n">out</span><span class="o">.</span><span class="n">write_u64_le</span><span class="p">(</span><span class="mi">42</span><span class="n">u64</span><span class="p">)</span><span class="o">?</span>
 
-<div class="rfc-index-filter">
-  <label>
-    Filter RFCs: <input type="search" data-rfc-filter="rfcs-index" placeholder="e.g. 018, testing, superseded">
-  </label>
-  <p><small>Tip: press <code>Esc</code> to clear.</small></p>
-</div>
-
-<div data-rfc-table="rfcs-index">
-<table>
-<thead>
-<tr>
-<th style="text-align: right;">RFC</th>
-<th>Status</th>
-<th>Track</th>
-<th>Title</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/000_core_rfc">RFC 000</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Incan Core Language RFC (Phase 1)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/001_test_fixtures">RFC 001</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Test Fixtures</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/002_test_parametrize">RFC 002</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Parametrized Tests</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/003_frontend_wasm">RFC 003</a></td>
-<td>Blocked</td>
-<td>proposed / active</td>
-<td>Frontend &amp; WebAssembly Support</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/004_async_fixtures">RFC 004</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Async Fixtures</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Rust Interop</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/006_generators">RFC 006</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Python-style generators</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/007_inline_tests">RFC 007</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Inline Tests</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/008_const_bindings">RFC 008</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Const Bindings</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/009_sized_integers">RFC 009</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Sized integer types and builtin type registry</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/010_tempfile">RFC 010</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Python-style <code>tempfile</code> standard library</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/011_fstring_error_spans">RFC 011</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Precise Error Spans in F-Strings</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/012_json_value_enum_methods_and_trait_adoption">RFC 012</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td><code>JsonValue</code>, enum methods, and enum trait adoption</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Rust Crate Dependencies</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/014_generated_code_error_handling">RFC 014</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Error Handling in Generated Rust Code</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a></td>
-<td>In Progress</td>
-<td>proposed / active</td>
-<td>Hatch-like Tooling (Project Lifecycle CLI)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/016_loop_and_break_value">RFC 016</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>loop</code> and <code>break &lt;value&gt;</code> (Loop Expressions)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/017_validated_newtypes_with_implicit_coercion">RFC 017</a></td>
-<td>In Progress</td>
-<td>proposed / active</td>
-<td>Validated newtypes with implicit coercion (pydantic-like feel)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/018_testing">RFC 018</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Language Primitives for Testing</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/019_runner_testing">RFC 019</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Test Runner, CLI, and Ecosystem</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/020_offline_locked_reproducible_builds">RFC 020</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Offline / Locked / Reproducible Builds (Cargo Policy + Generated Project Contract)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/021_model_field_metadata_and_aliases">RFC 021</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Model field metadata and schema-safe aliases</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Namespaced stdlib modules and compiler→stdlib handoff</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Compilable Stdlib &amp; Rust Module Binding</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Extensible Derive Protocol</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Multi-Instantiation Trait Dispatch</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/026_user_defined_trait_bridges">RFC 026</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>User-Defined Trait Bridges</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/027_incan_vocab_crate">RFC 027</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td><code>incan-vocab</code> — Library Vocabulary Registration Crate</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/028_trait_based_operator_overloading">RFC 028</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Trait-Based Operator Overloading</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/029_union_types">RFC 029</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Union Types and Type Narrowing</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/030_std_collections">RFC 030</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.collections</code> — Extended Collection Types</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/031_library_system_phase1">RFC 031</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Incan Library System — Phase 1 (Local Path Dependencies)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/032_value_enums">RFC 032</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Value Enums — <code>StrEnum</code> and <code>IntEnum</code></td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/033_ctx_keyword">RFC 033</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>ctx</code> — Typed Configuration Context</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/034_incan_pub_registry">RFC 034</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>incan.pub</code> — The Incan Package Registry</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/035_first_class_function_references">RFC 035</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>First-Class Named Function References</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/036_user_defined_decorators">RFC 036</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>User-Defined Decorators</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/037_native_web_stdlib_redesign">RFC 037</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Native Web and HTTP Stdlib Redesign</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/038_variadic_positional_args_and_keyword_capture">RFC 038</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Variadic Positional Args and Keyword-Argument Capture (<code>*args</code> / <code>**kwargs</code>)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/039_race_for_awaitable_concurrency">RFC 039</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>race</code> for Awaitable Concurrency</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/040_scoped_dsl_glyph_surfaces">RFC 040</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Scoped DSL Glyph Surfaces</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>First-Class Rust Interop Authoring</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/042_traits_are_always_abstract">RFC 042</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Traits Are Always Abstract</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/043_rust_trait_impl_from_incan">RFC 043</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Rust Trait Implementation from Incan</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/044_open_ended_trait_methods">RFC 044</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Open-Ended Trait Methods</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/045_scoped_dsl_symbol_surfaces">RFC 045</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Scoped DSL symbol surfaces</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/046_computed_properties">RFC 046</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Computed properties (<code>property name -&gt; Type</code>)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/047_lightweight_directed_graph_stdlib">RFC 047</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Lightweight directed graph types (stdlib)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/048_contract_backed_models_emit_and_tooling">RFC 048</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Contract-backed models, Incan emit, and interrogation tooling</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/049_single_arm_conditional_match">RFC 049</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>if let</code> single-arm conditional match</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/050_enum_methods_and_trait_adoption">RFC 050</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Enum methods and enum trait adoption</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/051_json_value">RFC 051</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>JsonValue</code> for <code>std.json</code></td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/052_module_static_storage">RFC 052</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Module Static Storage</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/053_formatter_vertical_spacing_buckets">RFC 053</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Formatter vertical spacing (three blank-line buckets)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/054_explicit_call_site_generics">RFC 054</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Explicit call-site generic arguments for function and method calls</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/055_std_fs">RFC 055</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>std.fs</code> — pathlib-shaped filesystem APIs with chunked file I/O</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/056_std_io">RFC 056</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>std.io</code> — in-memory byte streams and binary parsing helpers</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/057_rust_allow_targeted_lint_suppression">RFC 057</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>@rust.allow(...)</code> — targeted Rust lint suppression for generated code</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/058_std_datetime">RFC 058</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>std.datetime</code> — temporal values, intervals, and runtime timing</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/059_std_regex">RFC 059</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>std.regex</code> — regular expressions, matches, captures, and replacement</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/060_std_uuid">RFC 060</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.uuid</code> — UUID parsing, generation, and formatting</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/061_std_compression">RFC 061</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.compression</code> — codec-based compression and decompression</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/062_std_archive">RFC 062</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.archive</code> — archive container creation and extraction</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/063_std_process">RFC 063</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.process</code> — process spawning and command execution</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/064_std_encoding">RFC 064</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.encoding</code> — binary-text encoding and decoding utilities</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/065_std_hash">RFC 065</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.hash</code> — stable hashing primitives for data and integrity workflows</td>
-</tr>
-</tbody>
-</table>
-</div>
-<!-- markdownlint-enable MD013 MD060 MD053 MD033 -->
+<span class="n">blob</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">into_bytes</span><span class="p">()</span>
+</code></pre></div>
+<p>The mental model is: <code>std.fs</code> gets bytes into or out of files, while <code>std.io</code> walks through and rewrites bytes already in memory.</p>
+<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
+<h3 id="module-split-and-compatibility-target">Module split and compatibility target<a class="headerlink" href="#module-split-and-compatibility-target" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The standard library must expose <code>std.io</code> for in-memory byte-stream reading, writing, and cursor semantics.</li>
+<li><code>std.io</code> is deliberately separate from <code>std.fs</code>: open OS-file handles belong to the filesystem module, while <code>BytesIO</code> operates on already-materialized <code>bytes</code>.</li>
+<li>The surface should be recognizable to Python users coming from <code>io.BytesIO</code>, but the committed contract is broader than Python's minimal cursor methods because Incan also standardizes explicit numeric parsing helpers.</li>
+<li>The committed numeric helper surface depends on RFC 009. Width-specific reads and writes must use the sized numeric vocabulary introduced there.</li>
+<li>Implementations may use Rust <code>std::io::Cursor</code>, <code>BufRead</code>, and primitive byte-conversion helpers internally, but user-visible semantics are defined by this RFC and stdlib docs, not by Rust trait names.</li>
+</ul>
+<h3 id="required-capabilities-committed-contract">Required capabilities (committed contract)<a class="headerlink" href="#required-capabilities-committed-contract" title="Permanent link">&para;</a></h3>
+<p>The <code>std.io</code> contract commits to the following <code>BytesIO</code> surface:</p>
+<ul>
+<li>Direct construction: <code>BytesIO(initial: bytes = b"") -&gt; BytesIO</code>.</li>
+<li>Byte reads: <code>read(size: int = -1) -&gt; Result[bytes, E]</code>, <code>read_exact(size: int) -&gt; Result[bytes, E]</code>.</li>
+<li>Delimiter helpers: <code>read_until(byte: u8) -&gt; Result[bytes, E]</code>, <code>skip_until(byte: u8) -&gt; Result[int, E]</code>.</li>
+<li>Cursor helpers: <code>tell() -&gt; int</code>, <code>seek(offset: int, whence: int = 0) -&gt; Result[int, E]</code>, <code>rewind() -&gt; Result[(), E]</code>, <code>seek_relative(offset: int) -&gt; Result[(), E]</code>.</li>
+<li>Byte writes: <code>write(data: bytes) -&gt; Result[int, E]</code>, <code>truncate(size: int | None = None) -&gt; Result[int, E]</code>.</li>
+<li>Buffer extraction and inspection: <code>getvalue() -&gt; bytes</code>, <code>into_bytes() -&gt; bytes</code>, <code>remaining() -&gt; int</code>.</li>
+<li>Exact-width numeric reads and writes aligned with RFC 009.</li>
+</ul>
+<h3 id="normative-cursor-and-buffer-semantics">Normative cursor and buffer semantics<a class="headerlink" href="#normative-cursor-and-buffer-semantics" title="Permanent link">&para;</a></h3>
+<p>Cursor behavior is normative:</p>
+<ul>
+<li>A newly constructed <code>BytesIO(initial)</code> starts with its cursor at position <code>0</code>.</li>
+<li><code>read(size)</code> must return at most <code>size</code> bytes and must advance the cursor by the returned byte count.</li>
+<li><code>read(size)</code> with <code>size = -1</code> must return the remaining bytes.</li>
+<li><code>read(size)</code> at EOF must return an empty <code>bytes</code> value.</li>
+<li><code>read_exact(size)</code> must fail if fewer than <code>size</code> bytes remain.</li>
+<li><code>seek(offset, whence)</code> must follow the Python-style <code>whence</code> model: <code>0</code> for start, <code>1</code> for current position, and <code>2</code> for end.</li>
+<li><code>rewind()</code> is the convenience form of seeking to the start of the buffer.</li>
+<li><code>seek_relative(offset)</code> moves relative to the current cursor position and must fail if the resulting position would be invalid.</li>
+</ul>
+<p>Write behavior is also normative:</p>
+<ul>
+<li><code>BytesIO</code> is always readable, writable, and seekable; separate <code>readable()</code> / <code>writable()</code> / <code>seekable()</code> predicates are not part of the committed surface.</li>
+<li><code>write(data)</code> writes from the current cursor position. It does not imply append semantics unless the caller has already moved the cursor to the end.</li>
+<li><code>write(data)</code> must either write the full byte slice or fail. Partial-write behavior is not part of the user-visible contract for an in-memory buffer.</li>
+<li><code>truncate(size=None)</code> must shrink or extend the buffer to <code>size</code>; when <code>size</code> is omitted, it uses the current cursor position.</li>
+</ul>
+<p>Delimiter behavior is normative:</p>
+<ul>
+<li><code>read_until(byte)</code> must return bytes up to and including the delimiter when the delimiter is found.</li>
+<li><code>read_until(byte)</code> must return the remaining bytes when EOF is reached before the delimiter.</li>
+<li><code>skip_until(byte)</code> must discard bytes until the delimiter or EOF and return the total number of discarded bytes, including the delimiter when it is found.</li>
+<li><code>read_until(byte)</code> and <code>skip_until(byte)</code> must return <code>0</code>-length / <code>0</code>-count results at EOF.</li>
+</ul>
+<p>Buffer extraction behavior is normative:</p>
+<ul>
+<li><code>getvalue()</code> returns a <code>bytes</code> snapshot of the buffer contents.</li>
+<li><code>into_bytes()</code> consumes the <code>BytesIO</code> value and returns the underlying <code>bytes</code> without promising a copy.</li>
+<li><code>remaining()</code> returns the number of unread bytes from the current cursor position to the logical end of the buffer.</li>
+</ul>
+<h3 id="numeric-helper-surface">Numeric helper surface<a class="headerlink" href="#numeric-helper-surface" title="Permanent link">&para;</a></h3>
+<p>The numeric helper surface is committed, not tentative:</p>
+<ul>
+<li>One-byte reads and writes: <code>read_u8() -&gt; Result[u8, E]</code>, <code>read_i8() -&gt; Result[i8, E]</code>, <code>write_u8(value: u8) -&gt; Result[(), E]</code>, <code>write_i8(value: i8) -&gt; Result[(), E]</code>.</li>
+<li>Unsigned integer reads and writes for <code>u16</code>, <code>u32</code>, <code>u64</code>, and <code>u128</code> in both endian families: <code>read_u16_le</code>, <code>read_u16_be</code>, <code>read_u32_le</code>, <code>read_u32_be</code>, and so on through <code>u128</code>; matching <code>write_u16_le</code>, <code>write_u16_be</code>, <code>write_u32_le</code>, <code>write_u32_be</code>, and so on through <code>u128</code>.</li>
+<li>Signed integer reads and writes for <code>i16</code>, <code>i32</code>, <code>i64</code>, and <code>i128</code> in both endian families: <code>read_i16_le</code>, <code>read_i16_be</code>, <code>read_i32_le</code>, <code>read_i32_be</code>, and so on; matching write helpers.</li>
+<li>Floating-point reads and writes for <code>f32</code> and <code>f64</code> in both endian families: <code>read_f32_le</code>, <code>read_f32_be</code>, <code>read_f64_le</code>, <code>read_f64_be</code>; matching write helpers.</li>
+<li>Endianness suffixes are not used for <code>u8</code> and <code>i8</code>, because byte order is meaningless for one-byte values.</li>
+<li>Convenience aliases for Incan defaults are part of the surface: <code>read_int_le</code>, <code>read_int_be</code>, <code>write_int_le</code>, <code>write_int_be</code>, <code>read_float_le</code>, <code>read_float_be</code>, <code>write_float_le</code>, and <code>write_float_be</code>.</li>
+<li>RFC 009 defines <code>int</code> as the ergonomic alias for <code>i64</code> and <code>float</code> as the ergonomic alias for <code>f64</code>, so those convenience helpers are aliases for the corresponding <code>i64</code> and <code>f64</code> forms rather than independent numeric contracts.</li>
+</ul>
+<h3 id="expected-api-shape-skeletal">Expected API shape (skeletal)<a class="headerlink" href="#expected-api-shape-skeletal" title="Permanent link">&para;</a></h3>
+<h4 id="bytesio"><code>BytesIO</code><a class="headerlink" href="#bytesio" title="Permanent link">&para;</a></h4>
+<ul>
+<li><code>BytesIO(initial: bytes = b"") -&gt; BytesIO</code>.</li>
+<li><code>read(size: int = -1) -&gt; Result[bytes, E]</code>.</li>
+<li><code>read_exact(size: int) -&gt; Result[bytes, E]</code>.</li>
+<li><code>read_until(byte: u8) -&gt; Result[bytes, E]</code>.</li>
+<li><code>skip_until(byte: u8) -&gt; Result[int, E]</code>.</li>
+<li><code>tell() -&gt; int</code>.</li>
+<li><code>seek(offset: int, whence: int = 0) -&gt; Result[int, E]</code>.</li>
+<li><code>rewind() -&gt; Result[(), E]</code>.</li>
+<li><code>seek_relative(offset: int) -&gt; Result[(), E]</code>.</li>
+<li><code>write(data: bytes) -&gt; Result[int, E]</code>.</li>
+<li><code>truncate(size: int | None = None) -&gt; Result[int, E]</code>.</li>
+<li><code>getvalue() -&gt; bytes</code>.</li>
+<li><code>into_bytes() -&gt; bytes</code>.</li>
+<li><code>remaining() -&gt; int</code>.</li>
+<li><code>read_u8() -&gt; Result[u8, E]</code>, <code>read_i8() -&gt; Result[i8, E]</code>.</li>
+<li><code>read_u16_le() -&gt; Result[u16, E]</code>, <code>read_u16_be() -&gt; Result[u16, E]</code>, and corresponding helpers for <code>u32</code>, <code>u64</code>, and <code>u128</code>.</li>
+<li><code>read_i16_le() -&gt; Result[i16, E]</code>, <code>read_i16_be() -&gt; Result[i16, E]</code>, and corresponding helpers for <code>i32</code>, <code>i64</code>, and <code>i128</code>.</li>
+<li><code>read_f32_le() -&gt; Result[f32, E]</code>, <code>read_f32_be() -&gt; Result[f32, E]</code>, <code>read_f64_le() -&gt; Result[f64, E]</code>, <code>read_f64_be() -&gt; Result[f64, E]</code>.</li>
+<li>Matching <code>write_*</code> helpers for every committed numeric read helper.</li>
+<li><code>read_int_le() -&gt; Result[int, E]</code>, <code>read_int_be() -&gt; Result[int, E]</code>, <code>read_float_le() -&gt; Result[float, E]</code>, <code>read_float_be() -&gt; Result[float, E]</code>.</li>
+<li><code>write_int_le(value: int) -&gt; Result[(), E]</code>, <code>write_int_be(value: int) -&gt; Result[(), E]</code>, <code>write_float_le(value: float) -&gt; Result[(), E]</code>, <code>write_float_be(value: float) -&gt; Result[(), E]</code>.</li>
+</ul>
+<h3 id="errors-and-compatibility">Errors and compatibility<a class="headerlink" href="#errors-and-compatibility" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Operations must surface failure through ordinary <code>Result</code> returns unless a helper is explicitly documented otherwise.</li>
+<li>Error payloads should be actionable, including at minimum the failed operation, the requested size or delimiter where relevant, and the cursor position when that improves debugging.</li>
+<li>This RFC is additive. It does not change existing filesystem or builtin contracts.</li>
+<li><code>std.io</code> helpers must not require <code>rust::</code> knowledge in ordinary documentation or examples.</li>
+<li>If RFC 009's sized numeric model changes materially before implementation, the width-specific helper signatures in this RFC must be updated to match that final language contract rather than silently drifting.</li>
+</ul>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="why-stdio-is-separate-from-stdfs">Why <code>std.io</code> is separate from <code>std.fs</code><a class="headerlink" href="#why-stdio-is-separate-from-stdfs" title="Permanent link">&para;</a></h3>
+<p><code>BytesIO</code> solves a different problem than file handles. It helps when the bytes are already in memory. That includes tests, network payloads, decompressed buffers, and parser stages after a file has already been read. Keeping <code>std.io</code> separate avoids turning the filesystem module into a generic "everything binary" bucket.</p>
+<h3 id="python-shaped-surface-rust-backed-semantics">Python-shaped surface, Rust-backed semantics<a class="headerlink" href="#python-shaped-surface-rust-backed-semantics" title="Permanent link">&para;</a></h3>
+<p>The surface should feel familiar to Python users: <code>BytesIO(data)</code>, <code>read</code>, <code>write</code>, <code>tell</code>, <code>seek</code>, and <code>getvalue</code> are all recognizable from <code>io.BytesIO</code>. But the substrate is Rust, and Rust gives a few extra semantics that are worth standardizing instead of hiding.</p>
+<p>Rust's <code>Cursor</code> model is the reason <code>BytesIO</code> should be treated as a real writable stream instead of a read-only parser shim. A new cursor starts at the beginning, not the end, and writes overwrite from the current cursor position rather than implying append behavior. Rust also makes <code>rewind()</code> and <code>seek_relative(...)</code> natural convenience operations, so Incan should expose them instead of forcing callers to encode every cursor move through raw <code>seek(...)</code> calls.</p>
+<p>Rust's <code>BufRead</code> model also gives a strong case for delimiter-based helpers. <code>read_until</code> and <code>skip_until</code> are not esoteric parser machinery; they are the simple, direct way to handle NUL-terminated strings, line-like records, or bounded marker scans inside binary formats. They belong in a real in-memory binary I/O contract.</p>
+<h3 id="why-the-numeric-helper-surface-is-broad">Why the numeric helper surface is broad<a class="headerlink" href="#why-the-numeric-helper-surface-is-broad" title="Permanent link">&para;</a></h3>
+<p>Once <code>std.io</code> commits to exact-width numeric parsing, arbitrary seams become harder to defend. Supporting only little-endian reads or only a couple of widths would leave the API lopsided for no principled reason. The Rust substrate already supports endian-aware conversion for the full sized-integer and sized-float family, and RFC 009 already defines that vocabulary at the language level. The coherent design is therefore: full width family, both endian families for multi-byte values, and matching write helpers.</p>
+<p>The default <code>int</code> and <code>float</code> aliases do still matter ergonomically, so <code>read_int_le</code> / <code>read_int_be</code> and <code>read_float_le</code> / <code>read_float_be</code> are good additions. But they are just shorthand over the exact-width forms, not a second independent numeric model.</p>
+<h3 id="why-getbuffer-and-generic-protocols-stay-out">Why <code>getbuffer()</code> and generic protocols stay out<a class="headerlink" href="#why-getbuffer-and-generic-protocols-stay-out" title="Permanent link">&para;</a></h3>
+<p>Python's <code>BytesIO.getbuffer()</code> exposes a mutable view over the underlying buffer. That is powerful, but it also introduces aliasing and resize constraints that are not worth standardizing before Incan has a broader borrowed-buffer story. This RFC therefore keeps the safe extraction surface small: <code>getvalue()</code> for a snapshot and <code>into_bytes()</code> for ownership transfer.</p>
+<p>The same boundary applies to general <code>Reader</code> / <code>Writer</code> protocols. Those may well make sense later for <code>BytesIO</code>, <code>std.fs.File</code>, temporary files, network bodies, or InQL adapters. But that is a cross-cutting stream-abstraction RFC, not part of the in-memory byte-stream contract itself. RFC 056 should finish the concrete <code>BytesIO</code> design rather than smuggling in a second library proposal.</p>
+<h3 id="interaction-with-temporary-storage">Interaction with temporary storage<a class="headerlink" href="#interaction-with-temporary-storage" title="Permanent link">&para;</a></h3>
+<p>Spill-to-disk behavior does not belong in <code>BytesIO</code>. Python puts that concept in <code>tempfile.SpooledTemporaryFile</code>, not in <code>io.BytesIO</code>, and Incan should keep the same separation. RFC 056 is about pure in-memory streams. If Incan later standardizes spooled temporary files in RFC 010, that type should align with <code>BytesIO</code> where practical without being defined as a magical disk-spilling <code>BytesIO</code>.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>No <code>std.io</code>; use slicing and builtins only</strong> — too low-level and repetitive for real parsers.</li>
+<li><strong>Fold <code>BytesIO</code> into <code>std.fs</code></strong> — rejected because in-memory byte streams are not path-based filesystem APIs.</li>
+<li><strong>Expose only a Rust-shaped <code>Cursor</code> API</strong> — exposes substrate vocabulary instead of an Incan-facing contract.</li>
+<li><strong>Require separate <code>struct</code>-style unpacking for every numeric read and write</strong> — workable, but worse ergonomically for the common fixed-width cases.</li>
+<li><strong>Include spill-to-disk behavior directly in <code>BytesIO</code></strong> — rejected because storage policy and tempfile lifecycle are separate concerns better handled in <code>std.tempfile</code>.</li>
+</ol>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>std.io</code> is a modest but real additional stdlib surface to maintain.</li>
+<li>The full numeric helper family creates a larger testing matrix than a tiny parser-only API would.</li>
+<li>Excluding buffer-view APIs means some zero-copy workflows will still need Rust interop or a later dedicated buffer abstraction.</li>
+</ul>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
+<p><em>(Non-normative.)</em> A practical delivery implements <code>BytesIO</code> as a normal Incan stdlib type backed by Rust cursor and buffer primitives, with exact-width conversions delegated to Rust's primitive byte-conversion helpers. The public API should stay Incan-first even when the runtime maps directly onto <code>Cursor&lt;Vec&lt;u8&gt;&gt;</code>-like semantics underneath.</p>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Stdlib / runtime (<code>incan_stdlib</code>)</strong>: new <code>std.io</code> module and the <code>BytesIO</code> type.</li>
+<li><strong>Typechecker / symbol resolution</strong>: registration of the new module, constructor, and methods.</li>
+<li><strong>Builtin numeric surface</strong>: numeric helper signatures depend on RFC 009's sized numeric types and aliases.</li>
+<li><strong>LSP / tooling</strong>: completions and hovers for <code>std.io</code>.</li>
+<li><strong>Docs / examples</strong>: binary parsing examples should use <code>std.io.BytesIO</code> instead of <code>rust::</code> recipes for the common in-memory path.</li>
+</ul>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>BytesIO</code> uses direct construction: <code>BytesIO(data)</code>, not <code>BytesIO.new(data)</code>.</li>
+<li><code>BytesIO</code> is a writable, seekable, in-memory binary stream rather than a read-only parser cursor.</li>
+<li>The committed contract includes <code>read_until</code>, <code>skip_until</code>, <code>rewind</code>, <code>seek_relative</code>, <code>truncate</code>, <code>getvalue</code>, <code>into_bytes</code>, and <code>remaining</code>.</li>
+<li>Numeric helpers cover the full RFC 009 width family, with both endian families for multi-byte values and matching write helpers.</li>
+<li>Convenience aliases for <code>int</code> and <code>float</code> are included, but the exact-width forms remain canonical.</li>
+<li><code>BytesIO</code> does not include <code>close()</code>, <code>getbuffer()</code>, spill-to-disk behavior, or generic <code>Reader</code> / <code>Writer</code> protocols.</li>
+</ul>
 
 
 
@@ -4564,18 +4593,18 @@
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="../../javascripts/mathjax.js"></script>
+        <script src="../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../../javascripts/tablesort.js"></script>
+        <script src="../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../../javascripts/rfc_table_filter.js"></script>
+        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>
