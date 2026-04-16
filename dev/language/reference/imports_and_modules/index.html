@@ -1343,6 +1343,8 @@
       
         
       
+        
+      
     
     
       
@@ -1918,6 +1920,90 @@
       
         
       
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_12" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../stdlib/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Standard library
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_12" id="__nav_3_4_12_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_12">
+            <span class="md-nav__icon md-icon"></span>
+            Standard library
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/math/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.math (generated)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
         
       
         
@@ -1937,7 +2023,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_13" >
         
           
           
@@ -1953,14 +2039,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_12" id="__nav_3_4_12_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_13" id="__nav_3_4_13_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_12_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_12">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_13">
             <span class="md-nav__icon md-icon"></span>
             Stdlib traits
           </label>
@@ -2132,10 +2218,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_13" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_14" >
         
           
-          <label class="md-nav__link" for="__nav_3_4_13" id="__nav_3_4_13_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4_14" id="__nav_3_4_14_label" tabindex="0">
             
   
   <span class="md-ellipsis">
@@ -2146,8 +2232,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_13_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_13">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_14">
             <span class="md-nav__icon md-icon"></span>
             Derives
           </label>
@@ -4897,13 +4983,12 @@ hint: Add `import std.async` or `from std.async import ...`
 <span class="kn">import</span><span class="w"> </span><span class="nn">models</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">std</span>
 </code></pre></div>
 <h2 id="stdlib-module-stdmath">Stdlib module: <code>std.math</code><a class="headerlink" href="#stdlib-module-stdmath" title="Permanent link">&para;</a></h2>
-<!-- TODO: move this to its own section -->
-
+<p>See generated stdlib signatures: <a href="../stdlib/math/">Standard library reference: <code>std.math</code></a>.</p>
 <p>You must import <code>std.math</code> before use:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.math</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;pi=</span><span class="si">{</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;pi=</span><span class="si">{</span><span class="n">math</span><span class="o">.</span><span class="nc">PI</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="available-constants">Available constants<a class="headerlink" href="#available-constants" title="Permanent link">&para;</a></h3>
 <table>
@@ -4915,23 +5000,23 @@ hint: Add `import std.async` or `from std.async import ...`
 </thead>
 <tbody>
 <tr>
-<td><code>math.pi</code></td>
+<td><code>math.PI</code></td>
 <td>π (3.14159...)</td>
 </tr>
 <tr>
-<td><code>math.e</code></td>
+<td><code>math.E</code></td>
 <td>Euler’s number (2.71828...)</td>
 </tr>
 <tr>
-<td><code>math.tau</code></td>
+<td><code>math.TAU</code></td>
 <td>τ = 2π (6.28318...)</td>
 </tr>
 <tr>
-<td><code>math.inf</code></td>
+<td><code>math.INFINITY</code></td>
 <td>Positive infinity</td>
 </tr>
 <tr>
-<td><code>math.nan</code></td>
+<td><code>math.NAN</code></td>
 <td>Not a Number</td>
 </tr>
 </tbody>
