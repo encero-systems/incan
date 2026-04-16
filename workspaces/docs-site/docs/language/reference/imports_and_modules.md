@@ -287,6 +287,40 @@ def main() -> None:
 | `math.atan2(y, x)`                             | Two-argument arctangent       |
 | `math.hypot(x, y)`                             | Euclidean distance √(x² + y²) |
 
+## Stdlib module: `std.async`
+
+See generated/curated stdlib signatures: [Standard library reference: `std.async`](stdlib/async.md).
+
+`std.async` includes runtime support for asynchronous programming and activates the `async`/`await` soft keywords when imported.
+
+You can import time helpers directly:
+
+```incan
+from std.async.time import sleep, timeout
+```
+
+Or import a complete surface from the prelude:
+
+```incan
+from std.async.prelude import *
+```
+
+### Time helpers
+
+| Function                | Description                      |
+| ----------------------- | -------------------------------- |
+| `sleep`, `sleep_ms`     | Delay the current task           |
+| `timeout`, `timeout_ms` | Bound async work with a deadline |
+
+### Concurrency helpers
+
+| API                                       | Description                  |
+| ----------------------------------------- | ---------------------------- |
+| `spawn`, `spawn_blocking`                 | Start async or blocking work |
+| `channel`, `unbounded_channel`, `oneshot` | Message passing primitives   |
+| `select_timeout`                          | Timeout-based select utility |
+| `yield_now`                               | Yield to scheduler           |
+
 ## Rust standard library access
 
 To import from Rust’s standard library, use the `rust::` prefix:

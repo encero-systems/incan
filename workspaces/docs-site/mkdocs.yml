@@ -153,6 +153,7 @@ nav:
           - Derives & traits (reference): language/reference/derives_and_traits.md
           - Standard library:
               - Overview: language/reference/stdlib/index.md
+              - std.async: language/reference/stdlib/async.md
               - std.math (generated): language/reference/stdlib/math.md
           - Stdlib traits:
               - Overview: language/reference/stdlib_traits/index.md

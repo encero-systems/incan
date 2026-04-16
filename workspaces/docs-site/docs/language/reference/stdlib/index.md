@@ -6,4 +6,5 @@ Pages in this section are generated from stdlib source files so signatures stay 
 
 ## Available modules
 
+- [`std.async`](async.md)
 - [`std.math`](math.md) (generated)

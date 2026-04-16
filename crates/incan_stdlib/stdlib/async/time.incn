@@ -24,11 +24,10 @@ Examples:
 import std.async
 from std.traits.error import Error
 from rust::incan_stdlib::async::task import RuntimeFuture
-from rust::incan_stdlib::async::time import (
-    sleep as rust_sleep,
-    sleep_ms as rust_sleep_ms,
-    timeout as rust_timeout,
-    timeout_ms as rust_timeout_ms,
+from rust::incan_stdlib::async::time import clamp_seconds, clamp_millis
+from rust::tokio::time import (
+    sleep as tokio_sleep,
+    timeout as tokio_timeout,
 )
 
 pub model TimeoutError with Error:
@@ -88,7 +87,7 @@ pub async def sleep(seconds: float) -> None:
     Example:
         await sleep(0.1)
     """
-    await rust_sleep(seconds)
+    await tokio_sleep(clamp_seconds(seconds))
 
 
 pub async def sleep_ms(milliseconds: int) -> None:
@@ -98,14 +97,14 @@ pub async def sleep_ms(milliseconds: int) -> None:
     Example:
         await sleep_ms(100)
     """
-    await rust_sleep_ms(milliseconds)
+    await tokio_sleep(clamp_millis(milliseconds))
 
 
 pub async def timeout[T with (Send, Static), TaskFuture with RuntimeFuture[T]](seconds: float, task: TaskFuture) -> Result[T, TimeoutError]:
     """
     Await `task` with a floating-point second timeout.
     """
-    match await rust_timeout(seconds, task):
+    match await tokio_timeout(clamp_seconds(seconds), task):
         Ok(value) => return Ok(value)
         Err(_err) => return Err(TimeoutError())
 
@@ -114,6 +113,6 @@ pub async def timeout_ms[T with (Send, Static), TaskFuture with RuntimeFuture[T]
     """
     Await `task` with an integer millisecond timeout.
     """
-    match await rust_timeout_ms(milliseconds, task):
+    match await tokio_timeout(clamp_millis(milliseconds), task):
         Ok(value) => return Ok(value)
         Err(_err) => return Err(TimeoutError())
