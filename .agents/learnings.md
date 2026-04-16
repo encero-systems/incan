@@ -21,6 +21,7 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 ## Testing strategy
 
 - **Always test both typechecker and codegen.** Typechecker unit tests validate semantics; codegen snapshot tests verify end-to-end output. Neither alone is sufficient.
+- **Extern fixture coverage must stay real**: when removing or renaming a Rust host-boundary symbol, update generic extern-delegation fixtures/snapshots (for example `rust_extern_delegation`) alongside feature-specific snapshots; otherwise test coverage keeps validating dead runtime paths instead of the current boundary shape. (Issues #301/#302)
 - **Snapshot tests must exercise features in expressions**, not just declarations. A model that declares an alias but never uses it in an expression won't catch lowering bugs.
 - **Test both `From` and `RustFrom` import forms** when changing import handling — they share `parse_import_items(rust_item_names)`; only `RustFrom` passes `true` so Rust symbols may be Incan keywords (e.g. `import type as proto_type`). Incan `from m import ...` keeps `rust_item_names=false`.
 
@@ -34,6 +35,7 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 
 - **`STDLIB_NAMESPACES` is the single source of truth** for which `std.*` modules exist, how stub paths resolve, and which imports activate soft keywords. Extend the registry rather than adding hardcoded special cases.
 - **Stdlib stubs (`stdlib/*.incn`) are IDE-only** — the prelude isn't wired into compilation. For core surface types like `FieldInfo`, also register them in `incan_core::lang::surface::types` and map to the runtime Rust type in IR emission.
+- **Metadata-driven decorators keep their extern shell**: `std.testing` markers (`skip`, `xfail`, `slow`, `fixture`, `parametrize`) cannot be converted to plain Incan wrappers just because runtime calls are rejected; `src/frontend/testing_markers.rs` extracts semantics from `@rust.extern(metadata={...})` in `stdlib/testing.incn`, so removing that shell breaks discovery even if normal execution still passes. (Issue #302)
 - **Runtime facades must match generated imports**: if codegen emits `incan_stdlib::r#async`, the runtime crate must export that module tree.
 - **Prefer `.incn` declarations over synthesized `FunctionInfo`**: if a public stdlib function exists, use a local `.incn` wrapper so the AST loader extracts its signature from source. Handwritten `FunctionInfo` drifts.
 
@@ -45,6 +47,7 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 
 ## Docs and RFC tooling
 
+- **Stdlib closeouts need reference-nav parity**: when a stdlib issue changes a module's implementation shape or canonical docs path, update the stdlib reference index, MkDocs nav, and any legacy standalone reference page together; otherwise modules like `std.testing` drift out of the `language/reference/stdlib/` structure even when release notes and how-to docs were updated. (Issues #301/#302)
 - **RFC lifecycle edits need graph updates**: When an RFC is renamed, moved, split, or superseded, update inbound RFC references and regenerate `workspaces/docs-site/docs/_snippets/rfcs_refs.md` plus `workspaces/docs-site/docs/_snippets/tables/rfcs_index.md`; otherwise the docs graph silently points at stale RFC paths and statuses. (RFC 012/050/051 split)
 
 ## Builtin trait stubs and stdlib method lookup (#193)

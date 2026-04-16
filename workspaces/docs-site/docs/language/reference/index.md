@@ -18,8 +18,8 @@ For step-by-step learning and patterns, see [Tutorials](../tutorials/book/index.
 - [Glossary](glossary.md): canonical terminology used across the docs
 - [Imports and modules](imports_and_modules.md): import syntax, module paths, and module resolution rules
 - [Static storage](static_storage.md): `static`, `pub static`, initialization rules, and live shared module state
-- [Testing](testing.md): the `testing` stdlib module (assertions, markers, fixtures, parametrization)
-- [Standard library reference](stdlib/index.md): signatures for `std.*` modules (`std.math`, `std.async`, ...)
+- [std.testing](stdlib/testing.md): assertions, markers, fixtures, and parametrization
+- [Standard library reference](stdlib/index.md): signatures for `std.*` modules (`std.math`, `std.async`, `std.testing`, ...)
 - [Numeric semantics](numeric_semantics.md): numeric operators, promotion rules, and edge cases
 - [Strings](strings.md): string types, formatting, and string operations
 - [Derives & traits](derives_and_traits.md): derives, trait authoring, method decorators, and generic instance methods

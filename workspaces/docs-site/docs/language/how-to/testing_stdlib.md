@@ -3,7 +3,7 @@
 This page covers what `std.testing` provides and how to use it in your tests.
 
 > If you want CLI usage (`incan test`, discovery, flags), see [Tooling: Testing](../../tooling/how-to/testing.md).
-> If you want the API reference only, see [Language reference: Testing](../reference/testing.md).
+> If you want the API reference only, see [Standard library reference: `std.testing`](../reference/stdlib/testing.md).
 
 ## Assertion helpers
 
@@ -26,6 +26,14 @@ from std.testing import assert_is_some, assert_is_none, assert_is_ok, assert_is_
 | `fail(msg)`                     | Always (unconditional failure) | —       |
 
 All `msg` parameters are optional. When omitted, a sensible default message is used.
+
+## `assert_raises`
+
+`std.testing.assert_raises` is intentionally kept as a blocker for now:
+
+- its public API remains present for compatibility.
+- it currently fails with a clear "not implemented yet" diagnostic at runtime.
+- real support is blocked until the parser and assertion lowering fully support structured `assert ... raises ...` semantics.
 
 ## Assert statement syntax (planned)
 
@@ -55,12 +63,14 @@ Test markers control how `incan test` discovers and runs tests:
 | `@fixture`                          | Declares a test fixture (see below).                            |
 | `@parametrize(argnames, argvalues)` | Runs the test once per parameter set.                           |
 
+Markers are declared in `testing.incn` with marker metadata, and `incan test` consumes that metadata during discovery.
+This keeps marker behavior in the runner and prevents regular runtime calls to marker functions.
+
 ## Fixtures
 
 ### The problem fixtures solve
 
-Tests often need some shared setup — a database connection, a temporary file, a logged-in user. Without fixtures you end
-up repeating that setup in every test:
+Tests often need some shared setup — a database connection, a temporary file, a logged-in user. Without fixtures you end up repeating that setup in every test:
 
 ```incan
 def test_query_users() -> None:
@@ -76,8 +86,7 @@ def test_insert_user() -> None:
     db.close()                          # same teardown, again
 ```
 
-This is tedious, error-prone (forget one `db.close()` and you leak a connection), and makes the actual test logic harder
-to spot.
+This is tedious, error-prone (forget one `db.close()` and you leak a connection), and makes the actual test logic harder to spot.
 
 ### Declaring a fixture
 
@@ -95,8 +104,7 @@ def database() -> Database:
 
 ### Using a fixture in a test
 
-To use a fixture, add a parameter to your test function **whose name matches the fixture function**. The test runner
-sees the matching name, calls the fixture, and passes the result in automatically:
+To use a fixture, add a parameter to your test function **whose name matches the fixture function**. The test runner sees the matching name, calls the fixture, and passes the result in automatically:
 
 ```incan
 def test_query_users(database: Database) -> None:
@@ -104,13 +112,11 @@ def test_query_users(database: Database) -> None:
     assert_eq(len(result), 3)
 ```
 
-You don't call the fixture yourself — `incan test` handles that. The parameter name `database` is what connects the test
-to the `database()` fixture.
+You don't call the fixture yourself — `incan test` handles that. The parameter name `database` is what connects the test to the `database()` fixture.
 
 ### Teardown with `yield`
 
-If your fixture needs cleanup after the test finishes, use `yield` instead of `return`. Everything before `yield`
-is setup; everything after is teardown:
+If your fixture needs cleanup after the test finishes, use `yield` instead of `return`. Everything before `yield` is setup; everything after is teardown:
 
 ```incan
 @fixture
@@ -120,8 +126,7 @@ def database() -> Database:
     db.close()        # <-- runs after the test finishes, even if it failed
 ```
 
-This guarantees cleanup runs regardless of whether the test passes or fails — no more leaked connections or orphaned
-temp files.
+This guarantees cleanup runs regardless of whether the test passes or fails — no more leaked connections or orphaned temp files.
 
 ### Fixtures using other fixtures
 
@@ -144,13 +149,11 @@ def test_user_count(populated_db: Database) -> None:
     assert_eq(populated_db.count("users"), 2)
 ```
 
-The test runner resolves the dependency chain for you: `populated_db` needs `database`, so `database()` runs first, then
-its result is passed into `populated_db()`.
+The test runner resolves the dependency chain for you: `populated_db` needs `database`, so `database()` runs first, then its result is passed into `populated_db()`.
 
 ### Fixture scopes
 
-By default, a fixture is created and torn down for **each test** that uses it. If the setup is expensive (e.g., a
-database connection or a network client), you can share it across a wider scope with the `scope` argument:
+By default, a fixture is created and torn down for **each test** that uses it. If the setup is expensive (e.g., a database connection or a network client), you can share it across a wider scope with the `scope` argument:
 
 ```incan
 @fixture(scope="module")
@@ -166,8 +169,7 @@ def shared_client() -> Client:
 | `"module"`                 | Shared across all tests in one test file. |
 | `"session"`                | Shared across the entire test session.    |
 
-Choose the narrowest scope that makes sense — `"function"` keeps tests fully isolated, while wider scopes trade isolation
-for speed. You have to decide what is best for your test suite and your use case.
+Choose the narrowest scope that makes sense — `"function"` keeps tests fully isolated, while wider scopes trade isolation for speed. You have to decide what is best for your test suite and your use case.
 
 ## Parametrized tests
 
@@ -184,8 +186,7 @@ def test_add_negative() -> None:
     assert_eq(add(-1, 1), 0)
 ```
 
-This works, but the test logic is identical every time — only the data changes. `@parametrize` lets you write the
-logic once and supply a table of inputs:
+This works, but the test logic is identical every time — only the data changes. `@parametrize` lets you write the logic once and supply a table of inputs:
 
 ```incan
 from std.testing import parametrize
@@ -199,8 +200,7 @@ def test_add(x: int, y: int, expected: int) -> None:
     assert_eq(add(x, y), expected)
 ```
 
-The first argument is a comma-separated string of parameter names. The second is a list of tuples — one tuple per test
-case. Each tuple is unpacked into the named parameters.
+The first argument is a comma-separated string of parameter names. The second is a list of tuples — one tuple per test case. Each tuple is unpacked into the named parameters.
 
 The test runner generates a separate test case per tuple, with the values shown in the test ID:
 

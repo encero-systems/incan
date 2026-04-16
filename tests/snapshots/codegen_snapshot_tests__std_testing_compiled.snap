@@ -12,7 +12,8 @@ incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
 pub fn fail(msg: String) {
-    incan_stdlib::testing::fail(msg)
+    "Explicitly fail a test with a message.\n\n    Fail makes the program raise a panic.\n\n    Example:\n    \n    ```incan\n    fail(\"this test should not reach here\")\n    ```\n    ";
+    return fail_t(msg);
 }
 pub fn fail_t<T>(msg: String) -> T {
     incan_stdlib::testing::fail_t::<T>(msg)
@@ -101,5 +102,9 @@ pub fn assert_is_err<T, E>(result: Result<T, E>, msg: String) -> E {
     };
 }
 pub fn assert_raises<E>(block: fn() -> (), msg: String) -> E {
-    incan_stdlib::testing::assert_raises::<E>(block, msg)
+    "\n    Assert that a block raises/panics with error type E.\n\n    Example:\n\n    ```incan\n    def bad_parse() -> None:\n        int(\"not a number\")\n\n    err = assert_raises[ValueError](bad_parse)\n    ```\n    ";
+    if incan_stdlib::strings::str_eq(&msg, &"") {
+        return fail_t("std.testing.assert_raises is not implemented yet".to_string());
+    }
+    return fail_t(msg);
 }

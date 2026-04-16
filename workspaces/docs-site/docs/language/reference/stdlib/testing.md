@@ -1,16 +1,17 @@
-# Testing (reference)
+# std.testing (reference)
 
-This page specifies the **standard library testing API** exposed by the `testing` module.
+This page specifies the standard-library testing API exposed by `std.testing`.
 
 !!! info "Related pages"
-    - If you’re looking for how to *run* tests (`incan test`, discovery rules, CLI flags), see: [Tooling → Testing].
+    - If you are looking for how to run tests (`incan test`, discovery rules, CLI flags), see:
+      [Tooling → Testing].
     - If you want a guided walkthrough, see: [The Incan Book → Unit tests].
     - If you want integration details for how `std.testing` is compiled and wired, see:
       [Language → How-to → `std.testing` guide].
 
 <!-- References -->
-[Tooling → Testing]:../../tooling/how-to/testing.md
-[The Incan Book → Unit tests]:../tutorials/book/13_unit_tests.md
+[Tooling → Testing]:../../../tooling/how-to/testing.md
+[The Incan Book → Unit tests]:../../tutorials/book/13_unit_tests.md
 [Language → How-to → `std.testing` guide]:../../how-to/testing_stdlib.md
 
 ## Importing the testing API
@@ -23,7 +24,7 @@ from std.testing import assert, assert_eq, assert_ne, assert_true, assert_false,
 
 ## Assertion functions
 
-All assertion helpers **fail the current test** when the assertion does not hold.
+All assertion helpers fail the current test when the assertion does not hold.
 
 ### `assert(condition: bool, msg: str = "") -> None`
 
@@ -67,7 +68,7 @@ Fails if `result` is `Ok(...)`; otherwise returns the `Err(...)` value.
 
 ## Test markers (decorators)
 
-The following decorators are **recognized by the test runner**:
+The following decorators are recognized by the test runner:
 
 ### `@skip(reason: str = "")`
 
@@ -75,11 +76,19 @@ Marks a test as skipped.
 
 ### `@xfail(reason: str = "")`
 
-Marks a test as *expected to fail*.
+Marks a test as expected to fail.
 
 ### `@slow`
 
 Marks a test as slow (excluded by default unless enabled via tooling flags).
+
+## `assert_raises`
+
+`std.testing.assert_raises[E](...)` is intentionally not yet implemented.
+It currently fails immediately with an explicit "not implemented yet" diagnostic.
+
+This remains a blocker until parser-level `assert <expr> raises <Type>` support and
+panic payload capture are both implemented.
 
 ## Fixtures and parametrization
 
@@ -88,4 +97,5 @@ The `testing` module also defines the surface API for:
 - `@fixture` (fixtures + dependency injection)
 - `@parametrize` (parameterized tests)
 
-These are implemented by the `incan test` runner. For current behavior and CLI support, see: [Tooling → Testing].
+These are implemented by the `incan test` runner. For current behavior and CLI support, see:
+[Tooling → Testing].

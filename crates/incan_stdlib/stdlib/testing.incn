@@ -36,7 +36,6 @@ Marker semantics are declared on marker APIs via `@rust.extern(metadata={...})`.
 # Test Utilities
 # =============================================================================
 
-@rust.extern
 pub def fail(msg: str) -> None:
     """Explicitly fail a test with a message.
 
@@ -48,7 +47,7 @@ pub def fail(msg: str) -> None:
     fail("this test should not reach here")
     ```
     """
-    ...
+    return fail_t(msg)
 
 
 @rust.extern
@@ -84,7 +83,7 @@ pub def skip(reason: str = "") -> None:
     ```
 
     Note: Marker decorators are consumed by `incan test` during discovery.
-          Their runtime implementation is host-provided via `@rust.extern`.
+          Their runtime implementation stays a host boundary so metadata remains parseable in this declaration surface.
     """
     ...
 
@@ -106,7 +105,7 @@ pub def xfail(reason: str = "") -> None:
     ```
 
     Note: Marker decorators are consumed by `incan test` during discovery.
-          Their runtime implementation is host-provided via `@rust.extern`.
+          Their runtime implementation stays a host boundary so metadata remains parseable in this declaration surface.
     """
     ...
 
@@ -128,7 +127,7 @@ pub def slow() -> None:
     ```
 
     Note: Marker decorators are consumed by `incan test` during discovery.
-          Their runtime implementation is host-provided via `@rust.extern`.
+          Their runtime implementation stays a host boundary so metadata remains parseable in this declaration surface.
     """
     ...
 
@@ -301,9 +300,7 @@ pub def assert_is_err[T, E](result: Result[T, E], msg: str = "assertion failed: 
         Err(err) => return err
         Ok(_) => return fail_t(msg)
 
-
-# FIXME: not implemented yet
-@rust.extern
+# TODO: structured `assert ... raises ...` support is not implemented yet.
 pub def assert_raises[E](block: () -> None, msg: str = "") -> E:
     """
     Assert that a block raises/panics with error type E.
@@ -314,7 +311,11 @@ pub def assert_raises[E](block: () -> None, msg: str = "") -> E:
     def bad_parse() -> None:
         int("not a number")
 
-    err = assert_raises[ValueError](bad_parse())
+    err = assert_raises[ValueError](bad_parse)
     ```
     """
-    ...
+    # TODO: block-style error assertions are blocked until parser support for `assert <expr> raises <Type>` lands.
+    #       Keep this explicit failure path so callers get a clear diagnostic today.
+    if msg == "":
+        return fail_t("std.testing.assert_raises is not implemented yet")
+    return fail_t(msg)

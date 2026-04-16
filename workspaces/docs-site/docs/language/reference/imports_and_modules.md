@@ -246,7 +246,7 @@ import models as std
 
 ## Stdlib module: `std.math`
 
-See generated stdlib signatures: [Standard library reference: `std.math`](stdlib/math.md).
+See the stdlib reference page: [Standard library reference: `std.math`](stdlib/math.md).
 
 You must import `std.math` before use:
 

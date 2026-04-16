@@ -2,15 +2,13 @@
 //!
 //! This binary renders:
 //! - language-core vocabulary registries (keywords, operators, builtins, types, punctuation)
-//! - selected stdlib API reference pages derived from stdlib `.incn` source
 //!
 //! Outputs are written under `workspaces/docs-site/docs/language/reference/`.
 //!
 //! ## Notes
 //! - The generated files are meant to be checked into the repo and treated as derived artifacts.
-//! - **Do not edit generated files by hand** (`language.md`, `stdlib/math.md`).
+//! - **Do not edit generated files by hand** (`language.md`).
 //! - Change source registries under `crates/incan_core/src/lang/` for core language tables.
-//! - Change stdlib `.incn` files under `crates/incan_stdlib/stdlib/` for generated stdlib API pages.
 //! - Re-run this binary so docs remain in sync.
 //!
 //! ## Examples
@@ -30,19 +28,6 @@ use incan_core::lang::types::{collections, numerics, stringlike};
 use incan_core::lang::{
     builtins, decorators, derives, errors, keywords, operators, punctuation, stdlib, surface, traits,
 };
-
-#[derive(Debug, Clone)]
-struct StdlibConstRow {
-    name: String,
-    ty: String,
-}
-
-#[derive(Debug, Clone)]
-struct StdlibFunctionRow {
-    name: String,
-    params: String,
-    return_ty: String,
-}
 
 fn trim_trailing_newlines_to_at_most_two(out: &mut String) {
     let mut count = 0usize;
@@ -87,15 +72,8 @@ fn main() {
     if let Err(err) = fs::create_dir_all(&out_dir) {
         panic!("create workspaces/docs-site/docs/language/reference/: {err}");
     }
-    if let Err(err) = fs::create_dir_all(out_dir.join("stdlib")) {
-        panic!("create workspaces/docs-site/docs/language/reference/stdlib/: {err}");
-    }
 
     write_language_reference(&out_dir.join("language.md"));
-    write_stdlib_math_reference(
-        &out_dir.join("stdlib/math.md"),
-        &root.join("crates/incan_stdlib/stdlib/math.incn"),
-    );
 }
 
 /// Write `workspaces/docs-site/docs/language/reference/language.md`.
@@ -954,149 +932,6 @@ fn render_surface_methods_section(out: &mut String) {
         ));
     }
     out.push('\n');
-}
-
-fn write_stdlib_math_reference(path: &Path, source_path: &Path) {
-    let source = match fs::read_to_string(source_path) {
-        Ok(source) => source,
-        Err(err) => panic!("read std.math source `{}`: {err}", source_path.display()),
-    };
-    let (constants, functions) = match parse_stdlib_math_source(source.as_str()) {
-        Ok(rows) => rows,
-        Err(err) => panic!("parse std.math source `{}`: {err}", source_path.display()),
-    };
-
-    let mut out = String::new();
-    out.push_str("# std.math reference\n\n");
-    out.push_str("!!! warning \"Generated file\"\n");
-    out.push_str("    Do not edit this page by hand.\n");
-    out.push_str("    Regenerate with: `cargo run -p incan_core --bin generate_lang_reference`\n\n");
-    out.push_str("Source of truth: `crates/incan_stdlib/stdlib/math.incn`.\n\n");
-    out.push_str("Import with:\n\n");
-    out.push_str("```incan\nimport std.math\n```\n\n");
-
-    out.push_str("## Constants\n\n");
-    out.push_str("| Name | Type |\n");
-    out.push_str("|---|---|\n");
-    for c in constants {
-        out.push_str(&format!("| `math.{}` | `{}` |\n", c.name, c.ty));
-    }
-    out.push('\n');
-
-    out.push_str("## Functions\n\n");
-    out.push_str("| Function | Returns |\n");
-    out.push_str("|---|---|\n");
-    for f in functions {
-        out.push_str(&format!("| `math.{}({})` | `{}` |\n", f.name, f.params, f.return_ty));
-    }
-
-    trim_trailing_newlines_to_at_most_two(&mut out);
-    if let Err(err) = fs::write(path, out) {
-        panic!("write std.math reference `{}`: {err}", path.display());
-    }
-}
-
-fn parse_stdlib_math_source(source: &str) -> Result<(Vec<StdlibConstRow>, Vec<StdlibFunctionRow>), String> {
-    let mut constants = Vec::new();
-    let mut functions = Vec::new();
-
-    for (idx, raw) in source.lines().enumerate() {
-        let line_no = idx + 1;
-        let line = raw.trim();
-        if let Some(rest) = line.strip_prefix("pub const ") {
-            let Some((name, after_name)) = rest.split_once(':') else {
-                return Err(format!(
-                    "line {line_no}: malformed const declaration (missing ':'): `{line}`"
-                ));
-            };
-            let ty = after_name.split_once('=').map_or(after_name, |(left, _)| left).trim();
-            if name.trim().is_empty() || ty.is_empty() {
-                return Err(format!("line {line_no}: malformed const declaration: `{line}`"));
-            }
-            constants.push(StdlibConstRow {
-                name: name.trim().to_string(),
-                ty: ty.to_string(),
-            });
-            continue;
-        }
-
-        if let Some(rest) = line.strip_prefix("pub def ") {
-            let Some((name, after_name)) = rest.split_once('(') else {
-                return Err(format!(
-                    "line {line_no}: malformed function declaration (missing '('): `{line}`"
-                ));
-            };
-            let Some((params, after_params)) = after_name.split_once(')') else {
-                return Err(format!(
-                    "line {line_no}: malformed function declaration (missing ')'): `{line}`"
-                ));
-            };
-            let Some(after_arrow) = after_params.trim().strip_prefix("->") else {
-                return Err(format!(
-                    "line {line_no}: malformed function declaration (missing '->'): `{line}`"
-                ));
-            };
-            let return_ty = after_arrow
-                .trim()
-                .strip_suffix(':')
-                .map_or(after_arrow.trim(), str::trim);
-            if name.trim().is_empty() || return_ty.is_empty() {
-                return Err(format!("line {line_no}: malformed function declaration: `{line}`"));
-            }
-
-            functions.push(StdlibFunctionRow {
-                name: name.trim().to_string(),
-                params: params.trim().to_string(),
-                return_ty: return_ty.to_string(),
-            });
-        }
-    }
-
-    if constants.is_empty() {
-        return Err("no constants found in std.math source".to_string());
-    }
-    if functions.is_empty() {
-        return Err("no functions found in std.math source".to_string());
-    }
-
-    Ok((constants, functions))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_stdlib_math_source;
-
-    #[test]
-    fn parse_stdlib_math_source_extracts_rows() {
-        let source = r#"
-pub const PI: float = RUST_PI
-pub def sqrt(x: float) -> float:
-    return rust_sqrt(x)
-"#;
-        let Ok((constants, functions)) = parse_stdlib_math_source(source) else {
-            panic!("expected parser success");
-        };
-        assert_eq!(constants.len(), 1);
-        assert_eq!(constants[0].name, "PI");
-        assert_eq!(constants[0].ty, "float");
-        assert_eq!(functions.len(), 1);
-        assert_eq!(functions[0].name, "sqrt");
-        assert_eq!(functions[0].params, "x: float");
-        assert_eq!(functions[0].return_ty, "float");
-    }
-
-    #[test]
-    fn parse_stdlib_math_source_rejects_malformed_pub_rows() {
-        let source = r#"
-pub const PI float = RUST_PI
-pub def sqrt(x: float) -> float:
-    return rust_sqrt(x)
-"#;
-        let Err(err) = parse_stdlib_math_source(source) else {
-            panic!("expected parser failure");
-        };
-        assert!(err.contains("malformed const declaration"), "unexpected error: {err}");
-    }
 }
 
 /// Resolve the workspace root directory.

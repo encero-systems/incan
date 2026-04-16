@@ -11,12 +11,12 @@ expression: rust_code
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
-fn fail(msg: String) {
-    incan_stdlib::testing::fail(msg)
+fn fail_t(msg: String) {
+    incan_stdlib::testing::fail_t(msg)
 }
 fn assert_true(value: bool) {
     if !value {
-        fail("assertion failed: expected true".to_string());
+        fail_t("assertion failed: expected true".to_string());
     }
 }
 fn main() {

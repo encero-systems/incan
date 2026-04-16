@@ -2,9 +2,10 @@
 
 This section documents the `std.*` module surfaces.
 
-Pages in this section are generated from stdlib source files so signatures stay aligned with implementation.
+Pages in this section are curated and checked into the repository.
 
 ## Available modules
 
-- [`std.async`](async.md)
-- [`std.math`](math.md) (generated)
+- [`std.async`](async.md) (curated)
+- [`std.testing`](testing.md) (curated)
+- [`std.math`](math.md) (curated)

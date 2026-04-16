@@ -15,7 +15,7 @@ This chapter shows how to write and run **unit tests** in a way that’s friendl
     References:
 
     - CLI and discovery rules: [Tooling → Testing](../../../tooling/how-to/testing.md)
-    - API signatures: [Testing (reference)](../../reference/testing.md)
+    - API signatures: [Standard library reference: `std.testing`](../../reference/stdlib/testing.md)
 
 ## The testing module
 
@@ -28,7 +28,7 @@ from std.testing import assert, assert_eq, assert_ne, assert_true, assert_false,
 These are normal functions (not language keywords), which makes them easy for tooling to understand.
 
 For the full API reference, see:
-[Testing (reference)](../../reference/testing.md).
+[Standard library reference: `std.testing`](../../reference/stdlib/testing.md).
 
 ## Your first unit test
 
@@ -93,4 +93,4 @@ That's the end of the Incan Book (Basics)! You now know the core language. Here 
   `incan init`, Rust crate dependencies, and reproducible builds
 - [Rust interop](../../how-to/rust_interop.md) — Use Rust crates from Incan code
 - [Async programming](../../how-to/async_programming.md) — Write concurrent programs
-- [Testing (reference)](../../reference/testing.md) — Full testing API: fixtures, parametrize, skip, xfail
+- [Standard library reference: `std.testing`](../../reference/stdlib/testing.md) — Full testing API: fixtures, parametrize, skip, xfail

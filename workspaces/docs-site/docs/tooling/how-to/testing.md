@@ -3,7 +3,7 @@
 Incan provides a pytest-like testing experience with `incan test`.
 
 For the **testing API** (assertions, markers, fixtures, parametrization), see:
-[Language → Reference → Testing](../../language/reference/testing.md).
+[Standard library reference → `std.testing`](../../language/reference/stdlib/testing.md).
 
 For a guided walkthrough, see:
 [The Incan Book → Unit tests](../../language/tutorials/book/13_unit_tests.md).

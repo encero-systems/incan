@@ -3,15 +3,6 @@
 //! `crates/incan_stdlib/stdlib/testing.incn` is the source-of-truth surface API for `std.testing`.
 //! This Rust module implements only host-boundary functions referenced by `@rust.extern` declarations in `std.testing`.
 
-/// Explicitly fail a test with a message.
-///
-/// # Panics
-///
-/// Always panics with the provided `msg`.
-pub fn fail(msg: String) {
-    panic!("{}", msg);
-}
-
 /// Generic panic primitive used by `std.testing` helpers with non-`None` return types.
 ///
 /// # Panics
@@ -58,16 +49,4 @@ pub fn fixture() {
 /// Parameter expansion is handled by `incan test`; calling this at runtime is a misuse.
 pub fn parametrize<T>(_argnames: String, _argvalues: Vec<T>) {
     marker_runtime_misuse("parametrize");
-}
-
-/// Placeholder host boundary for `std.testing.assert_raises`.
-///
-/// # Panics
-///
-/// Always panics because `assert_raises` is not implemented yet.
-pub fn assert_raises<E>(_block: fn() -> (), msg: String) -> E {
-    if msg.is_empty() {
-        fail_t::<E>("std.testing.assert_raises is not implemented yet".to_string());
-    }
-    fail_t::<E>(msg)
 }
