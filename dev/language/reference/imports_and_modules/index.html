@@ -1729,6 +1729,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#stdlib-module-stdasync" class="md-nav__link">
+    <span class="md-ellipsis">
+      Stdlib module: std.async
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Stdlib module: std.async">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#time-helpers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Time helpers
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#concurrency-helpers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Concurrency helpers
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rust-standard-library-access" class="md-nav__link">
     <span class="md-ellipsis">
       Rust standard library access
@@ -1920,6 +1953,8 @@
       
         
       
+        
+      
     
     
       
@@ -1958,6 +1993,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/async/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.async
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -4609,6 +4665,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#stdlib-module-stdasync" class="md-nav__link">
+    <span class="md-ellipsis">
+      Stdlib module: std.async
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Stdlib module: std.async">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#time-helpers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Time helpers
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#concurrency-helpers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Concurrency helpers
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rust-standard-library-access" class="md-nav__link">
     <span class="md-ellipsis">
       Rust standard library access
@@ -5089,6 +5178,61 @@ hint: Add `import std.async` or `from std.async import ...`
 <tr>
 <td><code>math.hypot(x, y)</code></td>
 <td>Euclidean distance √(x² + y²)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stdlib-module-stdasync">Stdlib module: <code>std.async</code><a class="headerlink" href="#stdlib-module-stdasync" title="Permanent link">&para;</a></h2>
+<p>See generated/curated stdlib signatures: <a href="../stdlib/async/">Standard library reference: <code>std.async</code></a>.</p>
+<p><code>std.async</code> includes runtime support for asynchronous programming and activates the <code>async</code>/<code>await</code> soft keywords when imported.</p>
+<p>You can import time helpers directly:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span><span class="p">,</span> <span class="nb">timeout</span>
+</code></pre></div>
+<p>Or import a complete surface from the prelude:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.prelude</span><span class="w"> </span><span class="kn">import</span> <span class="o">*</span>
+</code></pre></div>
+<h3 id="time-helpers">Time helpers<a class="headerlink" href="#time-helpers" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sleep</code>, <code>sleep_ms</code></td>
+<td>Delay the current task</td>
+</tr>
+<tr>
+<td><code>timeout</code>, <code>timeout_ms</code></td>
+<td>Bound async work with a deadline</td>
+</tr>
+</tbody>
+</table>
+<h3 id="concurrency-helpers">Concurrency helpers<a class="headerlink" href="#concurrency-helpers" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spawn</code>, <code>spawn_blocking</code></td>
+<td>Start async or blocking work</td>
+</tr>
+<tr>
+<td><code>channel</code>, <code>unbounded_channel</code>, <code>oneshot</code></td>
+<td>Message passing primitives</td>
+</tr>
+<tr>
+<td><code>select_timeout</code></td>
+<td>Timeout-based select utility</td>
+</tr>
+<tr>
+<td><code>yield_now</code></td>
+<td>Yield to scheduler</td>
 </tr>
 </tbody>
 </table>
