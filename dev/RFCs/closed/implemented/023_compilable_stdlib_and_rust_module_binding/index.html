@@ -1583,6 +1583,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1635,6 +1641,69 @@
   
   <span class="md-ellipsis">
     std.async
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.derives.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.traits.*
   </span>
   
 
@@ -4748,7 +4817,8 @@
 <p>Together, these changes push the Incan stdlib toward being written in <strong>mostly plain Incan</strong>, with a minimal set of Rust-backed primitives — and make the same pattern available to the ecosystem, allowing users to write their own rust-backed Incan libraries.</p>
 <h2 id="implemented-closeout-notes">Implemented Closeout Notes<a class="headerlink" href="#implemented-closeout-notes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>.incn</code> source is now the source of truth for migrated stdlib surfaces, including <code>std.async</code>, <code>std.math</code>, <code>std.reflection</code>, and <code>std.traits</code>.</li>
+<li><code>.incn</code> source is now the source of truth for the stdlib surfaces closed out under RFC 023, including <code>std.async</code>, <code>std.math</code>, <code>std.reflection</code>, and <code>std.traits.{ops,error,indexing,callable,prelude}</code>.</li>
+<li><code>std.traits.convert</code> remains part of the documented standard-library surface, but its <code>.incn</code> source is still blocked on follow-up compiler-surface work for <code>from</code> / <code>try_from</code> (tracked separately under RFC 043 / issue #344).</li>
 <li>Build, test, and lock flows derive stdlib-driven feature/extra-dependency activation from shared namespace metadata (for example <code>std.async</code> enabling Tokio and <code>std.math</code> pulling <code>libm</code>).</li>
 <li>Explicit generic <code>with</code> bounds are enforced in the frontend against concrete argument types; backend trait-bound inference remains additive rather than the first place bound violations show up.</li>
 <li><code>@rust.extern</code> declaration-shape errors are caught in the frontend, and downstream Cargo/<code>rustc</code> failures are wrapped back onto the <code>.incn</code> declaration site in the CLI build surface.</li>
@@ -5564,7 +5634,7 @@ reserved for future use when <code>module</code> is introduced as a keyword.</p>
 <li>[x] Typechecker tests: stdlib signatures resolved from <code>.incn</code> source.</li>
 <li>[x] Codegen snapshot tests: compiled Incan stdlib functions in generated output.</li>
 <li>[x] Codegen snapshot tests: generic functions emit correct Rust trait bounds (inferred and explicit).</li>
-<li>[ ] Integration tests: behavioral equivalence with pre-migration stdlib.</li>
+<li>[x] Integration tests: behavioral equivalence with pre-migration stdlib.</li>
 <li>[x] Negative tests: calling a bounded generic function with a non-conforming type → Incan-level error.</li>
 <li>[x] Negative tests: <code>@rust.extern</code> with non-trivial body, invalid <code>rust.module()</code> path, unused <code>rust.module()</code> warning.</li>
 <li>[x] Transitive inference test: <code>foo[T]</code> calling <code>assert_eq[T]</code> acquires <code>PartialEq + Display</code> bounds from callee.</li>

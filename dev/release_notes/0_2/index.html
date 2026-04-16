@@ -1587,6 +1587,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1639,6 +1645,69 @@
   
   <span class="md-ellipsis">
     std.async
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.derives.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.traits.*
   </span>
   
 
@@ -4608,6 +4677,11 @@
 <li><strong>Compiler</strong>: <code>@rust.extern</code> marker for Rust-backed function stubs, replacing the internal <code>@std.builtin</code> decorator (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>, <a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Compiler</strong>: <code>@staticmethod</code> decorator for type-scoped methods with no <code>self</code> receiver, available on <code>class</code>, <code>model</code>, and <code>newtype</code> declarations. Required for <code>@rust.extern</code> methods on types (instance delegation is not supported).</li>
 <li><strong>Testing</strong>: <code>std.testing</code> is now surface-first: assertion and marker-facing API is declared in <code>crates/incan_stdlib/stdlib/testing.incn</code>; runtime-backed helpers are kept only where required for semantics. <code>fail_t</code> remains the panic host boundary, marker functions keep metadata-backed runtime entry points, and <code>assert_raises</code> is tracked as a known blocker until parser-level <code>assert ... raises ...</code> support is available. (#302)</li>
+<li><strong>Runtime / Compiler</strong>: <code>std.serde.json.Serialize</code> now provides a source-defined default <code>to_json()</code> path for explicit <code>with Serialize</code> adopters, while lowering forwards that trait adoption into the matching Rust <code>serde::Serialize</code> derive so the direct-interop body compiles honestly. <code>Deserialize.from_json()</code> remains the irreducible host boundary for now. (#303)</li>
+<li><strong>Compiler / Stdlib</strong>: <code>std.reflection</code> now typechecks <code>__class_name__()</code> and <code>__fields__()</code> against their real surface types (<code>str</code> and <code>FrozenList[FieldInfo]</code>) instead of backend-only unknown fallbacks. Plain reflection use no longer requires importing <code>FieldInfo</code>; explicit type annotations still do. (#304)</li>
+<li><strong>Compiler / Stdlib</strong>: <code>std.derives.{comparison,copying,string}</code> no longer model derive-provided methods as <code>rust.module()</code> helper shims. These traits now live as source-defined capability contracts, while codegen continues to realize <code>@derive(...)</code> through ordinary Rust derive attributes on the adopting type. (#305)</li>
+<li><strong>Compiler / Stdlib</strong>: <code>std.traits.*</code> now has a curated stdlib reference entry, and <code>std.traits.{ops,error,indexing,callable,prelude}</code> now has compiled-source coverage proving they already compile directly from <code>.incn</code> source without <code>rust.module()</code> / <code>@rust.extern</code> helper shims. <code>std.traits.convert</code> remains the explicit blocked closeout item because <code>from</code> / <code>try_from</code> still collide with the hard <code>from</code> keyword in declaration position; follow-up is tracked under RFC 043. (#306)</li>
+<li><strong>Testing / Stdlib</strong>: RFC 023’s remaining behavioral-equivalence lane is now covered by an integration fixture that exercises migrated source-defined stdlib behavior end-to-end: explicit <code>std.serde.json.Serialize</code> adoption, <code>std.reflection</code> metadata, and derive-backed <code>Clone</code> / <code>Eq</code> / <code>Ord</code> / <code>Default</code> behavior on the same model. (#158)</li>
 <li><strong>Runtime / Compiler</strong>: <code>std.math</code> closeout alignment now keeps direct Rust interop wrappers while ensuring the module contract is consistent across typechecking, codegen, and docs (including <code>round</code>, <code>log2</code>, <code>atan2</code>, and <code>hypot</code>; uppercase constants such as <code>math.PI</code>) (#307).</li>
 <li><strong>Runtime / Compiler</strong>: Issue #301 <code>std.async</code> direct-interoperability closeout for <code>std.async.time</code> and <code>std.async.select</code> is complete. These modules now expose their runtime-facing API via direct Rust imports (<code>clamp_seconds</code> / <code>clamp_millis</code> helpers, <code>tokio</code> time primitives) while preserving the public <code>std.async.*</code> contract and error/return behavior. Remaining async modules (<code>task</code>, <code>sync</code>, <code>channel</code>, <code>prelude</code>) are still under conversion to preserve behaviorful/native wrappers.</li>
 <li><strong>Compiler</strong>: Stdlib namespace registry (<code>STDLIB_NAMESPACES</code>) replaces the flat stdlib-module list — convention-based submodule discovery, registry-driven unknown-module diagnostics, and soft-keyword activation metadata.</li>

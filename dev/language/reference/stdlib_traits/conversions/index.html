@@ -1591,6 +1591,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1643,6 +1649,69 @@
   
   <span class="md-ellipsis">
     std.async
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stdlib/derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.derives.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stdlib/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stdlib/traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.traits.*
   </span>
   
 
@@ -4191,10 +4260,15 @@
 
 <h1 id="conversion-traits-reference">Conversion traits (Reference)<a class="headerlink" href="#conversion-traits-reference" title="Permanent link">&para;</a></h1>
 <p>This page documents stdlib traits for explicit conversions.</p>
+<p>Current status:</p>
+<ul>
+<li><code>std.traits.convert</code> remains a documented trait family, but RFC 023 closeout for its <code>.incn</code> source is blocked for now because <code>from</code> is still a hard keyword in declaration position.</li>
+<li>Follow-up is tracked in <a href="../../../../RFCs/043_rust_trait_impl_from_incan/">RFC 043</a>.</li>
+</ul>
 <h2 id="from-into">From / Into<a class="headerlink" href="#from-into" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>From[T]</code></strong><ul>
-<li>Hook: <code>@classmethod def from(cls, value: T) -&gt; Self</code></li>
+<li>Intended hook: <code>@classmethod def from(cls, value: T) -&gt; Self</code></li>
 </ul>
 </li>
 <li><strong><code>Into[T]</code></strong><ul>
@@ -4205,7 +4279,7 @@
 <h2 id="tryfrom-tryinto">TryFrom / TryInto<a class="headerlink" href="#tryfrom-tryinto" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>TryFrom[T]</code></strong><ul>
-<li>Hook: <code>@classmethod def try_from(cls, value: T) -&gt; Result[Self, str]</code></li>
+<li>Intended hook: <code>@classmethod def try_from(cls, value: T) -&gt; Result[Self, str]</code></li>
 </ul>
 </li>
 <li><strong><code>TryInto[T]</code></strong><ul>

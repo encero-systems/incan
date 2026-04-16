@@ -1673,6 +1673,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1725,6 +1731,69 @@
   
   <span class="md-ellipsis">
     std.async
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.derives.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.traits.*
   </span>
   
 
@@ -4237,6 +4306,7 @@
 
 <h1 id="reflection-reference">Reflection (Reference)<a class="headerlink" href="#reflection-reference" title="Permanent link">&para;</a></h1>
 <p>Models and classes provide built-in reflection helpers for runtime introspection.</p>
+<p>For the curated <code>std.reflection</code> module surface, see <a href="../stdlib/reflection/">Standard library reference: <code>std.reflection</code></a>.</p>
 <h2 id="__class_name__-str"><code>__class_name__() -&gt; str</code><a class="headerlink" href="#__class_name__-str" title="Permanent link">&para;</a></h2>
 <p>Returns the type's name as a string.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
@@ -4309,6 +4379,7 @@
 <ul>
 <li>Field metadata like <code>[alias="..."]</code> and <code>[description="..."]</code> is <strong>model-only</strong>.</li>
 <li>For a <code>class</code>, <code>FieldInfo.alias</code> and <code>FieldInfo.description</code> are always <code>None</code> and <code>FieldInfo.wire_name == FieldInfo.name</code>.</li>
+<li>You do not need to import <code>FieldInfo</code> just to call <code>obj.__fields__()</code> and inspect the returned records. Import <code>FieldInfo</code> only when you want to spell the type explicitly in an annotation.</li>
 </ul>
 <h3 id="common-patterns">Common patterns<a class="headerlink" href="#common-patterns" title="Permanent link">&para;</a></h3>
 <p>If you only need canonical field names:</p>
