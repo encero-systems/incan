@@ -636,6 +636,7 @@ Note:
 
 - Field metadata like `[alias="..."]` and `[description="..."]` is **model-only**. For `class`, `FieldInfo.alias`
   and `FieldInfo.description` are always `None` and `FieldInfo.wire_name == FieldInfo.name`.
+- `u.__fields__()` is typed as `FrozenList[FieldInfo]` directly by the compiler. Import `FieldInfo` only when you need to spell that type in an annotation.
 
 See [Reflection (Reference)](reflection.md) for `FieldInfo` structure details.
 
