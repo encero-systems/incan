@@ -1454,8 +1454,6 @@
       
         
       
-        
-      
     
     
       
@@ -1650,27 +1648,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/testing/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Testing
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../../reference/reflection/" class="md-nav__link">
         
   
@@ -1723,6 +1700,8 @@
       
         
       
+        
+      
     
     
       
@@ -1732,7 +1711,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_11" >
         
           
           
@@ -1748,14 +1727,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_12" id="__nav_3_4_12_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_11" id="__nav_3_4_11_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_12_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_12">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_11">
             <span class="md-nav__icon md-icon"></span>
             Standard library
           </label>
@@ -1791,11 +1770,32 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../reference/stdlib/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../reference/stdlib/math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
-    std.math (generated)
+    std.math
   </span>
   
 
@@ -1847,7 +1847,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_13" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_12" >
         
           
           
@@ -1863,14 +1863,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_13" id="__nav_3_4_13_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_12" id="__nav_3_4_12_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_13_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_13">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_12">
             <span class="md-nav__icon md-icon"></span>
             Stdlib traits
           </label>
@@ -2042,10 +2042,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_14" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_13" >
         
           
-          <label class="md-nav__link" for="__nav_3_4_14" id="__nav_3_4_14_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4_13" id="__nav_3_4_13_label" tabindex="0">
             
   
   <span class="md-ellipsis">
@@ -2056,8 +2056,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_14_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_14">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_13">
             <span class="md-nav__icon md-icon"></span>
             Derives
           </label>
@@ -4306,7 +4306,7 @@
 <p>References:</p>
 <ul>
 <li>CLI and discovery rules: <a href="../../../../tooling/how-to/testing/">Tooling → Testing</a></li>
-<li>API signatures: <a href="../../../reference/testing/">Testing (reference)</a></li>
+<li>API signatures: <a href="../../../reference/stdlib/testing/">Standard library reference: <code>std.testing</code></a></li>
 </ul>
 </div>
 <h2 id="the-testing-module">The testing module<a class="headerlink" href="#the-testing-module" title="Permanent link">&para;</a></h2>
@@ -4315,7 +4315,7 @@
 </code></pre></div>
 <p>These are normal functions (not language keywords), which makes them easy for tooling to understand.</p>
 <p>For the full API reference, see:
-<a href="../../../reference/testing/">Testing (reference)</a>.</p>
+<a href="../../../reference/stdlib/testing/">Standard library reference: <code>std.testing</code></a>.</p>
 <h2 id="your-first-unit-test">Your first unit test<a class="headerlink" href="#your-first-unit-test" title="Permanent link">&para;</a></h2>
 <p>Create a test file, for example <code>tests/test_math.incn</code>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;Unit tests for math utilities.&quot;&quot;&quot;</span>
@@ -4362,7 +4362,7 @@
   <code>incan init</code>, Rust crate dependencies, and reproducible builds</li>
 <li><a href="../../../how-to/rust_interop/">Rust interop</a> — Use Rust crates from Incan code</li>
 <li><a href="../../../how-to/async_programming/">Async programming</a> — Write concurrent programs</li>
-<li><a href="../../../reference/testing/">Testing (reference)</a> — Full testing API: fixtures, parametrize, skip, xfail</li>
+<li><a href="../../../reference/stdlib/testing/">Standard library reference: <code>std.testing</code></a> — Full testing API: fixtures, parametrize, skip, xfail</li>
 </ul>
 
 

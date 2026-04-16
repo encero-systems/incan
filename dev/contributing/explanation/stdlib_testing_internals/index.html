@@ -1339,8 +1339,6 @@
       
         
       
-        
-      
     
     
       
@@ -1535,27 +1533,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/testing/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Testing
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../../language/reference/reflection/" class="md-nav__link">
         
   
@@ -1608,6 +1585,8 @@
       
         
       
+        
+      
     
     
       
@@ -1617,7 +1596,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_11" >
         
           
           
@@ -1633,14 +1612,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_12" id="__nav_3_4_12_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_11" id="__nav_3_4_11_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_12_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_12">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_11">
             <span class="md-nav__icon md-icon"></span>
             Standard library
           </label>
@@ -1676,11 +1655,32 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/reference/stdlib/math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
-    std.math (generated)
+    std.math
   </span>
   
 
@@ -1732,7 +1732,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_13" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_12" >
         
           
           
@@ -1748,14 +1748,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_13" id="__nav_3_4_13_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_12" id="__nav_3_4_12_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_13_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_13">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_12">
             <span class="md-nav__icon md-icon"></span>
             Stdlib traits
           </label>
@@ -1927,10 +1927,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_14" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_13" >
         
           
-          <label class="md-nav__link" for="__nav_3_4_14" id="__nav_3_4_14_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4_13" id="__nav_3_4_13_label" tabindex="0">
             
   
   <span class="md-ellipsis">
@@ -1941,8 +1941,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_14_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_14">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_13">
             <span class="md-nav__icon md-icon"></span>
             Derives
           </label>
@@ -4210,7 +4210,7 @@
 <code>std.testing</code> stdlib module. It is aimed at compiler contributors, not Incan users.</p>
 <blockquote>
 <p>For the user-facing guide, see [Language → How-to → <code>std.testing</code> guide].
-For the API reference, see <a href="../../../language/reference/testing/">Language → Reference → Testing</a>.</p>
+For the API reference, see [Standard library reference → <code>std.testing</code>].</p>
 </blockquote>
 <h2 id="integration-model-rfc-023-phase-5">Integration model (RFC 023 Phase 5)<a class="headerlink" href="#integration-model-rfc-023-phase-5" title="Permanent link">&para;</a></h2>
 <p><code>std.testing</code> is compiled from Incan source instead of relying on hardcoded Rust assertion helpers.</p>
@@ -4219,13 +4219,16 @@ For the API reference, see <a href="../../../language/reference/testing/">Langua
 <li><strong>Rust module mapping</strong>: the file declares <code>rust.module("incan_stdlib::testing")</code>, routing host-boundary calls to the
   <code>incan_stdlib::testing</code> Rust module.</li>
 <li><strong>Incan-implemented assertions</strong>: <code>assert</code>, <code>assert_eq</code>, <code>assert_ne</code>, <code>assert_true</code>, <code>assert_false</code>, <code>assert_is_some</code>,
-  <code>assert_is_none</code>, <code>assert_is_ok</code>, <code>assert_is_err</code> are all written in Incan source. They delegate to <code>fail()</code> /
+  <code>assert_is_none</code>, <code>assert_is_ok</code>, <code>assert_is_err</code>, and <code>fail</code> are all written in Incan source. They delegate to
   <code>fail_t()</code> for the actual panic.</li>
 <li><strong>Host-boundary primitives</strong> (<code>@rust.extern</code>):<ul>
-<li><code>fail(msg)</code> / <code>fail_t[T](msg)</code> — panic primitives implemented in <code>incan_stdlib::testing</code>.</li>
-<li><code>assert_raises</code> — not yet implemented (FIXME in stdlib source).</li>
+<li><code>fail_t[T](msg)</code> — generic panic primitive implemented in <code>incan_stdlib::testing</code>.</li>
 <li>Marker entrypoints (<code>skip</code>, <code>xfail</code>, <code>slow</code>, <code>fixture</code>, <code>parametrize</code>) — their Rust implementations intentionally
   panic with a "runtime misuse" message; they exist only to satisfy the extern boundary.</li>
+</ul>
+</li>
+<li><strong>Known blocker</strong>:<ul>
+<li><code>assert_raises</code> remains unimplemented as an Incan-side placeholder (fails via <code>fail_t</code>) until parser/lowering support for <code>assert ... raises ...</code> lands.</li>
 </ul>
 </li>
 <li><strong>Marker metadata</strong>: each marker extern carries <code>metadata={...}</code> on its <code>@rust.extern</code> annotation. <code>incan test</code> reads
