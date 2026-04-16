@@ -9,7 +9,7 @@
     - RFC 040 (scoped DSL glyph surfaces)
     - RFC 022 (namespaced stdlib and compiler handoff)
     - RFC 031 (library system phase 1)
-- **Issue:** #202
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/202
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -197,20 +197,20 @@ The feature is additive at language surface level, but it can change behavior fo
 Non-normative recommended shape:
 
 - Extend DSL registration metadata with scoped symbol descriptors.
-- Carry owning-block and eligible-position context through frontend semantic analysis.
-- Resolve scoped symbols during typechecking before ordinary fallback in eligible positions.
-- Lower resolved scoped symbols through DSL-specific desugar/lowering paths.
+- Carry owning-block and eligible-position context through semantic analysis.
+- Resolve scoped symbols before ordinary fallback in eligible positions.
+- Preserve scoped symbol identity through later compilation stages so DSL-owned meaning remains unambiguous.
 - Preserve explicit namespaced builtin calls as direct builtin targets.
 
 ## Layers affected
 
-- **Parser / AST**: parser must preserve enough DSL block and clause-position context for scoped symbol eligibility checks.
-- **Typechecker / Symbol resolution**: resolver must apply scoped symbol precedence in eligible positions and preserve ordinary resolution elsewhere.
-- **IR Lowering**: lowering must keep scoped symbol identity so DSL-owned semantics are emitted through the correct path.
+- **Frontend recognition**: the language frontend must preserve enough DSL block and clause-position context for scoped symbol eligibility checks.
+- **Name resolution**: symbol resolution must apply scoped symbol precedence in eligible positions and preserve ordinary resolution elsewhere.
+- **Lowering / execution handoff**: later compilation stages must keep scoped symbol identity so DSL-owned semantics are emitted through the correct path.
 - **Emission**: emitted output must preserve DSL-scoped meaning and explicit builtin calls without ambiguity.
-- **`incan-vocab` registry**: registration schema must support scoped symbol descriptors and activation metadata.
-- **Formatter**: formatter should preserve explicit qualification used to disambiguate scoped vs builtin calls.
-- **LSP / Tooling**: completions, hover, go-to-definition, and diagnostics should reflect scoped symbol meaning by context.
+- **`incan-vocab` registry**: registration metadata must support scoped symbol descriptors and activation information.
+- **Formatter**: formatting should preserve explicit qualification used to disambiguate scoped vs builtin calls.
+- **LSP / tooling**: completions, hover, go-to-definition, and diagnostics should reflect scoped symbol meaning by context.
 
 ## Unresolved questions
 
@@ -221,5 +221,4 @@ Non-normative recommended shape:
 - Should descriptor activation be file-local only, or should there be an opt-in module subtree propagation model?
 - How should scoped symbol overloading across nested DSL blocks be resolved when multiple active descriptors share a name?
 
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

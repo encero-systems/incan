@@ -1,65 +1,43 @@
-# RFC 025: Multi-Instantiation Trait Dispatch
+# RFC 025: multi-instantiation trait dispatch
 
-- **Status**: Draft
-- **Author(s)**: Danny Meijer (@dannymeijer)
-- **Issue**: #150
-- **RFC PR**: —
-- **Created**: 2026-02-17
-- **Related**:
+- **Status:** Draft
+- **Created:** 2026-02-17
+- **Author(s):** Danny Meijer (@dannymeijer)
+- **Related:**
     - RFC 050 (enum methods & trait adoption)
     - RFC 051 (`JsonValue`)
-    - [RFC 023] (compilable stdlib & rust.module binding)
-    - [RFC 024] (extensible derive protocol)
+    - RFC 023 (compilable stdlib and rust.module binding)
+    - RFC 024 (extensible derive protocol)
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/150
+- **RFC PR:** —
+- **Written against:** v0.1
+- **Shipped in:** —
 
 ## Summary
 
-This RFC proposes allowing a type to adopt multiple instantiations of the same generic trait with different type
-parameters. When this results in multiple methods with the same name but different parameter types, the compiler
-resolves which implementation to call based on the argument type at the call site. This is compile-time dispatch, not
-runtime overloading.
+This RFC proposes allowing a type to adopt multiple instantiations of the same generic trait with different type parameters. When this results in multiple methods with the same name but different parameter types, the compiler resolves which implementation to call based on the argument type at the call site. This is compile-time dispatch, not runtime overloading.
 
 ## Motivation
 
 ### One trait, multiple key types
 
-Incan's `Index[K, V]` trait (from `std.traits.indexing`) defines `__getitem__(self, key: K) -> V` for subscript
-access. Some types naturally need indexing by more than one key type:
+Incan's `Index[K, V]` trait (from `std.traits.indexing`) defines `__getitem__(self, key: K) -> V` for subscript access. Some types naturally need indexing by more than one key type:
 
 - `JsonValue` needs `value["key"]` (str) and `value[0]` (int)
 - A `DataFrame` might need `df["column"]` (str) and `df[0]` (int for row access)
 - A `Matrix` might need `m[(0, 1)]` (tuple) and `m[0]` (int for row slice)
 
-Today, a type can only adopt `Index` once — `with Index[str, V]` or `with Index[int, V]`, but not both — because the
-method table stores one entry per method name and two `__getitem__` definitions would collide.
+Today, a type can only adopt `Index` once — `with Index[str, V]` or `with Index[int, V]`, but not both — because same-name trait methods still collide in the current language model.
 
 ### Rust handles this naturally
 
-In Rust, a type can implement the same trait for different type parameters without conflict:
-
-```rust
-impl Index<&str> for JsonValue {
-    type Output = JsonValue;
-    fn index(&self, key: &str) -> &JsonValue { ... }
-}
-
-impl Index<&i64> for JsonValue {
-    type Output = JsonValue;
-    fn index(&self, key: &i64) -> &JsonValue { ... }
-}
-```
-
-The compiler resolves which `index()` to call based on the argument type. This is not overloading — it's the trait
-system working as designed. Incan should support the same pattern.
+Rust already demonstrates that this pattern is coherent: one type may implement the same generic trait multiple times with different type parameters, and the compiler selects the matching implementation from type context. Incan should support the same underlying capability instead of forcing users into wrapper traits or artificial API splits.
 
 ## Non-Goals
 
-- **General method overloading.** This RFC does not add the ability to define two freestanding `def foo(x: int)` and
-  `def foo(x: str)` at module level. Same-name methods are permitted **only** when they arise from different trait
-  instantiations.
-- **Runtime dispatch.** Resolution happens at compile time based on argument types. There is no dynamic dispatch or
-  `isinstance`-style checks.
-- **Union types.** `str | int` as a first-class type is a separate concern. This RFC solves the multi-key problem
-  through the trait system, not through type unions.
+- **General method overloading.** This RFC does not add the ability to define two freestanding `def foo(x: int)` and `def foo(x: str)` at module level. Same-name methods are permitted only when they arise from different trait instantiations.
+- **Runtime dispatch.** Resolution happens at compile time based on argument types. There is no dynamic dispatch or `isinstance`-style checking.
+- **Union types.** `str | int` as a first-class type is a separate concern. This RFC solves the multi-key problem through the trait system, not through type unions.
 
 ## Guide-level explanation (how users think about it)
 
@@ -83,8 +61,7 @@ enum JsonValue with Index[str, JsonValue], Index[int, JsonValue]:
     def __getitem__(self, key: int) -> JsonValue: ...
 ```
 
-The two `__getitem__` methods are not overloads — they are implementations of two different trait instantiations. The
-compiler matches each definition to its trait by comparing parameter types.
+The two `__getitem__` methods are not overloads. They are implementations of two different trait instantiations, and the compiler matches each definition to its trait by comparing parameter types.
 
 ### Call-site resolution
 
@@ -128,14 +105,11 @@ let precise: float = reading.into()   # Into[float]
 let rounded: int = reading.into()     # Into[int]
 ```
 
-The compiler resolves `reading.into()` based on the expected return type from context (the binding's type annotation).
-If the context doesn't disambiguate, the compiler reports an ambiguity error.
+The compiler resolves `reading.into()` based on the expected return type from context (the binding's type annotation). If the context doesn't disambiguate, the compiler reports an ambiguity error.
 
 ### Multi-format serialization (the foundational use case)
 
-Beyond `Index` and `Into`, the primary real-world motivation for multi-instantiation is **multi-format serialization**.
-Many applications require a single model to serve multiple wire formats — JSON, YAML, Protobuf, Avro — each via a
-derivable trait. A generic `Serializable[F]` trait makes this composable:
+Beyond `Index` and `Into`, the primary real-world motivation for multi-instantiation is **multi-format serialization**. Many applications require a single model to serve multiple wire formats — JSON, YAML, Protobuf, Avro — each via a derivable trait. A generic `Serializable[F]` trait makes this composable:
 
 ```incan
 trait Serializable[F]:
@@ -158,16 +132,13 @@ let json_bytes = publish[Json](my_event)   # T inferred as CustomerEvent; Serial
 let yaml_bytes = publish[Yaml](my_event)  # Serializable[Yaml]::serialize
 ```
 
-The type parameter `F` determines which `Serializable` instantiation the compiler selects. The bound
-`T with Serializable[F]` links the model type to the format — standard Incan `with` syntax in the type
-parameter list. This pattern is the foundation of the `@derive(format)` protocol described in [RFC 024].
+The type parameter `F` determines which `Serializable` instantiation the compiler selects. The bound `T with Serializable[F]` links the model type to the format using ordinary Incan `with` syntax in the type-parameter list. This pattern is the foundation of the `@derive(format)` protocol described in RFC 024.
 
 ## Reference-level explanation (precise rules)
 
 ### Trait adoption
 
-A type may list the same trait name multiple times in its `with` clause, provided each instantiation has different type
-arguments:
+A type may list the same trait name multiple times in its `with` clause, provided each instantiation has different type arguments:
 
 ```incan
 model Foo with Trait[A], Trait[B]:  # OK — different type args
@@ -178,38 +149,27 @@ model Bar with Trait[A], Trait[A]:  # ERROR — duplicate instantiation
 
 When multiple trait instantiations produce methods with the same name, the compiler resolves which to call using:
 
-1. **Argument types** — the most common case. `value["key"]` vs `value[0]` is unambiguous because `str` and `int` are
-   distinct types.
-2. **Expected return type** (provisional) — when argument types are identical but return types differ (e.g.,
-   `Into[float]` vs `Into[int]`), the compiler may use the expected type from surrounding context (type annotation,
-   function argument, etc.). See [deferred question #2](#deferred-questions) for open design considerations.
-3. **Explicit qualification** — if neither argument nor return type disambiguates, the call is an error. The user must
-   qualify which trait they mean (syntax TBD — could be `value.Index[str].__getitem__("key")` or similar, but this is
-   expected to be rare).
+1. **Argument types** — the most common case. `value["key"]` vs `value[0]` is unambiguous because `str` and `int` are distinct types.
+2. **Expected return type** (provisional) — when argument types are identical but return types differ (for example `Into[float]` vs `Into[int]`), the compiler may use the expected type from surrounding context such as a binding annotation or function argument. See the unresolved questions section for the remaining design work here.
+3. **Explicit qualification** — if neither argument nor return type disambiguates, the call is an error. The user must qualify which trait they mean. The exact qualification syntax is still open, but this should be the fallback rather than the common path.
 
 ### Symbol table representation
 
-The current `HashMap<String, MethodInfo>` representation is insufficient for multi-instantiation methods. The
-implementation must support multiple entries for the same method name, keyed or grouped by their trait origin. The
-specifics of this data structure change are left to the implementer.
+The language and compiler model must support more than one same-name method entry when those methods arise from distinct trait instantiations. The exact internal representation is implementation detail, but the public rule is that trait-origin information must be preserved well enough for type-directed dispatch and diagnostics to stay coherent.
 
 ### Rust emission
 
-Each trait instantiation emits a separate `impl Trait<TypeArg> for Type { ... }` block in Rust. This maps directly
-to how Rust handles multiple trait implementations.
+Each trait instantiation lowers to a separate Rust trait implementation. That backend mapping is straightforward and is one reason this RFC is a good semantic fit for the language rather than a forced abstraction.
 
 ## Design details
 
 ### Syntax
 
-No new syntax is proposed. The existing `with Trait[A], Trait[B]` clause already parses a comma-separated list of trait
-adoptions. If the parser currently rejects duplicate trait names in the `with` clause, that restriction must be lifted.
-Same-name `def` declarations are permitted inside the body when they correspond to different trait instantiations.
+No new syntax is proposed. The existing `with Trait[A], Trait[B]` clause already parses a comma-separated list of trait adoptions. If the parser currently rejects duplicate trait names in the `with` clause, that restriction must be lifted. Same-name `def` declarations are permitted inside the body when they correspond to different trait instantiations.
 
 ### Semantics
 
-The rule is simple: **same-name methods are permitted if and only if they satisfy different `with` trait adoptions.**
-This is not general overloading — it's the trait system resolving dispatch.
+The rule is simple: **same-name methods are permitted if and only if they satisfy different `with` trait adoptions.** This is not general overloading — it's the trait system resolving dispatch.
 
 ### Interaction with existing features
 
@@ -219,13 +179,11 @@ Multi-instantiation works on all three declaration types that support `with`.
 
 #### Built-in types (`List`, `Dict`)
 
-Built-in collection types currently have compiler-level indexing support. This RFC does not change that, but provides
-the mechanism for user-defined types to achieve the same capability through traits.
+Built-in collection types currently have compiler-level indexing support. This RFC does not change that, but it provides the mechanism for user-defined types to achieve the same capability through traits.
 
 #### `@rust.extern` methods
 
-`@rust.extern` methods in multi-instantiation traits work normally — each `__getitem__` can independently be
-`@rust.extern` or pure Incan.
+`@rust.extern` methods in multi-instantiation traits work normally. Each `__getitem__` can independently be `@rust.extern` or pure Incan.
 
 #### Generic function bounds
 
@@ -236,13 +194,11 @@ def lookup[T with Index[str, V], Index[int, V]](data: T, key: str, idx: int) -> 
     ...
 ```
 
-This falls out naturally from the trait system — each `with` bound is an independent constraint. The function body can
-call `data[key]` and `data[idx]`, and the compiler resolves each to the matching `Index` instantiation.
+This falls out naturally from the trait system. Each `with` bound is an independent constraint, and the function body can call `data[key]` and `data[idx]` with each use resolving to the matching `Index` instantiation.
 
 #### Cross-trait method name collisions
 
-Multi-instantiation of the *same* generic trait is the primary use case, but the same-name rule applies to *any*
-combination of adopted traits. Consider:
+Multi-instantiation of the *same* generic trait is the primary use case, but the same-name rule applies to *any* combination of adopted traits. Consider:
 
 ```incan
 trait Readable:
@@ -256,10 +212,7 @@ model Source with Readable, Parseable:
     def read(self, s: str) -> SomeResult: ... # satisfies Parseable
 ```
 
-This is permitted — the two `read` methods come from different trait adoptions and have different parameter types, so
-the compiler can disambiguate at the call site. However, if two different traits produce methods with **identical
-signatures**, no disambiguation is possible and the type declaration is an error (see [Diagnostics](#diagnostics)
-below).
+This is permitted — the two `read` methods come from different trait adoptions and have different parameter types, so the compiler can disambiguate at the call site. However, if two different traits produce methods with **identical signatures**, no disambiguation is possible and the type declaration is an error (see [Diagnostics](#diagnostics) below).
 
 > Note: permitted does not mean that this is encouraged. Avoid ambiguous method signatures whenever possible.
 
@@ -326,20 +279,17 @@ model Sink with Logger, Serializer:
 
 ### Compatibility / migration
 
-Fully additive. Existing code that adopts a trait once is unaffected. The only new capability is adopting the same
-trait with different type arguments.
+Fully additive. Existing code that adopts a trait once is unaffected. The only new capability is adopting the same trait with different type arguments.
 
 ## Alternatives considered
 
 ### 1. Union types (`str | int`)
 
-A single `Index[str | int, JsonValue]` adoption with one `__getitem__`. Rejected as a dependency — union types are a
-larger language feature. Multi-instantiation dispatch solves the immediate problem through the existing trait system.
+A single `Index[str | int, JsonValue]` adoption with one `__getitem__`. Rejected as a dependency — union types are a larger language feature. Multi-instantiation dispatch solves the immediate problem through the existing trait system.
 
 ### 2. `@overload` decorator (Python-style)
 
-Declare multiple signatures, implement once with runtime dispatch. Rejected because it's a runtime mechanism in a
-compile-time language. Multi-instantiation dispatch is resolved entirely at compile time.
+Declare multiple signatures, implement once with runtime dispatch. Rejected because it's a runtime mechanism in a compile-time language. Multi-instantiation dispatch is resolved entirely at compile time.
 
 ### 3. Separate method names
 
@@ -348,30 +298,26 @@ and feels un-Pythonic.
 
 ### 4. Compiler special-casing per type
 
-Give `JsonValue` special compiler support for multi-key indexing without a general mechanism. Rejected because it
-doesn't scale — every type with the same need would require its own compiler special-case.
+Give `JsonValue` special compiler support for multi-key indexing without a general mechanism. Rejected because it doesn't scale — every type with the same need would require its own compiler special-case.
 
 ## Drawbacks
 
 - **Ambiguity errors**: when the compiler can't determine which instantiation to use from context, it must report an
-  error. The error messages need to be clear about *why* the call is ambiguous and *how* to resolve it.
+error. The error messages need to be clear about *why* the call is ambiguous and *how* to resolve it.
 - **Symbol table complexity**: the method table representation needs to support multiple entries per method name. This
-  is an internal complexity increase, though the user-facing model is simple.
+is an internal complexity increase, though the user-facing model is simple.
 - **Compile-time cost**: resolving multi-instantiation dispatch requires checking argument types against all candidates.
-  For typical usage (2-3 instantiations), this is negligible.
+For typical usage (2-3 instantiations), this is negligible.
 - **Teachability**: "two methods with the same name" is a new concept for Python-background users, who are accustomed to
-  one-name-one-definition. The key teaching point is that these are *trait implementations*, not overloads — the trait
-  system makes the distinction principled rather than ad-hoc. This puts a high bar on tooling: the LSP must surface
-  which trait instantiation a call resolves to (e.g., hover info showing `Index[str, JsonValue].__getitem__`), and
-  diagnostics for ambiguous calls must clearly explain the competing candidates and how to disambiguate.
+one-name-one-definition. The key teaching point is that these are *trait implementations*, not overloads — the trait system makes the distinction principled rather than ad-hoc. This puts a high bar on tooling: the LSP must surface which trait instantiation a call resolves to (e.g., hover info showing `Index[str, JsonValue].__getitem__`), and diagnostics for ambiguous calls must clearly explain the competing candidates and how to disambiguate.
 
-## Implementation plan
+## Implementation architecture
 
 - [ ] Verify parser allows duplicate trait names in `with` clauses; lift restriction if needed
 - [ ] Update the symbol table to support multiple method entries per name (grouped by trait origin)
 - [ ] Update the typechecker to allow same-name methods when they correspond to different trait instantiations
 - [ ] Update call resolution to disambiguate based on argument types (and optionally return type context, see
-  [deferred question #2](#deferred-questions))
+[deferred question #2](#deferred-questions))
 - [ ] Update lowering to emit separate `impl Trait<T> for Type` blocks per instantiation
 - [ ] Add diagnostics:
     - Duplicate trait instantiation (`with Trait[A], Trait[A]`)
@@ -380,41 +326,46 @@ doesn't scale — every type with the same need would require its own compiler s
 - [ ] Add codegen snapshot tests for multi-instantiation dispatch
 - [ ] Add integration tests for `Index` with multiple key types
 
-## Design decisions
+## Layers affected
+
+- **Typechecker / symbol resolution**: must allow multiple instantiations of the same generic trait on one type and resolve call sites against the correct instantiation.
+- **Method resolution**: same-name methods arising from different trait instantiations must remain distinguishable without turning into general-purpose overloading.
+- **Lowering / emission**: must preserve the resolved instantiation choice into generated backend code without introducing runtime dispatch.
+- **Docs / tooling**: must explain ambiguity diagnostics and qualification escape hatches clearly when the compiler cannot pick one instantiation unambiguously.
+
+## Design Decisions
 
 1. **Trait-driven, not general overloading**: same-name methods are only allowed when they arise from different trait
-   instantiations. This keeps the language simple and the dispatch rule principled.
+instantiations. This keeps the language simple and the dispatch rule principled.
 
 2. **Compile-time resolution**: no runtime dispatch. The compiler knows which implementation to call from the argument
-   types at the call site.
+types at the call site.
 
-## Deferred questions
+## Unresolved questions
 
 1. **Explicit qualification syntax**: when disambiguation fails, how does the user specify which trait instantiation
-   they mean? Options include `value.Index[str].__getitem__("key")`, turbofish-style `value.__getitem__::<str>("key")`,
-   or something else. This is expected to be rare in practice.
+they mean? Options include `value.Index[str].__getitem__("key")`, turbofish-style `value.__getitem__::<str>("key")`, or something else. This is expected to be rare in practice.
 
 2. **Return-type-only disambiguation**: is it sufficient to resolve based on expected return type alone (e.g.,
    `let precise: float = reading.into()`)? Or should this always be an error requiring explicit qualification?
 
 3. **Type-parameter-level dispatch**: in the multi-format serialization pattern, disambiguation comes from a generic
-   type parameter resolved at monomorphization, not from argument or return types at the call site:
+type parameter resolved at monomorphization, not from argument or return types at the call site:
 
    ```incan
    def publish[F, T with Serializable[F]](event: T) -> bytes:
        return event.serialize()
    ```
 
-   When the caller writes `publish[Json](my_event)`, `F = Json` and `T` is inferred from the argument. The compiler
-   picks `Serializable[Json]::serialize`. This uses standard Incan `with` syntax in the type parameter list — no
+When the caller writes `publish[Json](my_event)`, `F = Json` and `T` is inferred from the argument. The compiler picks `Serializable[Json]::serialize`. This uses standard Incan `with` syntax in the type parameter list — no
    `where` clause. Incan will need this mechanism once generic functions with trait bounds are implemented.
 
 ## References
 
 - RFC 050 — Enum Methods and Enum Trait Adoption
 - RFC 051 — `JsonValue` for `std.json`
-- [RFC 023] — Compilable Stdlib & Rust Module Binding
-- [RFC 024] — Extensible Derive Protocol
+- RFC 023 — Compilable Stdlib & Rust Module Binding
+- RFC 024 — Extensible Derive Protocol
 - Rust trait system — multiple `impl Trait<T> for Type` blocks
 
---8<-- "_snippets/rfcs_refs.md"
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

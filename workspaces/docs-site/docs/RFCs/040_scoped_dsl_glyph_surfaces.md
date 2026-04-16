@@ -7,7 +7,7 @@
     - RFC 027 (`incan-vocab` block registration and desugaring)
     - RFC 028 (global operator overloading)
     - RFC 045 (scoped DSL symbol surfaces — companion RFC for identifier-level scoping)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/332
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -53,8 +53,8 @@ If the types globally implement RFC 028 operator traits, the compiler can no lon
 RFC 027 gives Incan an explicit DSL block model:
 
 - libraries register block keywords and placement rules
-- the parser preserves block structure
-- desugarers transform block syntax into regular Incan before ordinary compilation continues
+- block structure remains explicit and available to later compilation phases
+- DSL blocks can contribute library-owned surface meaning without mutating ordinary language semantics
 
 That is already the correct architectural home for DSL-owned glyphs. What is missing is a way for a block to say "inside these positions, this glyph has a local meaning."
 
@@ -87,7 +87,7 @@ That is fine. The thing the language must restrict is not *which* glyphs are ima
 
 - the glyph must be explicitly registered
 - the DSL must declare the positions where it becomes special
-- the DSL must declare its family and parsing shape
+- the DSL must declare its family and surface shape
 - conflicts with core grammar must be explicit and tooling-safe
 
 That is the real safety boundary for this RFC.
@@ -294,7 +294,7 @@ query totals:
     total := count()
 ```
 
-This RFC reserves space for binding-like glyphs inside explicit blocks. `:=` in this design is **not** a global walrus operator. It is a DSL-owned glyph family that may create aliases, named slots, or intermediate bindings according to the DSL's registration and desugaring rules.
+This RFC reserves space for binding-like glyphs inside explicit blocks. `:=` in this design is **not** a global walrus operator. It is a DSL-owned glyph family that may create aliases, named slots, or intermediate bindings according to the DSL's registered contract.
 
 ### Example: leading-dot field access (expression-form surface)
 
@@ -315,13 +315,13 @@ orders.filter(.amount > 100).select(.customer_id, .region)
 
 Here `.amount`, `.customer_id`, and `.region` are in relational argument positions owned by the DSL that registered the `filter` and `select` operations. The implicit receiver is the dataset value the method is called on.
 
-Conceptually, the desugared meaning of `.amount` might be:
+Conceptually, the meaning of `.amount` might be:
 
 ```incan
 _relation_ctx.field("amount")
 ```
 
-The DSL supplies the implicit context; the leading dot is the surface syntax. Outside eligible DSL positions, `.field` at expression start must be rejected by the parser.
+The DSL supplies the implicit context; the leading dot is the surface syntax. Outside eligible DSL positions, `.field` at expression start must be rejected.
 
 ## Reference-level explanation
 
@@ -350,7 +350,7 @@ This RFC does **not** standardize a permanently closed glyph inventory. Instead,
 A scoped glyph is allowed if all of the following hold:
 
 - the glyph is explicitly registered by the DSL
-- the surface is composed of lexer-recognized tokens (symbolic for glyphs, leading-dot for expression forms)
+- the surface shape is explicitly declared (symbolic glyph for operator-like or binding-like forms, or a declared expression-form shape such as leading-dot access)
 - the surface declares its family (`OperatorLike`, `BindingLike`, or `ExpressionForm`)
 - the glyph does not collide with a core grammar form in the same position unless the DSL also declares an explicit eligibility/disambiguation rule
 - the formatter and tooling can preserve it without ad-hoc special cases
@@ -373,7 +373,7 @@ Common binding-like examples include:
 
 - `:=`
 
-This is a binding-shaped glyph family, not an RFC 028 global operator. A DSL may interpret it as aliasing, named slots, or block-local binding according to its own desugaring contract.
+This is a binding-shaped glyph family, not an RFC 028 global operator. A DSL may interpret it as aliasing, named slots, or block-local binding according to its own surface contract.
 
 ### Expression-form surfaces
 
@@ -397,58 +397,30 @@ Expression-form surfaces do not use `chain_mode` or `inherits_core_precedence`; 
 
 A vocab provider that registers a block keyword may also register scoped glyph surfaces for that block.
 
-Conceptually:
+Conceptually, a scoped glyph descriptor needs to capture:
 
-```rust
-pub enum ScopedSurfaceFamily {
-    OperatorLike,
-    BindingLike,
-    ExpressionForm,
-}
+- `surface`: the glyph or expression-form shape being claimed
+- `family`: whether the surface is operator-like, binding-like, or expression-form
+- `owning_block`: which explicit block kind owns the surface
+- `positive_scope`: where the surface gains DSL-owned meaning
+- `misuse_scope`: where targeted misuse diagnostics may fire
+- `eligible_positions`: which positions within the owning block are allowed to interpret the surface specially
+- `chain_mode`: whether repeated use is nested, pairwise, or not chainable
+- precedence/disambiguation policy: whether the surface reuses ordinary token precedence or requires a narrower DSL-specific rule
+- operand or target constraints: used for validation and diagnostics
+- `outside_scope_diagnostic`: optional targeted messaging for likely misuse
 
-pub enum ChainMode {
-    Nested,
-    Pairwise,
-    NotChainable,
-}
+### Surface recognition
 
-pub struct ScopedSurfaceDescriptor {
-    pub surface: String,
-    pub family: ScopedSurfaceFamily,
-    pub owning_block: String,
-    pub positive_scope: PositiveScope,
-    pub misuse_scope: MisuseScope,
-    pub eligible_positions: Vec<ScopedGlyphPosition>,
-    pub chain_mode: ChainMode,
-    pub inherits_core_precedence: bool,
-    pub lhs_constraint: Option<OperandConstraint>,
-    pub rhs_constraint: Option<OperandConstraint>,
-    pub outside_scope_diagnostic: Option<String>,
-}
-```
+Scoped glyphs should remain distinguishable from ordinary language surfaces when they are used with DSL-owned meaning.
 
-The important parts are:
-
-- `owning_block`: the block kind that owns this glyph family
-- `positive_scope`: where the glyph acquires block-local meaning
-- `misuse_scope`: where targeted outside-the-block diagnostics may fire
-- `eligible_positions`: which syntactic positions the parser may treat as scoped-glyph candidates
-- `chain_mode`: whether `a >> b >> c` is nested or pairwise
-- `inherits_core_precedence`: scoped glyphs reuse the existing token precedence instead of inventing a custom table
-- operand constraints: used for validation and diagnostics
-
-### Parsing and AST
-
-Scoped glyphs should not be forced through the ordinary global AST shape when their meaning is position-scoped within a DSL.
-
-In particular, a DSL-owned `a >> b` should not have to masquerade as the same `BinaryOp::Shr` node used for ordinary global operator overloading. The parser/desugaring boundary should preserve that this was a **scoped glyph occurrence** owned by the block and encountered in an eligible DSL position.
-
-Conceptually, the public vocab AST needs a dedicated node family for scoped glyph surfaces, parallel to scoped functions and other block-local constructs.
-
-The exact AST type names are an implementation detail, but the semantic requirement is:
+The semantic requirement is simple:
 
 - global operator expressions remain global operator expressions
 - DSL-owned glyph occurrences remain identifiable as DSL-owned glyph occurrences
+- expression-form surfaces such as leading-dot access remain identifiable as DSL-owned forms, not as newly general-purpose Incan syntax
+
+How a frontend chooses to represent that distinction internally is an implementation detail. The requirement is that later phases and tooling can still tell which semantic path the user invoked.
 
 ### Resolution order
 
@@ -465,13 +437,13 @@ This yields the intended behavior:
 - outside the owning block but inside the activating file/module: targeted diagnostic when the DSL can recognize likely misuse
 - ordinary code elsewhere: ordinary global operator semantics
 
-For glyphs that already have a core syntactic role, such as `->`, the parser must first respect the core grammar. Scoped-glyph resolution only applies in positions the enclosing block has marked as eligible for scoped glyph parsing.
+For glyphs that already have a core syntactic role, such as `->`, ordinary language meaning remains authoritative outside positions the enclosing block has explicitly marked as eligible for DSL-owned interpretation.
 
 ### Pairwise chaining
 
-Operator-like scoped glyphs may opt into `Pairwise` chaining.
+Operator-like scoped glyphs may opt into pairwise chaining.
 
-For `ChainMode::Pairwise`:
+In pairwise mode:
 
 ```incan
 a >> b >> c >> d
@@ -489,13 +461,13 @@ not:
 
 This is important for DSLs that describe edges, links, or dataflow between adjacent stages.
 
-For `ChainMode::Nested`, the DSL receives the ordinary nested parse shape instead.
+In nested mode, the DSL receives the ordinary nested parse shape instead.
 
 ### Implicit block receiver/context
 
 Scoped glyph semantics are not ambient runtime magic. They are lexical semantics supplied by the enclosing block and the specific DSL position being parsed.
 
-Conceptually, a DSL-owned glyph lowers against an implicit block context such as:
+Conceptually, a DSL-owned glyph acts against an implicit block context such as:
 
 - `_pipeline_ctx`
 - `_query_ctx`
@@ -584,15 +556,15 @@ This RFC extends that world with block-owned, position-scoped glyph surfaces. It
 
 - Parser and formatter complexity increase because some glyphs can now be block-local as well as global.
 - Readers must understand that the same glyph can mean different things in ordinary code versus an explicit DSL block.
-- Desugarers need good diagnostics and clear docs; otherwise scoped glyphs can become opaque.
+- Libraries and tooling need good diagnostics and clear docs; otherwise scoped glyphs can become opaque.
 
 ## Layers affected
 
-- **Parser** — the parser must distinguish scoped-surface occurrences in eligible DSL positions from ordinary expressions; `->` and other glyphs with existing core meanings must continue to parse normally outside registered positions; expression-form surfaces such as leading-dot access must only be accepted in eligible DSL positions and rejected elsewhere
-- **Typechecker / Symbol resolution** — block-local glyph resolution must follow the defined order (DSL-owned first, then core, then outside-scope diagnostic); `PositiveScope` and `MisuseScope` descriptors must be tracked per active DSL in the current file/module
-- **IR Lowering** — DSL-owned glyph occurrences desugar against the implicit block context (`_pipeline_ctx.link(...)` etc.) rather than lowering to global binary operator nodes; pairwise chaining must be expanded correctly
-- **RFC 027 extension** — the vocab block registration API needs a `ScopedGlyphDescriptor` surface so DSL authors can declare glyphs alongside block keywords; RFC 027 may need a small extension for expression-position block kinds to support `race for value:` and similar forms
-- **Formatter** — must preserve scoped glyph markers without ad-hoc special-casing; the formatter should understand `chain_mode` to format `a >> b >> c` correctly
+- **Frontend recognition** — the language frontend must distinguish scoped-surface occurrences in eligible DSL positions from ordinary expressions; `->` and other glyphs with existing core meanings must continue to mean their ordinary language form outside registered positions; expression-form surfaces such as leading-dot access must only be accepted in eligible DSL positions and rejected elsewhere
+- **Semantic analysis** — block-local glyph resolution must follow the defined order (DSL-owned first, then core, then outside-scope diagnostic); active DSL descriptors must remain available to the current file/module
+- **Lowering / execution handoff** — DSL-owned glyph occurrences must preserve their block-owned meaning through later compilation stages; pairwise chaining must be expanded correctly
+- **RFC 027 extension** — the vocab registration surface needs a scoped-glyph descriptor so DSL authors can declare glyphs alongside block keywords; expression-position block kinds may need a small extension to support forms such as `race for value:`
+- **Formatter** — must preserve scoped glyph markers without ad-hoc special-casing; repeated chainable surfaces should format coherently
 - **LSP** — hover and syntax highlighting should distinguish block-local glyph use from global operator use; misuse diagnostics should be actionable
 
 ## Unresolved questions

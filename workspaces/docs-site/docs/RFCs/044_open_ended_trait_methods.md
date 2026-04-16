@@ -7,7 +7,7 @@
     - RFC 028 (trait-based operator overloading)
     - RFC 026 (Superseded — archival; Rust trait contracts on wrappers: RFC 043)
     - RFC 003 (traits and derives)
-- **Issue:** #201
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/201
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —

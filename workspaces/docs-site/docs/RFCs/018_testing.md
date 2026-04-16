@@ -1,14 +1,13 @@
-# RFC 018: Language Primitives for Testing
+# RFC 018: language primitives for testing
 
-**Status:** Planned  
-**Created:** 2026-01-14  
-**Author(s):** Danny Meijer (@danny-meijer)  
-**Issue:** [#76](https://github.com/dannys-code-corner/incan/issues/76)  
-**RFC PR:** —  
-**Related:** RFC 019 (test runner and CLI)  
-**Written against:** v0.1
-**Shipped in:** —
-**Supersedes:** RFC 001 (language portions), RFC 002 (language portions)  
+- **Status:** Planned
+- **Created:** 2026-01-14
+- **Author(s):** Danny Meijer (@dannymeijer)
+- **Related:** RFC 019 (test runner and CLI), RFC 001 (language portions; superseded), RFC 002 (language portions; superseded)
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/76
+- **RFC PR:** —
+- **Written against:** v0.1
+- **Shipped in:** —
 
 ## Summary
 
@@ -22,16 +21,26 @@ Define the language-level testing primitives for Incan:
 
 Testing decorators/markers are gated behind the `testing` standard library module (no magic global names).
 
-This RFC is jointly normative with **RFC 019**, which defines runner and CLI behavior (discovery, fixtures,
-parametrization, markers, parallelism, timeouts, reporting).
+This RFC is jointly normative with **RFC 019**, which defines runner and CLI behavior (discovery, fixtures, parametrization, markers, parallelism, timeouts, reporting).
 
 ## Motivation
 
-Testing spans both **language** concerns (syntax, scoping, desugaring) and **runner** concerns (discovery, fixtures,
-selection, reporting). Keeping those concerns in separate RFCs lets the compiler and the test runner evolve
-independently while still sharing precise invariants.
+Testing spans both **language** concerns (syntax, scoping, desugaring) and **runner** concerns (discovery, fixtures, selection, reporting). Keeping those concerns in separate RFCs lets the compiler and the test runner evolve independently while still sharing precise invariants.
 
 This RFC defines only the language primitives; RFC 019 specifies the runner and CLI semantics that consume them.
+
+## Goals
+
+- Define the language-owned testing primitives independently from runner and CLI behavior.
+- Standardize `assert`, `assert ... raises ErrorType`, and inline `module tests:` blocks.
+- Require `testing`-gated name resolution for test-only decorators and helpers.
+- Preserve a clean split between compiler semantics and test-runner semantics across RFC 018 and RFC 019.
+
+## Non-Goals
+
+- Defining test discovery, fixtures, parametrization, markers, parallelism, or reporting semantics in this RFC.
+- Introducing magic global test names outside the `testing` module gate.
+- Changing production-code semantics beyond the explicitly defined testing primitives in this document.
 
 ## Guide-level explanation (how users think about it)
 
@@ -47,8 +56,7 @@ This RFC covers **language-level** testing primitives only:
 Runner/CLI behavior (discovery, fixtures, parametrization, markers, parallelism, timeouts, reporting) is defined in
 **RFC 019**.
 
-If you are implementing this RFC, start with the conformance checklist near the end and the reference-level rules above,
-then implement in dependency order.
+If you are implementing this RFC, start with the conformance checklist near the end and the reference-level rules above, then implement in dependency order.
 
 ### The `testing` module
 
@@ -64,8 +72,7 @@ RFC 019.
 
 ### Assertions: `assert ...` (keyword)
 
-This RFC introduces an `assert` keyword that can be used **anywhere** (tests or production code) without importing
-anything:
+This RFC introduces an `assert` keyword that can be used **anywhere** (tests or production code) without importing anything:
 
 ```incan
 assert 1 + 2 == 3
@@ -73,23 +80,22 @@ assert 2 < 3
 assert user is Some(_), "user must be present"
 ```
 
-It is syntax sugar for a **language-level assertion primitive** with the same user-facing behavior as the `testing`
-module’s assertion functions. See the reference-level table below for the full, exhaustive mapping.
+It is syntax sugar for a **language-level assertion primitive** with the same user-facing behavior as the `testing` module’s assertion functions. See the reference-level table below for the full, exhaustive mapping.
 
 Design note (important semantic commitment):
 
 - `assert` must be valid in production code **without** pulling in the test runner or requiring `incan test`.
 - Implementations may lower `assert` to a compiler intrinsic / core runtime primitive. The `testing.assert_*` helpers are
-  the test-oriented, explicit API surface and must remain consistent with `assert` behavior (messages, formatting, etc.).
+the test-oriented, explicit API surface and must remain consistent with `assert` behavior (messages, formatting, etc.).
 - This RFC defines `assert` as **always-on** runtime checking (like Python). A compile-out variant (e.g. `debug_assert`)
-  may be introduced in a future RFC, but is out of scope here.
+may be introduced in a future RFC, but is out of scope here.
 
 Rationale (brief):
 
 - `assert` is used both in tests and in production code for invariants (“this should never happen”).
 - Always-on semantics avoid “works in tests/debug, breaks in release” surprises.
 - Mitigation: avoid asserts in hot paths and prefer explicit `Result`/`Option`-based error handling for recoverable
-  conditions. A future `debug_assert` can address performance-sensitive checks.
+conditions. A future `debug_assert` can address performance-sensitive checks.
 
 The `testing` module remains available for explicit imports, and richer APIs.
 
@@ -118,8 +124,7 @@ assert user.name == "alice", "expected alice user"
 
 Exact formatting is implementation-defined, but failures should be understandable.
 
-At minimum, failed `assert` statements should be reported as an `AssertionError` (Python-inspired), with the optional
-message rendered as `AssertionError: <msg>`.
+At minimum, failed `assert` statements should be reported as an `AssertionError` (Python-inspired), with the optional message rendered as `AssertionError: <msg>`.
 
 Minimum examples:
 
@@ -188,12 +193,12 @@ assert result is Err(_)
 Binding notes (important semantic commitment):
 
 - `assert x is Some(v)` may introduce a binding (here: `v`) for the **remainder of the current block scope**, as if the
-  compiler had emitted `let v = ...` at that point.
+compiler had emitted `let v = ...` at that point.
 - In RFC 018, only the following binding patterns are supported in `assert`:
     - `Some(name)` and `Ok(name)` / `Err(name)` where `name` is a single identifier, OR
     - the wildcard `_` (no binding).
 - Nested patterns, multiple bindings, and guards are out of scope for this RFC (they may be added later if/when the
-  general pattern-matching system is specified).
+general pattern-matching system is specified).
 
 “Contains” / membership style checks:
 
@@ -204,9 +209,7 @@ assert name != ""
 assert tags.contains("release")
 ```
 
-Identity checks (Python’s `is`) are intentionally **not** part of `assert` in this RFC, because `is` already has a
-different meaning (pattern matching). If/when Incan adds a reference-identity operation, it should be spelled
-explicitly (e.g. `ref_eq(a, b)`), not overloaded onto `is`.
+Identity checks (Python’s `is`) are intentionally **not** part of `assert` in this RFC, because `is` already has a different meaning (pattern matching). If/when Incan adds a reference-identity operation, it should be spelled explicitly (e.g. `ref_eq(a, b)`), not overloaded onto `is`.
 
 ### Inline test-only module blocks
 
@@ -228,13 +231,12 @@ module tests:
         assert add(2, 3) == 5
 ```
 
-This keeps helpers/fixtures/test imports scoped to the test module and allows the compiler to strip all test-only code
-from `incan build` and `incan run`.
+This keeps helpers/fixtures/test imports scoped to the test module and allows the compiler to strip all test-only code from `incan build` and `incan run`.
 
 Rule of thumb:
 
 - In inline tests (`module tests:` inside a production file), put `from testing import ...` **inside the `module tests:`
-  block** so the production module namespace stays clean.
+block** so the production module namespace stays clean.
 
 Test file discovery and runner behavior are defined in **RFC 019**.
 
@@ -242,8 +244,7 @@ Test file discovery and runner behavior are defined in **RFC 019**.
 
 ### Core principle: testing is gated behind `testing`
 
-Test tooling must only recognize testing constructs when they resolve to the `testing` module. The compiler must resolve
-imports/aliases consistently so runner semantics (defined in RFC 019) can rely on these identities.
+Test tooling must only recognize testing constructs when they resolve to the `testing` module. The compiler must resolve imports/aliases consistently so runner semantics (defined in RFC 019) can rely on these identities.
 
 Runner-recognized constructs (see RFC 019) include:
 
@@ -268,17 +269,17 @@ For a decorator `@X` to be treated as `testing.<name>`, one of the following mus
 Rationale:
 
 - Unlike ordinary modules (e.g. `web`), `testing` is a gateway for discovery and special semantics. Resolution must be
-  explicit and auditable, so only symbols that *resolve to* `testing` are treated as test constructs.
+explicit and auditable, so only symbols that *resolve to* `testing` are treated as test constructs.
 
 Module aliasing:
 
 - A decorator expression of the form `@M.<name>` is treated as `testing.<name>` only if `M` resolves to the `testing`
-  module (e.g. `import testing as t; @t.fixture`).
+module (e.g. `import testing as t; @t.fixture`).
 
 Re-exports:
 
 - If a decorator name resolves to a symbol re-exported from another module, it is treated as `testing.<name>` only if the
-  resolver can prove the symbol originates from `testing`. Otherwise it is treated as a normal decorator.
+resolver can prove the symbol originates from `testing`. Otherwise it is treated as a normal decorator.
 
 Star imports are disallowed for the `testing` module:
 
@@ -294,8 +295,7 @@ Form:
 - `assert <expr>` where `<expr>` type-checks as `bool`
 - `assert <expr>, <msg>` where `<msg>` type-checks as `str` (optional failure message)
 
-The optional message is passed through to the underlying `testing.assert_*` helper and should be displayed as part of the
-assertion failure output.
+The optional message is passed through to the underlying `testing.assert_*` helper and should be displayed as part of the assertion failure output.
 
 Message presence:
 
@@ -305,9 +305,9 @@ Message presence:
 Minimum diagnostics guarantee:
 
 - On failure, assertion output must include the optional message (if provided) and enough detail to diagnose the failing
-  condition.
+condition.
 - For equality/inequality assertions (`assert a == b` / `assert a != b`), the minimum guarantee is that the output
-  includes both “left” and “right” values (via `Debug`-style formatting) plus the optional message.
+includes both “left” and “right” values (via `Debug`-style formatting) plus the optional message.
 
 Runtime error model:
 
@@ -384,14 +384,11 @@ Note: the “lowers to” wording describes the required behavior and message pr
 `assert` to a compiler intrinsic and have `testing.assert_*` call into that intrinsic, as long as the user-visible
 semantics match this mapping.
 
-The `testing` module is **not** required at runtime for `assert`; the mapping is semantic, and `testing.assert_*` must
-mirror the intrinsic behavior.
+The `testing` module is **not** required at runtime for `assert`; the mapping is semantic, and `testing.assert_*` must mirror the intrinsic behavior.
 
-The `assert_true` / `assert_false` helpers are aliases/conveniences in the `testing` API; the compiler does not need to
-emit them directly.
+The `assert_true` / `assert_false` helpers are aliases/conveniences in the `testing` API; the compiler does not need to emit them directly.
 
-On failure, assertions must produce the same failure semantics and (as much as possible) the same message formatting as
-the underlying `testing` assertion functions.
+On failure, assertions must produce the same failure semantics and (as much as possible) the same message formatting as the underlying `testing` assertion functions.
 
 #### Pattern-binding scope and allowed patterns (reference rules)
 
@@ -414,11 +411,11 @@ Restrictions:
 
 - No nested patterns (e.g. `Some(Ok(x))`) and no multiple bindings in a single `assert`.
 - The bound name is introduced in the *current* scope exactly as if the compiler had emitted `let <ident> = ...` at the
-  assertion site; it is in scope for subsequent statements in the same block.
+assertion site; it is in scope for subsequent statements in the same block.
 - The bound name has the inner type of the matched value (e.g. `T` for `Option[T]`, `T`/`E` for `Result[T, E]`), and the
-  assertion does not otherwise narrow the type of the tested expression.
+assertion does not otherwise narrow the type of the tested expression.
 - Shadowing: if the bound identifier already exists in the current lexical block, the assertion is a compile-time error.
-  Users should pick a new name or bind in an inner block to avoid ambiguity.
+Users should pick a new name or bind in an inner block to avoid ambiguity.
 
 Guidance (non-normative): avoid using `assert` as control flow in production code. Prefer explicit pattern matching or
 `assert_is_*` helpers when unwrapping `Option`/`Result` values.
@@ -433,7 +430,7 @@ This is a convenience for asserting that a call fails by *raising* a runtime err
 - It does **not** refer to `Result`-returning APIs; for results, use `assert res is Err(e)` / `assert_is_err`.
 - Block-style “raises” assertions are out of scope; use `testing.assert_raises` for multi-statement checks.
 - Matching: `ErrorType` matches that exact type or any of its subtypes.
-  If an implementation lacks subtype information, it MUST at minimum match the exact type.
+If an implementation lacks subtype information, it MUST at minimum match the exact type.
 - Async “raises” is out of scope for this RFC.
 
 ### Inline test module context (reference rules)
@@ -460,8 +457,7 @@ Test file discovery and how tests/fixtures are collected are defined in RFC 019.
 
 Test files are only relevant to `incan test` (they are not part of production builds).
 
-Note: `incan --check` type-checks inline `module tests:` blocks in source files, but does not include `tests/` unless
-explicitly passed as a path argument.
+Note: `incan --check` type-checks inline `module tests:` blocks in source files, but does not include `tests/` unless explicitly passed as a path argument.
 
 ## Design details
 
@@ -476,13 +472,12 @@ Visibility rules (normative):
 
 - Names declared in the enclosing module (including private names not marked `pub`) are visible inside `module tests:`.
 - This is **lexical visibility**, not an implicit import: the test block can reference any name that is in scope at
-  the file level, as if the test block were nested code in the same file.
+the file level, as if the test block were nested code in the same file.
 - Names declared inside `module tests:` (functions, imports, bindings) are **not** visible outside the test block.
 - The test block does not introduce a separate module namespace for the purpose of `pub` visibility; it is purely a
-  scoped block that can be stripped.
+scoped block that can be stripped.
 
-This RFC does **not** define a general-purpose module system beyond existing file/module semantics; `module tests:`
-inside a file is specifically a scoped block that can be stripped in non-test compilation modes.
+This RFC does **not** define a general-purpose module system beyond existing file/module semantics; `module tests:` inside a file is specifically a scoped block that can be stripped in non-test compilation modes.
 
 ## Compatibility / migration
 
@@ -493,7 +488,7 @@ inside a file is specifically a scoped block that can be stripped in non-test co
 ## Alternatives considered
 
 - **Top-level `@test` next to production functions**: rejected; it pollutes the production namespace and makes it hard
-  to keep test-only imports/helpers contained.
+to keep test-only imports/helpers contained.
 - **Magic language keywords for tests/fixtures**: rejected; harms tooling and contradicts the “stdlib-gated” principle.
 - **Compile-time-only assertions**: rejected; `assert` is intended for always-on runtime invariants.
 
@@ -504,9 +499,7 @@ Out of scope (for now):
 
 ## Appendix: testing surface inventory (informative)
 
-This appendix is a contributor-oriented inventory of the testing surface **after this RFC is implemented**, with an
-informative snapshot of what exists **today** (at time of writing). It is **not normative**; the spec sections above are
-authoritative.
+This appendix is a contributor-oriented inventory of the testing surface **after this RFC is implemented**, with an informative snapshot of what exists **today** (at time of writing). It is **not normative**; the spec sections above are authoritative.
 
 Legend:
 
@@ -538,6 +531,13 @@ Legend:
 - **Lowering** — must lower `assert <expr>` to the appropriate `testing.assert_*` call based on expression shape (equality, inequality, option/result, pattern binding); must lower `assert <expr> raises <Type>` to `testing.assert_raises`; must strip `module tests:` bodies from non-test compilation modes.
 - **Stdlib (`std.testing`)** — `assert_eq`, `assert_ne`, `assert_is_some`, `assert_is_none`, `assert_raises`, `assert`, and their message-accepting overloads must conform to the desugaring rules specified in this RFC.
 - **CLI** — `incan build` and `incan run` must strip `module tests:` bodies; `incan --check` must typecheck them; `incan test` must include them in the compilation unit.
+
+## Design Decisions
+
+- `assert` is an always-on language primitive and is not compiled out in release builds by this RFC.
+- Testing-specific decorators and helpers are gated behind the `testing` module rather than treated as ambient global names.
+- `module tests:` is the reserved inline scope for test-only code in production modules.
+- Runner and CLI semantics remain split into RFC 019 rather than being folded into this language-level RFC.
 
 ## References
 

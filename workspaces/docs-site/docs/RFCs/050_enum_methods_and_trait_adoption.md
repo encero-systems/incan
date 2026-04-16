@@ -7,7 +7,7 @@
     - RFC 025 (multi-instantiation trait dispatch)
     - RFC 032 (value enums)
     - RFC 051 (`JsonValue`)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/334
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -126,7 +126,7 @@ Enum methods behave like other instance or associated methods in the language. T
 
 - RFC 025 is the clean route for allowing one enum to adopt multiple instantiations of the same generic trait when needed.
 - RFC 032 benefits directly because value enums become able to carry user-defined methods and trait implementations alongside generated ones.
-- Rust interop remains relevant because Rust-backed enum methods should follow the same model/class conventions.
+- Rust interop remains relevant because exported enum methods should follow the same conventions as model and class methods.
 
 ### Compatibility / migration
 
@@ -145,17 +145,17 @@ The feature is additive. Existing enums without methods or traits keep working u
 
 ## Drawbacks
 
-- Enum methods and trait adoption expand the language surface and require careful implementation across parsing, typing, and emission.
+- Enum methods and trait adoption expand the language surface and require careful end-to-end consistency.
 - Some downstream library designs will become easier to propose once this lands, which means pressure for adjacent features may rise quickly.
 
 ## Layers affected
 
-- **Parser / AST**: must accept enum `with` clauses and enum method declarations.
-- **Typechecker / symbol resolution**: must validate enum methods and enum trait adoption under the same broad rules used for models and classes.
-- **Lowering / emission**: must lower enum methods and adopted traits in the same spirit as model/class methods and traits.
-- **Docs / tooling**: should surface enum methods and enum-adopted traits ergonomically in completion, hover text, and diagnostics.
+- **Language surface**: enums must accept `with` clauses and method declarations.
+- **Type system**: enum methods and enum trait adoption must follow the same broad validation rules used for models and classes.
+- **Interop / code generation**: emitted artifacts must preserve enum methods and adopted traits in the same spirit as model/class methods and traits.
+- **Docs / tooling**: completion, hover text, and diagnostics should surface enum methods and enum-adopted traits ergonomically.
 
-## Design decisions
+## Design Decisions
 
 1. **Enum methods and trait adoption are general-purpose language features.** They are not justified only by one library use case.
 2. **Enums should reach parity with models and classes for attached behavior and trait participation.** The language should not preserve an arbitrary capability gap here.

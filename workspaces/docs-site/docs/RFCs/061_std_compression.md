@@ -8,7 +8,7 @@
     - RFC 023 (compilable stdlib and Rust module binding)
     - RFC 055 (`std.fs` path-centric filesystem APIs)
     - RFC 056 (`std.io` in-memory byte streams and binary parsing helpers)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/339
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -228,9 +228,9 @@ This feature is additive. Existing Rust interop or third-party compression code 
 
 ## Layers affected
 
-- **Stdlib / runtime**: must provide codec modules and one-shot/stream behavior contracts.
-- **Typechecker / symbol resolution**: must register module and codec submodules.
-- **Lowering / emission**: must preserve codec behavior without backend leakage.
+- **Stdlib / runtime**: must provide codec modules and one-shot or stream behavior contracts.
+- **Language surface**: the module and codec submodules must be available as specified.
+- **Execution handoff**: implementations must preserve codec behavior without backend leakage.
 - **Docs / examples**: must standardize bytes, stream, and autodetection usage patterns.
 
 ## Design Decisions

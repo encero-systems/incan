@@ -4,7 +4,7 @@
 - **Created:** 2026-04-08
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 027 (incan vocab crate)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/336
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -23,7 +23,14 @@ This RFC defines **normative vertical spacing rules** for Incan’s **source for
 
 ## Motivation
 
-Today, vertical gaps arise from several independent mechanisms (top-level declaration spacing, per-statement leading blank lines, match and block layout, docstring emission, comment reattachment, and EOF handling). That fragmentation makes it easy for **extra** consecutive blank lines to appear (for example after large `match` arms) and for **EOF** newline behavior to disagree with user expectations. Authors and reviewers need a **single document** that states what the formatter **guarantees**, similar to how Python ecosystems cite PEP 8 for style, without reading Rust implementation details.
+Vertical gaps currently arise from several independent mechanisms such as
+top-level declaration spacing, per-statement leading blank lines, match and
+block layout, docstring emission, comment reattachment, and EOF handling. That
+fragmentation makes it easy for extra consecutive blank lines to appear, for
+example after large `match` arms, and for EOF newline behavior to disagree with
+user expectations. Authors and reviewers need one document that states what the
+formatter guarantees, similar to how Python ecosystems cite PEP 8 for style,
+without reading formatter internals.
 
 ## Goals
 
@@ -336,7 +343,10 @@ def build_service() -> Service:
 ## Alternatives considered
 
 - **Implementation-only fixes without an RFC:** Rejected for this work because spacing is **user-visible** and **cross-repo**; a written contract reduces debate and drift.
-- **PEP 8 verbatim:** Rejected; Incan has **imports**, **models**, **Rust interop**, and **docstrings** that do not map 1:1 to Python, so buckets are **Incan-specific** while keeping the same **spirit** for top-level breathing room and tight imports.
+- **PEP 8 verbatim:** Rejected; Incan has imports, models, interop surfaces,
+  and docstrings that do not map 1:1 to Python, so the bucket rules should be
+  Incan-specific while keeping the same spirit for top-level breathing room and
+  tight imports.
 
 ## Drawbacks
 
@@ -375,7 +385,13 @@ flowchart TB
   end
 ```
 
-**Intent:** **many** call sites today each contribute `\n`; the **foreseen** shape concentrates **policy** in one **vertical-spacing** stage that runs on **line-structured** output after **same-scope construct classification** and **comment placement** while **respecting string and char literal boundaries**. That keeps bucket rules, docstring-interior normalization, and EOF normalization conceptually centralized while **emitters** focus on **syntax-shaped** text.
+**Intent:** many call sites currently contribute newline decisions
+independently. The foreseen shape concentrates policy in one vertical-spacing
+stage that runs on line-structured output after same-scope construct
+classification and comment placement while respecting string and char literal
+boundaries. That keeps bucket rules, docstring-interior normalization, and EOF
+normalization conceptually centralized while emitters focus on syntax-shaped
+text.
 
 ## Layers affected
 
@@ -384,9 +400,8 @@ flowchart TB
 - **Parser / AST:** implementations **may** require richer classification signals (for example single-line vs body-bearing declarations) if those are not already explicit in the formatting input.
 - **Documentation:** contributor-facing formatter docs **should** link to this RFC as the vertical-spacing contract.
 
-## Unresolved questions
+## Design Decisions
 
-- None at this time.
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- The formatter contract is intentionally expressed through three blank-line buckets rather than ad hoc formatter heuristics.
+- Stand-alone comments do not satisfy blank-line quotas by themselves; placement rules govern how they interact with spacing.
+- The RFC is intended as the normative vertical-spacing contract for both `incan fmt` and editor-integrated formatting surfaces.

@@ -296,8 +296,8 @@ This feature is additive. Existing string-manipulation code keeps working, but r
 ## Layers affected
 
 - **Stdlib / runtime**: must provide the regex types, errors, and documented matching and replacement behavior.
-- **Typechecker / symbol resolution**: must register the module and its result types.
-- **Lowering / emission**: must preserve the chosen matching and replacement semantics without leaking backend-specific quirks.
+- **Language surface**: the module and result types must be available as specified.
+- **Execution handoff**: implementations must preserve the chosen matching and replacement semantics without leaking backend-specific quirks.
 - **Docs / tooling**: should standardize regex examples, error reporting expectations, and the distinction between stdlib-safe regex and any later fancy-regex package.
 
 ## Design Decisions

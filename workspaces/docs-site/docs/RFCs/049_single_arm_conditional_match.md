@@ -6,7 +6,7 @@
 - **Related:**
     - RFC 000 (core language surface)
     - RFC 018 (testing)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/333
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -275,19 +275,19 @@ For this RFC's narrow goal, `if let` is the better fit.
 ## Alternatives considered
 
 1. Keep using full `match` everywhere.
-   This preserves one construct but keeps the repetitive `None => pass` / `Err(_) => pass` boilerplate that motivated this RFC.
+This preserves one construct but keeps the repetitive `None => pass` / `Err(_) => pass` boilerplate that motivated this RFC.
 
 2. `PATTERN match VALUE`.
-   This is explicit, but it introduces a new dedicated control-flow spelling where a well-understood construct already exists.
+This is explicit, but it introduces a new dedicated control-flow spelling where a well-understood construct already exists.
 
 3. Extend `is`, as in `if value is Some(child):`.
-   This is plausible, especially given RFC 018, but it frames the feature more as a boolean pattern test than as a single-arm destructuring branch.
+This is plausible, especially given RFC 018, but it frames the feature more as a boolean pattern test than as a single-arm destructuring branch.
 
 4. Walrus-style binding.
-   This is awkward for pattern-matching constructs, especially around `Some(...)`, `Ok(...)`, and other constructors. It obscures the fact that the operation is a pattern match rather than assignment.
+This is awkward for pattern-matching constructs, especially around `Some(...)`, `Ok(...)`, and other constructors. It obscures the fact that the operation is a pattern match rather than assignment.
 
 5. General Rust passthrough for `let` inside `if`.
-   This was rejected because it weakens Incan's ownership of its own syntax and semantics.
+This was rejected because it weakens Incan's ownership of its own syntax and semantics.
 
 ## Drawbacks
 
@@ -297,23 +297,22 @@ For this RFC's narrow goal, `if let` is the better fit.
 
 ## Implementation architecture
 
-The preferred implementation strategy is to lower `if let` through the same pattern-matching machinery already used by full `match`.
+The preferred implementation strategy is to express `if let` through the same semantic core already used by full `match`.
 
 That can be done either by:
 
-- desugaring `if let` into a single-arm `match` plus implicit `_ => pass`, or
-- introducing a dedicated AST node that later lowers to the same internal match core.
+- interpreting `if let` as a single-arm `match` plus implicit `_ => pass`, or
+- representing it separately while preserving the same pattern-matching semantics.
 
 This section is non-normative. Any implementation strategy is acceptable if it preserves the semantics above.
 
 ## Layers affected
 
-- **Parser / AST**: parse `if let PATTERN = VALUE:` in `if` statement position.
-- **Typechecker / Symbol resolution**: type-check the pattern exactly like a `match` arm and scope bindings to the success branch.
-- **IR Lowering**: lower through existing pattern-match machinery.
-- **Emission**: may lower to Rust `if let` where appropriate.
-- **Formatter**: format `if let` predictably and avoid unreadable nested chains.
-- **LSP / Tooling**: provide hover, completion, and diagnostics for branch-local pattern bindings.
+- **Language surface**: `if let PATTERN = VALUE:` must be accepted in `if` statement position.
+- **Type system**: the pattern must type-check exactly like a `match` arm, and bindings must stay scoped to the success branch.
+- **Execution handoff**: implementations may realize `if let` through the existing pattern-match machinery as long as the observable semantics match this RFC.
+- **Formatter**: `if let` should format predictably and avoid unreadable nested chains.
+- **LSP / tooling**: hover, completion, and diagnostics should respect branch-local pattern bindings.
 
 ## Unresolved questions
 

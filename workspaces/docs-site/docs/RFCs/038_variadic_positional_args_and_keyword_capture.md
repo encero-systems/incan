@@ -6,7 +6,10 @@
 - **Related:**
     - RFC 035 (First-class named function references)
     - RFC 039 (`race` for awaitable concurrency)
-- **Target version:** TBD
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/83
+- **RFC PR:** —
+- **Written against:** v0.2
+- **Shipped in:** —
 
 ## Summary
 
@@ -158,8 +161,7 @@ pub async def fastest_text() -> str:
     )
 ```
 
-The repeated thing here is not "awaitable, callback, awaitable, callback". The repeated thing is `RaceArm[str]`.
-That is the kind of API variadics make elegant.
+The repeated thing here is not "awaitable, callback, awaitable, callback". The repeated thing is `RaceArm[str]`. That is the kind of API variadics make elegant.
 
 ### Calls through variables
 
@@ -347,19 +349,18 @@ The homogeneous model is clearer, easier to typecheck, and already sufficient fo
 
 ## Drawbacks
 
-- adds parser, AST, typechecker, and diagnostics complexity
+- adds syntax, typing, and diagnostics complexity
 - increases the number of ways to express APIs, which can fragment style
 - leaves an important open question about calls through function values
 - may encourage over-flexible APIs if used without discipline
 
 ## Layers affected
 
-- **Parser** — new `*` / `**` parameter forms in function signatures; the AST parameter representation must capture the parameter kind (normal, rest positional, rest keyword)
-- **Typechecker** — rest-parameter metadata on function and method symbols; binding and type-checking rules for extra positional arguments, unknown named arguments, and element/value type mismatches
-- **IR Lowering** — call sites where the callee signature is known must rewrite extra positionals into a `List[...]` literal and extra named arguments into a `Dict[str, ...]` literal as trailing arguments
-- **IR Emission** — the emitter must generate correct Rust `Vec<T>` / `HashMap<String, V>` construction for those lowered container literals
-- **Formatter** — print `*` / `**` markers on rest parameters
-- **LSP** — rest parameter variables should display as `List[T]` / `Dict[str, V]` on hover and in completions
+- **Language surface** — `*` and `**` parameter forms in function signatures must be supported and remain distinct from ordinary parameters.
+- **Type system** — rest-parameter metadata, binding rules for extra positional or named arguments, and element or value type mismatches must be validated.
+- **Execution handoff** — implementations may rewrite extra positionals into `List[...]` values and extra named arguments into `Dict[str, ...]` values, but the observable call semantics must match this RFC.
+- **Formatter** — `*` and `**` markers on rest parameters should print predictably.
+- **LSP** — rest parameter variables should display as `List[T]` and `Dict[str, V]` on hover and in completions.
 
 ## Unresolved questions
 
@@ -367,3 +368,5 @@ The homogeneous model is clearer, easier to typecheck, and already sufficient fo
 2. Does Incan need function-type syntax that preserves rest-parameter structure explicitly, or is the conservative "direct calls only" rule sufficient?
 3. Should a follow-up RFC add call-site unpacking (`f(*xs)` / `f(**m)` / `f(*xs, **m)`)?
 4. Is `Dict[str, V]` sufficient for keyword captures, or will some ecosystems eventually want a richer tagged-union or structured-options story?
+
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

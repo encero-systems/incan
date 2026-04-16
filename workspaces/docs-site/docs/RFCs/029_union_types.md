@@ -1,11 +1,14 @@
-# RFC 029: Union Types and Type Narrowing
+# RFC 029: union types and type narrowing
 
 
 - **Status:** Draft
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 028 (trait-based operator overloading)
-- **Target version:** v0.2
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/315
+- **RFC PR:** —
+- **Written against:** v0.2
+- **Shipped in:** —
 
 ## Summary
 
@@ -191,8 +194,7 @@ match value:
 
 A type pattern `T(name)` is valid only when the scrutinee has a union type containing `T`.
 
-The binding captures the **whole narrowed value** of type `T`. It is not structural destructuring of the internals of `T`.
-For example:
+The binding captures the **whole narrowed value** of type `T`. It is not structural destructuring of the internals of `T`. For example:
 
 ```incan
 def handle(result: Response | Error) -> str:
@@ -236,23 +238,18 @@ def example(x: int | str | None):
 | `x is None`          | `None`                 | Union minus `None`     |
 | `x is not None`      | Union minus `None`     | `None`                 |
 
-### Rust lowering
+### Lowering model
 
-Rust does not have anonymous union types. Incan lowers unions to **auto-generated enums**, except for the `... | None` family which canonicalizes through `Option[...]`.
+Backends need a closed internal representation for union values. The important language-level constraint is that this representation must preserve:
 
-Examples:
+- the fixed set of member alternatives;
+- compile-time narrowing semantics;
+- exhaustive matching behavior;
+- `T | None` canonicalization through `Option[T]`.
 
-- `int | str` -> `enum Union_Int_String { Int(i64), String(String) }`
-- `int | str | None` -> `Option<Union_Int_String>`
-- `Response | Redirect | Error` -> `enum Union_Response_Redirect_Error { ... }`
+One reasonable backend strategy is a compiler-generated closed sum representation for each distinct union shape, while unions containing `None` reuse the ordinary `Option[...]` path. The specific emitted type names and backend data structures are implementation detail rather than part of the language contract.
 
-**Naming**: Auto-generated enum names are deterministic, based on sorted constituent type names: `Union_` followed by PascalCase type names joined with `_`.
-
-**Deduplication**: The compiler generates each unique union enum once per compilation unit.
-
-**`T | None` lowering**: Because `T | None` is source-level equivalent to `Option[T]`, the Rust backend lowers it directly to `Option<T>` rather than generating a separate union enum with a `None` variant.
-
-#### Pattern matching lowering
+#### Pattern matching behavior
 
 ```incan
 def normalize(value: int | str) -> int:
@@ -263,35 +260,18 @@ def normalize(value: int | str) -> int:
             return len(s)
 ```
 
-Lowers to:
+The language-level meaning is that each arm sees the narrowed member type and exhaustive coverage is checked against the full closed set of member types.
 
-```rust
-fn normalize(value: Union_Int_String) -> i64 {
-    match value {
-        Union_Int_String::Int(n) => n + 1,
-        Union_Int_String::String(s) => s.len() as i64,
-    }
-}
-```
+#### `isinstance` behavior (compile-time only)
 
-#### `isinstance` lowering (compile-time only)
-
-`isinstance` is resolved entirely at compile time. It generates a Rust `if let` pattern match — no runtime reflection:
+`isinstance` is resolved entirely through the compiler's type and control-flow reasoning. There is no runtime reflection requirement in this RFC.
 
 ```incan
 if isinstance(value, int):
     use_int(value)
 ```
 
-Lowers to:
-
-```rust
-if let Union_Int_String::Int(value) = value {
-    use_int(value);
-}
-```
-
-#### Construction lowering
+#### Construction behavior
 
 Assigning a concrete value to a union-typed binding wraps it in the appropriate variant:
 
@@ -299,11 +279,7 @@ Assigning a concrete value to a union-typed binding wraps it in the appropriate 
 x: int | str = 42
 ```
 
-Lowers to:
-
-```rust
-let x: Union_Int_String = Union_Int_String::Int(42);
-```
+The backend may materialize an internal tagged representation, but the source-level contract is simply that `42` is accepted as a member of `int | str`.
 
 ### Interaction with existing features
 
@@ -340,5 +316,20 @@ Require users to define their own Rust-style enums for sum types. Rejected becau
 
 ## Drawbacks
 
-- **Hidden codegen**: Auto-generated enum types are invisible to the user but appear in error messages and generated Rust code. This can be confusing when debugging.
+- **Hidden representation**: Backends need a concrete closed representation for unions, and that representation may occasionally leak into low-level debugging contexts.
 - **Inference complexity**: Union types interact with generic inference in subtle ways. This RFC takes the conservative rule that the compiler does not synthesize fresh union types during otherwise unconstrained generic inference.
+
+## Layers affected
+
+- **Language surface**: both `Union[...]` and `A | B` must be accepted as the same type-level construct.
+- **Type system**: union members must be canonicalized, narrowing rules enforced, and exhaustiveness checking performed where this RFC requires it.
+- **Execution handoff**: implementations must use a stable closed representation for unions without changing the language-level narrowing semantics.
+- **Docs / tooling**: the relationship between unions, `Option`, `match`, and narrowing must be explained clearly enough that users can predict when narrowing is required.
+
+## Design Decisions
+
+- `Union[A, B, ...]` is the canonical form, and `A | B` is equivalent syntactic sugar.
+- Unions are closed, compile-time-known alternatives rather than an open-ended dynamic `Variant` type.
+- `T | None` canonicalizes through `Option[T]` rather than defining a separate nullable union representation.
+- Narrowing is compile-time-driven and occurs through `isinstance(...)` and exhaustive `match`.
+- Union values do not implicitly expose the full method or operator surface of all members until they have been narrowed.

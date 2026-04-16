@@ -267,8 +267,8 @@ Authors may still use `rust::std::fs` and `rust::std::io` for capabilities this 
 ## Layers affected
 
 - **Stdlib / runtime (`incan_stdlib`)**: new `std.fs` module and supporting types such as `Path`, `File`, `OpenOptions`, and `DirEntry`.
-- **Typechecker / symbol resolution**: registration of the new module and types so imports and method calls resolve without ad hoc compiler cases.
-- **Compiler builtins / reference docs**: docs must explain the difference between whole-file helpers and chunked file-handle APIs.
+- **Language surface**: imports, constructors, methods, and helpers must be available without ad hoc special cases.
+- **Reference docs**: documentation must explain the difference between whole-file helpers and chunked file-handle APIs.
 - **LSP / tooling**: completions and hovers for `std.fs` members.
 - **Tests / docs-site**: API docs and examples must cover both whole-file and chunked large-file workflows.
 

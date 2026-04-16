@@ -9,7 +9,7 @@
     - RFC 023 (compilable stdlib and Rust module binding)
     - RFC 056 (`std.io` in-memory byte streams and binary parsing helpers)
     - RFC 064 (`std.encoding` binary-text encoding and decoding)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/343
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -156,8 +156,8 @@ Algorithm outputs must be deterministic and portable across platforms for identi
 ## Layers affected
 
 - **Stdlib / runtime**: algorithm implementations and stable output behavior.
-- **Typechecker / symbol resolution**: module/type registration.
-- **Lowering / emission**: preserve deterministic hashing semantics.
+- **Language surface**: the module families, hasher types, and helper functions must be available as specified.
+- **Execution handoff**: implementations must preserve deterministic hashing semantics.
 - **Docs / examples**: algorithm selection guidance and misuse avoidance.
 
 ## Design Decisions

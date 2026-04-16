@@ -4,14 +4,15 @@
 - **Created:** 2024-12-10
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 016 (loop and break value), RFC 019 (runner testing)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/324
 - **RFC PR:** —
 - **Written against:** v0.1
 - **Shipped in:** —
 
 ## Summary
 
-This RFC introduces Python-style generators to Incan in two connected forms: generator functions that use `yield` inside `def`, and generator expressions that produce lazy generator values inline. Both forms describe the same underlying language model: a resumable producer of `T` exposed as `Generator[T]`.
+This RFC introduces Python-style generators to Incan in two connected forms: generator functions that use `yield` inside `def`, and generator expressions that produce lazy generator values inline. Both forms describe the same underlying language model: a resumable producer of `T` exposed as
+`Generator[T]`.
 
 ## Motivation
 
@@ -20,9 +21,10 @@ Incan currently has eager collections and iterator-shaped loops, but it does not
 - large or unbounded sequences that should not be materialized eagerly;
 - streaming transformations that would otherwise allocate intermediate lists;
 - recursive traversals where the natural shape is "produce one value, suspend, resume";
-- portability for authors coming from Python, where `yield` and generator expressions are familiar ways to express lazy iteration.
+- portability for authors coming from Python, where `yield` and generator
+expressions are familiar ways to express lazy iteration.
 
-The feature also fits Incan's backend well. Rust already has generator machinery, so Incan does not need to invent a bespoke runtime model just to support this control-flow shape.
+The feature also fits Incan's backend well. Incan does not need a separate user-facing coroutine model just to support this control-flow shape; the compiler can lower generators to ordinary backend state-machine machinery.
 
 ## Goals
 
@@ -101,26 +103,32 @@ Generators are useful when the control flow is naturally incremental instead of 
 
 - A function is a generator function when its body contains `yield` and its declared return type is `Generator[T]`.
 - `yield expr` produces one element of type `T` for the surrounding generator.
-- `yield` must not appear in ordinary functions, except where another RFC explicitly gives `yield` special meaning for a distinct construct such as fixtures.
+- `yield` must not appear in ordinary functions, except where another RFC
+explicitly gives `yield` special meaning for a distinct construct such as fixtures.
 - A generator function may use `return` to terminate iteration early, but `return value` is not part of this RFC.
 
 ### Generator expressions reference
 
-- A generator expression has the form `(expr for binding in iterable)` and yields a `Generator[T]`, where `T` is the type of `expr`.
+- A generator expression has the form `(expr for binding in iterable)` and
+yields a `Generator[T]`, where `T` is the type of `expr`.
 - The iterable source is consumed lazily as the resulting generator is advanced.
-- A generator expression is semantically equivalent to an anonymous generator that iterates the source and yields `expr` for each bound element.
+- A generator expression is semantically equivalent to an anonymous generator
+that iterates the source and yields `expr` for each bound element.
 - Generator expressions are lazy; the list-comprehension surface remains the eager collection form.
 
 ### Typing
 
 - Every yielded expression must type-check against the element type `T` in `Generator[T]`.
 - Declaring `Generator[T]` without any reachable `yield` is a compile-time error.
-- Using `yield` without a `Generator[T]` return type is a compile-time error unless another construct has already claimed `yield` semantics for that context.
+- Using `yield` without a `Generator[T]` return type is a compile-time error
+unless another construct has already claimed `yield` semantics for that context.
 
 ### Consumption
 
 - `for` loops must accept generator values anywhere they accept iterable values.
-- Generator values may expose chainable helper methods such as `.map()`, `.filter()`, `.take()`, and `.collect()`, but this RFC does not yet freeze the full helper surface.
+- Generator values may expose chainable helper methods such as `.map()`,
+  `.filter()`, `.take()`, and `.collect()`, but this RFC does not yet freeze
+the full helper surface.
 - Exhausting a generator ends iteration normally.
 
 ## Design details
@@ -145,13 +153,14 @@ This RFC therefore treats the declaration context, not the token alone, as the s
 
 ### Lowering model
 
-The intended implementation strategy is to lower generator functions and generator expressions through Rust generator machinery such as `gen` blocks or an equivalent compiler-owned state-machine transformation. That lowering choice is not the language definition; the language contract is only that generators behave as lazy, resumable producers of `T`.
+The intended implementation strategy is to lower generator functions and generator expressions through a compiler-owned state-machine transformation or equivalent backend support. That lowering choice is not the language definition; the language contract is only that generators behave as lazy, resumable producers of `T`.
 
 ### Interaction with existing features
 
 - `for` loops consume generators the same way they consume other iterable sources.
 - Recursive generators are valid as long as the yielded element type remains consistent.
-- Generator expressions are the lazy counterpart to eager list-comprehension syntax rather than a separate collection feature.
+- Generator expressions are the lazy counterpart to eager list-comprehension
+syntax rather than a separate collection feature.
 
 ### Compatibility / migration
 
@@ -160,33 +169,39 @@ The feature is additive. Existing functions, loops, and comprehensions keep thei
 ## Alternatives considered
 
 1. **Explicit `gen` keyword**
-   - Clear, but more Rust-shaped than Incan needs. Requiring `Generator[T]` plus `yield` already communicates intent.
+   - Clear, but more backend-shaped than Incan needs. Requiring `Generator[T]`
+     plus `yield` already communicates intent.
 
 2. **Dedicated `generator` declaration form**
-   - Avoids overloading ordinary `def`, but splits the function surface for a feature that is still "a function producing values over time."
+   - Avoids overloading ordinary `def`, but splits the function surface for a
+     feature that is still "a function producing values over time."
 
 3. **Functions only, expressions later**
-   - Not actually more principled. It would make the RFC weaker while still aiming at the same north-star generator model.
+   - Not actually more principled. It would make the RFC weaker while still
+     aiming at the same north-star generator model.
 
 ## Drawbacks
 
 - `yield` now carries two meanings in the language, so diagnostics must be explicit.
 - Generators introduce suspension semantics that users must learn alongside ordinary function control flow.
-- Generator expressions add grammar and precedence surface that the parser and formatter must handle carefully.
+- Generator expressions add grammar and precedence surface that the language and tooling must handle carefully.
 
 ## Layers affected
 
-- **Parser**: must accept `yield` in generator function bodies and parse generator-expression syntax.
-- **Typechecker**: must enforce that yielded expressions match `Generator[T]` and that generator declarations are internally consistent.
-- **Lowering / IR emission**: must preserve suspension points and lazy iteration semantics for both named and anonymous generator forms.
-- **Stdlib / surface vocabulary**: must define the `Generator` type and any stable helper methods promised by the language.
-- **Formatter / tooling**: should format multi-line generators predictably and explain generator-specific diagnostics clearly.
+- **Language surface**: `yield` must be valid in generator function bodies, and generator-expression syntax must be recognized.
+- **Type system**: yielded expressions must match `Generator[T]`, and generator declarations must remain internally consistent.
+- **Execution model**: implementations must preserve suspension points and lazy iteration semantics for both named and anonymous generator forms.
+- **Stdlib / surface vocabulary**: the language must define the `Generator` type and any stable helper methods it promises publicly.
+- **Formatter / tooling**: multi-line generators should format predictably, and diagnostics should explain generator-specific behavior clearly.
 
 ## Unresolved questions
 
-1. Should generator expressions support the full comprehension clause surface immediately, including multiple `for` clauses and trailing `if` filters, or should this RFC only normatively require the single-`for` core form?
-2. What is the minimum `Generator` helper surface that Incan wants to standardize rather than inheriting opportunistically from backend details?
+1. Should generator expressions support the full comprehension clause surface
+immediately, including multiple `for` clauses and trailing `if` filters, or should this RFC only normatively require the single-`for` core form?
+2. What is the minimum `Generator` helper surface that Incan wants to
+standardize rather than inheriting opportunistically from backend details?
 3. Should `return value` inside a generator be rejected outright, or reserved for a future coroutine-oriented extension?
-4. How much of the fixture/generator `yield` distinction should be surfaced in linting or style guidance so that mixed mental models do not leak into user code?
+4. How much of the fixture/generator `yield` distinction should be surfaced in
+linting or style guidance so that mixed mental models do not leak into user code?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

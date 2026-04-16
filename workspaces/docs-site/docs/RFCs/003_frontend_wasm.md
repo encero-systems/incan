@@ -1,13 +1,17 @@
-# RFC 003: Frontend & WebAssembly Support
+# RFC 003: frontend and WebAssembly support
 
-**Status:** Blocked
-**Category**: Major Feature
+- **Status:** Draft
+- **Created:** 2025-12-11
+- **Author(s):** Danny Meijer (@dannymeijer)
+- **Related:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/312
+- **RFC PR:** —
+- **Written against:** v0.1
+- **Shipped in:** —
 
 ## Summary
 
-Enable Incan to compile to WebAssembly (WASM) and provide first-class support for building frontend applications,
-including reactive UI components and 3D graphics.
-This positions Incan as a full-stack alternative to JavaScript frameworks like React and Three.js.
+This RFC proposes a browser-facing Incan story built around a WebAssembly compilation target plus first-class frontend and graphics APIs. The north-star is that Incan can compile to native server binaries and to browser-deployable WASM output while offering a reactive UI surface, browser tooling, and a scene-graph style graphics layer, so Python-oriented users do not need to split their application model across Python on the backend and JavaScript on the frontend. The document currently acts as an umbrella RFC for those surfaces; if later review splits it, that split should preserve this end-state rather than narrowing the ambition.
 
 ## Motivation
 
@@ -56,8 +60,7 @@ Rust + WebAssembly solves the performance and safety issues, but presents barrie
 - **Lifetime annotations** — complex syntax for memory management
 - **Verbose syntax** — more ceremony than Python
 
-TypeScript developers have a smaller gap to Rust (similar syntax, static types).
-But Python developers face a steeper learning curve.
+TypeScript developers have a smaller gap to Rust (similar syntax, static types). But Python developers face a steeper learning curve.
 
 ### Incan's Opportunity
 
@@ -80,7 +83,22 @@ Benefits:
 - **Rust's safety** — memory safety without learning ownership
 - **Modern tooling** — single build system, unified debugging
 
-## Design
+## Goals
+
+- Give Incan an explicit WebAssembly/browser compilation target.
+- Define a first-class frontend UI story rather than treating browser work as pure Rust interop.
+- Define a graphics surface suitable for browser-based interactive and 3D applications.
+- Standardize dev and production browser tooling as part of the end-state developer experience.
+- Keep the user-facing surface Incan-first even when it lowers to Rust and WASM underneath.
+
+## Non-Goals
+
+- Promising that every surface in this RFC lands in one implementation phase.
+- Replacing the entire JavaScript ecosystem or every frontend-specialized framework.
+- Standardizing server-side rendering, static-site generation, desktop, mobile, VR, or AR in this RFC.
+- Committing to one specific Rust crate stack as part of the public language contract.
+
+## Guide-level explanation
 
 ### Part 1: WASM Compilation Target
 
@@ -96,7 +114,7 @@ This generates:
 - `Cargo.toml` configured for `wasm32-unknown-unknown`
 - Build artifacts ready for browser deployment
 
-#### Generated Structure
+#### Illustrative generated structure
 
 ```bash
 target/wasm/my_app/
@@ -286,8 +304,7 @@ def app() -> Element:
 
 ### Part 2b: JSX Template Syntax (Alternative)
 
-As an alternative to `html()` string templates, Incan supports JSX (JavaScript XML) syntax via the `jsx()` wrapper.
-This provides a more familiar experience for developers coming from React/TypeScript, with full IDE support.
+As an alternative to `html()` string templates, Incan supports JSX (JavaScript XML) syntax via the `jsx()` wrapper. This provides a more familiar experience for developers coming from React/TypeScript, with full IDE support.
 
 #### Why a `jsx()` Wrapper?
 
@@ -494,8 +511,7 @@ def list_items() -> Element:
 
 #### Parser Implementation Notes
 
-Incan supports two wrapper modes: `html()` and `jsx()`.
-Both compile to the same output (Leptos view nodes), but they parse differently:
+Incan supports two wrapper modes: `html()` and `jsx()`. Both compile to the same output (Leptos view nodes), but they parse differently:
 `html()` takes a string, while `jsx()` is native syntax the IDE can understand.
 
 - `html()` takes a string:
@@ -772,12 +788,9 @@ my_app/
 └── Cargo.toml             # Project config (with Incan metadata)
 ```
 
-#### Configuration (Cargo.toml)
+#### Illustrative configuration (`Cargo.toml`)
 
-Incan uses Cargo.toml with `[package.metadata.incan]` for Incan-specific settings.
-This follows Rust ecosystem conventions (used by wasm-pack, cargo-deb, etc.).
-Rust dependencies are auto-injected by the Incan toolchain based on what your
-Incan code imports and the build target.
+Incan uses Cargo.toml with `[package.metadata.incan]` for Incan-specific settings. This follows Rust ecosystem conventions (used by wasm-pack, cargo-deb, etc.). Rust dependencies are auto-injected by the Incan toolchain based on what your Incan code imports and the build target.
 
 ```toml
 [package]
@@ -799,7 +812,7 @@ port = 3000
 open_browser = true
 ```
 
-Auto-added dependencies (examples):
+Illustrative dependency mapping examples:
 
 | Incan usage                           | Added to Cargo.toml |
 | ------------------------------------- | ------------------- |
@@ -808,42 +821,28 @@ Auto-added dependencies (examples):
 | `from incan.graphics import Scene`    | `wgpu`, `glam`      |
 | `from incan.physics import RigidBody` | `rapier3d`          |
 
----
+## Reference-level explanation
 
-## Implementation Strategy
+The RFC proposes four coupled surfaces: an explicit WASM target, a reactive UI layer, a browser-oriented graphics layer, and browser-focused tooling.
 
-### Foundation Layer
+- The language and tooling must support an explicit browser or WASM target rather than treating browser emission as ad hoc Rust interop.
+- The browser target should produce deployable artifacts and preserve a stable mapping between Incan values and browser-facing JavaScript boundaries.
+- The UI surface should provide components, local reactive state, effects, templating, event binding, and routing.
+- The graphics surface should provide a scene-graph style API with cameras, meshes, materials, asset loading, and animation hooks.
+- Browser tooling should provide distinct development and production flows rather than requiring users to hand-assemble Rust or WASM build commands.
+- The RFC currently describes both `html(...)` string templates and `jsx(...)` wrapper syntax; it does not yet settle whether both belong in the final public contract.
+- The RFC currently bundles browser UI and 3D graphics into one umbrella proposal; that coupling remains open to revision if later review concludes they should become separate RFCs.
 
-1. WASM codegen target
-2. wasm-bindgen integration
-3. Basic JS interop
+## Design details
 
-### UI Layer (builds on Foundation)
+### Surface decomposition
 
-1. Signal/reactive primitives
-2. HTML template parser
-3. Component model
-4. Event handling
-5. Routing
+- **Target layer**: `incan build --target wasm ...` and `incan dev --target wasm` represent the intended user-facing entry points for browser work.
+- **UI layer**: the proposal includes components, signals, effects, routing, and template-based rendering.
+- **Graphics layer**: the proposal includes a browser-friendly scene graph, materials, asset loading, and animation support.
+- **Tooling layer**: the proposal includes a dev server, browser refresh or HMR-style feedback loops, source maps, and optimized production output.
 
-### Graphics Layer (builds on Foundation)
-
-1. wgpu bindings
-2. Scene graph
-3. Geometries and materials
-4. Asset loading
-5. Animation system
-
-### Tooling Layer (parallel)
-
-1. Dev server with HMR
-2. Production bundler
-3. Source maps
-4. Error overlay
-
----
-
-## Rust Crate Dependencies
+### Example Rust ecosystem backing (non-normative)
 
 | Feature       | Crate                     | Purpose             |
 | ------------- | ------------------------- | ------------------- |
@@ -855,31 +854,28 @@ Auto-added dependencies (examples):
 | Asset loading | gltf, image               | 3D models, textures |
 | Physics       | rapier                    | Optional physics    |
 
----
+### Demonstration targets
 
-## Success Criteria
+The intended surface should be strong enough to cover:
 
-1. **"Hello World" WASM app** compiles and runs in browser
-2. **Counter component** demonstrates reactive state
-3. **TodoMVC** proves component model completeness  
-4. **Rotating cube** demonstrates basic 3D
-5. **Animated character** demonstrates asset loading + animation
-6. **Full demo app** combines UI + 3D (e.g., 3D product viewer)
+- a "hello world" WASM app;
+- a reactive counter-style component;
+- a TodoMVC-scale UI application;
+- a rotating-cube style graphics demo; and
+- a combined UI plus graphics demo such as a 3D product viewer.
 
----
+## Alternatives considered
 
-## Future Extensions
+1. **Keep the status quo: Python backend plus JavaScript or TypeScript frontend**
+   - Rejected because it preserves the split-language experience the RFC is trying to eliminate.
 
-- Server-side rendering (SSR) with hydration
-- Static site generation (SSG)
-- Native desktop via wgpu (non-WASM)
-- Mobile via wgpu + platform bindings
-- VR/AR support via WebXR
-- Collaborative editing (CRDTs)
+2. **Tell users to write Rust directly for browser work**
+   - Rejected because it defeats the Python-first positioning of Incan and pushes users into a different language and mental model at exactly the point where a full-stack story is most valuable.
 
----
+3. **Treat frontend UI and graphics strictly as third-party ecosystem work**
+   - Rejected as the north-star because it leaves one of the largest developer-experience gaps in the language outside the standard design story.
 
-## References
+### References
 
 - [wasm-bindgen](https://rustwasm.github.io/wasm-bindgen/)
 - [Leptos](https://leptos.dev/) - Rust reactive framework
@@ -888,19 +884,27 @@ Auto-added dependencies (examples):
 - [Three.js](https://threejs.org/) - JS 3D library (inspiration)
 - [SolidJS](https://www.solidjs.com/) - JS signals (inspiration)
 
----
 
-## Checklist
+## Drawbacks
 
-- [ ] CLI: `incan build --target wasm` plumbing
-- [ ] Codegen: wasm-bindgen output for `wasm32-unknown-unknown`
-- [ ] Auto-deps: inject wasm-bindgen/web-sys/leptos/etc. from usage
-- [ ] UI: signals/effect/component runtime surface
-- [ ] Templates: `html()` strings
-- [ ] Templates: `jsx()` wrapper parsing/emission
-- [ ] Event handlers: named + arrow inline support
-- [ ] Routing: Router/Route/Link mapping
-- [ ] Dev server: `incan dev --target wasm` with HMR/overlay
-- [ ] Prod build: wasm-opt/minify/tree-shake/assets
-- [ ] 3D: wgpu bindings + scene graph + loaders
-- [ ] Examples: counter, TodoMVC, rotating cube, 3D demo
+- This RFC is very broad: it couples a compiler target, UI framework ideas, graphics abstractions, and tooling expectations in one document.
+- Browser runtimes and frontend ergonomics evolve quickly, so locking down the wrong abstraction too early would be costly.
+- The document currently mixes mature target-shape ideas with much more speculative UI and graphics surface design.
+- Supporting browser and WASM workflows well would add substantial compiler, runtime, and tooling scope.
+
+## Layers affected
+
+- **CLI / tooling**: must expose explicit browser-target build and dev commands rather than forcing manual Rust or WASM workflows.
+- **Execution handoff**: implementations must support browser-oriented output that preserves stable browser-boundary semantics.
+- **Stdlib / runtime**: browser-facing UI, graphics, and support libraries would be required if this RFC remains bundled as one proposal.
+- **Language surface**: the proposed browser-facing module surfaces must be recognized and validated coherently.
+- **Docs / examples**: the browser build model, UI reactivity model, and graphics model must be explained coherently.
+
+## Unresolved questions
+
+- Should the WebAssembly target, UI framework, and graphics framework remain in one RFC, or should this be split into smaller but still complete north-star RFCs?
+- Should both `html(...)` and `jsx(...)` remain in scope, or should the long-term contract standardize one primary templating surface?
+- Should browser tooling such as dev-server and bundling behavior be part of this RFC's public contract, or should they move to a separate tooling RFC?
+- How much of the proposed graphics surface belongs in core stdlib versus a purpose-built library layer?
+
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

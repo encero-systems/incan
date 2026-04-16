@@ -4,7 +4,7 @@
 - **Created:** 2025-12-24
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 006 (generators)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/327
 - **RFC PR:** —
 - **Written against:** v0.1
 - **Shipped in:** —

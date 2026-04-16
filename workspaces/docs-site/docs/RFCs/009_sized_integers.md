@@ -1,10 +1,10 @@
-# RFC 009: Sized integer types and builtin type registry
+# RFC 009: Sized numeric types and builtin type registry
 
 - **Status:** Draft
 - **Created:** 2024-12-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 005 (Rust interop)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/325
 - **RFC PR:** —
 - **Written against:** v0.1
 - **Shipped in:** —
@@ -15,7 +15,9 @@ This RFC introduces explicit sized numeric types such as `i8`, `u16`, `f32`, and
 
 ## Motivation
 
-The current numeric surface is intentionally simple: `int` lowers to `i64` and `float` lowers to `f64`. That is fine for general application code, but it is too blunt for several real cases:
+The current numeric surface is intentionally simple: `int` lowers to `i64` and
+`float` lowers to `f64`. That is fine for general application code, but it is
+too blunt for several real cases:
 
 - Rust interop and FFI frequently require exact-width numeric types.
 - Binary protocols and file formats encode fixed-width fields.
@@ -89,8 +91,10 @@ The language adds these builtin numeric spellings:
 
 ### Literals
 
-- Unsuffixed integer literals default to `int` unless a surrounding annotation or inference context requires a different numeric type.
-- Unsuffixed float literals default to `float` unless a surrounding annotation or inference context requires a different float type.
+- Unsuffixed integer literals default to `int` unless a surrounding annotation
+or inference context requires a different numeric type.
+- Unsuffixed float literals default to `float` unless a surrounding annotation
+or inference context requires a different float type.
 - Suffixed literals such as `42u16`, `7i8`, and `3.14f32` must construct the explicitly named type.
 - Out-of-range suffixed literals are compile-time errors.
 
@@ -99,7 +103,8 @@ The language adds these builtin numeric spellings:
 - Same-type arithmetic yields the same type.
 - Mixed-width arithmetic requires an explicit conversion.
 - Narrowing or sign-changing conversions must be explicit.
-- Widening conversions may be provided as named constructors or helpers, but this RFC does not permit silent widening in ordinary arithmetic expressions.
+- Widening conversions may be provided as named constructors or helpers, but
+this RFC does not permit silent widening in ordinary arithmetic expressions.
 
 ### Overflow behavior
 
@@ -130,7 +135,8 @@ The implementation therefore needs a language-owned builtin registry that define
 
 - Rust interop benefits directly because exact-width types can map to exact-width Rust signatures.
 - Existing `int` and `float` code keeps working unchanged.
-- Container indexing becomes more important once `usize` exists, but this RFC does not silently settle every indexing coercion rule yet.
+- Container indexing becomes more important once `usize` exists, but this RFC
+does not silently settle every indexing coercion rule yet.
 
 ### Compatibility / migration
 
@@ -142,7 +148,8 @@ The feature is additive. Existing programs using `int` and `float` continue to c
    - Too indirect. These types are useful inside ordinary Incan code, not only at FFI boundaries.
 
 2. **Python-style arbitrary-precision `int` only**
-   - That improves some numeric ergonomics, but it does not solve fixed-width interop, protocol parsing, or explicit layout control.
+   - That improves some numeric ergonomics, but it does not solve fixed-width
+     interop, protocol parsing, or explicit layout control.
 
 3. **Wrapper types only**
    - Still requires real underlying fixed-width types, so it does not remove the core problem.
@@ -154,20 +161,25 @@ The feature is additive. Existing programs using `int` and `float` continue to c
 
 - More builtin numeric types increase the language surface and the testing matrix.
 - `isize` and `usize` expose target-dependent widths, which slightly weakens the otherwise explicit story.
-- The registry requirement raises the implementation bar, but that is preferable to baking in more ad hoc builtin behavior.
+- The registry requirement raises the implementation bar, but that is
+preferable to baking in more ad hoc builtin behavior.
 
 ## Layers affected
 
 - **Lexer / parser**: must recognize the added type names and suffixed numeric literals.
-- **Typechecker**: must model exact-width numeric types, enforce explicit conversions, and diagnose out-of-range literals.
-- **Lowering / emission**: must preserve exact widths when lowering to Rust or other backend representations.
+- **Typechecker**: must model exact-width numeric types, enforce explicit
+conversions, and diagnose out-of-range literals.
+- **Lowering / emission**: must preserve exact widths when lowering to backend
+representations.
 - **Builtin surface registry**: must own the canonical spelling and method vocabulary for builtin numeric types.
 - **Docs / tooling**: should surface width-specific help, conversions, and overflow behavior consistently.
 
 ## Unresolved questions
 
-1. What is the exact rule for container indexing: explicit `as usize`, a targeted compiler coercion in indexing position, or something else?
+1. What is the exact rule for container indexing: explicit `as usize`, a
+targeted compiler coercion in indexing position, or something else?
 2. Should `char` join this RFC, or remain a separate feature with its own semantics?
-3. Which sized-type helper methods are language promises in v1, and which remain stdlib conveniences that can evolve separately?
+3. Which sized-type helper methods are language promises in v1, and which
+remain stdlib conveniences that can evolve separately?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

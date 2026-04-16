@@ -1,15 +1,15 @@
-# RFC 015: Hatch-like Tooling (Project Lifecycle CLI)
+# RFC 015: hatch-like tooling (project lifecycle CLI)
 
-**Status:** In Progress  
-**Created:** 2025-12-23  
-**Author(s):** Danny Meijer (@danny-meijer)  
-**Issue:** [#73](https://github.com/dannys-code-corner/incan/issues/73)  
-**RFC PR:** —  
-**Related:**
+- **Status:** In Progress
+- **Created:** 2025-12-23
+- **Author(s):** Danny Meijer (@dannymeijer)
+- **Related:**
     - RFC 013 (Rust crate dependencies)
-    - RFC 020 (Cargo offline/locked policy)  
-**Written against:** v0.1  
-**Shipped in:** —  
+    - RFC 020 (Cargo offline/locked policy)
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/73
+- **RFC PR:** —
+- **Written against:** v0.1
+- **Shipped in:** —
 
 ## Summary
 
@@ -21,8 +21,7 @@ Introduce a first-class, batteries-included project lifecycle CLI — similar in
 - (future) **Matrix testing** (tox/nox-style): a follow-up RFC may add a matrix/env runner once RFC 019 stabilizes
 - Additional “hatch-like” ergonomics where it fits Incan’s workflow (format/lint/release/build/publish).
 
-This RFC defines the CLI surface, the project metadata format, and the implementation boundaries
-so we don’t bake policy into ad-hoc scripts.
+This RFC defines the CLI surface, the project metadata format, and the implementation boundaries so we don’t bake policy into ad-hoc scripts.
 
 ## Motivation
 
@@ -31,7 +30,7 @@ Incan is a compiler + runtime ecosystem, but day-to-day developer experience is 
 - Starting a new project should be **one command**.
 - Bumping versions should be **correct and consistent** across project metadata, derived artifacts, and any package metadata.
 - Running tests should support **repeatable environments** and **matrix execution**, without forcing users to learn Cargo
-  internals.
+internals.
 - Release workflows should be **scriptable** and **standard** across projects.
 
 Python’s Hatch demonstrates that a single tool can cover the project lifecycle. This RFC adapts the useful parts to Incan.
@@ -55,7 +54,7 @@ Python’s Hatch demonstrates that a single tool can cover the project lifecycle
 
 - **Project**: An Incan repository containing Incan sources and metadata.
 - **Environment**: A named configuration overlay for repeatable command execution (`cwd`, `env-vars`, scripts,
-  dependency overlays).
+dependency overlays).
 - **Matrix**: Running an environment set across multiple dimensions (e.g., debug/release, features on/off).
 
 ## Project Metadata
@@ -82,12 +81,12 @@ serde = { version = "1.0", features = ["derive"] }
 Notes:
 
 - `[tool.incan]` may contain additional tool-specific configuration (e.g., formatter settings, test timeouts).
-  These are defined by their respective RFCs (e.g., RFC 019 for test configuration) and are not specified here.
+These are defined by their respective RFCs (e.g., RFC 019 for test configuration) and are not specified here.
 - `version` is SemVer-compatible with pre-release tags.
 - Rust dependencies integrate with RFC 013 rules.
 - `incan.toml` is the **project metadata** and is intended to be edited.
 - Generated build artifacts under `target/` are readable for debugging, but are **not** intended for manual editing
-  (RFC 020).
+(RFC 020).
 
 ### `[project]` schema (normative)
 
@@ -166,8 +165,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 - A script name should be a simple identifier (recommended snake_case).
 - `incan new --bin` must create a `main` script by default: `main = "src/main.incn"`.
 
-This RFC does not define project-aware `incan run` behavior for scripts yet.
-It only defines the configuration shape so it can be used by follow-up tooling RFCs without changing `incan.toml`.
+This RFC does not define project-aware `incan run` behavior for scripts yet. It only defines the configuration shape so it can be used by follow-up tooling RFCs without changing `incan.toml`.
 
 Note: `[project.scripts]` maps script names to `.incn` entrypoint paths. This is distinct from
 `[tool.incan.envs.<name>.scripts]` (defined below), which maps script names to shell command argv lists for env execution.
@@ -209,7 +207,7 @@ Override:
 
 - In **project mode**, project-level dependencies and strict lock semantics apply (RFC 013/020).
 - In **single-file mode**, dependency configuration is limited to inline annotations and known-good defaults (RFC 013),
-  and strict flags operate on the generated project’s `Cargo.lock` (RFC 020).
+and strict flags operate on the generated project’s `Cargo.lock` (RFC 020).
 
 ## CLI Design
 
@@ -305,10 +303,9 @@ Behavior:
 
 - `incan test` runs the Incan test runner as specified by RFC 019 (project-neutral behavior).
 - Cargo policy flags (`--offline/--locked/--frozen`) must be propagated consistently to any Cargo subprocesses,
-  as per RFC 020.
+as per RFC 020.
 
-This RFC intentionally does **not** define repo-maintainer workflows for the Incan compiler repository (e.g. “run all
-workspace Rust tests”); those are out of scope for user-facing tooling semantics.
+This RFC intentionally does **not** define repo-maintainer workflows for the Incan compiler repository (e.g. “run all workspace Rust tests”); those are out of scope for user-facing tooling semantics.
 
 Flags:
 
@@ -322,7 +319,7 @@ commands like `incan test`.
 Core command stability (normative):
 
 - Core commands like `incan test` are **not configurable** via `incan.toml`. Configuration is applied only when the user
-  explicitly uses `incan env run ...` or `incan env show ...`.
+explicitly uses `incan env run ...` or `incan env show ...`.
 
 Core shape:
 
@@ -359,7 +356,7 @@ docs_build = ["python3", "-m", "mkdocs", "build", "-q"]
 Normative behavior:
 
 - `incan env list` must output all configured env names. In `text` mode, one env name per line. In `json` mode, a JSON
-  array of env names.
+array of env names.
 - `incan env show <env>` must resolve env inheritance and merging using the same rules as `incan env run` and then print:
     - resolved overlay chain (base → default? → extends… → env)
     - resolved `cwd`
@@ -368,9 +365,9 @@ Normative behavior:
     - resolved dependency overlays (base + env additions/overrides)
 - `--format` controls output format; if omitted, `text` is used.
 - `incan env run ...` executes the configured script **without** any further env selection/indirection. In particular,
-  invoking `incan test` inside an env script must run the test runner directly and must not “re-enter” env resolution.
+invoking `incan test` inside an env script must run the test runner directly and must not “re-enter” env resolution.
 - Implementations must prevent accidental recursive self-invocation (e.g. an env script calling `incan env run ...` in a
-  way that would re-resolve the same env). If recursion is detected, the command must fail with a clear diagnostic.
+way that would re-resolve the same env). If recursion is detected, the command must fail with a clear diagnostic.
 - `--` separates `incan env run` arguments from additional user arguments passed through to the underlying command.
 - There are no implicit lifecycle hooks (e.g. no automatic `pre*`/`post*` script execution). Only the explicitly-invoked
   `<script>` is run.
@@ -415,14 +412,13 @@ Environment inheritance (normative; Hatch-like):
 - There is a special env named `default`. If it exists, it is included automatically for every other env **unless**
   `detached = true` is set for that env.
 - An env may additionally declare `extends = ["env_a", "env_b", ...]`. These envs are included (in order) before the env
-  itself.
+itself.
 - Duplicate inclusion is an error: if an env would appear more than once in the resolved overlay chain, `incan env show/run`
-  must fail with a clear diagnostic. (Rationale: duplicates usually indicate a misconfigured graph and can create surprising
-  override behavior.)
+must fail with a clear diagnostic. (Rationale: duplicates usually indicate a misconfigured graph and can create surprising override behavior.)
 - Cycles are forbidden. If inheritance is circular, `incan env show/run` must fail with a clear diagnostic.
 - Inheritance is a configuration overlay mechanism, not isolation: it does not create virtualenv-style sandboxes.
 - All overlays are applied deterministically in this order:
-  project base → `default` (if included) → extended envs (in order) → target env.
+project base → `default` (if included) → extended envs (in order) → target env.
 - Merge behavior for common env fields:
     - **scripts**: merged by name; later overlays override earlier ones on conflicts
     - **env-vars**: merged by key; later overlays override earlier ones on conflicts (unsetting is out of scope)
@@ -435,13 +431,12 @@ Dependency merge semantics:
     - **Version/source**: the env entry **replaces** the base entry.
     - **Features**: the env entry's features are **unioned** with the base entry's features.
 - It is an error for an env to define both canonical and alias dependency tables (same rule as RFC 013), applied within
-  the env scope.
+the env scope.
 - Envs cannot **remove** base dependencies; they can only add or override.
 
 ## Additional Commands (future; non-normative)
 
-These exist today in Makefiles across many repos, and this RFC leans toward **CLI-native** equivalents so projects do not
-need Make as a dependency.
+These exist today in Makefiles across many repos, and this RFC leans toward **CLI-native** equivalents so projects do not need Make as a dependency.
 
 However, they are intentionally deferred: these commands should be specified in follow-up RFCs once the core semantics of
 `incan test` (RFC 019) and policy propagation (RFC 020) are settled.
@@ -456,69 +451,28 @@ However, they are intentionally deferred: these commands should be specified in 
 Extensibility (future; non-normative):
 
 - Cargo-style third-party subcommands may be supported (similar to `cargo-foo` → `cargo foo`):
-  if `incan <cmd>` is not built-in, the CLI may attempt to execute `incan-<cmd>` from `PATH`.
+if `incan <cmd>` is not built-in, the CLI may attempt to execute `incan-<cmd>` from `PATH`.
 
 ## Layers affected
 
-- **CLI** — `incan new`, `incan init`, `incan version`, and `incan env` are all new top-level commands introduced by this RFC. All existing commands (`build`, `run`, `test`, `lock`) must be updated to consult `incan.toml` and derive project metadata from it.
-- **Project manifest parsing** — a new manifest reader must parse `incan.toml`, validate the `[project]`, `[project.scripts]`, and `[tool.incan.envs.*]` schemas, and emit span-precise diagnostics for missing or invalid keys.
-- **Project root discovery** — the compiler and CLI must walk upward from the current directory to locate `incan.toml`, with a `--project <path>` override. All commands must agree on the resolved root.
-- **Build / codegen** — generated project files (`Cargo.toml`, entrypoint wiring) must be derived from `incan.toml` metadata rather than hardcoded defaults.
+- **CLI surface** — `incan new`, `incan init`, `incan version`, and `incan env` are new top-level commands introduced by this RFC. Existing project-aware commands (`build`, `run`, `test`, `lock`) must consult `incan.toml` and derive project metadata from it.
+- **Project manifest model** — `incan.toml` must be parsed, validated against the `[project]`, `[project.scripts]`, and `[tool.incan.envs.*]` schemas, and diagnosed precisely when keys are missing or invalid.
+- **Project root discovery** — commands must walk upward from the current directory to locate `incan.toml`, with a `--project <path>` override, and all project-aware commands must agree on the resolved root.
+- **Project generation** — generated project files such as `Cargo.toml` and entrypoint wiring must derive from `incan.toml` metadata rather than hardcoded defaults.
 - **Documentation** — a project configuration reference and a "your first Incan project" guide are expected deliverables of this RFC.
 
-## Implementation Plan
+## Implementation architecture
 
-### Phase 1: Metadata + scaffolding
+*(Non-normative.)* A practical rollout has four broad pieces:
 
-- Add `incan.toml` parsing (serde + toml)
-- Validate schema and provide clear diagnostics for missing/invalid keys (see `[project]` schema above)
-- Implement project root discovery + `--project <path>` override
-- Implement `incan new`, `incan init`
-- Teach codegen/project generation to consult `incan.toml` when present
+1. **Metadata and scaffolding**: support `incan.toml` parsing and validation, project-root discovery, and the `incan new` / `incan init` scaffolding path.
+2. **Version management**: support SemVer-aware version bumping and explicit version setting against the project metadata source of truth.
+3. **Environment runner**: support `incan env list`, `show`, and `run`, including inheritance, deterministic overlay rules, dry-run output, and recursion or cycle diagnostics.
+4. **Documentation and polish**: provide guide-level docs and examples that make the project lifecycle workflow discoverable for ordinary Incan users rather than repo maintainers only.
 
-### Phase 2: Version command
+Implementation sequencing is not part of the public contract. The design claim is the project-lifecycle CLI surface and `incan.toml` model defined by this RFC, not any one internal rollout order.
 
-- Implement SemVer parsing + bump logic
-- Apply updates to `incan.toml`
-- Optional: update any secondary manifests (only if this repo's policy requires it)
-
-### Phase 3: Env runner
-
-- Implement `incan env list/show/run` with scripts, cwd/env-vars, env inheritance (`default`, `extends`), `--dry-run`,
-  and additive dependency merge
-- Implement recursion detection and clear diagnostics
-
-### Phase 4: Polish + docs
-
-- Add guide pages: `docs/tooling/project_lifecycle.md`
-- Provide "new project" tutorial for Python users
-- Add examples for `new/init/version/test/env` and project root discovery
-
-## Progress Checklist
-
-- [x] Define and validate `incan.toml` schema (`[project]`, `[project.scripts]`, `[tool.incan.envs.*]`) and document it
-      *(partial: `[project]`, `[project.scripts]`, `[build]`, `[dependencies]` implemented; `[tool.incan.envs.*]` pending)*
-- [x] Implement project root discovery + `--project <path>` override
-      *(`ProjectManifest::discover()` walks upward; `--project` not yet wired)*
-- [x] Implement `incan new` and `incan init` (including generating `[project.scripts].main`)
-      *(`incan init` implemented with full scaffold: `src/main.incn`, `tests/test_main.incn`, `incan.toml`)*
-- [ ] Implement `incan version` bump logic (project version only; clear output of modified files)
-- [ ] Implement `incan env list/show/run` with:
-    - inheritance (`default`, `extends`, `detached`)
-    - merge semantics (scripts/env-vars/cwd + dependency overlays)
-    - recursion/duplicate/cycle detection with clear diagnostics
-    - `--dry-run` and `--format text|json`
-- [x] Docs + examples (new/init/version/env + inheritance examples + `env show`)
-      *(partial: "Your first Incan project" tutorial, project config reference; env docs pending)*
-- [x] Teach codegen/project generation to consult `incan.toml` when present
-      *(build, run, test, and lock commands all consult `incan.toml`; test runner resolves source
-      modules via convention-based source root (`src/` or `[build] source-root`))*
-
-Follow-ups (recommended):
-
-- [ ] Specify and implement matrix expansion (tox/nox-like)
-
-## Alternatives Considered
+## Alternatives considered
 
 - **Rely solely on Makefile targets**: simple but inconsistent across repos, hard to compose and introspect;
     also adds an extra tool dependency we don’t need.
@@ -526,15 +480,8 @@ Follow-ups (recommended):
     also doesn’t cover project scaffolding or Incan-centric metadata.
 - **Adopt an existing tool (justfile, cargo-make)**: helps execution but doesn’t solve metadata/version semantics.
 
-## Unresolved questions
+## Design Decisions
 
-1. How do we want to represent "dev" versions (e.g., `-dev.1` vs `-dev+<sha>`)?
-
-   **Recommendation:** support both forms:
-   - `-dev.N` for sequential dev releases (e.g., `0.2.0-dev.1`, `0.2.0-dev.2`)
-   - `-dev+<sha>` for build metadata in CI artifacts (SemVer allows `+` build metadata)
-
-   The `.N` form is useful for manual dev releases; the `+<sha>` form is useful for CI-generated artifacts where
-   the commit hash provides traceability.
-
-<!-- Rename the "Unresolved questions" section above to "Design Decisions" once all open questions have been resolved and the RFC moves to Planned status. -->
+1. Development versions support both `-dev.N` and `-dev+<sha>` forms.
+   - `-dev.N` is used for sequential dev releases such as `0.2.0-dev.1`.
+   - `-dev+<sha>` is used for CI-oriented build metadata where commit traceability matters.

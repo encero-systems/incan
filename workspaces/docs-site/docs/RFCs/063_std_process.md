@@ -11,7 +11,7 @@
     - RFC 055 (`std.fs` path-centric filesystem APIs)
     - RFC 056 (`std.io` in-memory byte streams and binary parsing helpers)
     - RFC 058 (`std.datetime` durations and time handling)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/341
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -241,9 +241,9 @@ Process errors should be distinct at the type level:
 
 ## Layers affected
 
-- **Stdlib / runtime**: command spawn, stdio wiring, pipeline execution, timeout/termination semantics.
-- **Typechecker / symbol resolution**: module/type registration.
-- **Lowering / emission**: preserve process behavior without backend leakage.
+- **Stdlib / runtime**: command spawn, stdio wiring, pipeline execution, and timeout or termination semantics.
+- **Language surface**: the module types and methods must be available as specified.
+- **Execution handoff**: implementations must preserve process behavior without backend leakage.
 - **Docs / examples**: explicit shell boundary, checked execution, and pipeline usage.
 
 ## Design Decisions

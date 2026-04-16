@@ -1,12 +1,13 @@
-# RFC 032: Value Enums — `StrEnum` and `IntEnum`
+# RFC 032: value enums — `StrEnum` and `IntEnum`
 
 - **Status:** Draft
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 050 (Enum Methods & Trait Adoption), RFC 033 (`ctx` Keyword)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/317
 - **RFC PR:** —
-- **Target version:** TBD
+- **Written against:** v0.2
+- **Shipped in:** —
 
 ## Summary
 
@@ -228,85 +229,13 @@ When serde is active for a value enum:
 
 - Serialization: emits the **value**, not the variant name (`"production"` not `"Prod"`)
 - Deserialization: matches on the **value** (`"production"` → `Env.Prod`)
-- This is implemented via `#[serde(rename = "...")]` on each variant
+- Backends may realize this through per-variant rename metadata or an equivalent serialization hook.
 
-### Rust lowering
+### Lowering model
 
-```incan
-enum Env(str):
-    Dev = "development"
-    QA = "qa"
-    Prod = "production"
-```
+Backends should lower value enums to an ordinary closed enum representation plus generated helpers for value lookup, reverse lookup, display behavior, and any serialization metadata required by the chosen backend. The exact emitted code shape is implementation detail; the language-level contract is the generated method and serialization behavior described above.
 
-Lowers to:
-
-```rust
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Env {
-    Dev,
-    QA,
-    Prod,
-}
-
-impl Env {
-    pub fn value(&self) -> &str {
-        match self {
-            Env::Dev => "development",
-            Env::QA => "qa",
-            Env::Prod => "production",
-        }
-    }
-
-    pub fn from_value(s: &str) -> Option<Env> {
-        match s {
-            "development" => Some(Env::Dev),
-            "qa" => Some(Env::QA),
-            "production" => Some(Env::Prod),
-            _ => None,
-        }
-    }
-
-    pub fn message(&self) -> String {
-        match self {
-            Env::Dev => String::from("Dev"),
-            Env::QA => String::from("QA"),
-            Env::Prod => String::from("Prod"),
-        }
-    }
-}
-
-impl std::fmt::Display for Env {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.value())
-    }
-}
-
-impl std::str::FromStr for Env {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::from_value(s)
-            .ok_or_else(|| format!("invalid value for Env: {}", s))
-    }
-}
-```
-
-With serde enabled:
-
-```rust
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum Env {
-    #[serde(rename = "development")]
-    Dev,
-    #[serde(rename = "qa")]
-    QA,
-    #[serde(rename = "production")]
-    Prod,
-}
-```
-
-For `IntEnum`, the pattern is identical but with `i64` values, `TryFrom<i64>` instead of `FromStr`, and serde uses `#[serde(rename = "200")]` etc.
+For `IntEnum`, the same model applies with integer-valued lookup and reverse lookup rather than string parsing.
 
 ## Design details
 
@@ -333,7 +262,7 @@ enum Name:          # Regular ADT enum (unchanged)
 
 **Traits (RFC 050)**: Once enum methods and trait adoption land, value enums can have additional methods. The auto-generated `value()`, `from_value()`, and `message()` methods will coexist with user-defined methods.
 
-**Serde**: Value enums integrate with the existing serde derive scanning in `IrCodegen`. The `#[serde(rename)]` attributes are added per-variant.
+**Serde**: When serde-style serialization is active, value enums serialize and deserialize using their associated values rather than their variant names.
 
 **`ctx` (RFC 033)**: Axis resolution gains a two-step lookup: (1) try `from_value()` for exact value match, (2) fall back to case-insensitive variant name match. This means `PIPELINE_ENV=production` resolves via value, and `PIPELINE_ENV=Prod` resolves via name.
 
@@ -389,41 +318,17 @@ Rejected: breaks Incan's type safety philosophy. A `str` and an `Env` should not
 - **Value type restriction**: Only `str` and `int` are supported. Users wanting `float` or custom types must use regular enums with methods. This is intentional (simple values should be simple) but may require explanation.
 - **Display uses value, not name**: Printing an `Env.Dev` shows `"development"`, not `"Dev"`. This is the right default for wire-format types but could surprise users who expect the variant name. `message()` exists for that use case.
 
-## Implementation plan
+## Implementation architecture
 
-<!-- markdownlint-disable MD029 -->
-### Frontend
+*(Non-normative.)* A practical implementation preserves enum-level value-type metadata and per-variant literal values as first-class enum information rather than treating them as ad hoc attributes. Later compilation stages can then derive the standardized helper surface (`value()`, `from_value()`, display and parsing support, and serde-facing value mapping) from that single canonical representation. Tooling should use the same representation so completions, hover text, formatting, and diagnostics remain consistent.
 
-1. **Parser** (`crates/incan_syntax/src/parser/decl.rs`): After parsing `enum`, check for `(str)` or `(int)` value type specifier. Parse variant assignments `Name = <literal>`.
-2. **AST** (`crates/incan_syntax/src/ast/decls.rs`): Add `value_type: Option<Spanned<Type>>` to `EnumDecl`. Add `value: Option<Spanned<Expr>>` to `VariantDecl`.
-3. **Typechecker** (`src/frontend/typechecker/`):
-    - Validate that all variants have values when `value_type` is set (and none when it isn't).
-    - Validate value literals match the declared type.
-    - Validate value uniqueness.
-    - Reject value enums with tuple/struct variant fields.
-    - Reject value enums with type parameters.
+## Layers affected
 
-### Backend
-
-4. **IR** (`src/backend/ir/decl.rs`): Add `value_type: Option<IrType>` to `IrEnum`. Add `value: Option<IrLiteral>` to `EnumVariant`.
-5. **Lowering** (`src/backend/ir/lower/decl.rs`): Lower value type and variant values from AST to IR.
-6. **Emission** (`src/backend/ir/emit/decls/structures.rs`): Extend `emit_enum()` to generate:
-    - `value()` method (match on variants → literal values)
-    - `from_value()` method (match on literal values → variants)
-    - `Display` impl (delegates to `value()`)
-    - `FromStr` impl (delegates to `from_value()`)
-    - `#[serde(rename = "...")]` attributes per variant when serde is active
-
-### Tooling
-
-7. **Formatter** (`src/format/`): Format value enum syntax (alignment of `= "value"` assignments).
-8. **LSP** (`src/lsp/`): Completion for value enum variants, hover showing value.
-
-### Tests
-
-9. **Snapshot tests**: Add codegen snapshot for `StrEnum` and `IntEnum` variants.
-10. **Integration tests**: End-to-end test exercising `value()`, `from_value()`, `Display`, serde round-trip.
-11. **Error tests**: Missing values, duplicate values, type mismatches, generics rejected.
+- **Language surface**: value-carrying enum declarations must preserve explicit variant values as part of the enum contract.
+- **Type system**: allowed value types, uniqueness, and interactions with enum method surfaces must be validated.
+- **Execution handoff**: implementations must preserve variant values and generate the standardized helper surface such as `value()` and `from_value()`.
+- **Serde / runtime interop**: integrations must preserve the documented value mapping for serialization and parsing behavior.
+- **Docs / tooling**: the distinction between value enums, plain enums, and general ADTs must be explained clearly.
 
 ## Unresolved questions
 
@@ -436,3 +341,5 @@ Rejected: breaks Incan's type safety philosophy. A `str` and an `Env` should not
 4. **Should there be a `from_name()` companion to `from_value()`?** `Env.from_name("Dev")` for when you want to match on variant names programmatically (rather than values). Currently `message()` gives you name→string, but there's no string→variant by name. The `ctx` axis resolver handles this internally, but exposing it as API might be useful.
 
 5. **Relationship with RFC 050 enum methods**: Once RFC 050 lands, value enums should be able to have user-defined methods alongside the auto-generated ones. Need to ensure no naming conflicts (e.g., user defines their own `value()` method on a value enum — should this be an error?).
+
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

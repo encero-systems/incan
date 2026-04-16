@@ -7,7 +7,7 @@
     - RFC 021 (model field metadata and aliases)
     - RFC 042 (traits are always abstract)
     - RFC 044 (open-ended trait methods)
-- **Issue:** #203
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/203
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -42,7 +42,7 @@ Properties invite **lighter** implementations (no side effects, O(1) or document
 - Add **`property <identifier> -> <Type>:`** with an indented body; **no parameter list** (except as explicitly extended later for `self` on types that use it).
 - At **use sites**, allow **`<expr>.<name>`** without `()` when `<name>` resolves to a property.
 - Give properties **the same type-checking story** as a nullary instance operation returning `Type` (including generic inference where applicable).
-- Specify how properties **lower** to Rust (typically a method or associated accessor) and how they interact with **traits** and **Rust interop** at a high level.
+- Specify the high-level execution and interop model for properties, including how they interact with **traits** and **Rust interop**.
 
 ## Non-Goals
 
@@ -119,7 +119,7 @@ Only **one** of these forms should be normative; see **Unresolved questions**.
 ### Typing
 
 - The property’s return type is **explicit** after `->` (required in v1; inference from body alone is non-goal unless specified later).
-- **Variance / borrowing**: same rules as for methods returning `T` (owned vs references) as decided by the existing Incan–Rust lowering contract.
+- **Variance / borrowing**: same rules as for methods returning `T`, following the existing Incan-to-Rust interop contract.
 
 ### Runtime and side effects
 
@@ -139,8 +139,8 @@ Only **one** of these forms should be normative; see **Unresolved questions**.
 
 ### Rust interop
 
-- A public Incan property on a type that exports to Rust should lower to a **Rust method** with a stable name (e.g. `schema_fields` or a documented mangling) taking `&self` and returning the lowered return type.
-- **Calling from Rust**: use the generated method; there is no special Rust “field” unless the emitter documents one.
+- A public Incan property on a type that exports to Rust should appear as a **Rust method** with a stable name (for example `schema_fields` or a documented mangling) returning the mapped result type.
+- **Calling from Rust**: use the generated method; there is no special Rust “field” unless the emitter explicitly documents one.
 
 ### Errors
 
@@ -191,12 +191,12 @@ Only **one** of these forms should be normative; see **Unresolved questions**.
 
 ## Layers affected
 
-- **Parser / AST**: new keyword, property declaration node, distinct from `FunctionDef`.
-- **Typechecker**: member kind for properties; rules for access without `()`; trait implementation matching for abstract properties.
-- **Lowering / IR**: map property reads to a dedicated IR operation or to a nullary method call with a stable symbol.
-- **Emission**: generate Rust `fn` with `&self` (or appropriate receiver) for each property.
-- **Formatter**: format `property` blocks consistently; preserve `->` spacing.
-- **LSP**: completion treats properties like fields; hover shows return type; “no parens” snippet behavior.
+- **Surface syntax**: the language needs a distinct `property` declaration form, separate from `def`.
+- **Type system**: member lookup must distinguish properties from methods, enforce access without `()`, and match abstract property requirements in traits.
+- **Execution handoff**: property reads must preserve field-like use-site syntax while executing property bodies according to the declared contract.
+- **Interop / emission**: emitted artifacts must preserve the property-vs-method distinction in a predictable way, including the Rust-facing method form.
+- **Formatter**: `property` blocks should format consistently and preserve `->` spacing.
+- **LSP**: completion should treat properties like fields; hover should show the return type; snippets should avoid inserting `()`.
 
 ## Unresolved questions
 
@@ -209,4 +209,4 @@ Only **one** of these forms should be normative; see **Unresolved questions**.
 7. Should we perhaps use **`prop`** instead of **`property`**?
 8. Should we add an @property decorator anyway and make `prop`/`property` just desugaring calls?
 
-<!-- Rename this section to "Design decisions" once all questions are resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

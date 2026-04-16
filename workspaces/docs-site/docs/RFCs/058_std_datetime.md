@@ -318,8 +318,8 @@ This feature is additive. Existing code using raw integers or strings for time-l
 ## Layers affected
 
 - **Stdlib / runtime**: must provide the temporal types, interval types, and documented arithmetic and formatting semantics.
-- **Typechecker / symbol resolution**: must register the module, types, and operator or method surface.
-- **Lowering / emission**: must preserve arithmetic, comparison, and parse or format behavior without leaking backend quirks.
+- **Language surface**: the module, types, constructors, operators, and methods must be available as specified.
+- **Execution handoff**: implementations must preserve arithmetic, comparison, parsing, and formatting behavior without leaking backend quirks.
 - **Docs / examples**: should standardize how Incan code measures elapsed time, works with timestamps, and performs interval arithmetic.
 
 ## Design Decisions

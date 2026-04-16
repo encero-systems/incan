@@ -9,7 +9,7 @@
     - RFC 056 (`std.io` in-memory byte streams and binary parsing helpers)
     - RFC 061 (`std.compression` codec-based compression and decompression)
     - RFC 065 (`std.hash` stable hashing primitives)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/342
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -192,8 +192,8 @@ Those belong to dedicated modules (`std.compression`, `std.archive`, and future 
 ## Layers affected
 
 - **Stdlib / runtime**: encoding implementations, stream adapters, and error surfaces.
-- **Typechecker / symbol resolution**: module and submodule registration.
-- **Lowering / emission**: preserve deterministic transformation behavior.
+- **Language surface**: the module and submodule families must be available as specified.
+- **Execution handoff**: implementations must preserve deterministic transformation behavior.
 - **Docs / examples**: strict/lenient guidance, variant choice guidance, and streaming patterns.
 
 ## Design Decisions

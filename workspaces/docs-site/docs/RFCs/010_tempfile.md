@@ -4,7 +4,7 @@
 - **Created:** 2024-12-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 019 (runner testing), RFC 023 (stdlib namespacing and compiler handoff)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/79
 - **RFC PR:** —
 - **Written against:** v0.1
 - **Shipped in:** —
@@ -46,7 +46,7 @@ Python solves this with `tempfile`, while Rust commonly uses the `tempfile` crat
 ```incan
 from std.tempfile import NamedTemporaryFile
 
-temp = NamedTemporaryFile.new()?
+temp = NamedTemporaryFile()?
 temp.write_text("some data")?
 
 process_file(temp.path())
@@ -58,7 +58,7 @@ process_file(temp.path())
 ```incan
 from std.tempfile import TemporaryDirectory
 
-temp_dir = TemporaryDirectory.new()?
+temp_dir = TemporaryDirectory()?
 
 config = temp_dir.path() / "config.toml"
 config.write_text(default_config)?
@@ -74,7 +74,7 @@ When the `TemporaryDirectory` value is dropped, the temporary directory tree is 
 ```incan
 from std.tempfile import NamedTemporaryFile
 
-temp = NamedTemporaryFile.with_suffix(".json")?
+temp = NamedTemporaryFile(suffix=".json")?
 temp.write_text(data)?
 
 final_path = temp.persist()?
@@ -159,6 +159,12 @@ This feature is additive. Existing `Path` and filesystem APIs keep their meaning
 - **Typechecker / docs**: must treat temp resources as ordinary typed values with path-returning methods.
 - **Lowering / runtime**: must preserve cleanup and persistence behavior across success and error paths.
 - **Testing / tooling**: should make examples and diagnostics around temporary resources easy to discover.
+
+## Design Decisions
+
+1. Construction follows ordinary direct Incan construction rather than `.new()`-style factory calls.
+2. Python-style type names such as `NamedTemporaryFile` and `TemporaryDirectory` are part of the intended public surface.
+3. Temporary resources remain path-usable filesystem entries while they exist; this RFC does not invent a separate non-`Path` interaction model for them.
 
 ## Unresolved questions
 

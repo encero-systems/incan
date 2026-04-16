@@ -1,10 +1,13 @@
-# RFC 028: Trait-Based Operator Overloading
+# RFC 028: trait-based operator overloading
 
 - **Status:** Draft
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 027 (vocab crate — block/desugaring substrate), RFC 024 (extensible derive protocol), RFC 040 (scoped DSL glyph surfaces), RFC 054 (explicit call-site generics)
-- **Target version:** v0.2
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/314
+- **RFC PR:** —
+- **Written against:** v0.2
+- **Shipped in:** —
 
 ## Summary
 
@@ -12,8 +15,8 @@ This RFC introduces operator overloading for Incan, allowing user-defined types 
 
 Part of the surface already exists today as stdlib trait stubs:
 
-- `crates/incan_stdlib/stdlib/traits/ops.incn` defines arithmetic traits such as `Add`, `Sub`, `Mul`, `Div`, `Neg`, and `Mod`
-- `crates/incan_stdlib/stdlib/derives/comparison.incn` defines comparison traits such as `Eq` and `Ord`
+- arithmetic traits such as `Add`, `Sub`, `Mul`, `Div`, `Neg`, and `Mod`
+- comparison traits such as `Eq` and `Ord`
 
 This RFC turns that partial, documentation-oriented surface into a coherent language feature: it wires operator resolution into the typechecker, defines lowering rules in IR, and specifies how backends preserve those already-resolved Incan semantics. It also expands the trait surface for operators that do not yet have stdlib definitions.
 
@@ -44,8 +47,8 @@ RFC 027 defines the vocabulary registration system for keywords and block-level 
 
 The stdlib already contains part of the intended protocol surface:
 
-- arithmetic traits in `stdlib/traits/ops.incn`
-- comparison traits in `stdlib/derives/comparison.incn`
+- arithmetic traits for the common numeric operators
+- comparison traits for equality and ordering
 
 But today those definitions are not the normative source of operator semantics. Builtin operators are still mostly hard-wired around primitive behavior, and user-defined types do not yet get full trait-dispatched operator resolution. Nothing in the compiler currently resolves `a + b` to `a.__add__(b)` for user-defined types or lowers that resolved protocol call as a first-class part of the operator pipeline.
 
@@ -316,33 +319,21 @@ This RFC also brings `|>` and `<|` into scope as ordinary global operators for l
 
 Like `@`, these are part of Incan if the Incan typechecker and standard traits define them, regardless of whether the target backend has matching built-in syntax.
 
-### Compiler pipeline changes
+### Operator resolution model
 
-**Typechecker:**
+When Incan sees an operator expression such as `lhs + rhs`, the language-level rule is:
 
-When the typechecker sees `BinaryOp(lhs, op, rhs)`:
+1. Determine the dunder surface for the operator (for example `+` maps to `__add__`).
+2. Check whether the left-hand type exposes a compatible dunder method, a compatible operator trait view, or both.
+3. If a compatible surface exists, resolve the expression through that operator contract and preserve the resolved view for generic reasoning and diagnostics.
+4. If no compatible surface exists, produce a type error naming the missing operator capability.
 
-1. Look up the dunder method for `op` (e.g., `+` → `__add__`)
-2. Check whether `typeof(lhs)` exposes a compatible operator trait, a compatible dunder method, or both
-3. If yes → resolve the expression to the corresponding dunder method and record the resolved operator view for lowering and generic reasoning
-4. If no → produce a type error naming the missing dunder / trait surface
-
-**IR Lowering:**
-
-- `BinaryOp(a, Add, b)` where `a` resolves through the `Add`/`__add__` surface → `IrExpr::MethodCall(a, "__add__", [b])`
-- The lowering already handles method calls. The new part is recognizing that `BinaryOp` on user-defined types should route through the resolved operator protocol rather than primitive operator emission.
-
-**IR Emission:**
-
-- Backends are responsible for implementing the already-resolved Incan semantics.
-- For the Rust backend, operators that map cleanly to `std::ops` may emit native Rust trait impls (`Add`, `Sub`, `Mul`, etc.).
-- Operators without a clean host-language analogue (`@`, `SetItem`, future reflected operators) may emit helper traits or direct method-based lowering instead.
+The important point is that user-defined operator expressions resolve through Incan’s operator protocol, not through ambient backend operator behavior. Backends are responsible only for realizing that already-resolved meaning.
 
 ### Interaction with existing features
 
 **`@derive(Eq, Ord)`:** Models with `@derive(Eq)` get auto-generated `__eq__` (field-wise comparison). Manually
-implementing `__eq__` overrides the derived version. This RFC relies on that comparison-trait surface but does not
-redefine derive semantics; those remain governed by RFC 024.
+implementing `__eq__` overrides the derived version. This RFC relies on that comparison-trait surface but does not redefine derive semantics; those remain governed by RFC 024.
 
 **Trait composition:** A type can implement multiple operator traits: `model Vec3 with Add[Vec3, Vec3], Mul[float, Vec3], Neg[Vec3]`. Each trait impl is independent.
 
@@ -389,3 +380,19 @@ def add_vectors(a: Vector, b: Vector) -> Vector: ...
 - **Potential for abuse**: Redefining `+` to mean something unexpected (e.g., `+` as string concatenation on non-string types) hurts readability. This is a cultural concern, not a technical one — Python has the same issue.
 - **Backend complexity**: Some Incan operator semantics map neatly to host-language primitives, and some do not. Backends may need helper traits, shims, or direct method lowering to preserve the language semantics.
 - **Open dispatch details**: Reflected operators and in-place operator hooks are likely useful, but their exact dispatch rules still need sharper specification. Leaving those details under-specified for too long would create confusion.
+
+## Layers affected
+
+- **Language surface**: operator spellings and dunder declarations must remain unambiguous.
+- **Type system**: operator usage must resolve against dunder methods and operator traits according to the RFC's dispatch rules.
+- **Execution handoff**: implementations must preserve the typechecked operator semantics across backends without leaking backend-specific operator rules into user-facing behavior.
+- **Stdlib / runtime**: the nominal operator trait surface used for generic capability expression and documentation must be available.
+- **Docs / tooling**: operator capability, trait vocabulary, and dispatch behavior must be explained clearly enough that overloaded operators remain understandable.
+
+## Unresolved questions
+
+- What is the exact fallback order between direct dunder methods, reflected operators, and trait-inferred operator capability?
+- Which in-place operator hooks are part of the initial contract, and when should they fall back to ordinary binary operator lowering?
+- How should diagnostics present operator ambiguity when multiple plausible trait-driven resolutions exist?
+
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

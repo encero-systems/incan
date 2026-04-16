@@ -224,7 +224,7 @@ Spill-to-disk behavior does not belong in `BytesIO`. Python puts that concept in
 ## Layers affected
 
 - **Stdlib / runtime (`incan_stdlib`)**: new `std.io` module and the `BytesIO` type.
-- **Typechecker / symbol resolution**: registration of the new module, constructor, and methods.
+- **Language surface**: the module, constructor, and methods must be available as specified.
 - **Builtin numeric surface**: numeric helper signatures depend on RFC 009's sized numeric types and aliases.
 - **LSP / tooling**: completions and hovers for `std.io`.
 - **Docs / examples**: binary parsing examples should use `std.io.BytesIO` instead of `rust::` recipes for the common in-memory path.

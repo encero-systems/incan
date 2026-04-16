@@ -1,25 +1,31 @@
-# RFC 033: `ctx` — Typed Configuration Context
+# RFC 033: `ctx` — typed configuration context
 
 
 - **Status:** Draft
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 032 (Value Enums)
-- **Target version:** TBD
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/318
+- **RFC PR:** —
+- **Written against:** v0.2
+- **Shipped in:** —
 
 ## Summary
 
-Introduce `ctx` as a core language keyword that declares a **typed, globally accessible, environment-aware configuration context**. A `ctx` declaration looks like a `model` but produces a set-once singleton whose fields are resolved from a layered priority chain: field defaults → match-block overrides → environment variables. This replaces the YAML/env-var/dataclass juggling common in Python applications with a single, compile-time validated construct.
+Introduce `ctx` as a core language keyword that declares a typed, globally accessible, environment-aware configuration context. A `ctx` declaration looks like a `model` but produces a set-once singleton whose fields are resolved from a layered priority chain: field defaults, then match-block overrides, then environment variables. This replaces the YAML/env-var/dataclass juggling common in Python applications with a single, compile-time validated construct.
 
 ## Motivation
 
-Every non-trivial application needs configuration — database paths, batch sizes, API endpoints, feature flags. Today's patterns are painful:
+Every non-trivial application needs configuration: database paths, batch sizes, API endpoints, feature flags. Today's patterns are painful:
 
-- **Python dataclass + env vars**: Manual `os.environ.get("KEY", "default")` for every field. No compile-time validation. String-typed. Error-prone.
-- **Pydantic BaseSettings**: Typed, env-var-aware, but runtime-only validation. No multi-environment resolution. No language integration.
+- **Python dataclass + env vars**: manual `os.environ.get("KEY", "default")`
+for every field. No compile-time validation. String-typed. Error-prone.
+- **Pydantic BaseSettings**: typed and env-var-aware, but runtime-only
+validation. No multi-environment resolution. No language integration.
 - **YAML + merge**: `common.yaml` + `prod.yaml` merged at load time. Untyped, no IDE support, merge surprises.
 - **Django settings**: Python module importable globally. Untyped, single-environment, no structured overrides.
-- **Koheesio Context**: Dict-like, YAML-loaded, `.get("key")` returns `Any`. 490 lines of Python + 40 lines of env resolution.
+- **Koheesio Context**: dict-like, YAML-loaded, `.get("key")` returns `Any`.
+The surface stays dynamic where Incan should be typed.
 
 The common pain points:
 
@@ -64,7 +70,7 @@ ctx AppConfig(env_prefix="APP_"):
             batch_size = 5000
 ```
 
-The declaration line — `ctx AppConfig(env_prefix="APP_"):` — controls **how** the context resolves (mechanics). The body declares **what** it contains (content). They never mix.
+The declaration line, `ctx AppConfig(env_prefix="APP_"):`, controls how the context resolves. The body declares what it contains. They do not mix.
 
 ### Reading context fields
 
@@ -80,11 +86,13 @@ def process_batch(items: list[Item]) -> list[Result]:
         ...
 ```
 
-`AppConfig.batch_size` is a global read. The compiler knows the type (`int`) at compile time. IDE completion works. Rename-refactoring works.
+`AppConfig.batch_size` is a global read. The compiler knows the type (`int`) at
+compile time. IDE completion works. Rename-refactoring works.
 
 ### How env_prefix works
 
-`ctx AppConfig(env_prefix="APP_")` maps each field to an environment variable using `{env_prefix}{UPPER_SNAKE_CASE_FIELD_NAME}`:
+`ctx AppConfig(env_prefix="APP_")` maps each field to an environment variable
+using `{env_prefix}{UPPER_SNAKE_CASE_FIELD_NAME}`:
 
 |     Field      |      Env var       |         Lookup order          |
 | -------------- | ------------------ | ----------------------------- |
@@ -121,7 +129,9 @@ This matches what every ops engineer already expects: "set it in the environment
 
 ### Per-field env var customization
 
-All fields read from env vars by default (via `env_prefix` + `UPPER_SNAKE_CASE`). For fields that need a custom env var name, use field metadata:
+All fields read from env vars by default via `env_prefix` plus
+`UPPER_SNAKE_CASE`. For fields that need a custom env var name, use field
+metadata:
 
 ```incan
 ctx AppConfig(env_prefix="APP_"):
@@ -183,7 +193,9 @@ case_arm     ::= "case" IDENT ":" NEWLINE INDENT field_override+ DEDENT
 field_override ::= IDENT "=" expr NEWLINE
 ```
 
-**`ctx` is a core keyword** — always reserved, not a soft keyword. It has unique semantics (singleton, env var integration, match blocks) that don't fit `model` or `class`.
+**`ctx` is a core keyword** and is always reserved, not a soft keyword. It has
+singleton, env-var, and match-block semantics that do not fit `model` or
+`class`.
 
 ### Declaration rules
 
@@ -192,14 +204,19 @@ field_override ::= IDENT "=" expr NEWLINE
 3. The body contains **field declarations** (same syntax as `model` fields) and **match blocks**.
 4. Match blocks reference a user-defined `enum` type. The enum must be in scope.
 5. Match arms can only override fields declared in the same `ctx`. They cannot introduce new fields.
-6. Fields without defaults and without coverage in all match arms are a compile error — the context must be fully resolvable.
+6. Fields without defaults and without coverage in all match arms are a compile
+error. The context must be fully resolvable.
 
 ### Type checking rules
 
-1. **Field types** — same as `model` fields. Primitive types (`str`, `int`, `float`, `bool`), `Option[T]`, `list[T]`, and model types are all valid.
-2. **Match arm overrides** — the assigned value must be type-compatible with the field's declared type. `batch_size: int = 100` can only be overridden with an `int`.
-3. **Global access** — `AppConfig.field_name` is typed using the field's declared type. The typechecker resolves it as a static field access on a known singleton, not a regular instance access.
-4. **Immutability** — context fields are read-only after initialization. Assigning to `AppConfig.field = x` outside of a match arm or `.init()` is a compile error.
+1. **Field types**: same as `model` fields. Primitive types (`str`, `int`,
+   `float`, `bool`), `Option[T]`, `list[T]`, and model types are all valid.
+2. **Match arm overrides**: the assigned value must be type-compatible with the
+field's declared type. `batch_size: int = 100` can only be overridden with an `int`.
+3. **Global access**: `AppConfig.field_name` is typed using the field's
+declared type. The typechecker resolves it as a static field access on a known singleton, not a regular instance access.
+4. **Immutability**: context fields are read-only after initialization.
+Assigning to `AppConfig.field = x` outside of a match arm or `.init()` is a compile error.
 
 ### Env var type coercion
 
@@ -217,74 +234,32 @@ If coercion fails, the program exits at startup with a clear error message namin
 
 ### Axis resolution
 
-For each `match EnumType:` block in a `ctx`, the runtime reads `{env_prefix}{ENUM_TYPE_NAME}` from the environment — e.g., `APP_ENV` for `match Env:`. The value must match an enum variant name (case-insensitive). If the env var is absent, the match block is skipped entirely and field defaults are used.
+For each `match EnumType:` block in a `ctx`, the runtime reads
+`{env_prefix}{ENUM_TYPE_NAME}` from the environment, for example `APP_ENV` for
+`match Env:`. The value must match an enum variant name case-insensitively. If
+the env var is absent, the match block is skipped entirely and field defaults are used.
 
 ### Lifecycle
 
-1. **Before init** — accessing any `ctx` field panics with `"AppConfig not initialized"`. If the compiler can prove a field is accessed before `main()`, it emits a compile error.
-2. **Init** — at program startup (or explicitly via `.init()` in tests): resolve axis env vars → evaluate matching match arms → apply env var field overrides → lock the singleton.
+1. **Before init**: accessing any `ctx` field panics with
+   `"AppConfig not initialized"`. If the compiler can prove a field is
+accessed before `main()`, it emits a compile error.
+2. **Init**: at program startup, or explicitly via `.init()` in tests, the
+runtime resolves axis env vars, evaluates matching arms, applies env var field overrides, and then locks the singleton.
 3. **After init** — `AppConfig.field` is a zero-cost read. Immutable. Thread-safe.
 4. **In tests** — `.init()` can be called again (resets the singleton) for per-test configuration.
 
-### Rust lowering
+### Lowering model
 
-The compiler generates:
+The compiler lowers each `ctx` declaration to a singleton-backed runtime representation together with initialization logic that:
 
-```rust
-use std::sync::OnceLock;
+1. starts from field defaults;
+2. resolves any active match-axis values;
+3. applies matching match-arm overrides;
+4. applies environment-variable overrides last;
+5. locks the context for ordinary read access after initialization.
 
-struct AppConfigData {
-    database_url: String,
-    batch_size: i64,
-    debug: bool,
-    output_dir: String,
-}
-
-static APP_CONFIG: OnceLock<AppConfigData> = OnceLock::new();
-
-fn init_app_config() {
-    let env_variant: Option<Env> = std::env::var("APP_ENV")
-        .ok()
-        .and_then(|s| s.parse().ok());
-
-    // Start with defaults
-    let mut database_url = String::from("sqlite:///dev.db");
-    let mut batch_size: i64 = 100;
-    let mut debug: bool = true;
-    let mut output_dir = String::from("output");
-
-    // Apply match arm overrides
-    if let Some(env) = env_variant {
-        match env {
-            Env::Dev => {
-                debug = true;
-                batch_size = 10;
-            }
-            Env::Prod => {
-                database_url = String::from("postgres://prod-host/app");
-                debug = false;
-                batch_size = 5000;
-            }
-        }
-    }
-
-    // Apply env var overrides (highest priority)
-    if let Ok(val) = std::env::var("APP_DATABASE_URL") {
-        database_url = val;
-    }
-    if let Ok(val) = std::env::var("APP_BATCH_SIZE") {
-        batch_size = val.parse().expect("APP_BATCH_SIZE must be a valid integer");
-    }
-    // ... etc for each field
-
-    APP_CONFIG.set(AppConfigData { database_url, batch_size, debug, output_dir })
-        .expect("AppConfig already initialized");
-}
-```
-
-`AppConfig.batch_size` in Incan becomes `APP_CONFIG.get().unwrap().batch_size` in Rust — a pointer dereference after the `OnceLock` is set.
-
-**Note:** The `.expect()` and `.unwrap()` calls here are in *generated user-program Rust code*, not in the compiler itself. The compiler's own `#[deny(clippy::unwrap_used)]` policy does not apply to code it emits into user projects. The panics are intentional: init-time failures (bad env var format) use `.expect()` for fail-fast startup errors; field accesses use `.unwrap()` because a missing `OnceLock` value is a programming error (accessing a context before it is initialized). Users who enable `unwrap_used` or `expect_used` in their own project's clippy configuration will see diagnostics on these generated calls — see unresolved question 6 for the trade-off discussion.
+The backend implementation may use a once-only singleton primitive or an equivalent runtime mechanism. That representation detail is not the main contract; the important behavior is set-once initialization, typed field reads, and fail-fast startup behavior on invalid configuration.
 
 ## Design details
 
@@ -330,23 +305,29 @@ ctx InfraConfig(env_prefix="INFRA_"):
             )
 ```
 
-Nested access works naturally: `InfraConfig.cluster.node_type`. The flow is one-directional — **ctx contains models, models don't contain ctx**. A `Transaction` model should never reference `AppConfig`.
+Nested access works naturally: `InfraConfig.cluster.node_type`. The flow is one-directional: `ctx` contains models, but models do not contain `ctx`. A
+`Transaction` model should never reference `AppConfig`.
 
 ### Interaction with existing features
 
 **Traits:** `ctx` types do not implement traits. They are singletons, not polymorphic data types.
 
-**async/await:** `ctx` fields are synchronously available (no `await` needed) — they're resolved at startup. Async functions can read ctx fields freely.
+**async/await:** `ctx` fields are synchronously available. No `await` is
+needed because they are resolved at startup. Async functions can read `ctx` fields freely.
 
-**Imports/modules:** `ctx` declarations follow normal module visibility. A `pub ctx` in a library can be imported by consumers. But: ctx initialization is the consumer's responsibility, not the library's.
+**Imports/modules:** `ctx` declarations follow normal module visibility. A
+`pub ctx` in a library can be imported by consumers, but initialization is the
+consumer's responsibility, not the library's.
 
-**Error handling:** Env var parsing failures at init time produce a clear startup error (not a `Result` — fail fast). This is intentional: misconfigured environments should crash immediately, not silently propagate.
+**Error handling:** env var parsing failures at init time produce a clear
+startup error, not a `Result`. This is intentional: misconfigured environments should crash immediately rather than propagate silently.
 
-**Field metadata:** `ctx` fields support the same `[key=value]` metadata syntax as model fields. Currently defined metadata keys for ctx fields: `env` (custom env var name or `false` to disable).
+**Field metadata:** `ctx` fields support the same `[key=value]` metadata
+syntax as model fields. The currently defined key is `env`, which provides a custom env var name or disables env lookup with `false`.
 
 ### Compatibility / migration
 
-This is a new feature — no migration needed. `ctx` becomes a reserved keyword, which is a breaking change for anyone using `ctx` as an identifier. Since Incan is pre-1.0, this is acceptable.
+This is a new feature, so there is no migration path to manage. `ctx` does become a reserved keyword, which is a breaking change for anyone already using it as an identifier. Pre-1.0, that is acceptable.
 
 ## Alternatives considered
 
@@ -359,7 +340,8 @@ model AppConfig:
     ...
 ```
 
-**Rejected.** The `match Env:` blocks don't fit naturally inside a `model` body. The singleton semantics, env var integration, and match resolution are different enough from `model` to warrant a distinct keyword. A decorator would hide the fundamental semantic difference.
+**Rejected.** The `match Env:` blocks do not fit naturally inside a `model`
+body. The singleton semantics, env var integration, and match resolution are different enough from `model` to warrant a distinct keyword. A decorator would hide that semantic difference.
 
 ### Runtime-only config (like Pydantic BaseSettings)
 
@@ -373,66 +355,61 @@ model AppConfig:
 config = AppConfig.from_env(prefix="APP_")
 ```
 
-**Rejected.** Loses compile-time validation of field references. Requires passing `config` around as a parameter. No match-block environment overrides. This is just a typed version of what Python already has.
+**Rejected.** This loses compile-time validation of field references, requires
+passing configuration around as a parameter, and cannot express match-block environment overrides. It is just a typed version of what Python already has.
 
 ### Soft keyword via library
 
 Ship `ctx` as a library-provided soft keyword instead of a core keyword.
 
-**Rejected.** `ctx` is universally useful — not specific to data pipelines or any domain library. Every application needs configuration. Making it a library feature would mean the most basic use case (read a setting from an env var) requires a dependency. The env var integration and singleton semantics are also deeply wired into the compiler's code generation.
+**Rejected.** `ctx` is universally useful rather than domain-specific. Every
+application needs configuration. Making it a library feature would mean the most basic use case, reading a setting from an env var, requires a dependency. The env var integration and singleton semantics also belong to the language contract, not an optional library add-on.
 
 ## Drawbacks
 
 - **New keyword** — `ctx` becomes reserved, breaking any code using it as an identifier. Acceptable pre-1.0.
-- **Global mutable state** — technically a singleton, which some consider an anti-pattern. Mitigated by being immutable after init and resettable in tests.
-- **Hidden dependency** — functions that read `AppConfig.field` have an implicit dependency on the context being initialized. Not visible in the function signature. This is the intended trade-off: explicitness vs. boilerplate reduction.
+- **Global mutable state**: technically a singleton, which some consider an
+anti-pattern. This is mitigated by immutability after init and reset support in tests.
+- **Hidden dependency**: functions that read `AppConfig.field` have an
+implicit dependency on the context being initialized. That dependency is not visible in the function signature. This is the intended trade-off between explicitness and boilerplate reduction.
 
 ## Layers affected
 
-- **Lexer** (`crates/incan_syntax/`) — `ctx` must be added as a core (always-reserved) keyword.
-- **Parser** (`crates/incan_syntax/`) — parse `ctx Name(params):` declarations with field declarations and `match EnumType:` blocks; reuse field parsing from model declarations where possible.
-- **AST** (`crates/incan_syntax/`) — a new `CtxDecl` node is required. The following data model captures the normative shape of what the AST must represent:
-
-  ```rust
-  pub struct CtxDecl {
-      pub visibility: Visibility,
-      pub name: Ident,
-      pub params: Vec<(Ident, Spanned<Expr>)>,    // e.g., env_prefix="APP_"
-      pub fields: Vec<Spanned<FieldDecl>>,
-      pub match_blocks: Vec<Spanned<CtxMatchBlock>>,
-  }
-
-  pub struct CtxMatchBlock {
-      pub axis: Spanned<Ident>,                    // the enum type name
-      pub arms: Vec<Spanned<CtxMatchArm>>,
-  }
-
-  pub struct CtxMatchArm {
-      pub variant: Spanned<Ident>,                 // e.g., Dev, Prod
-      pub overrides: Vec<(Ident, Spanned<Expr>)>,  // field = value assignments
-  }
-  ```
-- **Typechecker** (`src/frontend/typechecker/`) — validate field types; validate match arm override types are compatible with the declared field type; validate enum axes are in scope; enforce that every field has a default or exhaustive match arm coverage; register the ctx type in the symbol table so `AppConfig.field` resolves as a typed static field access.
-- **IR Lowering** (`src/backend/ir/lower/`) — lower `CtxDecl` to IR: struct definition, `OnceLock` static, and init function body.
-- **IR Emission** (`src/backend/ir/emit/`) — emit the Rust struct, `OnceLock` static, init function with match arms and env var reading logic, and field accesses as static reads through the lock.
-- **CLI / main bootstrap** (`src/cli/`) — auto-insert `init_<ctx_name>()` calls at the start of the generated `main()` when the resolution is set to auto-init.
-- **Formatter** (`src/format/`) — format `ctx` declarations (field alignment, match block indentation).
-- **LSP** — completions and hover for `CtxName.field` access, showing field types and mapped env var names.
-- **Test runner** — support `.init()` calls in test functions to reset the singleton per-test.
+- **Language surface** — `ctx` becomes a core reserved keyword with first-class declaration syntax, field declarations, and match-axis override blocks.
+- **Type system** — implementations must validate field types, match-arm compatibility, axis enum resolution, and typed static field access through the singleton surface.
+- **Initialization model** — the runtime/bootstrap path must honor the chosen auto-init or explicit-init policy and preserve the declared resolution order for defaults, match arms, and env vars.
+- **Formatter** — `ctx` declarations and match blocks should format predictably.
+- **LSP / tooling** — completions and hover for `CtxName.field` access should show field types and mapped env var names.
+- **Test support** — test execution must support `.init()` calls that reset the singleton per test.
 
 ## Unresolved questions
 
-1. **Should fields without defaults require exhaustive match coverage?** If `auth_token: str` has no default and `match Env` only covers `Prod`, what happens in `Dev`? Options: compile error (require all arms) or require a default value. Leaning toward: **fields without defaults must be covered by all match arms or have a matching env var annotation** — fail at init time if the env var is also absent.
+1. **Should fields without defaults require exhaustive match coverage?** If
+   `auth_token: str` has no default and `match Env` only covers `Prod`, what
+happens in `Dev`? Options: compile error requiring all arms, or requiring a default value. Leaning toward: fields without defaults must be covered by all match arms or have a matching env var annotation, with init-time failure if the env var is also absent.
 
-2. **Should `env_prefix` be optional?** Could default to `{UPPER_SNAKE_CASE_CTX_NAME}_`. Leaning toward: **required** — explicit is better than implicit for something that maps to external env vars.
+2. **Should `env_prefix` be optional?** It could default to
+   `{UPPER_SNAKE_CASE_CTX_NAME}_`. Leaning toward: required, because explicit
+is better than implicit for something that maps to external env vars.
 
-3. **How should nested model fields map to env vars?** `cluster: ClusterConfig` — should `INFRA_CLUSTER__NODE_TYPE` work (using a delimiter)? Or should nested models only be overridable as a whole? The research doc suggests `env_nested_delimiter` (Pydantic-style). Leaning toward: **defer nested env var mapping** — MVP covers flat fields only. Nested models are overridden in match arms.
+3. **How should nested model fields map to env vars?** For
+   `cluster: ClusterConfig`, should `INFRA_CLUSTER__NODE_TYPE` work via a
+delimiter, or should nested models only be overridable as a whole? Leaning toward: defer nested env var mapping. The initial contract can stay flat, with nested models overridden through match arms.
 
-4. **Auto-init or explicit init?** Should the compiler automatically insert `init_app_config()` at the start of `main()`? Or must the user call `AppConfig.init()`? Auto-init is more ergonomic; explicit init gives control over ordering when there are multiple ctx types. Leaning toward: **auto-init in `main()`**, with `.init()` available for tests and explicit control.
+4. **Auto-init or explicit init?** Should the compiler automatically insert the
+generated init call at the start of `main()`, or must the user call
+   `AppConfig.init()`? Auto-init is more ergonomic; explicit init gives control
+over ordering when there are multiple `ctx` declarations. Leaning toward: auto-init in `main()`, with `.init()` still available for tests and explicit control.
 
-5. **Multiple match axes scope.** The research doc describes multi-axis matching (`match RunMode:`, compound `match (Env, RunMode):`). This RFC covers single-axis matching only. Should multi-axis be a follow-up RFC, or included here? Leaning toward: **follow-up RFC** — single-axis covers the common case and keeps the initial implementation focused.
+5. **Multiple match axes scope.** This RFC covers single-axis matching only.
+Should multi-axis matching, such as `match RunMode:` plus
+   `match (Env, RunMode):`, be a follow-up RFC or part of this one? Leaning
+toward: a follow-up RFC. Single-axis matching covers the common case and keeps the initial implementation focused.
 
-6. **Generated panic compatibility with user clippy settings.** The generated init function uses `.expect()` for env var parse failures and `.unwrap()` for field access through the `OnceLock`. Both are intentional (fail-fast startup errors and programming-error detection respectively), but users who enable `clippy::unwrap_used` or `clippy::expect_used` in their own project will see diagnostics on these generated calls. Should the generated init function return `Result<(), CtxInitError>` and propagate errors to `main` via `?` instead of panicking? This would remove the `expect` calls but require users to handle init errors explicitly. Leaning toward: **keep panics for v1** — the fail-fast semantics are the point, and adding a `Result` return type complicates auto-init in `main`. A `#[allow(clippy::unwrap_used)]` annotation on the generated init function may be the right mitigation.
+6. **Generated panic compatibility with strict lint settings.** The generated init path may use fail-fast panics for
+env var parse failures and singleton access that occurs before initialization. Both are intentional startup/programming errors, but projects that enable strict lints against generated panic sites will still see diagnostics. Should the generated init function return `Result[None, CtxInitError]` and propagate errors to `main` instead of panicking? That would remove the panic sites but would also require users to handle init errors explicitly. Leaning toward: **keep panics for v1** — fail-fast startup is the point, and a `Result` return complicates auto-init.
+
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 ## Future extensions (not in this RFC)
 

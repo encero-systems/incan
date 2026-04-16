@@ -1,4 +1,4 @@
-# RFC 036: User-Defined Decorators
+# RFC 036: user-defined decorators
 
 - **Status:** Draft
 - **Created:** 2026-03-06
@@ -11,25 +11,29 @@
     - RFC 026 (Superseded — see RFC 043 for Rust trait surface on wrappers)
     - RFC 027 (incan-vocab — library vocabulary registration, enables DSL decorators)
     - RFC 031 (Library system — enables decorator libraries to ship as `pub::` packages)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/328
 - **RFC PR:** —
-- **Target version**: v0.2
+- **Written against:** v0.2
+- **Shipped in:** —
 
 ## Summary
 
-Incan's decorator system today consists entirely of compiler built-ins (`@derive`, `@staticmethod`, `@rust.extern`, `@route`, etc.) — annotation markers that the compiler recognises by name and transforms at compile time. Users cannot define their own decorators.
+Incan's decorator system currently consists entirely of compiler built-ins such as `@derive`, `@staticmethod`, `@rust.extern`, and `@route`. Those forms are compiler-recognized annotations rather than ordinary user-extensible language abstractions. Users cannot define their own decorators.
 
-This RFC introduces **user-defined decorators**: any callable (function or object) that accepts a function and returns a value. The compiler desugars `@my_decorator def f(): ...` into `f = my_decorator(f)`, exactly as Python does. This unblocks `@cache`, `@retry`, `@validate`, `@app.get` and every other cross-cutting concern that is natural in Python but currently impossible in Incan.
+This RFC introduces user-defined decorators: any callable, whether a function or an object, that accepts a function and returns a value. The compiler desugars `@my_decorator def f(): ...` into `f = my_decorator(f)`, exactly as Python does. This unblocks `@cache`, `@retry`, `@validate`, `@app.get`, and other cross-cutting patterns that are natural in Python but still impossible in Incan.
 
 ## Motivation
 
 ### Decorators as markers vs decorators as wrappers
 
-Today's `@route("/users")` is a **compile-time marker**: the compiler sees it, generates an `inventory::submit!` call, and moves on. The handler function is unchanged. Users have no mechanism to attach runtime behaviour to a function through a decorator.
+Today's `@route("/users")` is a compile-time marker. The compiler treats it as route-registration metadata and moves on. The handler function is otherwise unchanged. Users have no mechanism to attach runtime behavior to a function through an ordinary decorator surface.
 
-In Python, decorators are **wrappers**. `@app.get("/users")` calls `app.get("/users")(get_users)` at module load time. The result replaces `get_users`. The framework intercepts the return value and serialises it. The user just annotates functions and returns plain values.
+In Python, decorators are wrappers. `@app.get("/users")` calls
+`app.get("/users")(get_users)` at module load time. The result replaces
+`get_users`. The framework intercepts the return value and serializes it. The
+user just annotates functions and returns plain values.
 
-The consequence in Incan today is that the framework leaks into the handler:
+The consequence in Incan is that the framework currently leaks into the handler:
 
 ```incan
 # Today: user does the framework's job
@@ -69,7 +73,7 @@ None of these can be written today.
 
 ### The connection to the RFC tree
 
-Once user-defined decorators land, the web framework's `@app.get` pattern becomes implementable in pure Incan. Combined with RFC 027 (vocab registration) and RFC 031 (library system), a web library could further offer a declarative DSL form that desugars to the same decorator calls — with **no compiler changes required**:
+Once user-defined decorators land, the web framework's `@app.get` pattern becomes implementable in pure Incan. Combined with RFC 027 (vocab registration) and RFC 031 (library system), a web library could further offer a declarative DSL form that desugars to the same decorator calls, with no additional compiler feature needed:
 
 ```incan
 # Declarative DSL (library-defined via RFC 027 VocabDesugarer)
@@ -86,7 +90,7 @@ This desugars to the `@app.get`/`@app.post` decorator form, which itself desugar
 
 ### Using decorators
 
-Applying a decorator is a single-line annotation above a `def`. The decorator can be a plain name or a call expression — the compiler handles both forms:
+Applying a decorator is a single-line annotation above a `def`. The decorator can be a plain name or a call expression. The compiler handles both forms:
 
 ```incan
 @logged                      # plain: decorator is a callable
@@ -98,9 +102,10 @@ def greet(x: int) -> str:
     return "Hello " + str(x)
 ```
 
-The name `greet` is rebound to whatever the decorator returns. From the call site nothing changes — `greet` is still called as `greet(42)`.
+The name `greet` is rebound to whatever the decorator returns. From the call site, nothing changes. `greet` is still called as `greet(42)`.
 
-**Stacking** — multiple decorators on the same function apply bottom-up. The decorator written closest to `def` is applied first, and its result is passed up to the next:
+**Stacking**: multiple decorators on the same function apply bottom-up. The
+decorator written closest to `def` is applied first, and its result is passed up to the next:
 
 ```incan
 @app.get("/users/{id}")
@@ -111,7 +116,9 @@ async def get_user(id: int):
 
 `@cache` wraps `get_user` first; `@app.get` then wraps the cached version.
 
-**Compiler built-ins** — `@derive`, `@staticmethod`, `@rust.extern`, `@rust.delegate` and other built-in decorators are resolved before desugaring and work exactly as today. A decorator name that matches a built-in is handled by the compiler; everything else is a user-defined decorator.
+**Compiler built-ins**: compiler-owned decorators such as `@derive`,
+`@staticmethod`, and `@rust.extern` are resolved before desugaring and keep
+their existing meaning. A decorator name that matches a built-in is handled by the compiler; everything else is treated as user-defined.
 
 **Web routing** — with user-defined decorators, `App` can be implemented entirely in Incan:
 
@@ -135,11 +142,14 @@ async def create_user(body: CreateUser):
 app.run(port=8080)
 ```
 
-`app.get("/path")` is a method that returns a decorator. The decorator registers the route and returns the original function (or a response-serialising wrapper). No `Json(...)` wrapping needed — the decorator owns serialisation. No global `@route` — routes are owned by the `app` they're registered with.
+`app.get("/path")` is a method that returns a decorator. That decorator
+registers the route and returns the original function, or a response-serializing wrapper. No `Json(...)` wrapping is needed because the decorator owns serialization. No global `@route` is needed because routes are owned by the `app` they are registered with.
 
 ### Writing decorators
 
-A decorator is any function that accepts a function and returns a value. The `Callable[Params, R]` sugar from RFC 035 makes the type signature readable without the verbosity of the arrow form:
+A decorator is any function that accepts a function and returns a value. The
+`Callable[Params, R]` sugar from RFC 035 makes the type signature readable
+without the verbosity of the arrow form:
 
 ```incan
 def logged(func: Callable[int, str]) -> Callable[int, str]:
@@ -153,9 +163,9 @@ def logged(func: Callable[int, str]) -> Callable[int, str]:
 
 `logged` takes a function of type `(int) -> str` and returns a new function of the same type that adds logging around the original call.
 
-A **decorator factory** is a function that takes configuration arguments and returns a decorator. The outer function captures the arguments in a closure; the inner `decorator` does the actual wrapping.
+A decorator factory is a function that takes configuration arguments and returns a decorator. The outer function captures the arguments in a closure; the inner `decorator` does the actual wrapping.
 
-The three-level nesting is required because `@D(args)` evaluates `D(args)` *before* the decorated function exists — the `def` body is not yet available at that point. This means the function cannot be passed alongside the arguments in the same call; a factory that returns a callable is the only way to defer application until the function is ready. Without `@` syntax you can write the flatter two-argument form directly (`greet = prefix_log(greet, label="greet")`), but that forgoes the decorator syntax entirely.
+The three-level nesting is required because `@D(args)` evaluates `D(args)` before the decorated function exists. The `def` body is not yet available at that point. This means the function cannot be passed alongside the arguments in the same call; a factory that returns a callable is the only way to defer application until the function is ready. Without `@` syntax, you can write the flatter two-argument form directly, `greet = prefix_log(greet, label="greet")`, but that gives up decorator syntax entirely.
 
 ```incan
 def prefix_log(label: str):
@@ -285,7 +295,8 @@ If `module_a` decorates with `module_b`'s `app` object, `module_b`'s startup seq
 
 **`@derive`, `@staticmethod`, `@rust.extern`**: Compiler built-ins, unchanged. Recognised by name before desugaring runs.
 
-**Closures**: Unaffected. `IrExprKind::Closure` is the IR node for `(x) => expr`. Named function references (RFC 035) are `IrExprKind::Ident` with a function type. Both are valid decorator arguments.
+**Closures**: Unaffected. Ordinary closures and named function references from
+RFC 035 are both valid decorator arguments as long as they type-check as callables.
 
 **`@route`**: Continues to work. A follow-up RFC (web routing redesign) can deprecate it in favour of `@app.get` / `@app.post`.
 
@@ -328,3 +339,5 @@ Fully additive and non-breaking. Previously-invalid unknown decorators now desug
 3. **`@route` deprecation timeline**: When does global `@route` get deprecated — in this RFC's scope, or deferred to the web routing redesign RFC?
 
 4. **`@decorator` stdlib utility**: Decorator factories require three levels of `def` nesting, which is verbose. A stdlib utility `@decorator` could reduce this to two levels by automatically currying the `func` argument — a factory written as `def D(func, ...args)` would be transformed such that `D(args)` returns a partial application waiting for `func`, and `@D(args) def f()` completes it as `D(f, args)`. This is implementable as a stdlib decorator (meta: a decorator that makes decorators) but requires partial application semantics not yet defined in Incan. Deferred to a follow-up RFC, possibly in conjunction with RFC 038.
+
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

@@ -1,4 +1,4 @@
-# RFC 039: `race` for Awaitable Concurrency
+# RFC 039: `race` for awaitable concurrency
 
 - **Status:** Draft
 - **Created:** 2026-03-07
@@ -10,7 +10,10 @@
     - RFC 029 (Union types and type narrowing)
     - RFC 035 (First-class named function references)
     - RFC 038 (Variadic positional args and keyword-argument capture)
-- **Target version:** TBD
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/331
+- **RFC PR:** —
+- **Written against:** v0.2
+- **Shipped in:** —
 
 ## Summary
 
@@ -45,7 +48,7 @@ pub async def timeout_option[T, F with Awaitable[T]](seconds: float, task: F) ->
     ...
 ```
 
-But today that contract cannot be expressed and preserved cleanly enough through the frontend and lowering pipeline. A generic parameter like `TaskFuture` can be named, but not properly constrained as "awaitable yielding `T`" in a way that makes `await task` typecheck as ordinary Incan code.
+But today that contract cannot be expressed cleanly enough in the public language. A generic parameter like `TaskFuture` can be named, but not properly constrained as "awaitable yielding `T`" in a way that makes `await task` typecheck as ordinary Incan code.
 
 That leaves stdlib code in an awkward place:
 
@@ -66,16 +69,16 @@ The real semantic primitive is `await`.
 - it defines a calling convention for async code
 - it requires the compiler and backend to agree on suspension, resumption, and cancellation semantics
 
-By contrast, `race` is one layer higher. It is a way of composing several awaits. Under RFC 027, that makes it a strong fit for import-activated vocabulary plus desugaring rather than a permanently reserved always-on keyword.
+By contrast, `race` is one layer higher. It is a way of composing several awaits. Under RFC 027, that makes it a strong fit for import-activated vocabulary plus helper-shaped expansion rather than a permanently reserved always-on keyword.
 
 ### RFC 027, RFC 028, RFC 029, RFC 035, and RFC 038 all point to the same design
 
 This RFC sits at the intersection of several other design decisions:
 
-- **RFC 027** gives Incan a vocabulary/desugaring path, so `race` does not need bespoke parser wiring as a one-off compiler special case.
+- **RFC 027** gives Incan a vocabulary path, so `race` does not need to become a one-off always-on keyword.
 - **RFC 028** reinforces the language-first rule. Async semantics should be specified in Incan terms just as operators are specified in Incan terms.
 - **RFC 029** gives Incan anonymous sum types. That means the common result type of a race can naturally be a union when branch bodies yield different types.
-- **RFC 035** makes named functions first-class values. Combined with closures, that makes helper-style desugaring natural.
+- **RFC 035** makes named functions first-class values. Combined with closures, that makes a helper-shaped model natural.
 - **RFC 038** gives the helper surface its right long-term shape: a single variadic `race(*arms)` API instead of a growing `race2` / `race3` / `race4` ladder.
 
 Taken together, these RFCs point toward a cleaner architecture:
@@ -83,7 +86,7 @@ Taken together, these RFCs point toward a cleaner architecture:
 - define `await` through an Incan protocol
 - define `race` as `std.async` sugar
 - package branches as homogeneous `RaceArm[R]` values
-- desugar `race` to a variadic helper over those arm values
+- express `race` through a variadic helper over those arm values
 
 ### Why not just keep library helpers?
 
@@ -206,9 +209,9 @@ pub async def timeout_option[T, F with Awaitable[T]](seconds: float, task: F) ->
 
 The public surface is plain Incan. The helper is described in Incan terms, even if its eventual backend realization uses Tokio or another runtime.
 
-### What the helper desugaring looks like
+### Helper model
 
-The intended long-term desugaring target is variadic:
+The intended long-term helper model is variadic:
 
 ```incan
 result = race for value:
@@ -216,7 +219,7 @@ result = race for value:
     await slow() => value
 ```
 
-conceptually becomes:
+Conceptually, the surface form corresponds to:
 
 ```incan
 result = await std.async.race(
@@ -225,11 +228,11 @@ result = await std.async.race(
 )
 ```
 
-This is where RFC 038 matters. Without variadics, the helper surface tends to fragment into fixed-arity forms. With variadics, the public API can stay clean.
+RFC 038 matters because without variadics the helper surface tends to fragment into fixed-arity forms. With variadics, the public API stays clean.
 
-### Named handlers also work
+### Direct helper use also works
 
-RFC 035 matters here because helper-style desugaring becomes natural:
+RFC 035 matters here because named function references fit the helper form naturally:
 
 ```incan
 def on_fast(value: str) -> str:
@@ -244,7 +247,7 @@ result = await std.async.race(
 )
 ```
 
-Users do not have to write the helper call directly, but when they do, named function references and closures both work.
+Users do not have to write the helper call directly, but when they do, named function references and closures should both work.
 
 ### Matching is still done with ordinary `match`
 
@@ -280,7 +283,7 @@ This RFC distinguishes three layers:
 
 1. **Core semantic layer**: `await` and `Awaitable[T]`
 2. **Library layer**: helper values and helper functions in `std.async`
-3. **Vocabulary layer**: `race for value:` syntax, which desugars to the helper layer
+3. **Vocabulary layer**: `race for value:` syntax, which maps onto the helper layer
 
 The design intentionally avoids collapsing all three into one special-case compiler feature.
 
@@ -300,7 +303,7 @@ The user-facing rule is:
 - `await expr` is valid only if `expr` has some type `F` such that `F with Awaitable[T]` for some `T`
 - the result type of `await expr` is `T`
 
-Backends may lower this however they need to. On Rust, that will likely mean a representation equivalent to `Future<Output = T>`, but that is backend guidance, not the language model.
+Backends may realize this however they need to. On Rust, that will likely mean a representation equivalent to `Future<Output = T>`, but that is backend guidance, not the language model.
 
 ### Bound syntax
 
@@ -362,7 +365,7 @@ pub async def race[R](*arms: RaceArm[R]) -> R
 
 The important design choice is that the variadic parameter is homogeneous. Each branch is packaged into a `RaceArm[R]` first, and only then passed through `*arms`. This is what lets RFC 038 solve the arity problem cleanly.
 
-### Desugaring model
+### Surface-to-helper relationship
 
 Conceptually:
 
@@ -381,7 +384,7 @@ result = std.async.race(
 )
 ```
 
-The exact internal representation is an implementation detail, but the architectural point is important: `race` is best understood as syntax sugar over helper APIs, not as a hidden one-off backend primitive.
+The exact internal representation is an implementation detail. The important contract is that `race` is a library-shaped surface over `std.async` helpers, not a hidden one-off backend primitive.
 
 ### Transitional implementation note
 
@@ -582,17 +585,25 @@ Cons:
 - underuses RFC 035's function-reference story
 - no longer benefits as directly from RFC 038's variadic design
 
-An implementation may still use internal helpers or specialized lowering, but the public architecture should be helper-shaped.
+An implementation may still use internal specialization, but the public architecture should remain helper-shaped.
 
 ## Drawbacks
 
-- `Awaitable[T]` adds a new builtin protocol that the compiler must understand.
+- `Awaitable[T]` adds a new builtin protocol that the language implementation must understand.
 - `race` adds async-specific vocabulary users must learn.
 - cancellation semantics require careful documentation and testing.
 - RFC 027 may need a small extension if expression-position vocab blocks are not yet covered cleanly enough.
 - RFC 038 becomes a meaningful architectural dependency for the ideal helper surface, even if fixed-arity helpers can bridge the gap temporarily.
 
 These costs are acceptable because they buy a much cleaner async story for the stdlib and future libraries.
+
+## Layers affected
+
+- **Core async model** — `Awaitable[T]` is the builtin protocol behind `await`; `await expr` must verify that the awaited expression satisfies `Awaitable[T]` and that the result type follows.
+- **Vocabulary activation** — `race for value:` is import-activated syntax through `std.async`, following RFC 027's vocabulary model; expression-position block forms may require a small RFC 027 extension.
+- **Stdlib (`std.async`)** — the module owns the helper surface (`RaceArm[R]`, `arm(awaitable, on_win)`, and `race(*arms: RaceArm[R])`); the older `select` placeholder story should converge on `race`.
+- **Compilation handoff** — implementations must preserve the contract that `race` maps onto the `std.async` helper model; transitional fixed-arity helpers (`race2`, `race3`) are acceptable until RFC 038 variadics land.
+- **Backend realization** — backends may realize `Awaitable[T]` and `std.async.race(...)` using native async primitives; for Rust that likely means future semantics plus a `tokio::select!`-like strategy, but that is backend guidance, not the normative language definition.
 
 ## Unresolved questions
 
@@ -602,10 +613,4 @@ These costs are acceptable because they buy a much cleaner async story for the s
 4. Should a later version add a more general pattern-binding `race` form, or is `race for value:` plus ordinary `match` sufficient?
 5. Should a later version add `default` arms, guard expressions, or unbiased scheduling options?
 
-## Layers affected
-
-- **Core language / Typechecker** — `Awaitable[T]` as a builtin protocol; `await expr` must verify the awaited expression satisfies `Awaitable[T]` and the result type follows; bound lowering must preserve `F with Awaitable[T]` through the frontend and IR
-- **Parser / Vocabulary** — `race for value:` as import-activated syntax (requires `import std.async`); follows RFC 027's vocabulary/desugaring model; expression-position block form may require a small extension to RFC 027's surface kinds
-- **IR Lowering** — desugar `race for value:` into `std.async.race(std.async.arm(...), ...)` calls; transitional fixed-arity helpers (`race2`, `race3`) are acceptable until RFC 038 variadics land
-- **Stdlib (`std.async`)** — `RaceArm[R]`, `arm(awaitable, on_win)`, and `race(*arms: RaceArm[R])` helper types and functions; the existing `std.async.select` placeholder helpers should be rewritten as real implementations once the model is in place
-- **Rust backend** — `Awaitable[T]` maps to Rust future semantics; `std.async.race(...)` maps to `tokio::select!` or a narrow helper facade; this is backend guidance, not the normative language definition
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

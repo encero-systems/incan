@@ -1,14 +1,13 @@
-# RFC 019: Test Runner, CLI, and Ecosystem
+# RFC 019: test runner, CLI, and ecosystem
 
-**Status:** Planned  
-**Created:** 2026-01-14  
-**Author(s):** Danny Meijer (@danny-meijer)  
-**Issue:** [#77](https://github.com/dannys-code-corner/incan/issues/77)  
-**RFC PR:** —  
-**Related:** RFC 018 (language primitives for testing)  
-**Written against:** v0.1  
-**Shipped in:** —  
-**Supersedes:** RFC 007 (runner semantics), RFC 001/002 (runner portions)  
+- **Status:** Planned
+- **Created:** 2026-01-14
+- **Author(s):** Danny Meijer (@dannymeijer)
+- **Related:** RFC 018 (language primitives for testing), RFC 007 (runner semantics; superseded), RFC 001 (runner portions; superseded), RFC 002 (runner portions; superseded)
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/77
+- **RFC PR:** —
+- **Written against:** v0.1
+- **Shipped in:** —
 
 ## Summary
 
@@ -24,13 +23,24 @@ Define the test runner and CLI semantics for Incan (pytest-inspired), including:
 - timeouts (CLI + per-test override)
 - output/reporting (`-k`, `--list`, shuffle/seed, durations, JSON/JUnit)
 
-Language constructs (`assert`, pattern binding, `module tests:`) are specified in **RFC 018**. This RFC is jointly
-normative with RFC 018.
+Language constructs (`assert`, pattern binding, `module tests:`) are specified in **RFC 018**. This RFC is jointly normative with RFC 018.
 
 ## Motivation
 
-Testing is a *system feature*: discovery, fixtures, parametrization, markers, parallelism, and reporting all interact.
-This RFC captures the runner/CLI behavior in one place, while language primitives are specified in RFC 018.
+Testing is a *system feature*: discovery, fixtures, parametrization, markers, parallelism, and reporting all interact. This RFC captures the runner/CLI behavior in one place, while language primitives are specified in RFC 018.
+
+## Goals
+
+- Define the runner and CLI contract for Incan testing in one place.
+- Standardize discovery, fixtures, parametrization, markers, execution, timeouts, and reporting behavior.
+- Keep the compiler-facing language semantics split cleanly across RFC 018 and RFC 019.
+- Preserve a user-facing testing model that is Pythonic in ergonomics but explicit in semantics.
+
+## Non-Goals
+
+- Redefining language-level `assert` or inline test block semantics already owned by RFC 018.
+- Delegating the public testing contract to Cargo, pytest, or another external runner.
+- Leaving core runner semantics to repo-local scripts or convention-only behavior.
 
 ## Guide-level explanation (how users think about it)
 
@@ -72,11 +82,11 @@ Quick reference:
 This RFC is pytest-inspired, but there are a few deliberate differences that are easy to miss if you bring strong pytest/Rust/Jest muscle memory:
 
 - **`@slow` is excluded by default**: you must opt in via `incan test --slow` (closer to Rust’s ignored tests than pytest
-  markers).
+markers).
 - **`skipif` / `xfailif` conditions must be collection-time evaluatable** (const-evaluable + explicit `testing` probes).
 - **`conftest.incn` is only auto-discovered under `tests/`** (it does not apply to inline `module tests:` in `src/`).
 - **Parallel execution (`--jobs`) uses worker processes**, so process-global state (like `tmp_workdir` and `env`) remains
-  isolated.
+isolated.
 - **`assert` can bind names via limited patterns** (e.g. `assert opt is Some(v)`), defined in RFC 018.
 
 Quick CLI anchoring:
@@ -367,8 +377,7 @@ Now:
 - `incan test -m "integration" tests/` selects all integration tests
 - `incan test -m "integration and smoke" tests/` selects the smoke subset inside integrations
 
-Inline tests (`module tests:` in production files) may also use `const TEST_MARKS` inside the test module, but this is
-discouraged: keep inline tests simple and prefer per-test marks (or move richer test organization into `tests/`).
+Inline tests (`module tests:` in production files) may also use `const TEST_MARKS` inside the test module, but this is discouraged: keep inline tests simple and prefer per-test marks (or move richer test organization into `tests/`).
 
 ### Conditional skip/xfail
 
@@ -407,8 +416,7 @@ module tests:
 
 ### Shared fixtures via `conftest.incn`
 
-To avoid repeating fixtures across many test files, any `conftest.incn` under `tests/` is automatically loaded by the
-test runner and contributes fixtures to tests in that directory subtree.
+To avoid repeating fixtures across many test files, any `conftest.incn` under `tests/` is automatically loaded by the test runner and contributes fixtures to tests in that directory subtree.
 
 Example:
 
@@ -485,7 +493,7 @@ In this RFC, “collection-time evaluatable” means “const-evaluable”, usin
 Static constructors (explicit exceptions):
 
 - The following call-like forms are treated as **compile-time data constructors** and are allowed at collection time,
-  as long as their arguments are themselves collection-time evaluatable:
+as long as their arguments are themselves collection-time evaluatable:
     - `case(...)`
     - `mark("name")`
     - `skip("reason")`
@@ -743,7 +751,7 @@ Restrictions:
 
 - `TEST_MARKERS` must be collection-time evaluatable.
 - Marker names must match `^[a-z][a-z0-9_]*$` (snake_case). If this is violated, it is a **test collection error**
-  (`TestCollectionError`).
+(`TestCollectionError`).
 
 #### Marker selection expression
 
@@ -919,13 +927,12 @@ The following decorators are recognized when they resolve to the `testing` modul
 Rules:
 
 - The condition is evaluated at collection time using the same “const-evaluable subset” used for other compile-time
-  evaluation, plus a small set of explicit `testing` probes (see below).
+evaluation, plus a small set of explicit `testing` probes (see below).
 - If the condition is not evaluatable at collection time, it is a **test collection error** (`TestCollectionError`).
 
 #### Collection-time probes (testing)
 
-The following `testing` functions are intended for use in `skipif/xfailif` conditions and must be supported in the
-collection-time evaluatable subset:
+The following `testing` functions are intended for use in `skipif/xfailif` conditions and must be supported in the collection-time evaluatable subset:
 
 - `platform() -> str`
     - Returns a stable platform identifier string (minimum set: `"linux"`, `"macos"`, `"windows"`).
@@ -1032,7 +1039,7 @@ Default marks (`TEST_MARKS`):
 
 - `conftest.incn` may define `const TEST_MARKS: List[str]`.
 - All applicable `TEST_MARKS` values from conftest files on the path to a test file are **merged** (union), from
-  outer-to-inner directories.
+outer-to-inner directories.
 - The test file’s own `TEST_MARKS` (if present) is also merged.
 - Per-test and per-case marks are merged on top.
 
@@ -1113,7 +1120,7 @@ Future direction:
 
 - Async fixtures and async tests should compose with the same discovery model.
 - See RFC 004 for Tokio integration; followup RFCs must specify runtime selection, timeout/cancellation interaction, and
-  teardown guarantees.
+teardown guarantees.
 
 ## Compatibility / migration
 
@@ -1190,7 +1197,7 @@ Legend:
 - **Build system** — `incan test` must compile test modules against the project source root, enabling `from mymodule import ...` in test files without duplication; it must strip `module tests:` bodies from production builds.
 - **Reporting layer** — the runner must support `--format json`, `--junit <path>`, `--list`, `--durations`, and `--shuffle` as specified; JSON reports must include a stable `schema_version` field.
 
-## Implementation Plan
+## Implementation architecture
 
 Implement incrementally:
 
@@ -1239,6 +1246,13 @@ Turn the guide-level examples into real tests:
 - [ ] durations: `--durations 10` prints slowest tests with correct ids
 - [ ] reports: `--format json` and `--junit <path>` emit stable machine-readable output
 - [ ] JSON reports include `schema_version: "incan.test.v1"`
+
+## Design Decisions
+
+- RFC 019 owns runner and CLI behavior, while RFC 018 owns language-level testing constructs.
+- Test discovery includes both dedicated test files and inline `module tests:` contexts.
+- Fixture injection, parametrization, markers, timeouts, reporting, and scheduling are part of the core runner contract rather than repo-local convention.
+- Parallel execution uses worker-process isolation rather than shared in-process concurrency by default.
 
 ## References
 

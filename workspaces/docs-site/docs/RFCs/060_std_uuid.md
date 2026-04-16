@@ -8,7 +8,7 @@
     - RFC 022 (namespaced stdlib modules and compiler handoff)
     - RFC 023 (compilable stdlib and Rust module binding)
     - RFC 056 (`std.io` in-memory byte streams and binary parsing helpers)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/338
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -305,8 +305,8 @@ This feature is additive. Existing string-based code keeps working, but new APIs
 ## Layers affected
 
 - **Stdlib / runtime**: must provide the UUID type, parsing, formatting, and generation semantics.
-- **Typechecker / symbol resolution**: must register the module and value type.
-- **Lowering / emission**: must preserve parsing, formatting, and byte-conversion behavior without backend leakage.
+- **Language surface**: the module and value type must be available as specified.
+- **Execution handoff**: implementations must preserve parsing, formatting, and byte-conversion behavior without backend leakage.
 - **Docs / tooling**: should standardize UUID examples and canonical formatting expectations.
 - **Numeric/runtime interop**: must align `UUID.to_int()` and `UUID.from_int(...)` with RFC 009 `u128` semantics.
 

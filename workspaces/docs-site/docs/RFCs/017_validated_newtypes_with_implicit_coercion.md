@@ -4,7 +4,7 @@
 - **Created:** 2026-01-12
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 021 (model field metadata and aliases)
-- **Issue:** [#75](https://github.com/dannys-code-corner/incan/issues/75)
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/75
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -157,123 +157,16 @@ Multiple exit shapes (success, timeout, error) and call-site noise are reduced a
 - **Runtime/stdlib:** `ValidationError` shape, aggregation helpers, stable formatting.
 - **Docs/tooling:** teach hooks, coercion sites, opt-outs, and explicit alternatives.
 
-## Implementation Plan
+## Implementation architecture
 
-### Phase 1 — Stepping-stone (partial)
+*(Non-normative.)* A practical rollout has four broad pieces:
 
-- Lower newtype direct constructor `T(x)` (single positional argument) through a selected static `from_*` hook when eligible (prefer `from_underlying`; otherwise a single well-shaped `from_*`), with failure surfaced at the boundary.
-- Document current behavior versus full RFC in the language guides.
+1. **Type surface and hook recognition**: support constrained primitive syntax in type position, represent those constraints structurally, and recognize `from_underlying(...) -> Result[Self, ValidationError]` as the canonical newtype validation hook.
+2. **Coercion insertion**: apply implicit validated coercion only at the approved language sites in this RFC, including newtype construction, function arguments, typed initializers, and model or class field initialization, while preserving the rule that there are no ambient primitive conversions such as `str -> int`.
+3. **Failure and diagnostics model**: preserve fail-fast behavior at ordinary coercion sites, aggregated failures for model or class construction, deterministic coercion ordering, and diagnostics that explain both the coercion site and the chain being attempted.
+4. **Runtime and tooling support**: provide the canonical `ValidationError` shape, aggregation helpers, documentation for explicit recovery paths, and comprehensive tests for constraints, coercion insertion, diagnostics, and aggregation behavior.
 
-### Phase 2 — Type surface
-
-- Constrained `int[...]` / `float[...]` in type positions, AST modeling, formatter behavior, duplicate-key and incompatibility diagnostics.
-
-### Phase 3 — Coercion expansion
-
-- Implicit coercion at function arguments, typed initializers, model/class field initialization; transitive newtype chains; opt-out attributes.
-
-### Phase 4 — Runtime and diagnostics
-
-- Canonical `ValidationError`, aggregated model/class failures, span-accurate diagnostics and hints (explicit `from_underlying`, try-style APIs).
-
-## Progress Checklist
-
-### Spec / semantics
-
-- [ ] Lock down the **canonical hook** name and signature:
-    - [ ] `from_underlying(underlying: U) -> Result[Self, ValidationError]` as the compiler-recognized entrypoint
-    - [ ] deterministic / side-effect free contract, and “must not panic” rule
-- [ ] Define the **failure policy** precisely per coercion site:
-    - [ ] function args + typed initializers: fail-fast (panic on first invalid coercion)
-    - [ ] model/class construction: aggregate all field coercion failures and panic once
-- [ ] Define **transitive coercion** rules for newtype-on-newtype (chain building + cycle detection).
-- [ ] Define **opt-out controls** (library-friendly):
-    - [ ] `@no_implicit_coercion` (type-level) and/or per-site opt-out
-    - [ ] “Result mode” / explicit construction guidance
-- [ ] Define **constraint semantics** for `int[...]` / `float[...]`:
-    - [ ] permitted keys (`ge/gt/le/lt`) + compile-time const rules for values
-    - [ ] NaN policy for float constraints
-    - [ ] duplicate keys + incompatible constraint combinations diagnostics
-
-### Syntax / AST
-
-- [ ] Parser: support constrained primitive type syntax in type position (e.g. `int[gt=0]`, `float[ge=0.0]`).
-- [ ] AST: represent constrained types in a structured way (not as ad-hoc strings).
-- [ ] Formatter: preserve / normalize constraint formatting (order-insensitive, stable output).
-
-### Frontend (typechecker)
-
-- [ ] Recognize `from_underlying` as a **reserved newtype hook** and validate its shape:
-    - [ ] static (no receiver)
-    - [ ] exactly one parameter of the underlying type (including constrained underlying types)
-    - [ ] return type is `Result[Newtype, ValidationError]`
-- [ ] For newtypes without `from_underlying`, define and implement the **auto-generated default** behavior:
-    - [ ] `Ok(T(x))` if no constraints
-    - [ ] enforce constraints from underlying type if present
-- [ ] Insert implicit coercions at the approved sites:
-    - [ ] function arguments
-    - [ ] typed initializers
-    - [ ] model/class field initialization
-    - [ ] newtype construction `T(x)` (checked by default)
-- [ ] Ensure the compiler does **not** insert ambient primitive conversions (no `str -> int`, no `int -> float`).
-- [ ] Diagnostics quality:
-    - [ ] span-accurate errors pointing at the call site / field initializer
-    - [ ] actionable hints (show explicit `T.from_underlying(...)` / `try_...` alternatives)
-    - [ ] include coercion chain in errors (e.g. `int -> PositiveInt -> RetryAttempts`)
-
-### Lowering / IR
-
-- [x] Initial rewriting for newtype `T(x)` → selected validated static hook when eligible (stepping-stone; does not cover all RFC coercion sites).
-- [ ] Introduce an explicit IR representation for general “validated coercion” **or** document the full rewriting strategy for all sites.
-- [ ] Ensure lowering avoids recursion traps (e.g. `T(x)` inside the hook implementation for `T`).
-- [ ] Preserve deterministic evaluation order for default values and coercion calls.
-
-### Codegen (Rust emission)
-
-- [x] Emit validated hook invocation + failure path for stepping-stone newtype `T(x)` construction.
-- [ ] Emit `from_underlying(...)` calls at all remaining coercion sites.
-- [ ] Emit failure behavior:
-    - [ ] fail-fast sites: panic with rich validation context
-    - [ ] aggregated sites: collect multiple errors and fail once
-- [ ] Keep generated code **zero-cost** outside coercion sites (no extra allocations on happy path beyond user code).
-- [ ] Document the generated-code panic path for failed coercion (message shape, caller context); compiler Rust sources remain subject to the project’s own error-handling rules.
-
-### Runtime / core crates
-
-- [ ] Define canonical `ValidationError` type:
-    - [ ] structured fields (path, kind, message, optional nested causes)
-    - [ ] stable formatting (human-readable + optionally machine-readable)
-- [ ] Provide helper APIs for:
-    - [ ] creating per-field errors
-    - [ ] aggregating multiple errors
-    - [ ] panic helpers with useful caller attribution
-
-### Tooling / docs
-
-- [x] Document stepping-stone newtype construction behavior in the Book / reference (current vs full RFC).
-- [ ] Update Book + Reference for full RFC:
-    - [ ] explain `from_underlying`
-    - [ ] document implicit coercion sites and opt-out controls
-    - [ ] show explicit alternatives (`Result`-returning flows)
-- [ ] Add examples:
-    - [ ] constrained numeric newtypes
-    - [ ] parsing/normalization newtypes (pure)
-    - [ ] model/class aggregated validation example
-
-### Testing (must be comprehensive)
-
-- [ ] Parser tests for constraint syntax and errors.
-- [ ] Typechecker tests:
-    - [ ] correct insertion of coercions at each site
-    - [ ] no ambient primitive conversions
-    - [ ] transitive coercion chains + cycle detection errors
-    - [ ] spans + hint text assertions for key diagnostics
-- [ ] Codegen snapshot tests:
-    - [ ] emitted `from_underlying` calls at each coercion site
-    - [ ] emitted aggregation logic for model/class initialization
-- [ ] Runtime behavior tests:
-    - [ ] panic messages include correct path/field context
-    - [ ] aggregated errors contain all invalid fields
+Implementation sequencing is not part of the public contract. The RFC’s design claim is the full validated-newtype boundary model, not any one stepping-stone rollout order.
 
 ## Design Decisions
 
