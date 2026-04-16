@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../08_collections_and_iteration/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../10_models_vs_classes/">
+        <link rel="next" href="../math/">
       
       
       <link rel="icon" href="../../../../assets/images/favicon.png">
@@ -22,7 +22,7 @@
     
     
       
-        <title>9. Enums and better `match` - Incan Documentation</title>
+        <title>std.async - Incan Documentation</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#9-enums-and-better-match" class="md-skip">
+        <a href="#stdasync-reference" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              9. Enums and better `match`
+              std.async
             
           </span>
         </div>
@@ -507,10 +507,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -525,11 +523,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
         
           
           <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
@@ -543,7 +541,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_2">
             <span class="md-nav__icon md-icon"></span>
             Tutorials
@@ -554,8 +552,6 @@
                 
   
   
-    
-  
   
   
     
@@ -596,16 +592,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_1" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_1" >
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../../tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -622,7 +618,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_1_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_1_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_2_1">
             <span class="md-nav__icon md-icon"></span>
             The Incan Book (Basics)
@@ -638,7 +634,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../01_hello_world/" class="md-nav__link">
+      <a href="../../../tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -659,7 +655,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../../tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -680,7 +676,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../03_functions/" class="md-nav__link">
+      <a href="../../../tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -701,7 +697,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../04_control_flow/" class="md-nav__link">
+      <a href="../../../tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -722,7 +718,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../05_modules_and_imports/" class="md-nav__link">
+      <a href="../../../tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -743,7 +739,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../06_errors/" class="md-nav__link">
+      <a href="../../../tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -764,7 +760,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../../tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -785,7 +781,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../../tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -803,30 +799,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  <span class="md-ellipsis">
-    9. Enums and better `match`
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../../tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -835,80 +811,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#a-small-command-enum" class="md-nav__link">
-    <span class="md-ellipsis">
-      A small command enum
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#matching-on-enums" class="md-nav__link">
-    <span class="md-ellipsis">
-      Matching on enums
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#why-this-matters" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why this matters
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#try-it" class="md-nav__link">
-    <span class="md-ellipsis">
-      Try it
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#where-to-learn-more" class="md-nav__link">
-    <span class="md-ellipsis">
-      Where to learn more
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#next" class="md-nav__link">
-    <span class="md-ellipsis">
-      Next
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -921,7 +823,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../10_models_vs_classes/" class="md-nav__link">
+      <a href="../../../tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -942,7 +844,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../11_traits_and_derives/" class="md-nav__link">
+      <a href="../../../tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -963,7 +865,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../12_newtypes/" class="md-nav__link">
+      <a href="../../../tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -984,7 +886,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../13_unit_tests/" class="md-nav__link">
+      <a href="../../../tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1013,7 +915,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../build_your_first_api/" class="md-nav__link">
+      <a href="../../../tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1034,7 +936,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../web_framework/" class="md-nav__link">
+      <a href="../../../tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1406,6 +1308,8 @@
                 
   
   
+    
+  
   
   
     
@@ -1446,16 +1350,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../reference/" class="md-nav__link ">
+            <a href="../../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1472,7 +1376,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_4">
             <span class="md-nav__icon md-icon"></span>
             Reference
@@ -1488,7 +1392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/language/" class="md-nav__link">
+      <a href="../../language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1509,7 +1413,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/glossary/" class="md-nav__link">
+      <a href="../../glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1530,7 +1434,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/file_io/" class="md-nav__link">
+      <a href="../../file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1551,7 +1455,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1572,7 +1476,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/static_storage/" class="md-nav__link">
+      <a href="../../static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1593,7 +1497,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1614,7 +1518,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/strings/" class="md-nav__link">
+      <a href="../../strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1635,7 +1539,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/testing/" class="md-nav__link">
+      <a href="../../testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1656,7 +1560,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/reflection/" class="md-nav__link">
+      <a href="../../reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1677,7 +1581,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1695,6 +1599,8 @@
                 
   
   
+    
+  
   
   
     
@@ -1713,16 +1619,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_12" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../reference/stdlib/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1739,7 +1645,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_12_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_12_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_4_12">
             <span class="md-nav__icon md-icon"></span>
             Standard library
@@ -1752,10 +1658,30 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../../reference/stdlib/async/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    std.async
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   <span class="md-ellipsis">
@@ -1764,6 +1690,89 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#interop-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interop notes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#module-stdasynctime" class="md-nav__link">
+    <span class="md-ellipsis">
+      Module: std.async.time
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#module-stdasyncselect" class="md-nav__link">
+    <span class="md-ellipsis">
+      Module: std.async.select
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#module-stdasynctask" class="md-nav__link">
+    <span class="md-ellipsis">
+      Module: std.async.task
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#module-stdasyncchannel" class="md-nav__link">
+    <span class="md-ellipsis">
+      Module: std.async.channel
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#module-stdasyncsync" class="md-nav__link">
+    <span class="md-ellipsis">
+      Module: std.async.sync
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#module-stdasyncprelude" class="md-nav__link">
+    <span class="md-ellipsis">
+      Module: std.async.prelude
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1776,7 +1785,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/stdlib/math/" class="md-nav__link">
+      <a href="../math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1837,7 +1846,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1870,7 +1879,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1891,7 +1900,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1912,7 +1921,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1933,7 +1942,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1954,7 +1963,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1975,7 +1984,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2055,7 +2064,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2076,7 +2085,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/derives/comparison/" class="md-nav__link">
+      <a href="../../derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2097,7 +2106,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2118,7 +2127,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/derives/serialization/" class="md-nav__link">
+      <a href="../../derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2139,7 +2148,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/derives/validation/" class="md-nav__link">
+      <a href="../../derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2160,7 +2169,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4190,54 +4199,63 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#a-small-command-enum" class="md-nav__link">
+  <a href="#interop-notes" class="md-nav__link">
     <span class="md-ellipsis">
-      A small command enum
+      Interop notes
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#matching-on-enums" class="md-nav__link">
+  <a href="#module-stdasynctime" class="md-nav__link">
     <span class="md-ellipsis">
-      Matching on enums
+      Module: std.async.time
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#why-this-matters" class="md-nav__link">
+  <a href="#module-stdasyncselect" class="md-nav__link">
     <span class="md-ellipsis">
-      Why this matters
+      Module: std.async.select
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#try-it" class="md-nav__link">
+  <a href="#module-stdasynctask" class="md-nav__link">
     <span class="md-ellipsis">
-      Try it
+      Module: std.async.task
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#where-to-learn-more" class="md-nav__link">
+  <a href="#module-stdasyncchannel" class="md-nav__link">
     <span class="md-ellipsis">
-      Where to learn more
+      Module: std.async.channel
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#next" class="md-nav__link">
+  <a href="#module-stdasyncsync" class="md-nav__link">
     <span class="md-ellipsis">
-      Next
+      Module: std.async.sync
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#module-stdasyncprelude" class="md-nav__link">
+    <span class="md-ellipsis">
+      Module: std.async.prelude
     </span>
   </a>
   
@@ -4261,70 +4279,127 @@
   
 
 
-<h1 id="9-enums-and-better-match">9. Enums and better <code>match</code><a class="headerlink" href="#9-enums-and-better-match" title="Permanent link">&para;</a></h1>
-<p>Enums let you represent “one of several shapes” as a real type, and <code>match</code> lets you handle it exhaustively.</p>
-<h2 id="a-small-command-enum">A small command enum<a class="headerlink" href="#a-small-command-enum" title="Permanent link">&para;</a></h2>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Command</span><span class="p">:</span>
-    <span class="nc">Add</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
-    <span class="nc">Remove</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
-    <span class="kt">List</span>
-</code></pre></div>
-<div class="admonition tip">
-<p class="admonition-title">Coming from Python?</p>
-<p>Python’s <code>Enum</code> is mostly “named constants”. If you want variants that carry different data, Python often uses:
-strings, <code>dataclass</code> hierarchies, or <code>Union</code> types.</p>
-<p>In Incan, <code>enum</code> variants can carry data (like <code>Add(int)</code>), and <code>match</code> gives you an exhaustive, compiler-checked way
-to handle every case.</p>
-</div>
-<h2 id="matching-on-enums">Matching on enums<a class="headerlink" href="#matching-on-enums" title="Permanent link">&para;</a></h2>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="n">cmd</span><span class="p">:</span> <span class="nc">Command</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="k">match</span> <span class="n">cmd</span><span class="p">:</span>
-        <span class="nc">Add</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;add </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-        <span class="nc">Remove</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;remove </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-        <span class="kt">List</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;list&quot;</span><span class="p">)</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">run</span><span class="p">(</span><span class="nc">Command</span><span class="o">.</span><span class="nc">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>     <span class="c1"># outputs: add 1</span>
-    <span class="n">run</span><span class="p">(</span><span class="nc">Command</span><span class="o">.</span><span class="nc">Remove</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>  <span class="c1"># outputs: remove 1</span>
-    <span class="n">run</span><span class="p">(</span><span class="nc">Command</span><span class="o">.</span><span class="kt">List</span><span class="p">)</span>       <span class="c1"># outputs: list</span>
-</code></pre></div>
-<h2 id="why-this-matters">Why this matters<a class="headerlink" href="#why-this-matters" title="Permanent link">&para;</a></h2>
-<p>Unlike a stringly-typed “command name”, enums:</p>
+<h1 id="stdasync-reference">std.async (reference)<a class="headerlink" href="#stdasync-reference" title="Permanent link">&para;</a></h1>
+<p>This page documents the <code>std.async</code> API surface exposed by the standard library.
+See the module source files for authoritative behavior:</p>
 <ul>
-<li>prevent typos</li>
-<li>make invalid states unrepresentable</li>
-<li>give you exhaustive <code>match</code> checking</li>
+<li><code>crates/incan_stdlib/stdlib/async/time.incn</code></li>
+<li><code>crates/incan_stdlib/stdlib/async/task.incn</code></li>
+<li><code>crates/incan_stdlib/stdlib/async/channel.incn</code></li>
+<li><code>crates/incan_stdlib/stdlib/async/sync.incn</code></li>
+<li><code>crates/incan_stdlib/stdlib/async/select.incn</code></li>
+<li><code>crates/incan_stdlib/stdlib/async/prelude.incn</code></li>
 </ul>
-<h2 id="try-it">Try it<a class="headerlink" href="#try-it" title="Permanent link">&para;</a></h2>
-<ol>
-<li>Add a <code>Clear</code> variant and update the <code>match</code> accordingly.</li>
-<li>Add a <code>Rename(str)</code> variant and print the new name.</li>
-</ol>
-<details class="example">
-<summary>One possible solution</summary>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Command</span><span class="p">:</span>
-    <span class="nc">Add</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
-    <span class="nc">Remove</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
-    <span class="nc">Rename</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
-    <span class="nc">Clear</span>
-    <span class="kt">List</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="n">cmd</span><span class="p">:</span> <span class="nc">Command</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="k">match</span> <span class="n">cmd</span><span class="p">:</span>
-        <span class="nc">Add</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;add </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-        <span class="nc">Remove</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;remove </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-        <span class="nc">Rename</span><span class="p">(</span><span class="n">name</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;rename </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-        <span class="nc">Clear</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;clear&quot;</span><span class="p">)</span>
-        <span class="kt">List</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;list&quot;</span><span class="p">)</span>
+<h2 id="interop-notes">Interop notes<a class="headerlink" href="#interop-notes" title="Permanent link">&para;</a></h2>
+<p><code>std.async.time</code> and <code>std.async.select</code> use direct Rust interop calls (for example <code>tokio::time</code>) for their timer-related
+operations rather than wrapping stdlib-runtime helper functions. The public signatures listed below remain unchanged.
+<code>std.async.task</code>, <code>std.async.channel</code>, <code>std.async.sync</code>, and <code>std.async.prelude</code> still retain wrapper-style surfaces where behavior
+depends on native Rust adapter contracts.</p>
+<h2 id="module-stdasynctime">Module: <code>std.async.time</code><a class="headerlink" href="#module-stdasynctime" title="Permanent link">&para;</a></h2>
+<p>Import with:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span><span class="p">,</span> <span class="nb">timeout</span><span class="p">,</span> <span class="ne">TimeoutError</span>
 </code></pre></div>
-</details>
-<h2 id="where-to-learn-more">Where to learn more<a class="headerlink" href="#where-to-learn-more" title="Permanent link">&para;</a></h2>
+<p><strong>Functions</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sleep(seconds: float) -&gt; None</code></td>
+<td><code>None</code></td>
+</tr>
+<tr>
+<td><code>sleep_ms(milliseconds: int) -&gt; None</code></td>
+<td><code>None</code></td>
+</tr>
+<tr>
+<td><code>timeout[T, TaskFuture](seconds: float, task: TaskFuture) -&gt; Result[T, TimeoutError]</code></td>
+<td><code>Result[T, TimeoutError]</code></td>
+</tr>
+<tr>
+<td><code>timeout_ms[T, TaskFuture](milliseconds: int, task: TaskFuture) -&gt; Result[T, TimeoutError]</code></td>
+<td><code>Result[T, TimeoutError]</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Models</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>TimeoutError</code></td>
+<td>Error type returned by timeout helpers when the deadline expires.</td>
+</tr>
+<tr>
+<td><code>Duration</code></td>
+<td>Simple duration value object exposed as a convenience type.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="module-stdasyncselect">Module: <code>std.async.select</code><a class="headerlink" href="#module-stdasyncselect" title="Permanent link">&para;</a></h2>
+<p>Import with:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.select</span><span class="w"> </span><span class="kn">import</span> <span class="nb">select_timeout</span>
+</code></pre></div>
+<p><strong>Functions</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>select_timeout[T, TaskFuture](seconds: float, task: TaskFuture) -&gt; Option[T]</code></td>
+<td><code>Option[T]</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="module-stdasynctask">Module: <code>std.async.task</code><a class="headerlink" href="#module-stdasynctask" title="Permanent link">&para;</a></h2>
+<p>Exported top-level API:</p>
 <ul>
-<li>Enums deep dive: <a href="../../../explanation/enums/">Enums</a></li>
+<li><code>spawn[T, TaskFuture](task: TaskFuture) -&gt; JoinHandle[T]</code></li>
+<li><code>spawn_blocking[T, TaskFn](task: TaskFn) -&gt; JoinHandle[T]</code></li>
+<li><code>yield_now() -&gt; None</code></li>
 </ul>
-<h2 id="next">Next<a class="headerlink" href="#next" title="Permanent link">&para;</a></h2>
-<p>Back: <a href="../08_collections_and_iteration/">8. Collections and iteration</a></p>
-<p>Next chapter: <a href="../10_models_vs_classes/">10. Models vs classes</a></p>
+<h2 id="module-stdasyncchannel">Module: <code>std.async.channel</code><a class="headerlink" href="#module-stdasyncchannel" title="Permanent link">&para;</a></h2>
+<p>Top-level API:</p>
+<ul>
+<li><code>channel[T](buffer: int) -&gt; Tuple[Sender[T], Receiver[T]]</code></li>
+<li><code>unbounded_channel[T]() -&gt; Tuple[Sender[T], Receiver[T]]</code></li>
+<li><code>oneshot[T]() -&gt; Tuple[OneshotSender[T], OneshotReceiver[T]]</code></li>
+<li><code>SendError[T]</code></li>
+<li><code>RecvError</code></li>
+<li><code>Sender[T]</code>, <code>Receiver[T]</code></li>
+<li><code>OneshotSender[T]</code>, <code>OneshotReceiver[T]</code></li>
+</ul>
+<h2 id="module-stdasyncsync">Module: <code>std.async.sync</code><a class="headerlink" href="#module-stdasyncsync" title="Permanent link">&para;</a></h2>
+<p>Top-level API:</p>
+<ul>
+<li><code>Mutex[T]</code>, <code>MutexGuard[T]</code></li>
+<li><code>RwLock[T]</code>, <code>RwLockReadGuard[T]</code>, <code>RwLockWriteGuard[T]</code></li>
+<li><code>Semaphore</code>, <code>SemaphorePermit</code></li>
+<li><code>Barrier</code></li>
+<li><code>SemaphoreAcquireError</code></li>
+</ul>
+<h2 id="module-stdasyncprelude">Module: <code>std.async.prelude</code><a class="headerlink" href="#module-stdasyncprelude" title="Permanent link">&para;</a></h2>
+<p><code>std.async.prelude</code> re-exports the following:</p>
+<ul>
+<li><code>time</code>: <code>sleep</code>, <code>sleep_ms</code>, <code>timeout</code>, <code>timeout_ms</code>, <code>Duration</code>, <code>TimeoutError</code></li>
+<li><code>task</code>: <code>spawn</code>, <code>spawn_blocking</code>, <code>yield_now</code>, <code>JoinHandle</code>, <code>TaskJoinError</code></li>
+<li><code>channel</code>: <code>channel</code>, <code>unbounded_channel</code>, <code>oneshot</code>, <code>Sender</code>, <code>Receiver</code>, <code>OneshotSender</code>, <code>OneshotReceiver</code>, <code>SendError</code>, <code>RecvError</code></li>
+<li><code>sync</code>: <code>Mutex</code>, <code>MutexGuard</code>, <code>RwLock</code>, <code>RwLockReadGuard</code>, <code>RwLockWriteGuard</code>, <code>Semaphore</code>, <code>SemaphorePermit</code>, <code>SemaphoreAcquireError</code>, <code>Barrier</code></li>
+<li><code>select</code>: <code>select_timeout</code></li>
+</ul>
 
 
 
