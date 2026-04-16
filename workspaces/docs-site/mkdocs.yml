@@ -155,6 +155,7 @@ nav:
               - std.async: language/reference/stdlib/async.md
               - std.derives.*: language/reference/stdlib/derives.md
               - std.reflection: language/reference/stdlib/reflection.md
+              - std.traits.*: language/reference/stdlib/traits.md
               - std.testing: language/reference/stdlib/testing.md
               - std.math: language/reference/stdlib/math.md
           - Stdlib traits:

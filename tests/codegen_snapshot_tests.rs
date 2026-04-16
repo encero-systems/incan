@@ -1307,6 +1307,60 @@ fn test_std_serde_with_serialize_trait_codegen() {
 }
 
 // ============================================================================
+// RFC 023: Compile std.traits.* trait definitions from Incan source
+// ============================================================================
+
+#[test]
+fn test_std_traits_ops_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/traits/ops.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_traits_ops_compiled", rust_code);
+}
+
+#[test]
+fn test_std_traits_error_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/traits/error.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_traits_error_compiled", rust_code);
+}
+
+#[test]
+fn test_std_traits_indexing_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/traits/indexing.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_traits_indexing_compiled", rust_code);
+}
+
+#[test]
+fn test_std_traits_callable_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/traits/callable.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_traits_callable_compiled", rust_code);
+}
+
+#[test]
+fn test_std_traits_prelude_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/traits/prelude.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_traits_prelude_compiled", rust_code);
+}
+
+// ============================================================================
 /// Issue #145: Full surface-semantics path for `assert` statements.
 // ============================================================================
 ///
