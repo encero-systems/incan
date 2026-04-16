@@ -36,6 +36,10 @@ impl Iterator for PyRange {
 /// - End is **exclusive**.
 /// - Supports negative steps.
 ///
+/// TODO(perf): Extend lowering/codegen specialization beyond literal `step == 1`(for example, constant-folded
+///             expressions that evaluate to `1`) so more loops can use native Rust ranges where semantics are
+/// identical.
+///
 /// ## Panics
 /// - `ValueError: range() arg 3 must not be zero` if `step == 0`.
 #[inline]

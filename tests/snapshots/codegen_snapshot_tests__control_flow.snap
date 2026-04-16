@@ -59,16 +59,16 @@ fn test_for_loops() {
     for num in numbers.iter().copied() {
         println!("{}", num);
     }
-    for i in incan_stdlib::iter::range(0, 5, 1) {
+    for i in 0_i64..(5 as i64) {
         println!("{}", i);
     }
-    for i in incan_stdlib::iter::range(0, 10, 1) {
+    for i in 0_i64..(10 as i64) {
         if i == 5 {
             break;
         }
         println!("{}", i);
     }
-    for i in incan_stdlib::iter::range(0, 5, 1) {
+    for i in 0_i64..(5 as i64) {
         if i == 2 {
             continue;
         }
@@ -76,8 +76,8 @@ fn test_for_loops() {
     }
 }
 fn test_nested_control_flow() {
-    for i in incan_stdlib::iter::range(0, 3, 1) {
-        for j in incan_stdlib::iter::range(0, 3, 1) {
+    for i in 0_i64..(3 as i64) {
+        for j in 0_i64..(3 as i64) {
             if i == j {
                 continue;
             }

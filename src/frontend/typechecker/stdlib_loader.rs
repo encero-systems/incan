@@ -272,10 +272,12 @@ fn merge_reexported_metadata(
 ///
 /// Search order:
 /// 1. `$INCAN_STDLIB_DIR/<relative>` if the env var is set
-/// 2. `$CARGO_MANIFEST_DIR/crates/incan_stdlib/<relative>` (stdlib crate-local stubs)
-/// 3. `$CARGO_MANIFEST_DIR/<relative>` (workspace-root stubs)
-/// 4. `$CWD/crates/incan_stdlib/<relative>`
-/// 5. `$CWD/<relative>`
+/// 2. compile-time workspace path: `$CARGO_MANIFEST_DIR/crates/incan_stdlib/<relative>`
+/// 3. compile-time workspace path: `$CARGO_MANIFEST_DIR/<relative>`
+/// 4. paths relative to current executable (repo and install layouts)
+/// 5. `$CWD/crates/incan_stdlib/<relative>`
+/// 6. `$CWD/<relative>`
+/// 7. `$INCAN_STDLIB_PATH/<relative>` for installed layouts
 fn find_stdlib_file(relative: &str) -> Option<PathBuf> {
     // 1. Explicit override root.
     if let Ok(dir) = std::env::var("INCAN_STDLIB_DIR") {
@@ -285,20 +287,41 @@ fn find_stdlib_file(relative: &str) -> Option<PathBuf> {
         }
     }
 
-    // 2-3. Development builds (CARGO_MANIFEST_DIR points to workspace root for `incan`).
-    if let Ok(dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        let manifest_dir = PathBuf::from(dir);
-        let crate_local = manifest_dir.join("crates/incan_stdlib").join(relative);
-        if crate_local.exists() {
-            return Some(crate_local);
-        }
-        let workspace_local = manifest_dir.join(relative);
-        if workspace_local.exists() {
-            return Some(workspace_local);
+    // 2-3. Compile-time workspace paths (reliable in dev and local source builds).
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let crate_local = manifest_dir.join("crates/incan_stdlib").join(relative);
+    if crate_local.exists() {
+        return Some(crate_local);
+    }
+    let workspace_local = manifest_dir.join(relative);
+    if workspace_local.exists() {
+        return Some(workspace_local);
+    }
+
+    // 4. Relative to executable location (works for some installed/bundled layouts).
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(exe_dir) = exe_path.parent()
+    {
+        for base in [
+            Some(exe_dir),
+            exe_dir.parent(),
+            exe_dir.parent().and_then(|p| p.parent()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let candidate_crate_local = base.join("crates/incan_stdlib").join(relative);
+            if candidate_crate_local.exists() {
+                return Some(candidate_crate_local);
+            }
+            let candidate_local = base.join(relative);
+            if candidate_local.exists() {
+                return Some(candidate_local);
+            }
         }
     }
 
-    // 4-5. Relative to current working directory.
+    // 5-6. Relative to current working directory.
     if let Ok(cwd) = std::env::current_dir() {
         let crate_local = cwd.join("crates/incan_stdlib").join(relative);
         if crate_local.exists() {
@@ -307,6 +330,14 @@ fn find_stdlib_file(relative: &str) -> Option<PathBuf> {
         let local = cwd.join(relative);
         if local.exists() {
             return Some(local);
+        }
+    }
+
+    // 7. Installed stdlib path (runtime, for production installs).
+    if let Ok(stdlib_root) = std::env::var("INCAN_STDLIB_PATH") {
+        let installed_path = PathBuf::from(stdlib_root).join(relative);
+        if installed_path.exists() {
+            return Some(installed_path);
         }
     }
 

@@ -568,35 +568,40 @@ impl<'a> IrEmitter<'a> {
                     (Some(s), Some(e), false) => {
                         let ss = self.emit_expr(s)?;
                         let ee = self.emit_expr(e)?;
-                        return Ok(Some(quote! { incan_stdlib::iter::range(#ss, #ee, 1) }));
+                        return Ok(Some(quote! { (#ss as i64)..(#ee as i64) }));
                     }
                     (Some(s), Some(e), true) => {
                         let ss = self.emit_expr(s)?;
                         let ee = self.emit_expr(e)?;
-                        // Inclusive ranges are not a Python `range` feature; interpret as Rust-like convenience:
-                        // `start..=end` becomes `range(start, end+1, 1)`.
-                        return Ok(Some(quote! { incan_stdlib::iter::range(#ss, (#ee) + 1, 1) }));
+                        // Inclusive ranges are not a Python `range` feature; interpret as Rust-like convenience.
+                        return Ok(Some(quote! { (#ss as i64)..=(#ee as i64) }));
                     }
                     (None, Some(e), _) => {
                         let ee = self.emit_expr(e)?;
-                        return Ok(Some(quote! { incan_stdlib::iter::range(0, #ee, 1) }));
+                        if *inclusive {
+                            return Ok(Some(quote! { 0_i64..=(#ee as i64) }));
+                        }
+                        return Ok(Some(quote! { 0_i64..(#ee as i64) }));
                     }
                     _ => {}
                 }
             } else {
                 let end = self.emit_expr(&args[0])?;
-                return Ok(Some(quote! { incan_stdlib::iter::range(0, #end, 1) }));
+                return Ok(Some(quote! { 0_i64..(#end as i64) }));
             }
         }
         match args.len() {
             2 => {
                 let start = self.emit_expr(&args[0])?;
                 let end = self.emit_expr(&args[1])?;
-                Ok(Some(quote! { incan_stdlib::iter::range(#start, #end, 1) }))
+                Ok(Some(quote! { (#start as i64)..(#end as i64) }))
             }
             3 => {
                 let start = self.emit_expr(&args[0])?;
                 let end = self.emit_expr(&args[1])?;
+                if matches!(&args[2].kind, IrExprKind::Int(1)) {
+                    return Ok(Some(quote! { (#start as i64)..(#end as i64) }));
+                }
                 let step = self.emit_expr(&args[2])?;
                 Ok(Some(quote! { incan_stdlib::iter::range(#start, #end, (#step) as i64) }))
             }

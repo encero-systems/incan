@@ -22,7 +22,6 @@ use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_core::lang::surface::functions::{self as surface_functions, SurfaceFnId};
-use incan_core::lang::surface::math;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
@@ -41,6 +40,42 @@ enum RustArgBoundaryMatch {
 }
 
 impl TypeChecker {
+    /// Validate positional argument count for a stdlib module call and emit a builtin-arity diagnostic on mismatch.
+    ///
+    /// Returns `true` when `args.len() == expected`; otherwise records an error and returns `false`.
+    fn validate_stdlib_module_call_arity(
+        &mut self,
+        callable: &str,
+        expected: usize,
+        args: &[CallArg],
+        span: Span,
+    ) -> bool {
+        if args.len() != expected {
+            self.errors
+                .push(errors::builtin_arity(callable, expected, args.len(), span));
+            return false;
+        }
+        true
+    }
+
+    /// Type-check a stdlib module function call with an explicit arity gate.
+    ///
+    /// This always delegates to [`Self::validate_function_call`] so type-related diagnostics are still emitted, but if
+    /// arity validation fails the returned type is forced to [`ResolvedType::Unknown`] to avoid propagating a
+    /// misleading inferred result.
+    pub(in crate::frontend::typechecker::check_expr) fn validate_stdlib_module_function_call(
+        &mut self,
+        callable: &str,
+        info: &FunctionInfo,
+        explicit_type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        call_span: Span,
+    ) -> ResolvedType {
+        let arity_ok = self.validate_stdlib_module_call_arity(callable, info.params.len(), args, call_span);
+        let resolved = self.validate_function_call(callable, info, explicit_type_args, args, call_span);
+        if arity_ok { resolved } else { ResolvedType::Unknown }
+    }
+
     // ---- Rust boundary matching and coercion recording ----
 
     /// Determine whether `arg_ty` can flow into `target_ty` via `rusttype` boundary rules.
@@ -1698,18 +1733,16 @@ impl TypeChecker {
             }
         }
 
-        // Handle math module function calls (math.sqrt, math.sin, etc.)
+        // Imported module function calls whose signatures are known via the stdlib AST cache
+        // (for example `math.sqrt(...)`).
         if let Expr::Field(base, method) = &callee.node
-            && let Expr::Ident(module) = &base.node
-            && module == math::MATH_MODULE_NAME
+            && let Some((module_name, module_path)) = self.imported_module_for_expr(base)
         {
-            if !type_args.is_empty() {
-                self.errors
-                    .push(errors::explicit_call_site_type_args_not_supported(span));
-            }
-            self.check_call_args(args);
-            if math::fn_from_str(method.as_str()).is_some() {
-                return ResolvedType::Float;
+            // Ensure lowering marks the receiver identifier as a module-path binding.
+            let _ = self.check_ident(module_name.as_str(), base.span);
+            if let Some(func_info) = self.resolve_imported_module_function_member(&module_path, method.as_str()) {
+                let callable = format!("{module_name}.{method}");
+                return self.validate_stdlib_module_function_call(callable.as_str(), &func_info, type_args, args, span);
             }
         }
 
