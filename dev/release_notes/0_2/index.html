@@ -1606,8 +1606,6 @@
       
         
       
-        
-      
     
     
       
@@ -1646,27 +1644,6 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    std.async
-  </span>
-  
-
-      </a>
-    </li>
-  
-
               
             
               
@@ -4609,7 +4586,6 @@
 <li><strong>Compiler</strong>: <code>@staticmethod</code> decorator for type-scoped methods with no <code>self</code> receiver, available on <code>class</code>, <code>model</code>, and <code>newtype</code> declarations. Required for <code>@rust.extern</code> methods on types (instance delegation is not supported).</li>
 <li><strong>Testing</strong>: <code>std.testing</code> is Incan-first — user-facing API and assertion behavior are defined in <code>crates/incan_stdlib/stdlib/testing.incn</code>, with Rust limited to explicit <code>@rust.extern</code> host boundaries (for example <code>fail</code> and <code>fail_t</code>) (<a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a>).</li>
 <li><strong>Runtime / Compiler</strong>: <code>std.math</code> closeout alignment now keeps direct Rust interop wrappers while ensuring the module contract is consistent across typechecking, codegen, and docs (including <code>round</code>, <code>log2</code>, <code>atan2</code>, and <code>hypot</code>; uppercase constants such as <code>math.PI</code>) (#307).</li>
-<li><strong>Runtime / Compiler</strong>: Issue #301 <code>std.async</code> direct-interoperability closeout for <code>std.async.time</code> and <code>std.async.select</code> is complete. These modules now expose their runtime-facing API via direct Rust imports (<code>clamp_seconds</code> / <code>clamp_millis</code> helpers, <code>tokio</code> time primitives) while preserving the public <code>std.async.*</code> contract and error/return behavior. Remaining async modules (<code>task</code>, <code>sync</code>, <code>channel</code>, <code>prelude</code>) are still under conversion to preserve behaviorful/native wrappers.</li>
 <li><strong>Compiler</strong>: Stdlib namespace registry (<code>STDLIB_NAMESPACES</code>) replaces the flat stdlib-module list — convention-based submodule discovery, registry-driven unknown-module diagnostics, and soft-keyword activation metadata.</li>
 <li><strong>Compiler</strong>: Reserved root namespaces — <code>std</code> and <code>rust</code> cannot be used as user declaration names.</li>
 <li><strong>Compiler</strong>: Stdlib types require explicit imports with actionable error messages when used without import.</li>
