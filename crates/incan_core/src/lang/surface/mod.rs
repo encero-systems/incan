@@ -3,7 +3,6 @@
 //! This module is for **user-facing** names that are part of the language experience but are not
 //! pure syntax tokens:
 //!
-//! - module functions like `math.sqrt(...)`
 //! - prelude/runtime functions like `spawn(...)`, `timeout(...)`
 //! - runtime/interop types like `Mutex[T]`, `Sender[T]`, `Vec[T]`
 //! - builtin methods like `str.split(...)`
@@ -13,7 +12,6 @@
 
 pub mod constructors;
 pub mod functions;
-pub mod math;
 pub mod methods;
 pub mod types;
 

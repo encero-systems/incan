@@ -5034,6 +5034,104 @@ def circle_constant() -> float:
 }
 
 #[test]
+fn test_std_math_module_constants_uppercase_ok() {
+    let source = r#"
+import std.math
+
+def constants() -> float:
+  return math.PI + math.E + math.TAU + math.INFINITY + math.NAN
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_math_lowercase_constant_aliases_rejected() {
+    let source = r#"
+import std.math
+
+def constants() -> float:
+  return math.pi
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("legacy lowercase std.math aliases should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("missing field") || e.message.contains("has no field")),
+        "Expected missing-field diagnostic for lowercase alias; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_std_math_module_extended_functions_ok() {
+    let source = r#"
+import std.math
+
+def value(x: float, y: float) -> float:
+  return math.round(x) + math.log2(x) + math.atan2(y, x) + math.hypot(x, y)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_math_unknown_member_is_rejected() {
+    let source = r#"
+import std.math
+
+def broken() -> float:
+  return math.not_real
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("unknown std.math member should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("missing field") || e.message.contains("has no field")),
+        "Expected missing-field diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_std_math_unknown_function_is_rejected() {
+    let source = r#"
+import std.math
+
+def broken() -> float:
+  return math.not_real(1.0)
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("unknown std.math function should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Type 'math' has no method 'not_real(...)'")),
+        "Expected missing-method diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_std_math_arity_is_checked() {
+    let source = r#"
+import std.math
+
+def broken() -> float:
+  return math.round(1.0, 2.0)
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("wrong std.math arity should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("math.round() expects 1 argument(s), got 2")),
+        "Expected math arity diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_known_stdlib_module_is_accepted() {
     // `from std.testing import fail` should not trigger unknown-module diagnostic.
     let source = "from std.testing import fail\ndef main() -> None:\n    fail(\"oops\")\n";
@@ -5492,6 +5590,124 @@ def main() -> float:
     assert!(
         errs.iter().any(|e| e.message.contains("violates generic bound")),
         "Expected explicit Eq bound error; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_explicit_trait_bound_accepts_transitive_supertrait_adopter() {
+    let source = r#"
+trait Capability:
+  def capability(self) -> int: ...
+
+trait Ordered with Capability:
+  def ordered(self) -> int: ...
+
+model Carrier with Ordered:
+  value: int
+
+  def capability(self) -> int:
+    return self.value
+
+  def ordered(self) -> int:
+    return self.value
+
+def require_capability[T with Capability](value: T) -> T:
+  return value
+
+def main() -> Carrier:
+  return require_capability(Carrier(value=1))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_explicit_trait_bound_accepts_trait_typed_arguments() {
+    let source = r#"
+trait Capability:
+  def capability(self) -> int: ...
+
+trait Ordered with Capability:
+  def ordered(self) -> int: ...
+
+model Carrier with Ordered:
+  value: int
+
+  def capability(self) -> int:
+    return self.value
+
+  def ordered(self) -> int:
+    return self.value
+
+def as_ordered(value: Carrier) -> Ordered:
+  return value
+
+def require_capability[T with Capability](value: T) -> T:
+  return value
+
+def main() -> Ordered:
+  ordered = as_ordered(Carrier(value=1))
+  return require_capability(ordered)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_method_generic_bound_accepts_transitive_capability_adopter() {
+    let source = r#"
+trait Capability:
+  def capability(self) -> int: ...
+
+trait Ordered with Capability:
+  def ordered(self) -> int: ...
+
+model Carrier with Ordered:
+  value: int
+
+  def capability(self) -> int:
+    return self.value
+
+  def ordered(self) -> int:
+    return self.value
+
+class Helpers:
+  @staticmethod
+  def require_capability[T with Capability](value: T) -> T:
+    return value
+
+def main() -> Carrier:
+  return Helpers.require_capability(Carrier(value=1))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_explicit_trait_bound_rejects_missing_capability() {
+    let source = r#"
+trait Capability:
+  def capability(self) -> int: ...
+
+trait Other:
+  def other(self) -> int: ...
+
+model Plain with Other:
+  value: int
+
+  def other(self) -> int:
+    return self.value
+
+def require_capability[T with Capability](value: T) -> T:
+  return value
+
+def main() -> Plain:
+  return require_capability(Plain(value=1))
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("missing capability should fail explicit trait bound");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("violates generic bound")),
+        "Expected explicit generic bound error; got: {:?}",
         errs.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }

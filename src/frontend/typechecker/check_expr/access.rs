@@ -644,24 +644,29 @@ impl TypeChecker {
         field: &str,
         span: Span,
     ) -> ResolvedType {
-        // Handle builtin math module
-        if let Expr::Ident(name) = &base.node
-            && name == incan_core::lang::surface::math::MATH_MODULE_NAME
-        {
-            match field {
-                _ if incan_core::lang::surface::math::const_from_str(field).is_some() => {
-                    return ResolvedType::Float;
+        let base_ty = self.check_expr(base);
+
+        // Imported modules use symbol-driven metadata resolution.
+        if let Some((module_name, module_path)) = self.imported_module_for_expr(base) {
+            if let Some(info) = self.resolve_imported_module_constant_member(&module_path, field) {
+                return info.ty;
+            }
+            if let Some(info) = self.resolve_imported_module_function_member(&module_path, field) {
+                let callable = format!("{module_name}.{field}");
+                if !info.type_params.is_empty() {
+                    self.errors
+                        .push(errors::generic_function_reference(callable.as_str(), span));
+                    return ResolvedType::Unknown;
                 }
-                _ => {}
+                return Self::function_info_to_resolved_function_type(&info);
             }
         }
-
-        let base_ty = self.check_expr(base);
 
         // Be permissive for unknown receivers: allow field access and continue typechecking.
         if matches!(base_ty, ResolvedType::Unknown) {
             return ResolvedType::Unknown;
         }
+
         if let ResolvedType::RustPath(path) = &base_ty {
             let Some(meta) = self.rust_item_metadata_for_path(path) else {
                 // Metadata backend disabled/unavailable: preserve permissive RFC 005 behavior.
@@ -777,6 +782,22 @@ impl TypeChecker {
         span: Span,
     ) -> ResolvedType {
         let base_ty = self.check_expr(base);
+
+        // If the receiver type is Unknown, be permissive and do not error on methods.
+        if matches!(base_ty, ResolvedType::Unknown) {
+            return ResolvedType::Unknown;
+        }
+
+        if let Some((module_name, module_path)) = self.imported_module_for_expr(base) {
+            if let Some(info) = self.resolve_imported_module_function_member(&module_path, method) {
+                let callable = format!("{module_name}.{method}");
+                return self.validate_stdlib_module_function_call(callable.as_str(), &info, type_args, args, span);
+            }
+            self.errors
+                .push(errors::missing_method(module_name.as_str(), method, span));
+            return ResolvedType::Unknown;
+        }
+
         // Collect arg types for method-specific validation.
         let arg_types: Vec<ResolvedType> = args
             .iter()
@@ -785,10 +806,6 @@ impl TypeChecker {
             })
             .collect();
 
-        // If the receiver type is Unknown, be permissive and do not error on methods.
-        if matches!(base_ty, ResolvedType::Unknown) {
-            return ResolvedType::Unknown;
-        }
         if let Some(path) = self.rust_canonical_path_for_receiver_type(&base_ty) {
             let Some(ret) = self.resolve_rust_path_method_call(&path, method, args, &arg_types, base.span, span) else {
                 // Metadata backend disabled/unavailable: preserve permissive RFC 005 behavior.

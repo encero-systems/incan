@@ -151,6 +151,9 @@ nav:
           - Testing: language/reference/testing.md
           - Reflection: language/reference/reflection.md
           - Derives & traits (reference): language/reference/derives_and_traits.md
+          - Standard library:
+              - Overview: language/reference/stdlib/index.md
+              - std.math (generated): language/reference/stdlib/math.md
           - Stdlib traits:
               - Overview: language/reference/stdlib_traits/index.md
               - Collection protocols: language/reference/stdlib_traits/collection_protocols.md

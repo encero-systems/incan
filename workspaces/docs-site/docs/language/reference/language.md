@@ -21,7 +21,6 @@
 - [Builtin types](#builtin-types)
 - [Surface constructors](#surface-constructors)
 - [Surface functions](#surface-functions)
-- [Surface math](#surface-math)
 - [Surface string methods](#surface-string-methods)
 - [Surface types](#surface-types)
 - [Surface methods](#surface-methods)
@@ -421,43 +420,6 @@ def main() -> None:
 | Channel | `channel` |  | Create a bounded channel (sender, receiver). | RFC 000 | 0.1 | Stable |
 | UnboundedChannel | `unbounded_channel` |  | Create an unbounded channel (sender, receiver). | RFC 000 | 0.1 | Stable |
 | Oneshot | `oneshot` |  | Create a oneshot channel (sender, receiver). | RFC 000 | 0.1 | Stable |
-
-## Surface math
-
-### Functions
-
-| Id | Canonical | Aliases | Description | RFC | Since | Stability |
-|---|---|---|---|---|---|---|
-| Sqrt | `sqrt` |  | Square root. | RFC 000 | 0.1 | Stable |
-| Abs | `abs` |  | Absolute value. | RFC 000 | 0.1 | Stable |
-| Floor | `floor` |  | Floor (round down). | RFC 000 | 0.1 | Stable |
-| Ceil | `ceil` |  | Ceil (round up). | RFC 000 | 0.1 | Stable |
-| Pow | `pow` |  | Power function. | RFC 000 | 0.1 | Stable |
-| Exp | `exp` |  | Exponentiation (e^x). | RFC 000 | 0.1 | Stable |
-| Log | `log` |  | Natural logarithm. | RFC 000 | 0.1 | Stable |
-| Log10 | `log10` |  | Base-10 logarithm. | RFC 000 | 0.1 | Stable |
-| Log2 | `log2` |  | Base-2 logarithm. | RFC 000 | 0.1 | Stable |
-| Sin | `sin` |  | Sine. | RFC 000 | 0.1 | Stable |
-| Cos | `cos` |  | Cosine. | RFC 000 | 0.1 | Stable |
-| Tan | `tan` |  | Tangent. | RFC 000 | 0.1 | Stable |
-| Asin | `asin` |  | Arcsine. | RFC 000 | 0.1 | Stable |
-| Acos | `acos` |  | Arccosine. | RFC 000 | 0.1 | Stable |
-| Atan | `atan` |  | Arctangent. | RFC 000 | 0.1 | Stable |
-| Sinh | `sinh` |  | Hyperbolic sine. | RFC 000 | 0.1 | Stable |
-| Cosh | `cosh` |  | Hyperbolic cosine. | RFC 000 | 0.1 | Stable |
-| Tanh | `tanh` |  | Hyperbolic tangent. | RFC 000 | 0.1 | Stable |
-| Atan2 | `atan2` |  | Two-argument arctangent. | RFC 000 | 0.1 | Stable |
-
-
-### Constants
-
-| Id | Canonical | Aliases | Description | RFC | Since | Stability |
-|---|---|---|---|---|---|---|
-| Pi | `pi` |  | The constant π. | RFC 000 | 0.1 | Stable |
-| E | `e` |  | The constant e. | RFC 000 | 0.1 | Stable |
-| Tau | `tau` |  | The constant τ (2π). | RFC 000 | 0.1 | Stable |
-| Inf | `inf` |  | Positive infinity. | RFC 000 | 0.1 | Stable |
-| Nan | `nan` |  | Not a number (NaN). | RFC 000 | 0.1 | Stable |
 
 ## Surface string methods
 

@@ -311,6 +311,15 @@ Rules to keep in mind:
 - A value annotated as `Collection[int]` may be any concrete adopter of that trait instantiation.
 - Supertrait relationships are transitive: if `OrderedCollection[T]` adopts `Collection[T]`, adopters of `OrderedCollection[T]` also satisfy `Collection[T]`.
 
+When an operation should only be available for values with specific capabilities, express that constraint in the type system with generic bounds instead of selectively hiding inherited trait methods:
+
+```incan
+def require_ordering[T with OrderedCollection[int]](values: T) -> T:
+    return values
+```
+
+The compiler enforces these bounds at call sites using nominal trait conformance, including transitive supertrait relationships.
+
 ### `@requires(...)` (adopter contract)
 
 `@requires(...)` is a decorator you can put on a `trait` to declare **which adopter fields must exist** (and what types

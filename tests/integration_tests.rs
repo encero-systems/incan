@@ -1625,6 +1625,70 @@ def main() -> None:
             stdout
         );
     }
+
+    #[test]
+    fn test_std_math_module_constants_and_functions_run() {
+        let Ok(output) = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+import std.math
+
+def main() -> None:
+    println(math.PI)
+    println(math.round(1.6))
+    println(math.log2(8.0))
+    println(math.atan2(1.0, 1.0))
+    println(math.hypot(3.0, 4.0))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+        else {
+            panic!("failed to run incan");
+        };
+
+        assert!(
+            output.status.success(),
+            "std.math module run failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines.len(),
+            5,
+            "expected 5 output lines (PI/round/log2/atan2/hypot); got: {stdout}"
+        );
+
+        let Ok(pi) = lines[0].parse::<f64>() else {
+            panic!("PI output was not a float: `{}`", lines[0]);
+        };
+        let Ok(round) = lines[1].parse::<f64>() else {
+            panic!("round output was not a float: `{}`", lines[1]);
+        };
+        let Ok(log2) = lines[2].parse::<f64>() else {
+            panic!("log2 output was not a float: `{}`", lines[2]);
+        };
+        let Ok(atan2) = lines[3].parse::<f64>() else {
+            panic!("atan2 output was not a float: `{}`", lines[3]);
+        };
+        let Ok(hypot) = lines[4].parse::<f64>() else {
+            panic!("hypot output was not a float: `{}`", lines[4]);
+        };
+
+        assert!((pi - std::f64::consts::PI).abs() < 1e-12, "unexpected PI value: {pi}");
+        assert!((round - 2.0).abs() < 1e-12, "unexpected round value: {round}");
+        assert!((log2 - 3.0).abs() < 1e-12, "unexpected log2 value: {log2}");
+        assert!(
+            (atan2 - std::f64::consts::FRAC_PI_4).abs() < 1e-12,
+            "unexpected atan2 value: {atan2}"
+        );
+        assert!((hypot - 5.0).abs() < 1e-12, "unexpected hypot value: {hypot}");
+    }
 }
 
 /// End-to-end integration tests for `incan test`.

@@ -9,7 +9,7 @@
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
-use crate::frontend::symbols::{FieldInfo, ResolvedType};
+use crate::frontend::symbols::{FieldInfo, FunctionInfo, ResolvedType, SymbolKind, VariableInfo};
 use incan_core::lang::keywords;
 use incan_semantics_core::SurfaceExprTypeCheck;
 use std::collections::HashMap;
@@ -50,6 +50,60 @@ impl TypeChecker {
             .iter()
             .find(|(_, info)| info.alias.as_deref() == Some(field_name))
             .map(|(name, info)| (name.clone(), info))
+    }
+
+    /// Resolve an expression receiver like `math` to an imported module binding path.
+    ///
+    /// This is intentionally module-kind driven (`SymbolKind::Module`) instead of name-driven so member access does not
+    /// require per-module hardcoded registries.
+    fn imported_module_for_expr(&self, expr: &Spanned<Expr>) -> Option<(String, Vec<String>)> {
+        let Expr::Ident(name) = &expr.node else {
+            return None;
+        };
+        let sym = self.lookup_symbol(name)?;
+        let SymbolKind::Module(info) = &sym.kind else {
+            return None;
+        };
+        // Rust imports keep their dedicated metadata path and Python modules remain dynamic.
+        if info.path.first().is_some_and(|seg| seg == "rust") || info.is_python {
+            return None;
+        }
+        Some((name.clone(), info.path.clone()))
+    }
+
+    fn resolve_imported_module_function_member(
+        &mut self,
+        module_path: &[String],
+        member: &str,
+    ) -> Option<FunctionInfo> {
+        if let Some(info) = self.stdlib_cache.lookup_function(module_path, member) {
+            return Some(info);
+        }
+        if module_path.len() == 2 && module_path.first().is_some_and(|seg| seg == "pub") {
+            return self.lookup_pub_library_function_member(&module_path[1], member);
+        }
+        None
+    }
+
+    fn resolve_imported_module_constant_member(
+        &mut self,
+        module_path: &[String],
+        member: &str,
+    ) -> Option<VariableInfo> {
+        if let Some(info) = self.stdlib_cache.lookup_constant(module_path, member) {
+            return Some(info);
+        }
+        if module_path.len() == 2 && module_path.first().is_some_and(|seg| seg == "pub") {
+            return self.lookup_pub_library_constant_member(&module_path[1], member);
+        }
+        None
+    }
+
+    fn function_info_to_resolved_function_type(info: &FunctionInfo) -> ResolvedType {
+        ResolvedType::Function(
+            info.params.iter().map(|(_, ty)| ty.clone()).collect(),
+            Box::new(info.return_type.clone()),
+        )
     }
     // ========================================================================
     // Expressions

@@ -180,7 +180,7 @@ import — no manual feature flags needed.
 
 ### Available modules
 
-|      Module      |                  Description                  | Activates feature |
+| Module           | Description                                   | Activates feature |
 | ---------------- | --------------------------------------------- | ----------------- |
 | `std.web`        | Web framework (routes, responses, extractors) | `web` (Axum)      |
 | `std.testing`    | Test fixtures and assertions                  | —                 |
@@ -246,7 +246,7 @@ import models as std
 
 ## Stdlib module: `std.math`
 
-<!-- TODO: move this to its own section -->
+See generated stdlib signatures: [Standard library reference: `std.math`](stdlib/math.md).
 
 You must import `std.math` before use:
 
@@ -254,18 +254,18 @@ You must import `std.math` before use:
 import std.math
 
 def main() -> None:
-    println(f"pi={math.pi}")
+    println(f"pi={math.PI}")
 ```
 
 ### Available constants
 
-| Constant   | Description                 |
-| ---------- | --------------------------- |
-| `math.pi`  | π (3.14159...)              |
-| `math.e`   | Euler’s number (2.71828...) |
-| `math.tau` | τ = 2π (6.28318...)         |
-| `math.inf` | Positive infinity           |
-| `math.nan` | Not a Number                |
+| Constant        | Description                 |
+| --------------- | --------------------------- |
+| `math.PI`       | π (3.14159...)              |
+| `math.E`        | Euler’s number (2.71828...) |
+| `math.TAU`      | τ = 2π (6.28318...)         |
+| `math.INFINITY` | Positive infinity           |
+| `math.NAN`      | Not a Number                |
 
 ### Available functions
 

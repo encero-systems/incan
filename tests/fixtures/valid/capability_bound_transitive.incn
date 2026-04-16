@@ -1,0 +1,35 @@
+trait Capability:
+    def capability(self) -> int: ...
+
+
+trait Ordered with Capability:
+    def ordered(self) -> int: ...
+
+
+model Carrier with Ordered:
+    value: int
+
+    def capability(self) -> int:
+        return self.value
+
+    def ordered(self) -> int:
+        return self.value
+
+
+def require_capability[T with Capability](value: T) -> T:
+    return value
+
+
+class Helpers:
+    @staticmethod
+    def require_capability[T with Capability](value: T) -> T:
+        return value
+
+
+def as_ordered(value: Carrier) -> Ordered:
+    return value
+
+
+def main() -> Ordered:
+    ordered = as_ordered(Carrier(value=1))
+    return Helpers.require_capability(require_capability(ordered))

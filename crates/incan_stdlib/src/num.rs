@@ -41,9 +41,17 @@ use crate::errors::raise_zero_division;
 // These are implemented in `incan_stdlib` (rather than calling into `incan_core`) so they can be
 // inlined aggressively into generated binaries without requiring LTO.
 
-#[inline]
+#[inline(always)]
 fn py_mod_i64_impl(a: i64, b: i64) -> i64 {
     debug_assert!(b != 0);
+    // Fast path for the dominant benchmark/runtime shape (`a >= 0`, `b > 0`).
+    // For this domain, Rust `%` already matches Python modulo semantics.
+    //
+    // TODO(perf): Teach lowering/codegen to emit native `%` directly when positivity is proven,
+    //             so hot loops can bypass helper calls entirely.
+    if a >= 0 && b > 0 {
+        return a % b;
+    }
     // Use `wrapping_rem` to avoid the extra overflow guard Rust emits for `i64::MIN % -1`.
     // (We still panic on division by zero at the wrapper layer for consistent Python-like errors.)
     let r = a.wrapping_rem(b);
@@ -405,7 +413,7 @@ pub fn py_floor_div_f64(a: f64, b: f64) -> f64 {
 /// assert_eq!(py_mod_i64(7, -3), -2); // Rust % gives 1
 /// assert_eq!(py_mod_i64(-7, -3), -1);
 /// ```
-#[inline]
+#[inline(always)]
 pub fn py_mod_i64(a: i64, b: i64) -> i64 {
     if b == 0 {
         raise_zero_division();

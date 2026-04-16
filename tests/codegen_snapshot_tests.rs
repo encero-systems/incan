@@ -732,6 +732,13 @@ fn test_mixed_numeric_codegen() {
 }
 
 #[test]
+fn test_std_math_codegen() {
+    let source = load_test_file("std_math");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_math", rust_code);
+}
+
+#[test]
 fn test_function_calls_codegen() {
     let source = load_test_file("function_calls");
     let rust_code = generate_rust(&source);

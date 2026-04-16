@@ -21,7 +21,7 @@ fn test_len_builtin() {
     println!("{}", length);
 }
 fn test_range_builtin() {
-    for i in incan_stdlib::iter::range(0, 5, 1) {
+    for i in 0_i64..(5 as i64) {
         println!("{}", i);
     }
 }

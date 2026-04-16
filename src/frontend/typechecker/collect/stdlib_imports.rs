@@ -431,6 +431,47 @@ impl TypeChecker {
         }
     }
 
+    /// Resolve one exported function from a loaded `pub::` library manifest.
+    pub(in crate::frontend::typechecker) fn lookup_pub_library_function_member(
+        &self,
+        library: &str,
+        member: &str,
+    ) -> Option<FunctionInfo> {
+        let entry = self.library_manifests.get(library)?;
+        let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
+            return None;
+        };
+        let export = manifest.exports.functions.iter().find(|item| item.name == member)?;
+        Some(self.function_info_from_manifest(export))
+    }
+
+    /// Resolve one exported const/static value type from a loaded `pub::` library manifest.
+    pub(in crate::frontend::typechecker) fn lookup_pub_library_constant_member(
+        &self,
+        library: &str,
+        member: &str,
+    ) -> Option<VariableInfo> {
+        let entry = self.library_manifests.get(library)?;
+        let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
+            return None;
+        };
+        if let Some(export) = manifest.exports.consts.iter().find(|item| item.name == member) {
+            return Some(VariableInfo {
+                ty: resolved_type_from_manifest_type_ref(&export.ty),
+                is_mutable: false,
+                is_used: false,
+            });
+        }
+        if let Some(export) = manifest.exports.statics.iter().find(|item| item.name == member) {
+            return Some(VariableInfo {
+                ty: resolved_type_from_manifest_type_ref(&export.ty),
+                is_mutable: true,
+                is_used: false,
+            });
+        }
+        None
+    }
+
     /// Seed internal semantic caches for one `pub::` library's exported types and traits.
     ///
     /// These caches are used only by the consumer-side typechecker when imported signatures mention provider types
