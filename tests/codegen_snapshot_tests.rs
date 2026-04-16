@@ -1239,8 +1239,8 @@ fn test_std_async_select_compiled_codegen() {
 
 /// compile `std.derives.comparison` (Eq, Ord, Hash) from `.incn` source.
 ///
-/// Verifies that trait declarations with `@rust.extern` abstract methods and pure-Incan default methods
-/// (`__ne__`, `__le__`, `__gt__`, `__ge__`) compile through the full pipeline.
+/// Verifies that source-defined abstract methods and pure-Incan default methods (`__ne__`, `__le__`, `__gt__`,
+/// `__ge__`) compile through the full pipeline without a fake `rust.module()` boundary.
 #[test]
 fn test_std_derives_comparison_compiled_codegen() {
     let path = "crates/incan_stdlib/stdlib/derives/comparison.incn";
