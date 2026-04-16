@@ -4308,140 +4308,11 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-plan" class="md-nav__link">
+  <a href="#implementation-architecture" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation Plan
+      Implementation architecture
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Implementation Plan">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#phase-1-stepping-stone-partial" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 1 — Stepping-stone (partial)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-2-type-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 2 — Type surface
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-3-coercion-expansion" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 3 — Coercion expansion
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-4-runtime-and-diagnostics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 4 — Runtime and diagnostics
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#progress-checklist" class="md-nav__link">
-    <span class="md-ellipsis">
-      Progress Checklist
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Progress Checklist">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#spec-semantics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Spec / semantics
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#syntax-ast" class="md-nav__link">
-    <span class="md-ellipsis">
-      Syntax / AST
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#frontend-typechecker" class="md-nav__link">
-    <span class="md-ellipsis">
-      Frontend (typechecker)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#lowering-ir" class="md-nav__link">
-    <span class="md-ellipsis">
-      Lowering / IR
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#codegen-rust-emission" class="md-nav__link">
-    <span class="md-ellipsis">
-      Codegen (Rust emission)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#runtime-core-crates" class="md-nav__link">
-    <span class="md-ellipsis">
-      Runtime / core crates
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tooling-docs" class="md-nav__link">
-    <span class="md-ellipsis">
-      Tooling / docs
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#testing-must-be-comprehensive" class="md-nav__link">
-    <span class="md-ellipsis">
-      Testing (must be comprehensive)
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -4478,7 +4349,7 @@
 <li><strong>Created:</strong> 2026-01-12</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong> RFC 021 (model field metadata and aliases)</li>
-<li><strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/75">#75</a></li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/75</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -4603,154 +4474,15 @@
 <li><strong>Runtime/stdlib:</strong> <code>ValidationError</code> shape, aggregation helpers, stable formatting.</li>
 <li><strong>Docs/tooling:</strong> teach hooks, coercion sites, opt-outs, and explicit alternatives.</li>
 </ul>
-<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
-<h3 id="phase-1-stepping-stone-partial">Phase 1 — Stepping-stone (partial)<a class="headerlink" href="#phase-1-stepping-stone-partial" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Lower newtype direct constructor <code>T(x)</code> (single positional argument) through a selected static <code>from_*</code> hook when eligible (prefer <code>from_underlying</code>; otherwise a single well-shaped <code>from_*</code>), with failure surfaced at the boundary.</li>
-<li>Document current behavior versus full RFC in the language guides.</li>
-</ul>
-<h3 id="phase-2-type-surface">Phase 2 — Type surface<a class="headerlink" href="#phase-2-type-surface" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Constrained <code>int[...]</code> / <code>float[...]</code> in type positions, AST modeling, formatter behavior, duplicate-key and incompatibility diagnostics.</li>
-</ul>
-<h3 id="phase-3-coercion-expansion">Phase 3 — Coercion expansion<a class="headerlink" href="#phase-3-coercion-expansion" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Implicit coercion at function arguments, typed initializers, model/class field initialization; transitive newtype chains; opt-out attributes.</li>
-</ul>
-<h3 id="phase-4-runtime-and-diagnostics">Phase 4 — Runtime and diagnostics<a class="headerlink" href="#phase-4-runtime-and-diagnostics" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Canonical <code>ValidationError</code>, aggregated model/class failures, span-accurate diagnostics and hints (explicit <code>from_underlying</code>, try-style APIs).</li>
-</ul>
-<h2 id="progress-checklist">Progress Checklist<a class="headerlink" href="#progress-checklist" title="Permanent link">&para;</a></h2>
-<h3 id="spec-semantics">Spec / semantics<a class="headerlink" href="#spec-semantics" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[ ] Lock down the <strong>canonical hook</strong> name and signature:<ul>
-<li>[ ] <code>from_underlying(underlying: U) -&gt; Result[Self, ValidationError]</code> as the compiler-recognized entrypoint</li>
-<li>[ ] deterministic / side-effect free contract, and “must not panic” rule</li>
-</ul>
-</li>
-<li>[ ] Define the <strong>failure policy</strong> precisely per coercion site:<ul>
-<li>[ ] function args + typed initializers: fail-fast (panic on first invalid coercion)</li>
-<li>[ ] model/class construction: aggregate all field coercion failures and panic once</li>
-</ul>
-</li>
-<li>[ ] Define <strong>transitive coercion</strong> rules for newtype-on-newtype (chain building + cycle detection).</li>
-<li>[ ] Define <strong>opt-out controls</strong> (library-friendly):<ul>
-<li>[ ] <code>@no_implicit_coercion</code> (type-level) and/or per-site opt-out</li>
-<li>[ ] “Result mode” / explicit construction guidance</li>
-</ul>
-</li>
-<li>[ ] Define <strong>constraint semantics</strong> for <code>int[...]</code> / <code>float[...]</code>:<ul>
-<li>[ ] permitted keys (<code>ge/gt/le/lt</code>) + compile-time const rules for values</li>
-<li>[ ] NaN policy for float constraints</li>
-<li>[ ] duplicate keys + incompatible constraint combinations diagnostics</li>
-</ul>
-</li>
-</ul>
-<h3 id="syntax-ast">Syntax / AST<a class="headerlink" href="#syntax-ast" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[ ] Parser: support constrained primitive type syntax in type position (e.g. <code>int[gt=0]</code>, <code>float[ge=0.0]</code>).</li>
-<li>[ ] AST: represent constrained types in a structured way (not as ad-hoc strings).</li>
-<li>[ ] Formatter: preserve / normalize constraint formatting (order-insensitive, stable output).</li>
-</ul>
-<h3 id="frontend-typechecker">Frontend (typechecker)<a class="headerlink" href="#frontend-typechecker" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[ ] Recognize <code>from_underlying</code> as a <strong>reserved newtype hook</strong> and validate its shape:<ul>
-<li>[ ] static (no receiver)</li>
-<li>[ ] exactly one parameter of the underlying type (including constrained underlying types)</li>
-<li>[ ] return type is <code>Result[Newtype, ValidationError]</code></li>
-</ul>
-</li>
-<li>[ ] For newtypes without <code>from_underlying</code>, define and implement the <strong>auto-generated default</strong> behavior:<ul>
-<li>[ ] <code>Ok(T(x))</code> if no constraints</li>
-<li>[ ] enforce constraints from underlying type if present</li>
-</ul>
-</li>
-<li>[ ] Insert implicit coercions at the approved sites:<ul>
-<li>[ ] function arguments</li>
-<li>[ ] typed initializers</li>
-<li>[ ] model/class field initialization</li>
-<li>[ ] newtype construction <code>T(x)</code> (checked by default)</li>
-</ul>
-</li>
-<li>[ ] Ensure the compiler does <strong>not</strong> insert ambient primitive conversions (no <code>str -&gt; int</code>, no <code>int -&gt; float</code>).</li>
-<li>[ ] Diagnostics quality:<ul>
-<li>[ ] span-accurate errors pointing at the call site / field initializer</li>
-<li>[ ] actionable hints (show explicit <code>T.from_underlying(...)</code> / <code>try_...</code> alternatives)</li>
-<li>[ ] include coercion chain in errors (e.g. <code>int -&gt; PositiveInt -&gt; RetryAttempts</code>)</li>
-</ul>
-</li>
-</ul>
-<h3 id="lowering-ir">Lowering / IR<a class="headerlink" href="#lowering-ir" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[x] Initial rewriting for newtype <code>T(x)</code> → selected validated static hook when eligible (stepping-stone; does not cover all RFC coercion sites).</li>
-<li>[ ] Introduce an explicit IR representation for general “validated coercion” <strong>or</strong> document the full rewriting strategy for all sites.</li>
-<li>[ ] Ensure lowering avoids recursion traps (e.g. <code>T(x)</code> inside the hook implementation for <code>T</code>).</li>
-<li>[ ] Preserve deterministic evaluation order for default values and coercion calls.</li>
-</ul>
-<h3 id="codegen-rust-emission">Codegen (Rust emission)<a class="headerlink" href="#codegen-rust-emission" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[x] Emit validated hook invocation + failure path for stepping-stone newtype <code>T(x)</code> construction.</li>
-<li>[ ] Emit <code>from_underlying(...)</code> calls at all remaining coercion sites.</li>
-<li>[ ] Emit failure behavior:<ul>
-<li>[ ] fail-fast sites: panic with rich validation context</li>
-<li>[ ] aggregated sites: collect multiple errors and fail once</li>
-</ul>
-</li>
-<li>[ ] Keep generated code <strong>zero-cost</strong> outside coercion sites (no extra allocations on happy path beyond user code).</li>
-<li>[ ] Document the generated-code panic path for failed coercion (message shape, caller context); compiler Rust sources remain subject to the project’s own error-handling rules.</li>
-</ul>
-<h3 id="runtime-core-crates">Runtime / core crates<a class="headerlink" href="#runtime-core-crates" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[ ] Define canonical <code>ValidationError</code> type:<ul>
-<li>[ ] structured fields (path, kind, message, optional nested causes)</li>
-<li>[ ] stable formatting (human-readable + optionally machine-readable)</li>
-</ul>
-</li>
-<li>[ ] Provide helper APIs for:<ul>
-<li>[ ] creating per-field errors</li>
-<li>[ ] aggregating multiple errors</li>
-<li>[ ] panic helpers with useful caller attribution</li>
-</ul>
-</li>
-</ul>
-<h3 id="tooling-docs">Tooling / docs<a class="headerlink" href="#tooling-docs" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[x] Document stepping-stone newtype construction behavior in the Book / reference (current vs full RFC).</li>
-<li>[ ] Update Book + Reference for full RFC:<ul>
-<li>[ ] explain <code>from_underlying</code></li>
-<li>[ ] document implicit coercion sites and opt-out controls</li>
-<li>[ ] show explicit alternatives (<code>Result</code>-returning flows)</li>
-</ul>
-</li>
-<li>[ ] Add examples:<ul>
-<li>[ ] constrained numeric newtypes</li>
-<li>[ ] parsing/normalization newtypes (pure)</li>
-<li>[ ] model/class aggregated validation example</li>
-</ul>
-</li>
-</ul>
-<h3 id="testing-must-be-comprehensive">Testing (must be comprehensive)<a class="headerlink" href="#testing-must-be-comprehensive" title="Permanent link">&para;</a></h3>
-<ul>
-<li>[ ] Parser tests for constraint syntax and errors.</li>
-<li>[ ] Typechecker tests:<ul>
-<li>[ ] correct insertion of coercions at each site</li>
-<li>[ ] no ambient primitive conversions</li>
-<li>[ ] transitive coercion chains + cycle detection errors</li>
-<li>[ ] spans + hint text assertions for key diagnostics</li>
-</ul>
-</li>
-<li>[ ] Codegen snapshot tests:<ul>
-<li>[ ] emitted <code>from_underlying</code> calls at each coercion site</li>
-<li>[ ] emitted aggregation logic for model/class initialization</li>
-</ul>
-</li>
-<li>[ ] Runtime behavior tests:<ul>
-<li>[ ] panic messages include correct path/field context</li>
-<li>[ ] aggregated errors contain all invalid fields</li>
-</ul>
-</li>
-</ul>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
+<p><em>(Non-normative.)</em> A practical rollout has four broad pieces:</p>
+<ol>
+<li><strong>Type surface and hook recognition</strong>: support constrained primitive syntax in type position, represent those constraints structurally, and recognize <code>from_underlying(...) -&gt; Result[Self, ValidationError]</code> as the canonical newtype validation hook.</li>
+<li><strong>Coercion insertion</strong>: apply implicit validated coercion only at the approved language sites in this RFC, including newtype construction, function arguments, typed initializers, and model or class field initialization, while preserving the rule that there are no ambient primitive conversions such as <code>str -&gt; int</code>.</li>
+<li><strong>Failure and diagnostics model</strong>: preserve fail-fast behavior at ordinary coercion sites, aggregated failures for model or class construction, deterministic coercion ordering, and diagnostics that explain both the coercion site and the chain being attempted.</li>
+<li><strong>Runtime and tooling support</strong>: provide the canonical <code>ValidationError</code> shape, aggregation helpers, documentation for explicit recovery paths, and comprehensive tests for constraints, coercion insertion, diagnostics, and aggregation behavior.</li>
+</ol>
+<p>Implementation sequencing is not part of the public contract. The RFC’s design claim is the full validated-newtype boundary model, not any one stepping-stone rollout order.</p>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ol>
 <li>

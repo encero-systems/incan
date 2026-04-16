@@ -4361,37 +4361,43 @@
 <li>RFC 033 (<code>ctx</code> — contrast only; graphs are not ambient singletons)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> #204</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/204</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC proposes a <strong>small, opinionated directed-graph abstraction</strong> in the <strong>Incan standard library</strong>: stable <strong>node identifiers</strong>, <strong>node payloads</strong> (including <strong>references to user-defined objects</strong> such as <code>model</code> or <code>class</code> instances), <strong>directed edges</strong> with optional <strong>kind</strong> metadata, and a <strong>minimal interrogation API</strong> (adjacency, roots/sinks, traversal, optional topological order). It is <strong>not</strong> a graph database, query language, or persistence layer. New graph-related stdlib surfaces <strong>must</strong> be specified through RFCs (this document or successors) before they become stable contracts.</p>
+<p>This RFC proposes a small, opinionated directed-graph abstraction in the Incan standard library: stable node identifiers, node payloads, directed edges with optional kind metadata, and a minimal interrogation API covering adjacency, roots and sinks, traversal, and optional topological order. It is not a graph database, query language, or persistence layer. New graph-related stdlib surfaces should continue to go through RFCs rather than growing ad hoc.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Several Incan-backed domains benefit from a <strong>shared in-memory graph model</strong>: lazy <strong>relational plan</strong> DAGs, <strong>task or dependency</strong> graphs, configuration <strong>pipelines</strong>, and other tools that need <strong>nodes and edges</strong> with <strong>programmatic traversal</strong> rather than ad hoc maps and lists per project.</p>
-<p>Without a stdlib shape, each library reinvents <strong>id allocation</strong>, <strong>edge storage</strong>, and <strong>walk order</strong>, which fragments tooling, tests, and Rust interop. A <strong>lightweight, RFC-governed</strong> type keeps the surface <strong>small</strong> while allowing <strong>domain-specific payloads</strong> and <strong>future extension</strong> (weights, attributes, alternate backends) in follow-on RFCs.</p>
+<p>Several Incan-backed domains benefit from a shared in-memory graph model: relational plan DAGs, task or dependency graphs, configuration pipelines, and other tools that need nodes, edges, and programmatic traversal rather than ad hoc maps and lists per project.</p>
+<p>Without a stdlib shape, each library reinvents id allocation, edge storage, and walk order. That fragments tooling, tests, and interop expectations. A lightweight, RFC-governed type keeps the surface small while still allowing domain-specific payloads and future extension, such as weights, attributes, or alternate backends, in follow-on RFCs.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Define <strong>normative semantics</strong> for a <strong>directed graph</strong> type (and optionally a <strong>DAG</strong> variant or mode) exposed through the stdlib.</li>
-<li>Specify <strong>stable <code>NodeId</code></strong> (or equivalent) semantics: what it means to add/remove nodes and edges, and when ids <strong>must not</strong> be reused in ways that confuse callers.</li>
-<li>Specify a <strong>minimal interrogation API</strong> sufficient for common compiler and orchestration patterns: successors, predecessors, roots, sinks, <strong>reachability traversal</strong> from a start node in at least one <strong>documented</strong> order (e.g. <strong>breadth-first search (BFS)</strong> or <strong>depth-first search (DFS)</strong> — see <a href="#interrogation-api-minimum-bar">Interrogation API (minimum bar)</a>, and topological order when acyclic). Illustrative sketches live under <strong>Illustrative API sketches (non-normative)</strong>.</li>
-<li>Require that <strong>new</strong> stdlib graph features (additional types, serialization guarantees, query dialects) go through the <strong>RFC process</strong> rather than growing ad hoc in implementation.</li>
+<li>Define normative semantics for a directed-graph type, and optionally for a
+DAG variant or mode, exposed through the stdlib.</li>
+<li>Specify stable <code>NodeId</code> semantics: what it means to add or remove nodes and
+edges, and when ids must not be reused in ways that confuse callers.</li>
+<li>Specify a minimal interrogation API sufficient for common compiler and
+orchestration patterns: successors, predecessors, roots, sinks, reachability traversal from a start node in at least one documented order, and topological order when acyclic.</li>
+<li>Keep future stdlib graph expansion on the RFC track rather than letting it
+grow ad hoc.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>A <strong>graph query language</strong>, <strong>index structures</strong> for scale-out property search, or <strong>disk-backed</strong> storage.</li>
 <li><strong>Undirected</strong> graphs as a first-class mandatory type (may be added later via RFC).</li>
 <li><strong>Distributed</strong> graphs, <strong>transactions</strong>, or <strong>Cypher</strong>-style interfaces.</li>
-<li>Mandating a specific <strong>Rust crate</strong> as the sole implementation; the contract is <strong>behavioral</strong>, not crate-specific.</li>
-<li>A <strong>process-wide</strong> or <strong>language-global singleton</strong> graph (no single ambient “the graph” for all callers). <strong>Named registries</strong>, <strong>session-held</strong> graphs, or <strong>scoped</strong> “current plan” handles are <strong>host / session</strong> concerns and <strong>must not</strong> be required by this stdlib contract.</li>
+<li>Mandating one specific backend implementation; the contract is behavioral,
+not implementation-specific.</li>
+<li>A process-wide or language-global singleton graph. Named registries or
+application-level default graphs may exist in higher-level systems, but this stdlib contract must not require them.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<p>Authors obtain a <strong>graph handle</strong> from the stdlib, <strong>add nodes</strong> with optional typed or opaque payloads, and <strong>add directed edges</strong> from one node to another. They can ask for <strong>outgoing</strong> or <strong>incoming</strong> neighbors, enumerate <strong>roots</strong> (no incoming edges) or <strong>sinks</strong> (no outgoing edges), and <strong>walk</strong> from a start node in a documented order. Common walk orders are <strong>breadth-first search (BFS)</strong>—visit nodes in layers by distance from the start—and <strong>depth-first search (DFS)</strong>—follow one path to the end, then backtrack; the stdlib <strong>must</strong> document which order(s) each traversal API uses. When the graph is intended to be acyclic, they may use a <strong>DAG mode</strong> (or a separate type) that <strong>rejects</strong> edge insertions that would create a cycle, or they may call <strong>topological order</strong> and handle the error if a cycle exists.</p>
-<p>The type is <strong>in-memory</strong> and <strong>library-scoped</strong>: persistence, network sync, and engine-specific optimization remain <strong>outside</strong> this RFC.</p>
-<p>Authors construct <strong>values</strong>—variables, fields on carriers, arguments—rather than reaching for one implicit global graph.</p>
+<p>Authors obtain a graph handle from the stdlib, add nodes with optional payloads, and add directed edges from one node to another. They can ask for outgoing or incoming neighbors, enumerate roots or sinks, and walk from a start node in a documented order. Common walk orders are breadth-first search and depth-first search; the stdlib must document which order each traversal API uses. When the graph is intended to be acyclic, authors may use a DAG mode or type that rejects edge insertions that would create a cycle, or they may call topological-order APIs and handle the error if a cycle exists.</p>
+<p>The type is in-memory and library-scoped. Persistence, network sync, and engine-specific optimization remain outside this RFC.</p>
+<p>Authors construct and pass graph values explicitly rather than reaching for one implicit global graph.</p>
 <h2 id="illustrative-api-sketches-non-normative">Illustrative API sketches (non-normative)<a class="headerlink" href="#illustrative-api-sketches-non-normative" title="Permanent link">&para;</a></h2>
-<p>The following examples show <strong>one possible</strong> Incan-facing shape. <strong>Names, return types, and error modeling</strong> are illustrative until the RFC moves beyond Draft; they are <strong>not</strong> a commitment to exact signatures.</p>
+<p>The following examples show one possible Incan-facing shape. Names, return types, and error modeling are illustrative until the RFC moves beyond Draft; they are not commitments to exact signatures.</p>
 <p><strong>Module path</strong> is assumed to be <code>std.graph</code> (see RFC 022 stdlib namespacing); final names <strong>may</strong> differ.</p>
 <h3 id="constructing-a-directed-graph-and-querying-neighbors">Constructing a directed graph and querying neighbors<a class="headerlink" href="#constructing-a-directed-graph-and-querying-neighbors" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
@@ -4410,7 +4416,9 @@
 <span class="n">roots</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">roots</span><span class="p">()</span>
 </code></pre></div>
 <h3 id="node-payloads-as-object-references-eg-step">Node payloads as <strong>object references</strong> (e.g. <code>Step</code>)<a class="headerlink" href="#node-payloads-as-object-references-eg-step" title="Permanent link">&para;</a></h3>
-<p>Graphs are <strong>not</strong> limited to string or primitive payloads. A common pattern is <strong><code>DiGraph[Step]</code></strong> (or another user type) where each <strong><code>NodeId</code></strong> maps to a <strong><code>Step</code></strong> (or similar) <strong>value</strong> the author already holds; <strong>edges</strong> still connect <strong><code>NodeId</code></strong>s, so one <strong><code>Step</code></strong> instance can be the payload of node <strong><code>a</code></strong> and another of node <strong><code>b</code></strong>, with a directed edge <strong><code>a → b</code></strong> meaning “this step runs before that step” (or any domain semantics).</p>
+<p>Graphs are not limited to string or primitive payloads. A common pattern is
+<code>DiGraph[Step]</code>, or another user type, where each <code>NodeId</code> maps to a <code>Step</code>
+value the author already holds. Edges still connect <code>NodeId</code>s, so one <code>Step</code> instance can be the payload of node <code>a</code> and another of node <code>b</code>, with a directed edge <code>a -&gt; b</code> meaning "this step runs before that step," or any other domain-specific relationship.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
 
 <span class="k">pub</span> <span class="k">model</span> <span class="nc">Step</span><span class="p">:</span>
@@ -4431,8 +4439,10 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">step_name_at</span><span class="p">(</span><span class="n">g</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nc">Step</span><span class="p">],</span> <span class="n">nid</span><span class="p">:</span> <span class="nc">NodeId</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">g</span><span class="o">.</span><span class="n">node_payload</span><span class="p">(</span><span class="n">nid</span><span class="p">)</span><span class="o">.</span><span class="n">name</span>
 </code></pre></div>
-<p><strong>Semantics:</strong> the graph <strong>stores</strong> (or references, per implementation) the <strong>payload</strong> per node; <strong><code>add_node(payload=...)</code></strong> ties <strong><code>NodeId</code></strong> to that object. <strong>Identity:</strong> if two nodes should represent the <strong>same</strong> <code>Step</code> instance, that is a <strong>domain</strong> choice—either one node is shared or two nodes hold <strong>cloned</strong> payloads; the stdlib <strong>must</strong> document <strong>clone</strong> vs <strong>shared reference</strong> behavior for mutable payloads.</p>
-<p><strong>Bounds:</strong> generic graphs <strong><code>DiGraph[T]</code></strong> will likely require <strong><code>T</code></strong> to satisfy whatever the language requires for <strong>stored</strong> or <strong>shared</strong> data (e.g. <strong><code>Clone</code></strong>), analogous to <strong><code>DataSet[T]</code></strong>; exact bounds are an <strong>implementation</strong> detail but <strong>must</strong> appear in user-facing docs.</p>
+<p><strong>Semantics:</strong> <code>add_node(payload=...)</code> ties a <code>NodeId</code> to that payload object.
+If two nodes should represent the same <code>Step</code> instance, that is a domain choice: either one node is shared or two nodes hold cloned payloads. The stdlib must document how clone versus shared-reference behavior works for mutable payloads.</p>
+<p><strong>Bounds:</strong> generic graphs such as <code>DiGraph[T]</code> will likely require <code>T</code> to
+satisfy whatever the language requires for stored or shared data. Exact bounds are implementation detail, but they must appear in user-facing docs.</p>
 <h3 id="traversal-bfs-dfs-from-a-start-node">Traversal (BFS / DFS) from a start node<a class="headerlink" href="#traversal-bfs-dfs-from-a-start-node" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
 
@@ -4470,7 +4480,9 @@
     <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">CycleWouldBeCreated</span><span class="p">):</span>
         <span class="k">pass</span>  <span class="c1"># expected</span>
 </code></pre></div>
-<p>Alternatively, a single <strong><code>DiGraph</code></strong> type could use <strong><code>DiGraph.new(enforce_dag=True)</code></strong> instead of a separate <strong><code>Dag</code></strong> name—see <strong>Unresolved questions</strong>.</p>
+<p>Alternatively, a single <code>DiGraph</code> type could use
+<code>DiGraph.new(enforce_dag=True)</code> instead of a separate <code>Dag</code> name. See
+Unresolved questions.</p>
 <h3 id="parallel-edges-multigraph-profile-if-supported">Parallel edges (multigraph profile), if supported<a class="headerlink" href="#parallel-edges-multigraph-profile-if-supported" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">MultiDiGraph</span><span class="p">,</span> <span class="nc">NodeId</span><span class="p">,</span> <span class="nc">EdgeId</span>
 
@@ -4505,109 +4517,137 @@
 <h3 id="directed-graph">Directed graph<a class="headerlink" href="#directed-graph" title="Permanent link">&para;</a></h3>
 <p>A <strong>directed graph</strong> value <strong>must</strong> conceptually consist of:</p>
 <ul>
-<li>A set of <strong>nodes</strong>, each with a <strong>distinct <code>NodeId</code></strong> while the node exists. Each node <strong>may</strong> carry an optional <strong>payload</strong>: any <strong>Incan value</strong> the API allows (primitives, <strong><code>model</code></strong> / <strong><code>class</code></strong> instances, newtypes, etc.). <strong>Edges always connect <code>NodeId</code>s</strong>, not raw object references—so “<strong><code>Step</code> A links to <code>Step</code> B</strong>” is modeled as <strong><code>NodeId</code></strong> for the node holding A <strong>pointing to</strong> <strong><code>NodeId</code></strong> for the node holding B.</li>
-<li>A multiset of <strong>directed edges</strong> <strong>from</strong> one <code>NodeId</code> <strong>to</strong> another <code>NodeId</code>. <strong>Parallel edges</strong> (same pair, multiple edges) <strong>may</strong> be permitted unless a future profile forbids them; if permitted, edges <strong>must</strong> be distinguishable by an <strong><code>EdgeId</code></strong> or by iteration order, as specified by the stdlib API.</li>
+<li>A set of nodes, each with a distinct <code>NodeId</code> while the node exists. Each
+node may carry an optional payload: any Incan value the API allows, including primitives, <code>model</code> or <code>class</code> instances, newtypes, and similar values. Edges always connect <code>NodeId</code>s, not raw object references.</li>
+<li>A multiset of directed edges from one <code>NodeId</code> to another <code>NodeId</code>. Parallel
+edges may be permitted unless a future profile forbids them. If they are permitted, edges must be distinguishable by an <code>EdgeId</code> or by iteration order, as specified by the stdlib API.</li>
 </ul>
-<p><strong>Removing</strong> a node <strong>must</strong> either <strong>remove</strong> all incident edges or <strong>define</strong> explicit behavior (e.g. error) in the stdlib contract; implementations <strong>must not</strong> leave the graph in an inconsistent state silently.</p>
+<p>Removing a node must either remove all incident edges or define explicit behavior, such as an error, in the stdlib contract. Implementations must not leave the graph in an inconsistent state silently.</p>
 <h3 id="nodeid-stability">NodeId stability<a class="headerlink" href="#nodeid-stability" title="Permanent link">&para;</a></h3>
-<p>The stdlib <strong>must</strong> document whether <strong><code>NodeId</code></strong> values are <strong>reused</strong> after node removal. Recommended default: <strong>do not reuse</strong> ids in the same graph instance without an explicit <strong>compact</strong> or <strong>reset</strong> operation documented for advanced users.</p>
+<p>The stdlib must document whether <code>NodeId</code> values are reused after node removal. The recommended default is not to reuse ids in the same graph instance without an explicit compact or reset operation documented for advanced users.</p>
 <h3 id="dag-profile">DAG profile<a class="headerlink" href="#dag-profile" title="Permanent link">&para;</a></h3>
-<p>If a <strong>DAG</strong> type or <strong>acyclicity-enforcing</strong> mode is provided, <strong>adding an edge</strong> that would introduce a cycle <strong>must</strong> fail with a <strong>defined</strong> error or return type; the graph <strong>must not</strong> accept the edge.</p>
+<p>If a DAG type or acyclicity-enforcing mode is provided, adding an edge that would introduce a cycle must fail with a defined error or return type. The graph must not accept the edge.</p>
 <h3 id="topological-order">Topological order<a class="headerlink" href="#topological-order" title="Permanent link">&para;</a></h3>
-<p>When <strong><code>topological_order</code></strong> (or equivalent) is provided, it <strong>must</strong> return a linear order <strong>consistent with</strong> all edges (every edge goes from an earlier to a later index). If the graph contains a cycle, the operation <strong>must</strong> report failure in a <strong>defined</strong> way.</p>
+<p>When <code>topological_order</code>, or an equivalent API, is provided, it must return a linear order consistent with all edges, meaning every edge goes from an earlier to a later index. If the graph contains a cycle, the operation must report failure in a defined way.</p>
 <h3 id="interrogation-api-minimum-bar">Interrogation API (minimum bar)<a class="headerlink" href="#interrogation-api-minimum-bar" title="Permanent link">&para;</a></h3>
 <p>The stdlib <strong>must</strong> expose operations equivalent to the following capabilities (names may differ):</p>
 <ul>
 <li><strong>Lookup</strong> node existence by <code>NodeId</code>.</li>
 <li><strong>Successors</strong> and <strong>predecessors</strong> (or outgoing/incoming edge iteration).</li>
 <li><strong>Roots</strong> and <strong>sinks</strong> according to the definitions above.</li>
-<li><strong>Reachability traversal</strong> from a start <code>NodeId</code> in at least one <strong>documented</strong> order—for example <strong>breadth-first search (BFS)</strong> (layer by layer from the start) and/or <strong>depth-first search (DFS)</strong> (follow a path to the end, then backtrack).</li>
+<li><strong>Reachability traversal</strong> from a start <code>NodeId</code> in at least one documented
+order, for example breadth-first search or depth-first search.</li>
 </ul>
 <p>Implementations <strong>may</strong> add further helpers (e.g. strongly connected components) in later RFCs.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <ul>
 <li>
 <p><strong>Payload model.</strong>
-  Nodes <strong>should</strong> carry a <strong>payload</strong> slot. Payloads <strong>may</strong> be ordinary <strong>Incan object references</strong> (e.g. a <strong><code>model</code></strong> or <strong><code>class</code></strong> value such as <strong><code>Step</code></strong>) so that <strong><code>DiGraph[Step]</code></strong> means “each node’s payload is a <strong><code>Step</code></strong>.” Payloads <strong>may</strong> also use <strong>Rust interop</strong> (RFC 005), <strong>newtypes</strong>, or <strong>opaque handles</strong> where that fits better. The RFC does <strong>not</strong> mandate a single <code>payload: any</code> model; the stdlib <strong>must</strong> document how payloads are represented, whether they are <strong>type-erased</strong> at the Incan boundary, and how <strong>cloning</strong> / <strong>shared mutation</strong> interact with <strong>graph</strong> operations when payloads are <strong>mutable</strong>.</p>
+Nodes should carry a payload slot. Payloads may be ordinary Incan object references such as <code>model</code> or <code>class</code> values, so that <code>DiGraph[Step]</code> means each node's payload is a <code>Step</code>. Payloads may also use newtypes or opaque handles where that fits better. The RFC does not mandate one <code>payload: any</code> model; the stdlib must document how payloads are represented and how cloning or shared mutation interact with graph operations when payloads are mutable.</p>
 </li>
 <li>
 <p><strong>Edge metadata.</strong>
-  Edges <strong>should</strong> support an optional <strong>kind</strong> or <strong>label</strong> (enumerated or string) so multiple domains can filter edges without separate side maps. This <strong>must</strong> be specified in the final API review before <strong>Planned</strong> status.</p>
+Edges should support an optional kind or label, whether enumerated or string, so multiple domains can filter edges without separate side maps. This must be specified in the final API review before Planned status.</p>
 </li>
 <li>
 <p><strong>Immutability vs mutation.</strong>
-  The stdlib <strong>may</strong> offer <strong>mutable</strong> graphs, <strong>immutable persistent</strong> updates (copy-on-write), or both as separate types. The chosen model <strong>must</strong> be documented so carriers like lazy plans can pick <strong>cheap clone</strong> semantics where needed.</p>
+The stdlib may offer mutable graphs, immutable persistent updates, or both as separate types. The chosen model must be documented so carriers such as lazy plans can pick cheap clone semantics where needed.</p>
 </li>
 <li>
 <p><strong>Relationship to other stdlib types.</strong>
-  Graph types <strong>should</strong> compose with existing <strong>collections</strong> (RFC 030) where natural (e.g. returning <strong>lists</strong> of <code>NodeId</code>). They <strong>must not</strong> silently duplicate <strong>dictionary</strong> semantics without documenting key conflicts.</p>
+Graph types should compose with existing collections, such as RFC 030 types, where natural, for example returning lists of <code>NodeId</code>. They must not silently duplicate dictionary semantics without documenting key conflicts.</p>
 </li>
 <li>
 <p><strong>Graph values vs global singletons (design decision).</strong></p>
 <ul>
-<li><strong>Normative:</strong> The stdlib graph abstraction <strong>must</strong> be usable as ordinary <strong>first-class data</strong>: many independent instances may exist at once; callers <strong>pass</strong> or <strong>store</strong> them explicitly (e.g. on a lazy carrier, in a module field, or as a function argument).</li>
-<li><strong>Normative:</strong> The stdlib <strong>must not</strong> define or require a <strong>single ambient graph</strong> analogous to RFC 033 <strong><code>ctx</code></strong> (typed configuration context). <strong><code>ctx</code></strong> addresses <strong>set-once configuration</strong> and <strong>parameter threading</strong> for app settings; graphs address <strong>structured relational or dependency data</strong> that is naturally <strong>per-pipeline</strong>, <strong>per-test</strong>, or <strong>per-request</strong>. Conflating the two would break <strong>concurrency</strong>, <strong>test isolation</strong>, and <strong>composition</strong> (two datasets, two plans, two dependency graphs in one process).</li>
-<li><strong>Non-normative:</strong> A <strong>session</strong>, <strong>runtime</strong>, or <strong>application</strong> layer <strong>may</strong> hold a <strong>default</strong> or <strong>named</strong> graph registry for ergonomics; that remains <strong>outside</strong> this RFC and <strong>must</strong> layer on top of <strong>value</strong>-based graph types rather than replacing them.</li>
+<li><strong>Normative:</strong> The stdlib graph abstraction must be usable as ordinary
+  first-class data. Many independent instances may exist at once, and
+  callers pass or store them explicitly.</li>
+<li><strong>Normative:</strong> The stdlib must not define or require one ambient graph
+  analogous to RFC 033 <code>ctx</code>. Graphs represent structured relational or
+  dependency data that is naturally per-pipeline, per-test, or per-request.
+  Conflating the two would break concurrency, test isolation, and
+  composition.</li>
+<li><strong>Non-normative:</strong> A session, runtime, or application layer may still
+  offer a default or named graph registry for ergonomics, but that remains
+  outside this RFC and must layer on top of value-based graph types.</li>
 </ul>
 </li>
 </ul>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
 <li>
-<p><strong>Only document a pattern</strong> (hand-rolled <code>dict</code> + lists) — avoids stdlib surface but perpetuates fragmentation and weak interoperability between libraries.</p>
+<p><strong>Only document a pattern</strong> such as a hand-rolled <code>dict</code> plus lists:
+rejected because it avoids stdlib surface at the cost of fragmentation and weak interoperability between libraries.</p>
 </li>
 <li>
-<p><strong>Expose a full-featured property-graph stdlib immediately</strong> — too large, blurs boundaries with databases and query engines.</p>
+<p><strong>Expose a full-featured property-graph stdlib immediately</strong>: rejected
+because it is too large and blurs boundaries with databases and query engines.</p>
 </li>
 <li>
-<p><strong>Standardize on an external Rust crate’s types in user-visible Incan APIs</strong> — couples the language to one dependency layout; better to define <strong>Incan-facing</strong> types and map implementations under the hood.</p>
+<p><strong>Standardize on one external implementation’s user-visible API</strong>: rejected
+because it couples the language too tightly to one dependency layout.</p>
 </li>
 </ol>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Surface area</strong>: even a minimal graph API is a long-lived commitment; changes require RFC discipline.</li>
-<li><strong>Performance</strong>: a single generic graph type may not fit every workload; domains may still need specialized structures <strong>behind</strong> thin wrappers.</li>
+<li><strong>Performance</strong>: a single generic graph type may not fit every workload.
+Domains may still need specialized structures behind thin wrappers.</li>
 <li><strong>Teaching cost</strong>: users must learn <strong>when</strong> to use graph stdlib vs plain collections.</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Stdlib / Rust bindings</strong> — new types and methods, likely backed by Rust structures exposed via <code>rust.module</code> or equivalent.</li>
+<li><strong>Stdlib / runtime bindings</strong>: new graph types and methods, potentially
+backed by runtime-native structures exposed through the normal stdlib binding path.</li>
 <li><strong>Typechecker</strong> — generic methods on graph types, error types for cycle detection.</li>
 <li><strong>Formatter / LSP</strong> — completions and formatting for new stdlib paths.</li>
 <li><strong>Docs-site</strong> — user-facing reference for graph types and examples.</li>
 <li><strong>RFC process</strong> — this RFC establishes that <strong>further</strong> graph stdlib growth is <strong>RFC-gated</strong>.</li>
 </ul>
 <h2 id="prior-art-survey-informative">Prior art survey (informative)<a class="headerlink" href="#prior-art-survey-informative" title="Permanent link">&para;</a></h2>
-<p>This section is <strong>not normative</strong>. It summarizes how <strong>popular libraries</strong> split <strong>directed vs multigraph</strong> and <strong>DAG policy</strong>, to inform <strong>Unresolved questions 1–2</strong>. It is <strong>not</strong> a mandate to copy any API.</p>
+<p>This section is not normative. It summarizes how popular libraries split directed versus multigraph concerns and DAG policy to inform unresolved questions 1 and 2. It is not a mandate to copy any API.</p>
 <ul>
 <li>
-<p><strong>Python (NetworkX).</strong> <strong><code>DiGraph</code></strong> is a <strong>simple</strong> directed graph: <strong>at most one</strong> edge per ordered pair of nodes. <strong><code>MultiDiGraph</code></strong> is the parallel-edge variant; parallel edges are distinguished by <strong>keys</strong>. <strong>Acyclicity</strong> is <strong>not</strong> usually a separate class: callers use algorithms such as topological sorting that <strong>fail</strong> or <strong>error</strong> when a cycle exists, or validate graphs beforehand.</p>
+<p><strong>Python (NetworkX).</strong> <code>DiGraph</code> is simple by default, with at most one edge
+per ordered node pair. <code>MultiDiGraph</code> is the parallel-edge variant. Acyclicity is usually an algorithm-level concern rather than a separate base type.</p>
 </li>
 <li>
-<p><strong>Java (JGraphT).</strong> <strong>Separate concrete types</strong> are common: e.g. <strong><code>SimpleDirectedGraph</code></strong> (no parallel edges, no self-loops per that type’s contract) vs <strong><code>DirectedMultigraph</code></strong> / <strong><code>DirectedWeightedMultigraph</code></strong> when parallel edges are needed. Authors <strong>choose the graph class</strong> at construction.</p>
+<p><strong>Java (JGraphT).</strong> Separate concrete types are common. Authors choose a
+simple directed graph or a multigraph at construction time.</p>
 </li>
 <li>
-<p><strong>JavaScript / TypeScript (Graphology).</strong> One <strong><code>Graph</code></strong> constructor with <strong>options</strong>: e.g. <strong><code>type: 'directed'</code></strong> and <strong><code>multi: true | false</code></strong>, plus specialized constructors like <strong><code>DirectedGraph</code></strong> vs <strong><code>MultiDirectedGraph</code></strong>. Parallel edges are <strong>opt-in</strong> via <strong><code>multi</code></strong>.</p>
+<p><strong>JavaScript / TypeScript (Graphology).</strong> One graph family with options such
+as <code>type: 'directed'</code> and <code>multi: true | false</code>, plus specialized constructors. Parallel edges are opt-in.</p>
 </li>
 <li>
-<p><strong>Ruby (RGL).</strong> <strong><code>DirectedAdjacencyGraph</code></strong> is a widely used <strong>directed</strong> structure; the <strong>default mental model</strong> in tutorials is <strong>simple</strong> adjacency (one logical edge per pair for many uses). <strong>Multigraph</strong>-first APIs are <strong>less</strong> central than in NetworkX’s split.</p>
+<p><strong>Ruby (RGL).</strong> Directed adjacency is the common teaching model, and
+multigraph-oriented APIs are less central.</p>
 </li>
 <li>
-<p><strong>Rust (<code>petgraph</code>, illustrative only).</strong> <strong><code>Graph</code></strong> stores edges as distinct indices and <strong>can</strong> represent <strong>multiple</strong> edges between the same node pair. <strong><code>GraphMap</code></strong> explicitly <strong>does not</strong> allow parallel edges. <strong>Acyclicity</strong> is <strong>not</strong> enforced by <strong><code>Graph::add_edge</code></strong> by default; DAG guarantees are <strong>algorithm or wrapper</strong> concerns.</p>
+<p><strong>Rust (<code>petgraph</code>, illustrative only).</strong> <code>Graph</code> can represent multiple
+edges between the same node pair, while <code>GraphMap</code> does not. Acyclicity is not enforced by default; DAG guarantees are algorithm or wrapper concerns.</p>
 </li>
 </ul>
-<p><strong>Loose takeaway for question 1 (DAG shape).</strong> Ecosystems <strong>rarely</strong> expose a <strong>third</strong> ubiquitous type name <strong><code>Dag</code></strong> alongside <strong><code>DiGraph</code></strong>; <strong>DAG</strong> is often <strong>policy</strong> (reject cycle on insert, or check before topo sort) on a <strong>directed</strong> container. A <strong>separate <code>Dag</code> type</strong> in Incan is still allowed if it improves <strong>ergonomics</strong> or <strong>static</strong> guarantees—it is just <strong>less</strong> common in the surveyed libraries.</p>
-<p><strong>Loose takeaway for question 2 (parallel edges).</strong> <strong>Simple</strong> directed graphs are the <strong>default</strong> in several major libraries; <strong>parallel</strong> edges are <strong>opt-in</strong> via <strong><code>Multi*</code></strong> types, <strong><code>multi: true</code></strong>, or a <strong>multigraph</strong> class. That pattern suggests <strong>defaulting to no parallel edges</strong> for v1 unless a domain <strong>clearly</strong> needs a multigraph profile—but the RFC <strong>need not</strong> decide here without Incan use-case review.</p>
+<p><strong>Loose takeaway for question 1 (DAG shape).</strong> Ecosystems rarely expose a
+third ubiquitous type name <code>Dag</code> alongside <code>DiGraph</code>; DAG is often policy on a directed container. A separate <code>Dag</code> type in Incan is still allowed if it improves ergonomics or static guarantees, but it is less common in the surveyed libraries.</p>
+<p><strong>Loose takeaway for question 2 (parallel edges).</strong> Simple directed graphs are
+the default in several major libraries, while parallel edges are opt-in through multigraph types or configuration. That suggests defaulting to no parallel edges in v1 unless a domain clearly needs a multigraph profile, but the RFC does not have to settle that yet.</p>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ol>
-<li><strong>Single <code>DiGraph</code> type vs separate <code>Dag</code> type</strong> vs <strong><code>DiGraph</code> with <code>enforce_dag: bool</code> at construction</strong> — which default best matches Incan authors? Informative: <strong>Prior art survey</strong> — separate <code>Dag</code> <strong>types</strong> are uncommon elsewhere; <strong>DAG-as-policy</strong> on a directed graph is common.</li>
-<li><strong>Parallel edges</strong>: allowed by default, or opt-in <strong>multigraph</strong> profile only? Informative: <strong>Prior art survey</strong> — <strong>opt-in</strong> multigraph is a recurring pattern.</li>
+<li><strong>Single <code>DiGraph</code> type vs separate <code>Dag</code> type vs <code>DiGraph</code> with
+   <code>enforce_dag: bool</code> at construction</strong>: which default best matches Incan
+authors? Prior art suggests DAG-as-policy is more common than a distinct
+   <code>Dag</code> type.</li>
+<li><strong>Parallel edges</strong>: allowed by default, or opt-in multigraph profile only?
+Prior art suggests opt-in multigraph support is the recurring pattern.</li>
 <li><strong>Node removal</strong>: required for v1, or <strong>append-only</strong> graphs only until a follow-on RFC?</li>
-<li><strong>Payload typing</strong> on the Incan side: opaque handle only for v1, or generic <strong><code>DiGraph[T]</code></strong> / <strong><code>Graph[NodePayload, EdgeKind]</code></strong>-style surface? (Object references such as <strong><code>Step</code></strong> are a primary motivation for <strong>generic</strong> payload typing.)</li>
-<li><strong>Serialization</strong>: stable <strong>JSON</strong> (or other) snapshot format in v1, or explicitly <strong>out of scope</strong> until a dedicated RFC?</li>
+<li><strong>Payload typing</strong> on the Incan side: opaque handle only for v1, or a
+generic <code>DiGraph[T]</code> / <code>Graph[NodePayload, EdgeKind]</code> style surface?</li>
+<li><strong>Serialization</strong>: stable JSON, or another snapshot format, in v1, or
+explicitly out of scope until a dedicated RFC?</li>
 </ol>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

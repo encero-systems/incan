@@ -4392,7 +4392,7 @@
 <li>RFC 018 (testing)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> —</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/333</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -4597,23 +4597,23 @@ if_let_test ::= &quot;let&quot; pattern &quot;=&quot; expr
 <ol>
 <li>
 <p>Keep using full <code>match</code> everywhere.
-   This preserves one construct but keeps the repetitive <code>None =&gt; pass</code> / <code>Err(_) =&gt; pass</code> boilerplate that motivated this RFC.</p>
+This preserves one construct but keeps the repetitive <code>None =&gt; pass</code> / <code>Err(_) =&gt; pass</code> boilerplate that motivated this RFC.</p>
 </li>
 <li>
 <p><code>PATTERN match VALUE</code>.
-   This is explicit, but it introduces a new dedicated control-flow spelling where a well-understood construct already exists.</p>
+This is explicit, but it introduces a new dedicated control-flow spelling where a well-understood construct already exists.</p>
 </li>
 <li>
 <p>Extend <code>is</code>, as in <code>if value is Some(child):</code>.
-   This is plausible, especially given RFC 018, but it frames the feature more as a boolean pattern test than as a single-arm destructuring branch.</p>
+This is plausible, especially given RFC 018, but it frames the feature more as a boolean pattern test than as a single-arm destructuring branch.</p>
 </li>
 <li>
 <p>Walrus-style binding.
-   This is awkward for pattern-matching constructs, especially around <code>Some(...)</code>, <code>Ok(...)</code>, and other constructors. It obscures the fact that the operation is a pattern match rather than assignment.</p>
+This is awkward for pattern-matching constructs, especially around <code>Some(...)</code>, <code>Ok(...)</code>, and other constructors. It obscures the fact that the operation is a pattern match rather than assignment.</p>
 </li>
 <li>
 <p>General Rust passthrough for <code>let</code> inside <code>if</code>.
-   This was rejected because it weakens Incan's ownership of its own syntax and semantics.</p>
+This was rejected because it weakens Incan's ownership of its own syntax and semantics.</p>
 </li>
 </ol>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
@@ -4623,21 +4623,20 @@ if_let_test ::= &quot;let&quot; pattern &quot;=&quot; expr
 <li>Formatter and linter guidance will matter to prevent overly dense nested <code>if let</code> chains.</li>
 </ul>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p>The preferred implementation strategy is to lower <code>if let</code> through the same pattern-matching machinery already used by full <code>match</code>.</p>
+<p>The preferred implementation strategy is to express <code>if let</code> through the same semantic core already used by full <code>match</code>.</p>
 <p>That can be done either by:</p>
 <ul>
-<li>desugaring <code>if let</code> into a single-arm <code>match</code> plus implicit <code>_ =&gt; pass</code>, or</li>
-<li>introducing a dedicated AST node that later lowers to the same internal match core.</li>
+<li>interpreting <code>if let</code> as a single-arm <code>match</code> plus implicit <code>_ =&gt; pass</code>, or</li>
+<li>representing it separately while preserving the same pattern-matching semantics.</li>
 </ul>
 <p>This section is non-normative. Any implementation strategy is acceptable if it preserves the semantics above.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Parser / AST</strong>: parse <code>if let PATTERN = VALUE:</code> in <code>if</code> statement position.</li>
-<li><strong>Typechecker / Symbol resolution</strong>: type-check the pattern exactly like a <code>match</code> arm and scope bindings to the success branch.</li>
-<li><strong>IR Lowering</strong>: lower through existing pattern-match machinery.</li>
-<li><strong>Emission</strong>: may lower to Rust <code>if let</code> where appropriate.</li>
-<li><strong>Formatter</strong>: format <code>if let</code> predictably and avoid unreadable nested chains.</li>
-<li><strong>LSP / Tooling</strong>: provide hover, completion, and diagnostics for branch-local pattern bindings.</li>
+<li><strong>Language surface</strong>: <code>if let PATTERN = VALUE:</code> must be accepted in <code>if</code> statement position.</li>
+<li><strong>Type system</strong>: the pattern must type-check exactly like a <code>match</code> arm, and bindings must stay scoped to the success branch.</li>
+<li><strong>Execution handoff</strong>: implementations may realize <code>if let</code> through the existing pattern-match machinery as long as the observable semantics match this RFC.</li>
+<li><strong>Formatter</strong>: <code>if let</code> should format predictably and avoid unreadable nested chains.</li>
+<li><strong>LSP / tooling</strong>: hover, completion, and diagnostics should respect branch-local pattern bindings.</li>
 </ul>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ul>

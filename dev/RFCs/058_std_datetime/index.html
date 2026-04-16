@@ -4644,8 +4644,8 @@
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Stdlib / runtime</strong>: must provide the temporal types, interval types, and documented arithmetic and formatting semantics.</li>
-<li><strong>Typechecker / symbol resolution</strong>: must register the module, types, and operator or method surface.</li>
-<li><strong>Lowering / emission</strong>: must preserve arithmetic, comparison, and parse or format behavior without leaking backend quirks.</li>
+<li><strong>Language surface</strong>: the module, types, constructors, operators, and methods must be available as specified.</li>
+<li><strong>Execution handoff</strong>: implementations must preserve arithmetic, comparison, parsing, and formatting behavior without leaking backend quirks.</li>
 <li><strong>Docs / examples</strong>: should standardize how Incan code measures elapsed time, works with timestamps, and performs interval arithmetic.</li>
 </ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>

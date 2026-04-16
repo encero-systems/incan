@@ -4370,7 +4370,7 @@
 <li>RFC 056 (<code>std.io</code> in-memory byte streams and binary parsing helpers)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> —</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/338</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -4630,8 +4630,8 @@
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Stdlib / runtime</strong>: must provide the UUID type, parsing, formatting, and generation semantics.</li>
-<li><strong>Typechecker / symbol resolution</strong>: must register the module and value type.</li>
-<li><strong>Lowering / emission</strong>: must preserve parsing, formatting, and byte-conversion behavior without backend leakage.</li>
+<li><strong>Language surface</strong>: the module and value type must be available as specified.</li>
+<li><strong>Execution handoff</strong>: implementations must preserve parsing, formatting, and byte-conversion behavior without backend leakage.</li>
 <li><strong>Docs / tooling</strong>: should standardize UUID examples and canonical formatting expectations.</li>
 <li><strong>Numeric/runtime interop</strong>: must align <code>UUID.to_int()</code> and <code>UUID.from_int(...)</code> with RFC 009 <code>u128</code> semantics.</li>
 </ul>

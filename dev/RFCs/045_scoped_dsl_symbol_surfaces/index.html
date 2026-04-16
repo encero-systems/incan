@@ -4344,7 +4344,7 @@
 <li>RFC 031 (library system phase 1)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> #202</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/202</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -4496,20 +4496,20 @@
 <p>Non-normative recommended shape:</p>
 <ul>
 <li>Extend DSL registration metadata with scoped symbol descriptors.</li>
-<li>Carry owning-block and eligible-position context through frontend semantic analysis.</li>
-<li>Resolve scoped symbols during typechecking before ordinary fallback in eligible positions.</li>
-<li>Lower resolved scoped symbols through DSL-specific desugar/lowering paths.</li>
+<li>Carry owning-block and eligible-position context through semantic analysis.</li>
+<li>Resolve scoped symbols before ordinary fallback in eligible positions.</li>
+<li>Preserve scoped symbol identity through later compilation stages so DSL-owned meaning remains unambiguous.</li>
 <li>Preserve explicit namespaced builtin calls as direct builtin targets.</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Parser / AST</strong>: parser must preserve enough DSL block and clause-position context for scoped symbol eligibility checks.</li>
-<li><strong>Typechecker / Symbol resolution</strong>: resolver must apply scoped symbol precedence in eligible positions and preserve ordinary resolution elsewhere.</li>
-<li><strong>IR Lowering</strong>: lowering must keep scoped symbol identity so DSL-owned semantics are emitted through the correct path.</li>
+<li><strong>Frontend recognition</strong>: the language frontend must preserve enough DSL block and clause-position context for scoped symbol eligibility checks.</li>
+<li><strong>Name resolution</strong>: symbol resolution must apply scoped symbol precedence in eligible positions and preserve ordinary resolution elsewhere.</li>
+<li><strong>Lowering / execution handoff</strong>: later compilation stages must keep scoped symbol identity so DSL-owned semantics are emitted through the correct path.</li>
 <li><strong>Emission</strong>: emitted output must preserve DSL-scoped meaning and explicit builtin calls without ambiguity.</li>
-<li><strong><code>incan-vocab</code> registry</strong>: registration schema must support scoped symbol descriptors and activation metadata.</li>
-<li><strong>Formatter</strong>: formatter should preserve explicit qualification used to disambiguate scoped vs builtin calls.</li>
-<li><strong>LSP / Tooling</strong>: completions, hover, go-to-definition, and diagnostics should reflect scoped symbol meaning by context.</li>
+<li><strong><code>incan-vocab</code> registry</strong>: registration metadata must support scoped symbol descriptors and activation information.</li>
+<li><strong>Formatter</strong>: formatting should preserve explicit qualification used to disambiguate scoped vs builtin calls.</li>
+<li><strong>LSP / tooling</strong>: completions, hover, go-to-definition, and diagnostics should reflect scoped symbol meaning by context.</li>
 </ul>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ul>
@@ -4520,8 +4520,7 @@
 <li>Should descriptor activation be file-local only, or should there be an opt-in module subtree propagation model?</li>
 <li>How should scoped symbol overloading across nested DSL blocks be resolved when multiple active descriptors share a name?</li>
 </ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

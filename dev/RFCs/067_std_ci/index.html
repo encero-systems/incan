@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 039: race for awaitable concurrency - Incan Documentation</title>
+        <title>RFC 067: std.ci — deterministic CI and automation scripting primitives - Incan Documentation</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-039-race-for-awaitable-concurrency" class="md-skip">
+        <a href="#rfc-067-stdci-deterministic-ci-and-automation-scripting-primitives" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 039: race for awaitable concurrency
+              RFC 067: std.ci — deterministic CI and automation scripting primitives
             
           </span>
         </div>
@@ -4095,62 +4095,20 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#core-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#motivation" class="md-nav__link">
     <span class="md-ellipsis">
       Motivation
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Motivation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#the-stdlib-still-lacks-an-incan-first-way-to-express-generic-awaitables" class="md-nav__link">
-    <span class="md-ellipsis">
-      The stdlib still lacks an Incan-first way to express generic awaitables
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#await-is-the-primitive-race-is-composition" class="md-nav__link">
-    <span class="md-ellipsis">
-      await is the primitive; race is composition
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfc-027-rfc-028-rfc-029-rfc-035-and-rfc-038-all-point-to-the-same-design" class="md-nav__link">
-    <span class="md-ellipsis">
-      RFC 027, RFC 028, RFC 029, RFC 035, and RFC 038 all point to the same design
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-not-just-keep-library-helpers" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why not just keep library helpers?
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#race-is-the-right-word" class="md-nav__link">
-    <span class="md-ellipsis">
-      race is the right word
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -4183,72 +4141,36 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#user-model" class="md-nav__link">
+  <a href="#reading-the-execution-environment" class="md-nav__link">
     <span class="md-ellipsis">
-      User model
+      Reading the execution environment
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#basic-syntax" class="md-nav__link">
+  <a href="#reading-workflow-payloads" class="md-nav__link">
     <span class="md-ellipsis">
-      Basic syntax
+      Reading workflow payloads
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#union-results-fit-naturally" class="md-nav__link">
+  <a href="#writing-outputs" class="md-nav__link">
     <span class="md-ellipsis">
-      Union results fit naturally
+      Writing outputs
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#use-an-enum-when-provenance-matters" class="md-nav__link">
+  <a href="#exiting-clearly" class="md-nav__link">
     <span class="md-ellipsis">
-      Use an enum when provenance matters
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#timeout-becomes-ordinary-stdasync-composition" class="md-nav__link">
-    <span class="md-ellipsis">
-      Timeout becomes ordinary std.async composition
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#helper-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      Helper model
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#direct-helper-use-also-works" class="md-nav__link">
-    <span class="md-ellipsis">
-      Direct helper use also works
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#matching-is-still-done-with-ordinary-match" class="md-nav__link">
-    <span class="md-ellipsis">
-      Matching is still done with ordinary match
+      Exiting clearly
     </span>
   </a>
   
@@ -4270,126 +4192,54 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#activation-and-status" class="md-nav__link">
+  <a href="#module-family" class="md-nav__link">
     <span class="md-ellipsis">
-      Activation and status
+      Module family
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#semantic-layering" class="md-nav__link">
+  <a href="#environment-access" class="md-nav__link">
     <span class="md-ellipsis">
-      Semantic layering
+      Environment access
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#awaitablet" class="md-nav__link">
+  <a href="#workflow-file-handling" class="md-nav__link">
     <span class="md-ellipsis">
-      Awaitable[T]
+      Workflow file handling
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#bound-syntax" class="md-nav__link">
+  <a href="#exit-behavior" class="md-nav__link">
     <span class="md-ellipsis">
-      Bound syntax
+      Exit behavior
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#surface-syntax" class="md-nav__link">
+  <a href="#determinism-and-testability" class="md-nav__link">
     <span class="md-ellipsis">
-      Surface syntax
+      Determinism and testability
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#context-restrictions" class="md-nav__link">
+  <a href="#secrets-and-diagnostics" class="md-nav__link">
     <span class="md-ellipsis">
-      Context restrictions
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#helper-api-shape" class="md-nav__link">
-    <span class="md-ellipsis">
-      Helper API shape
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#surface-to-helper-relationship" class="md-nav__link">
-    <span class="md-ellipsis">
-      Surface-to-helper relationship
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#transitional-implementation-note" class="md-nav__link">
-    <span class="md-ellipsis">
-      Transitional implementation note
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#type-checking-rules" class="md-nav__link">
-    <span class="md-ellipsis">
-      Type checking rules
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#runtime-semantics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Runtime semantics
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cancellation-semantics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Cancellation semantics
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tie-breaking" class="md-nav__link">
-    <span class="md-ellipsis">
-      Tie-breaking
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#backend-guidance" class="md-nav__link">
-    <span class="md-ellipsis">
-      Backend guidance
+      Secrets and diagnostics
     </span>
   </a>
   
@@ -4401,37 +4251,46 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#examples" class="md-nav__link">
+  <a href="#design-details" class="md-nav__link">
     <span class="md-ellipsis">
-      Examples
+      Design details
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Examples">
+    <nav class="md-nav" aria-label="Design details">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#fastest-mirror-wins" class="md-nav__link">
+  <a href="#syntax" class="md-nav__link">
     <span class="md-ellipsis">
-      Fastest mirror wins
+      Syntax
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#heterogeneous-winner" class="md-nav__link">
+  <a href="#semantics" class="md-nav__link">
     <span class="md-ellipsis">
-      Heterogeneous winner
+      Semantics
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#direct-helper-use" class="md-nav__link">
+  <a href="#interaction-with-existing-features" class="md-nav__link">
     <span class="md-ellipsis">
-      Direct helper use
+      Interaction with existing features
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compatibility-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compatibility / migration
     </span>
   </a>
   
@@ -4439,24 +4298,6 @@
         
       </ul>
     </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#why-not-select" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why not select
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#why-not-async-match" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why not async match
-    </span>
-  </a>
   
 </li>
       
@@ -4467,63 +4308,21 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Alternatives considered">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-make-race-a-hard-core-keyword" class="md-nav__link">
-    <span class="md-ellipsis">
-      1. Make race a hard core keyword
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-fixed-arity-helper-apis-only" class="md-nav__link">
-    <span class="md-ellipsis">
-      2. Fixed-arity helper APIs only
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-pure-helper-apis-with-no-syntax-sugar" class="md-nav__link">
-    <span class="md-ellipsis">
-      3. Pure helper APIs with no syntax sugar
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#4-expose-rust-like-futureoutput-t" class="md-nav__link">
-    <span class="md-ellipsis">
-      4. Expose Rust-like Future&lt;Output = T&gt;
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#5-treat-race-as-a-hidden-intrinsic-instead-of-helper-sugar" class="md-nav__link">
-    <span class="md-ellipsis">
-      5. Treat race as a hidden intrinsic instead of helper sugar
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
   <a href="#drawbacks" class="md-nav__link">
     <span class="md-ellipsis">
       Drawbacks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation architecture
     </span>
   </a>
   
@@ -4565,474 +4364,197 @@
   
 
 
-<h1 id="rfc-039-race-for-awaitable-concurrency">RFC 039: <code>race</code> for awaitable concurrency<a class="headerlink" href="#rfc-039-race-for-awaitable-concurrency" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-067-stdci-deterministic-ci-and-automation-scripting-primitives">RFC 067: <code>std.ci</code> — deterministic CI and automation scripting primitives<a class="headerlink" href="#rfc-067-stdci-deterministic-ci-and-automation-scripting-primitives" title="Permanent link">&para;</a></h1>
 <ul>
 <li><strong>Status:</strong> Draft</li>
-<li><strong>Created:</strong> 2026-03-07</li>
+<li><strong>Created:</strong> 2026-04-16</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
-<li>RFC 023 (Compilable stdlib &amp; Rust module binding)</li>
-<li>RFC 027 (<code>incan-vocab</code>)</li>
-<li>RFC 028 (Trait-based operator overloading)</li>
-<li>RFC 029 (Union types and type narrowing)</li>
-<li>RFC 035 (First-class named function references)</li>
-<li>RFC 038 (Variadic positional args and keyword-argument capture)</li>
+<li>RFC 015 (hatch-like tooling and project lifecycle CLI)</li>
+<li>RFC 051 (<code>JsonValue</code> for <code>std.json</code>)</li>
+<li>RFC 055 (<code>std.fs</code> path-centric filesystem APIs)</li>
+<li>RFC 063 (<code>std.process</code> process spawning and command execution)</li>
+<li>RFC 066 (<code>std.http</code> HTTP client surface)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/331</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/85</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Introduce <code>race</code> as an import-activated <code>std.async</code> vocabulary form for "first-completion wins" concurrency, together with an Incan-native <code>Awaitable[T]</code> protocol (trait) that formalizes what <code>await</code> means in generic code.</p>
-<p>The architecture is deliberately layered:</p>
+<p>This RFC proposes <code>std.ci</code> as Incan's standard library surface for deterministic CI and automation scripts. The module family standardizes environment access, workflow input and output files, small automation-oriented filesystem helpers, argument and exit handling, and integration with <code>std.http</code> and <code>JsonValue</code> so repository automation does not need to fall back to fragile shell glue or JavaScript snippets.</p>
+<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
+<p>Read this RFC as one foundation plus three mechanisms:</p>
 <ol>
-<li><code>await</code> remains a core language feature in semantic terms. It is not replaced by ordinary library calls.</li>
-<li><code>Awaitable[T]</code> is the Incan-facing protocol behind <code>await</code>, in the same language-first spirit that RFC 028 applies to operators.</li>
-<li><code>race</code> is not an always-on core keyword. It is activated through <code>import std.async</code> and introduced through RFC 027's vocabulary/desugaring machinery.</li>
-<li><code>race for value:</code> is surface sugar over <code>std.async</code> helper APIs.</li>
-<li>The long-term helper shape is variadic, via RFC 038: <code>std.async.race(*arms: RaceArm[R]) -&gt; R</code>.</li>
+<li><strong>Foundation:</strong> CI scripting is ordinary Incan automation work, not a special-purpose embedded DSL or provider-specific builtin.</li>
+<li><strong>Mechanism A:</strong> <code>std.ci</code> provides a narrow set of primitives for the execution environment: env vars, argument access, output files, and explicit exit behavior.</li>
+<li><strong>Mechanism B:</strong> network access remains a separate general-purpose concern through <code>std.http</code>, not a CI-only HTTP surface.</li>
+<li><strong>Mechanism C:</strong> provider-specific behavior such as GitHub payload interpretation should live in libraries built on these primitives rather than as a special builtin contract.</li>
 </ol>
-<p>RFC 029 matters here too: when different branches produce different value types, <code>race</code> can naturally return a union such as <code>str | int</code> instead of forcing every caller through <code>Either</code>-style wrappers.</p>
-<p>The keyword is <code>race</code>, not <code>select</code>.</p>
-<p>That choice is deliberate:</p>
-<ul>
-<li><code>race</code> matches the semantics: multiple awaitables compete, one completes first, the rest are cancelled</li>
-<li><code>race</code> avoids conflict with future query language surfaces that will use <code>SELECT</code></li>
-<li><code>race</code> is a better name for arbitrary awaitables than Go-style <code>select</code>, which is channel-oriented</li>
-</ul>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<h3 id="the-stdlib-still-lacks-an-incan-first-way-to-express-generic-awaitables">The stdlib still lacks an Incan-first way to express generic awaitables<a class="headerlink" href="#the-stdlib-still-lacks-an-incan-first-way-to-express-generic-awaitables" title="Permanent link">&para;</a></h3>
-<p>The current <code>std.async</code> surface already shows the missing language piece. A timeout helper should be straightforward Incan:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">timeout_option</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">F</span> <span class="k">with</span> <span class="nc">Awaitable</span><span class="p">[</span><span class="nc">T</span><span class="p">]](</span><span class="n">seconds</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">task</span><span class="p">:</span> <span class="nc">F</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-    <span class="o">...</span>
-</code></pre></div>
-<p>But today that contract cannot be expressed cleanly enough in the public language. A generic parameter like <code>TaskFuture</code> can be named, but not properly constrained as "awaitable yielding <code>T</code>" in a way that makes <code>await task</code> typecheck as ordinary Incan code.</p>
-<p>That leaves stdlib code in an awkward place:</p>
+<p>CI automation is usually held together by shell scripts, YAML snippets, and tiny bits of JavaScript. That works, but it is a poor foundation for a language that wants to be credible in tooling and automation. Scripts become hard to test locally, hard to refactor, hard to type-check, and hard to reuse.</p>
+<p>This is especially visible for workflows such as issue triage, label synchronization, release automation, or event-driven repository checks. Those tasks typically need the same small set of capabilities:</p>
 <ul>
-<li>wrappers that should be ordinary Incan remain placeholders</li>
-<li>or they drop to narrow Rust-backed leaves earlier than they should</li>
+<li>read environment variables</li>
+<li>read an event payload file</li>
+<li>write outputs or step summaries</li>
+<li>make HTTP requests</li>
+<li>exit clearly and deterministically</li>
 </ul>
-<p>This RFC closes that gap by giving the language an explicit awaitable protocol and by giving <code>std.async</code> a concise syntax for racing awaitables.</p>
-<h3 id="await-is-the-primitive-race-is-composition"><code>await</code> is the primitive; <code>race</code> is composition<a class="headerlink" href="#await-is-the-primitive-race-is-composition" title="Permanent link">&para;</a></h3>
-<p>Earlier iterations of this idea treated <code>race</code> as a new core expression. That is the wrong center of gravity.</p>
-<p>The real semantic primitive is <code>await</code>.</p>
-<p><code>await</code> must remain a core language feature because:</p>
-<ul>
-<li>it participates directly in typechecking</li>
-<li>it defines a calling convention for async code</li>
-<li>it requires the compiler and backend to agree on suspension, resumption, and cancellation semantics</li>
-</ul>
-<p>By contrast, <code>race</code> is one layer higher. It is a way of composing several awaits. Under RFC 027, that makes it a strong fit for import-activated vocabulary plus helper-shaped expansion rather than a permanently reserved always-on keyword.</p>
-<h3 id="rfc-027-rfc-028-rfc-029-rfc-035-and-rfc-038-all-point-to-the-same-design">RFC 027, RFC 028, RFC 029, RFC 035, and RFC 038 all point to the same design<a class="headerlink" href="#rfc-027-rfc-028-rfc-029-rfc-035-and-rfc-038-all-point-to-the-same-design" title="Permanent link">&para;</a></h3>
-<p>This RFC sits at the intersection of several other design decisions:</p>
-<ul>
-<li><strong>RFC 027</strong> gives Incan a vocabulary path, so <code>race</code> does not need to become a one-off always-on keyword.</li>
-<li><strong>RFC 028</strong> reinforces the language-first rule. Async semantics should be specified in Incan terms just as operators are specified in Incan terms.</li>
-<li><strong>RFC 029</strong> gives Incan anonymous sum types. That means the common result type of a race can naturally be a union when branch bodies yield different types.</li>
-<li><strong>RFC 035</strong> makes named functions first-class values. Combined with closures, that makes a helper-shaped model natural.</li>
-<li><strong>RFC 038</strong> gives the helper surface its right long-term shape: a single variadic <code>race(*arms)</code> API instead of a growing <code>race2</code> / <code>race3</code> / <code>race4</code> ladder.</li>
-</ul>
-<p>Taken together, these RFCs point toward a cleaner architecture:</p>
-<ul>
-<li>define <code>await</code> through an Incan protocol</li>
-<li>define <code>race</code> as <code>std.async</code> sugar</li>
-<li>package branches as homogeneous <code>RaceArm[R]</code> values</li>
-<li>express <code>race</code> through a variadic helper over those arm values</li>
-</ul>
-<h3 id="why-not-just-keep-library-helpers">Why not just keep library helpers?<a class="headerlink" href="#why-not-just-keep-library-helpers" title="Permanent link">&para;</a></h3>
-<p>Python and TypeScript prove that helper-style APIs are viable:</p>
-<ul>
-<li>Python has <code>asyncio.wait(...)</code> and <code>asyncio.as_completed(...)</code></li>
-<li>TypeScript has <code>Promise.race(...)</code></li>
-</ul>
-<p>Those are useful, but they are not the whole answer for Incan.</p>
-<p>On their own they miss two things:</p>
-<ol>
-<li><strong>Ergonomic surface syntax</strong>: <code>race for value:</code> is easier to scan and teach than nested helper calls with inline lambdas.</li>
-<li><strong>A first-class awaitable model</strong>: without <code>Awaitable[T]</code>, helpers still cannot express "this generic value may be awaited and yields <code>T</code>".</li>
-</ol>
-<p>So the right answer is not "syntax only" or "helpers only". It is both:</p>
-<ul>
-<li>core <code>await</code> semantics via <code>Awaitable[T]</code></li>
-<li>helper functions in <code>std.async</code></li>
-<li>syntax sugar over those helpers</li>
-</ul>
-<h3 id="race-is-the-right-word"><code>race</code> is the right word<a class="headerlink" href="#race-is-the-right-word" title="Permanent link">&para;</a></h3>
-<p>This feature is the async sibling of <code>match</code>, but it is not literally <code>match</code>.</p>
-<ul>
-<li><code>match</code> chooses a branch based on the shape of one value that already exists</li>
-<li><code>race</code> chooses a branch based on which awaited operation completes first</li>
-</ul>
-<p>That difference matters enough that reusing <code>match</code> would blur semantics rather than clarify them.</p>
+<p>Today, each of those usually gets reinvented with ad hoc shell behavior or backend-specific libraries. <code>std.ci</code> should provide one explicit and testable base layer instead.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Formalize the Incan-facing protocol behind <code>await</code> as <code>Awaitable[T]</code>.</li>
-<li>Allow generic APIs to say "this parameter is awaitable and yields <code>T</code>".</li>
-<li>Introduce <code>race for value:</code> as <code>std.async</code> vocabulary syntax activated by importing <code>std.async</code>.</li>
-<li>Desugar <code>race</code> into ordinary <code>std.async</code> helper calls rather than treating it as a one-off backend special form.</li>
-<li>Use RFC 038's variadic capture to shape the long-term helper surface as <code>race(*arms: RaceArm[R])</code>.</li>
-<li>Make union return types from RFC 029 a first-class part of the <code>race</code> story.</li>
-<li>Specify cancellation and tie-breaking semantics clearly.</li>
+<li>Provide a small stdlib surface for deterministic CI and automation scripts.</li>
+<li>Standardize environment-variable access, argument access, exit behavior, and workflow-output file handling.</li>
+<li>Keep HTTP out of the CI module itself by composing through RFC 066 <code>std.http</code>.</li>
+<li>Make the surface portable across hosted CI systems while still being usable for GitHub Actions-style workflows.</li>
+<li>Support local fixture-driven testing of automation scripts.</li>
+<li>Keep secrets handling explicit and conservative.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Making <code>race</code> an always-on core keyword.</li>
-<li>Replacing <code>await</code> with a library function. <code>await</code> remains a core language feature.</li>
-<li>Exposing Rust's <code>Future&lt;Output = T&gt;</code> syntax directly in user-facing Incan.</li>
-<li>Designing a full async trait system, async closures RFC, or effect system.</li>
-<li>Adding Go-style channel <code>select</code> as a separate feature in this RFC.</li>
-<li>Adding <code>default</code> arms, guarded arms, or fairness controls in v1.</li>
+<li>Shipping a GitHub-specific, GitLab-specific, or provider-specific SDK as part of <code>std.ci</code>.</li>
+<li>Replacing <code>std.http</code>, <code>std.fs</code>, or <code>std.process</code>; <code>std.ci</code> should compose with them, not duplicate them.</li>
+<li>Defining a full JWT or cryptography story here beyond whatever minimal hooks later prove necessary.</li>
+<li>Defining a workflow YAML format or a hosted-runner orchestration system.</li>
+<li>Making CI automation a language feature rather than a stdlib surface.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="user-model">User model<a class="headerlink" href="#user-model" title="Permanent link">&para;</a></h3>
-<p>Think of <code>race</code> as the async cousin of <code>match</code>.</p>
-<ul>
-<li><code>match</code> says: "inspect one value and choose a branch"</li>
-<li><code>race</code> says: "wait on several awaitables and choose the branch attached to the winner"</li>
-</ul>
-<p>The winning branch gets a value binding. The losing branches are cancelled.</p>
-<h3 id="basic-syntax">Basic syntax<a class="headerlink" href="#basic-syntax" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span> <span class="o">=</span> <span class="n">race</span> <span class="k">for</span> <span class="n">value</span><span class="p">:</span>
-    <span class="k">await</span> <span class="n">fast</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">value</span>
-    <span class="k">await</span> <span class="n">slow</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">value</span>
-</code></pre></div>
-<p>This reads as:</p>
-<ol>
-<li>start both awaitables</li>
-<li>whichever completes first binds its result to <code>value</code></li>
-<li>evaluate the corresponding branch body</li>
-<li>cancel the losing awaitable</li>
-</ol>
-<h3 id="union-results-fit-naturally">Union results fit naturally<a class="headerlink" href="#union-results-fit-naturally" title="Permanent link">&para;</a></h3>
-<p>RFC 029 removes a lot of wrapper pressure here.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">race</span> <span class="k">for</span> <span class="n">value</span><span class="p">:</span>
-    <span class="k">await</span> <span class="n">fetch_text</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">value</span>
-    <span class="k">await</span> <span class="n">fetch_count</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">value</span>
+<h3 id="reading-the-execution-environment">Reading the execution environment<a class="headerlink" href="#reading-the-execution-environment" title="Permanent link">&para;</a></h3>
+<p>An automation script should be able to read environment variables explicitly:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.ci.env</span><span class="w"> </span><span class="kn">import</span> <span class="nb">get</span><span class="p">,</span> <span class="n">get_optional</span>
 
-<span class="k">match</span> <span class="kt">result</span><span class="p">:</span>
-    <span class="k">case</span> <span class="nb">str</span><span class="p">(</span><span class="n">s</span><span class="p">):</span>
-        <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;text: </span><span class="si">{</span><span class="n">s</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="k">case</span> <span class="nb">int</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
-        <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;count: </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="n">event_path</span> <span class="o">=</span> <span class="nb">get</span><span class="p">(</span><span class="s2">&quot;GITHUB_EVENT_PATH&quot;</span><span class="p">)</span><span class="o">?</span>
+<span class="n">token</span> <span class="o">=</span> <span class="n">get_optional</span><span class="p">(</span><span class="s2">&quot;GITHUB_TOKEN&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p>The two arms await different result types, but the branch bodies still agree on one final type: <code>str | int</code>.</p>
-<h3 id="use-an-enum-when-provenance-matters">Use an enum when provenance matters<a class="headerlink" href="#use-an-enum-when-provenance-matters" title="Permanent link">&para;</a></h3>
-<p>If both branches produce the same type and you still need to know which branch won, use an explicit wrapper in the branch bodies:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">enum</span> <span class="nc">Source</span><span class="p">:</span>
-    <span class="nc">Primary</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
-    <span class="nc">Replica</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+<p>Missing required values should be explicit failures, not silent <code>None</code> unless the user asked for optional access.</p>
+<h3 id="reading-workflow-payloads">Reading workflow payloads<a class="headerlink" href="#reading-workflow-payloads" title="Permanent link">&para;</a></h3>
+<p>Scripts should be able to combine <code>std.ci</code> primitives with <code>JsonValue</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.ci.env</span><span class="w"> </span><span class="kn">import</span> <span class="nb">get</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.ci.fs</span><span class="w"> </span><span class="kn">import</span> <span class="n">read_text</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonValue</span>
 
-<span class="kt">result</span> <span class="o">=</span> <span class="n">race</span> <span class="k">for</span> <span class="n">value</span><span class="p">:</span>
-    <span class="k">await</span> <span class="n">fetch_primary</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="nc">Source</span><span class="o">.</span><span class="nc">Primary</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
-    <span class="k">await</span> <span class="n">fetch_replica</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="nc">Source</span><span class="o">.</span><span class="nc">Replica</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+<span class="n">payload</span> <span class="o">=</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">read_text</span><span class="p">(</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;GITHUB_EVENT_PATH&quot;</span><span class="p">)</span><span class="o">?</span><span class="p">)</span><span class="o">?</span><span class="p">)</span><span class="o">?</span>
+<span class="n">issue_number</span> <span class="o">=</span> <span class="n">payload</span><span class="p">[</span><span class="s2">&quot;issue&quot;</span><span class="p">][</span><span class="s2">&quot;number&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">as_int</span><span class="p">()</span>
 </code></pre></div>
-<p>This keeps <code>race</code> simple. The syntax decides the winner; ordinary Incan types decide how much provenance you want to carry afterwards.</p>
-<h3 id="timeout-becomes-ordinary-stdasync-composition">Timeout becomes ordinary <code>std.async</code> composition<a class="headerlink" href="#timeout-becomes-ordinary-stdasync-composition" title="Permanent link">&para;</a></h3>
-<p>Once <code>Awaitable[T]</code> exists, timeout helpers become straightforward:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">timeout_option</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">F</span> <span class="k">with</span> <span class="nc">Awaitable</span><span class="p">[</span><span class="nc">T</span><span class="p">]](</span><span class="n">seconds</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">task</span><span class="p">:</span> <span class="nc">F</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-    <span class="k">return</span> <span class="n">race</span> <span class="k">for</span> <span class="n">value</span><span class="p">:</span>
-        <span class="k">await</span> <span class="n">task</span> <span class="o">=&gt;</span> <span class="nb">Some</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
-        <span class="k">await</span> <span class="nb">sleep</span><span class="p">(</span><span class="n">seconds</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="kc">None</span>
-</code></pre></div>
-<p>The public surface is plain Incan. The helper is described in Incan terms, even if its eventual backend realization uses Tokio or another runtime.</p>
-<h3 id="helper-model">Helper model<a class="headerlink" href="#helper-model" title="Permanent link">&para;</a></h3>
-<p>The intended long-term helper model is variadic:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span> <span class="o">=</span> <span class="n">race</span> <span class="k">for</span> <span class="n">value</span><span class="p">:</span>
-    <span class="k">await</span> <span class="n">fast</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">value</span>
-    <span class="k">await</span> <span class="n">slow</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">value</span>
-</code></pre></div>
-<p>Conceptually, the surface form corresponds to:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">std</span><span class="o">.</span><span class="k">async</span><span class="o">.</span><span class="n">race</span><span class="p">(</span>
-    <span class="n">std</span><span class="o">.</span><span class="k">async</span><span class="o">.</span><span class="n">arm</span><span class="p">(</span><span class="n">fast</span><span class="p">(),</span> <span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">value</span><span class="p">),</span>
-    <span class="n">std</span><span class="o">.</span><span class="k">async</span><span class="o">.</span><span class="n">arm</span><span class="p">(</span><span class="n">slow</span><span class="p">(),</span> <span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">value</span><span class="p">),</span>
-<span class="p">)</span>
-</code></pre></div>
-<p>RFC 038 matters because without variadics the helper surface tends to fragment into fixed-arity forms. With variadics, the public API stays clean.</p>
-<h3 id="direct-helper-use-also-works">Direct helper use also works<a class="headerlink" href="#direct-helper-use-also-works" title="Permanent link">&para;</a></h3>
-<p>RFC 035 matters here because named function references fit the helper form naturally:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">on_fast</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">value</span>
+<p>This is still ordinary Incan. The CI-specific part is only how the script learns where the payload file lives.</p>
+<h3 id="writing-outputs">Writing outputs<a class="headerlink" href="#writing-outputs" title="Permanent link">&para;</a></h3>
+<p>Workflow systems often expose file-based output channels. The stdlib should make that explicit:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.ci.output</span><span class="w"> </span><span class="kn">import</span> <span class="n">set_output</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">on_slow</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">value</span>
+<span class="n">set_output</span><span class="p">(</span><span class="s2">&quot;triaged&quot;</span><span class="p">,</span> <span class="s2">&quot;true&quot;</span><span class="p">)</span><span class="o">?</span>
+</code></pre></div>
+<p>or, for a more direct file-oriented model:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.ci.env</span><span class="w"> </span><span class="kn">import</span> <span class="nb">get</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.ci.fs</span><span class="w"> </span><span class="kn">import</span> <span class="n">append_text</span>
 
-<span class="kt">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">std</span><span class="o">.</span><span class="k">async</span><span class="o">.</span><span class="n">race</span><span class="p">(</span>
-    <span class="n">std</span><span class="o">.</span><span class="k">async</span><span class="o">.</span><span class="n">arm</span><span class="p">(</span><span class="n">fast</span><span class="p">(),</span> <span class="n">on_fast</span><span class="p">),</span>
-    <span class="n">std</span><span class="o">.</span><span class="k">async</span><span class="o">.</span><span class="n">arm</span><span class="p">(</span><span class="n">slow</span><span class="p">(),</span> <span class="n">on_slow</span><span class="p">),</span>
-<span class="p">)</span>
+<span class="n">append_text</span><span class="p">(</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;GITHUB_OUTPUT&quot;</span><span class="p">)</span><span class="o">?</span><span class="p">,</span> <span class="s2">&quot;triaged=true</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
-<p>Users do not have to write the helper call directly, but when they do, named function references and closures should both work.</p>
-<h3 id="matching-is-still-done-with-ordinary-match">Matching is still done with ordinary <code>match</code><a class="headerlink" href="#matching-is-still-done-with-ordinary-match" title="Permanent link">&para;</a></h3>
-<p>This RFC intentionally does not require pattern bindings inside <code>race</code> arms.</p>
-<p>If you want to inspect the winner's shape, you do that in ordinary Incan:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span> <span class="o">=</span> <span class="n">race</span> <span class="k">for</span> <span class="n">msg</span><span class="p">:</span>
-    <span class="k">await</span> <span class="n">rx_a</span><span class="o">.</span><span class="n">recv</span><span class="p">()</span> <span class="o">=&gt;</span>
-        <span class="k">match</span> <span class="n">msg</span><span class="p">:</span>
-            <span class="nb">Some</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="sa">f</span><span class="s2">&quot;a: </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span>
-            <span class="kc">None</span> <span class="o">=&gt;</span> <span class="s2">&quot;a closed&quot;</span>
-    <span class="k">await</span> <span class="n">rx_b</span><span class="o">.</span><span class="n">recv</span><span class="p">()</span> <span class="o">=&gt;</span>
-        <span class="k">match</span> <span class="n">msg</span><span class="p">:</span>
-            <span class="nb">Some</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="sa">f</span><span class="s2">&quot;b: </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span>
-            <span class="kc">None</span> <span class="o">=&gt;</span> <span class="s2">&quot;b closed&quot;</span>
+<p>The important point is that the file-write behavior is explicit and testable.</p>
+<h3 id="exiting-clearly">Exiting clearly<a class="headerlink" href="#exiting-clearly" title="Permanent link">&para;</a></h3>
+<p>Automation scripts should be able to fail or succeed explicitly:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.ci.process</span><span class="w"> </span><span class="kn">import</span> <span class="n">exit</span>
+
+<span class="k">if</span> <span class="ow">not</span> <span class="n">ok</span><span class="p">:</span>
+    <span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
 </code></pre></div>
-<p>That keeps <code>race</code> focused on concurrency while letting <code>match</code> keep its existing role as the value-shape construct.</p>
+<p>This does not replace structured <code>Result</code>-returning APIs. It only gives the script one explicit terminal action when needed.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="activation-and-status">Activation and status<a class="headerlink" href="#activation-and-status" title="Permanent link">&para;</a></h3>
-<p><code>race</code> is not always available.</p>
-<p>It becomes active when <code>std.async</code> is imported, following RFC 027's unified vocabulary model. A file that never imports <code>std.async</code> does not gain <code>race</code>.</p>
-<h3 id="semantic-layering">Semantic layering<a class="headerlink" href="#semantic-layering" title="Permanent link">&para;</a></h3>
-<p>This RFC distinguishes three layers:</p>
-<ol>
-<li><strong>Core semantic layer</strong>: <code>await</code> and <code>Awaitable[T]</code></li>
-<li><strong>Library layer</strong>: helper values and helper functions in <code>std.async</code></li>
-<li><strong>Vocabulary layer</strong>: <code>race for value:</code> syntax, which maps onto the helper layer</li>
-</ol>
-<p>The design intentionally avoids collapsing all three into one special-case compiler feature.</p>
-<h3 id="awaitablet"><code>Awaitable[T]</code><a class="headerlink" href="#awaitablet" title="Permanent link">&para;</a></h3>
-<p>This RFC introduces an Incan-facing protocol:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Awaitable</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-    <span class="c1"># builtin protocol used by `await`</span>
-</code></pre></div>
-<p>This is a language hook. Like the operator protocols of RFC 028, it is specified in Incan terms first and mapped to backend constructs second.</p>
-<p>The user-facing rule is:</p>
+<h3 id="module-family">Module family<a class="headerlink" href="#module-family" title="Permanent link">&para;</a></h3>
+<p><code>std.ci</code> must provide a narrow but sufficient set of modules or equivalent surfaces covering:</p>
 <ul>
-<li><code>await expr</code> is valid only if <code>expr</code> has some type <code>F</code> such that <code>F with Awaitable[T]</code> for some <code>T</code></li>
-<li>the result type of <code>await expr</code> is <code>T</code></li>
+<li>environment access</li>
+<li>workflow input and output file handling</li>
+<li>process arguments and exit behavior</li>
+<li>deterministic helper behavior suitable for local testing</li>
 </ul>
-<p>Backends may realize this however they need to. On Rust, that will likely mean a representation equivalent to <code>Future&lt;Output = T&gt;</code>, but that is backend guidance, not the language model.</p>
-<h3 id="bound-syntax">Bound syntax<a class="headerlink" href="#bound-syntax" title="Permanent link">&para;</a></h3>
-<p>This RFC gives practical meaning to:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nc">F</span> <span class="k">with</span> <span class="nc">Awaitable</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
-</code></pre></div>
-<p>This means:</p>
+<p>The module family may be split as:</p>
 <ul>
-<li>values of type <code>F</code> may be awaited</li>
-<li>awaiting them yields a value of type <code>T</code></li>
+<li><code>std.ci.env</code></li>
+<li><code>std.ci.fs</code></li>
+<li><code>std.ci.process</code></li>
+<li><code>std.ci.output</code></li>
 </ul>
-<p>This is the missing piece that lets generic async wrappers be expressed cleanly in Incan source.</p>
-<h3 id="surface-syntax">Surface syntax<a class="headerlink" href="#surface-syntax" title="Permanent link">&para;</a></h3>
-<p>The primary surface syntax is:</p>
-<div class="language-text highlight"><pre><span></span><code>race_for_expr ::= &quot;race&quot; &quot;for&quot; IDENT &quot;:&quot; NEWLINE INDENT race_for_arm+ DEDENT
-race_for_arm  ::= &quot;await&quot; expr &quot;=&gt;&quot; race_body
-race_body     ::= expr | NEWLINE INDENT stmt+ DEDENT
-</code></pre></div>
-<p>Example:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span> <span class="o">=</span> <span class="n">race</span> <span class="k">for</span> <span class="n">value</span><span class="p">:</span>
-    <span class="k">await</span> <span class="n">fast</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">value</span>
-    <span class="k">await</span> <span class="n">slow</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">value</span>
-</code></pre></div>
-<p>The binding name after <code>for</code> is in scope inside each arm body, but each arm gets its own logically separate binding.</p>
-<h3 id="context-restrictions">Context restrictions<a class="headerlink" href="#context-restrictions" title="Permanent link">&para;</a></h3>
-<ol>
-<li><code>race</code> is only valid inside <code>async def</code>.</li>
-<li>Every arm in v1 is an <code>await</code> arm.</li>
-<li>All arm bodies must produce a single common result type.</li>
-<li>That common result type may be a union, subject to RFC 029's rules.</li>
-<li><code>race</code> is expression-position syntax.</li>
-</ol>
-<h3 id="helper-api-shape">Helper API shape<a class="headerlink" href="#helper-api-shape" title="Permanent link">&para;</a></h3>
-<p>The long-term helper family is expected to look roughly like this:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="nb">type</span> <span class="nc">RaceArm</span><span class="p">[</span><span class="nc">R</span><span class="p">]</span> <span class="o">=</span> <span class="o">...</span>
-
-<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">arm</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">R</span><span class="p">,</span> <span class="nc">F</span> <span class="k">with</span> <span class="nc">Awaitable</span><span class="p">[</span><span class="nc">T</span><span class="p">]](</span>
-    <span class="n">awaitable</span><span class="p">:</span> <span class="nc">F</span><span class="p">,</span>
-    <span class="n">on_win</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">R</span><span class="p">,</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">RaceArm</span><span class="p">[</span><span class="nc">R</span><span class="p">]</span>
-
-<span class="k">pub</span> <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">race</span><span class="p">[</span><span class="nc">R</span><span class="p">](</span><span class="o">*</span><span class="n">arms</span><span class="p">:</span> <span class="nc">RaceArm</span><span class="p">[</span><span class="nc">R</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">R</span>
-</code></pre></div>
-<p>The important design choice is that the variadic parameter is homogeneous. Each branch is packaged into a <code>RaceArm[R]</code> first, and only then passed through <code>*arms</code>. This is what lets RFC 038 solve the arity problem cleanly.</p>
-<h3 id="surface-to-helper-relationship">Surface-to-helper relationship<a class="headerlink" href="#surface-to-helper-relationship" title="Permanent link">&para;</a></h3>
-<p>Conceptually:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span> <span class="o">=</span> <span class="n">race</span> <span class="k">for</span> <span class="n">value</span><span class="p">:</span>
-    <span class="k">await</span> <span class="n">fast</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">transform_fast</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
-    <span class="k">await</span> <span class="n">slow</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">transform_slow</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
-</code></pre></div>
-<p>desugars to:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span> <span class="o">=</span> <span class="n">std</span><span class="o">.</span><span class="k">async</span><span class="o">.</span><span class="n">race</span><span class="p">(</span>
-    <span class="n">std</span><span class="o">.</span><span class="k">async</span><span class="o">.</span><span class="n">arm</span><span class="p">(</span><span class="n">fast</span><span class="p">(),</span> <span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">transform_fast</span><span class="p">(</span><span class="n">value</span><span class="p">)),</span>
-    <span class="n">std</span><span class="o">.</span><span class="k">async</span><span class="o">.</span><span class="n">arm</span><span class="p">(</span><span class="n">slow</span><span class="p">(),</span> <span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">transform_slow</span><span class="p">(</span><span class="n">value</span><span class="p">)),</span>
-<span class="p">)</span>
-</code></pre></div>
-<p>The exact internal representation is an implementation detail. The important contract is that <code>race</code> is a library-shaped surface over <code>std.async</code> helpers, not a hidden one-off backend primitive.</p>
-<h3 id="transitional-implementation-note">Transitional implementation note<a class="headerlink" href="#transitional-implementation-note" title="Permanent link">&para;</a></h3>
-<p>If RFC 038 is not available at initial implementation time, fixed-arity helpers such as <code>race2</code> and <code>race3</code> are acceptable as a stepping stone.</p>
-<p>They are not the desired long-term public architecture.</p>
-<h3 id="type-checking-rules">Type checking rules<a class="headerlink" href="#type-checking-rules" title="Permanent link">&para;</a></h3>
-<p>For a <code>race for value:</code> expression:</p>
-<ol>
-<li>Each awaited expression must typecheck as some <code>Awaitable[T_arm]</code>.</li>
-<li>Inside that arm body, <code>value</code> has type <code>T_arm</code>.</li>
-<li>The binder is arm-local; reusing the same name across arms is legal and does not imply the same type.</li>
-<li>Every arm body must typecheck to the same result type <code>R</code>.</li>
-<li><code>R</code> may be an ordinary type, an enum, or a union from RFC 029.</li>
-<li>The overall <code>race</code> expression has type <code>R</code>.</li>
-</ol>
-<p>Example:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">return</span> <span class="n">race</span> <span class="k">for</span> <span class="n">value</span><span class="p">:</span>
-    <span class="k">await</span> <span class="n">fetch_user</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
-    <span class="k">await</span> <span class="n">fetch_error_code</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="nb">Err</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
-</code></pre></div>
-<p>This typechecks if both branches produce the same outer type, for example <code>Result[User, int]</code>.</p>
-<h3 id="runtime-semantics">Runtime semantics<a class="headerlink" href="#runtime-semantics" title="Permanent link">&para;</a></h3>
-<p>When evaluation enters a <code>race</code> expression:</p>
-<ol>
-<li>All awaited arm expressions are started in the current async context.</li>
-<li>The runtime polls them concurrently.</li>
-<li>The first arm to complete wins.</li>
-<li>The winning arm body is evaluated.</li>
-<li>Losing awaitables are cancelled by being dropped.</li>
-</ol>
-<p>This is not the same as spawning detached tasks. <code>race</code> multiplexes several awaitables within one async flow.</p>
-<h3 id="cancellation-semantics">Cancellation semantics<a class="headerlink" href="#cancellation-semantics" title="Permanent link">&para;</a></h3>
-<p>Cancellation is cooperative:</p>
+<p>or another equivalent subdivision, but the public contract must remain small and explicit.</p>
+<h3 id="environment-access">Environment access<a class="headerlink" href="#environment-access" title="Permanent link">&para;</a></h3>
+<p>The environment-access surface must provide:</p>
 <ul>
-<li>losing arms do not continue running to completion</li>
-<li>dropping a losing awaitable triggers whatever cleanup that awaitable normally performs</li>
-<li>code must not assume side effects after the final suspension point of a losing arm will still happen</li>
+<li>a required getter that fails clearly when a variable is absent</li>
+<li>an optional getter that returns <code>None</code> when absent</li>
 </ul>
-<p>This is the same semantic territory as runtimes like Tokio, but the language definition stays backend-agnostic.</p>
-<h3 id="tie-breaking">Tie-breaking<a class="headerlink" href="#tie-breaking" title="Permanent link">&para;</a></h3>
-<p>If more than one arm becomes ready at the same poll point, v1 chooses the first arm in source order.</p>
-<p>This gives deterministic behavior and keeps the first version easy to reason about.</p>
-<h3 id="backend-guidance">Backend guidance<a class="headerlink" href="#backend-guidance" title="Permanent link">&para;</a></h3>
-<p>The Rust backend will likely realize <code>Awaitable[T]</code> in terms equivalent to Rust futures and realize <code>std.async.race(...)</code> in terms equivalent to <code>tokio::select!</code> or a narrow helper facade.</p>
-<p>That is explicitly backend guidance, not the normative language definition.</p>
-<h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
-<h3 id="fastest-mirror-wins">Fastest mirror wins<a class="headerlink" href="#fastest-mirror-wins" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fetch_file</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">race</span> <span class="k">for</span> <span class="n">data</span><span class="p">:</span>
-        <span class="k">await</span> <span class="n">http_get</span><span class="p">(</span><span class="nc">PRIMARY_URL</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">data</span>
-        <span class="k">await</span> <span class="n">http_get</span><span class="p">(</span><span class="nc">MIRROR_URL</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">data</span>
-</code></pre></div>
-<h3 id="heterogeneous-winner">Heterogeneous winner<a class="headerlink" href="#heterogeneous-winner" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">race</span> <span class="k">for</span> <span class="n">value</span><span class="p">:</span>
-    <span class="k">await</span> <span class="n">fetch_text</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">value</span>
-    <span class="k">await</span> <span class="n">fetch_count</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">value</span>
-</code></pre></div>
-<h3 id="direct-helper-use">Direct helper use<a class="headerlink" href="#direct-helper-use" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fastest_text</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="k">await</span> <span class="n">std</span><span class="o">.</span><span class="k">async</span><span class="o">.</span><span class="n">race</span><span class="p">(</span>
-        <span class="n">std</span><span class="o">.</span><span class="k">async</span><span class="o">.</span><span class="n">arm</span><span class="p">(</span><span class="n">fetch_primary</span><span class="p">(),</span> <span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">value</span><span class="p">),</span>
-        <span class="n">std</span><span class="o">.</span><span class="k">async</span><span class="o">.</span><span class="n">arm</span><span class="p">(</span><span class="n">fetch_replica</span><span class="p">(),</span> <span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">value</span><span class="p">),</span>
-        <span class="n">std</span><span class="o">.</span><span class="k">async</span><span class="o">.</span><span class="n">arm</span><span class="p">(</span><span class="n">fetch_cache</span><span class="p">(),</span> <span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">value</span><span class="p">),</span>
-    <span class="p">)</span>
-</code></pre></div>
-<h2 id="why-not-select">Why not <code>select</code><a class="headerlink" href="#why-not-select" title="Permanent link">&para;</a></h2>
-<p><code>select</code> was considered and rejected.</p>
-<p>Reasons:</p>
+<p>It must not silently coerce missing values into empty strings.</p>
+<h3 id="workflow-file-handling">Workflow file handling<a class="headerlink" href="#workflow-file-handling" title="Permanent link">&para;</a></h3>
+<p>The CI surface must support the common workflow pattern of reading payload files and writing output files. It may do this either through:</p>
 <ul>
-<li><code>SELECT</code> is reserved for future query language surfaces, so reusing the word would create unnecessary ambiguity</li>
-<li>Go-style <code>select</code> is channel-oriented, while this RFC is about arbitrary awaitables</li>
-<li><code>race</code> describes the behavior directly and keeps expectations cleaner</li>
+<li>explicit helpers such as <code>set_output(...)</code>, or</li>
+<li>a smaller primitive model built on environment variables and append-safe file helpers</li>
 </ul>
-<p>This does not rule out a future channel-specialized construct if that later proves worthwhile.</p>
-<h2 id="why-not-async-match">Why not <code>async match</code><a class="headerlink" href="#why-not-async-match" title="Permanent link">&para;</a></h2>
-<p><code>async match</code> was also considered.</p>
-<p>It sounds attractive at first because <code>race</code> is the async cousin of <code>match</code>, but the semantics are different enough that overloading <code>match</code> would blur the model:</p>
+<p>This RFC does not require one exact spelling yet, but it does require the capability.</p>
+<h3 id="exit-behavior">Exit behavior<a class="headerlink" href="#exit-behavior" title="Permanent link">&para;</a></h3>
+<p><code>std.ci</code> must provide explicit process-exit behavior or a functionally equivalent way to terminate with a chosen exit code.</p>
+<h3 id="determinism-and-testability">Determinism and testability<a class="headerlink" href="#determinism-and-testability" title="Permanent link">&para;</a></h3>
+<p>The module family should prefer deterministic behavior:</p>
 <ul>
-<li><code>match</code> inspects one value that already exists</li>
-<li><code>race</code> waits on several awaitables and cancels losers</li>
+<li>no hidden network</li>
+<li>no hidden retries</li>
+<li>no hidden provider-specific fallbacks</li>
 </ul>
-<p>Incan already has a good story for "await one thing, then match it":</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">match</span> <span class="k">await</span> <span class="n">rx</span><span class="o">.</span><span class="n">recv</span><span class="p">():</span>
-    <span class="nb">Some</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">handle</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
-    <span class="kc">None</span> <span class="o">=&gt;</span> <span class="n">handle_closed</span><span class="p">()</span>
-</code></pre></div>
-<p><code>race</code> is needed specifically for the multi-await case.</p>
+<p>CI scripts must remain locally testable with fixture payloads and explicit environment setup.</p>
+<h3 id="secrets-and-diagnostics">Secrets and diagnostics<a class="headerlink" href="#secrets-and-diagnostics" title="Permanent link">&para;</a></h3>
+<p>The CI surface should avoid exposing secrets carelessly in debug-facing or error-facing helpers. It does not need to define a complete secret type system, but it should follow conservative diagnostic practices and defer richer secret handling to dedicated follow-up work where needed.</p>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
+<p>This RFC introduces no new language syntax.</p>
+<h3 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h3>
+<p>The semantic center is narrowness:</p>
+<ul>
+<li><code>std.ci</code> is not a general automation framework</li>
+<li><code>std.ci</code> is not an HTTP stack</li>
+<li><code>std.ci</code> is not a provider-specific SDK</li>
+</ul>
+<p>It is a small bridge between hosted automation environments and ordinary Incan code.</p>
+<h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>RFC 066 (<code>std.http</code>)</strong>: HTTP access for automation scripts should go through <code>std.http</code>, not a CI-only network API.</li>
+<li><strong>RFC 051 (<code>JsonValue</code>)</strong>: event payload parsing should compose naturally with <code>JsonValue</code>.</li>
+<li><strong>RFC 055 (<code>std.fs</code>)</strong>: path and file handling should stay coherent with the broader filesystem surface where possible.</li>
+<li><strong>RFC 063 (<code>std.process</code>)</strong>: argument access and exit behavior should align with the broader process model rather than diverge.</li>
+<li><strong>RFC 015</strong>: a future CLI wrapper such as <code>incan ci</code> may exist, but it is not required for the base stdlib contract.</li>
+</ul>
+<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
+<p>This feature is additive. Existing bash, shell, or JavaScript-based CI steps remain valid. The design claim is that Incan should offer a better standard path for new automation scripts once the module exists.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<h3 id="1-make-race-a-hard-core-keyword">1. Make <code>race</code> a hard core keyword<a class="headerlink" href="#1-make-race-a-hard-core-keyword" title="Permanent link">&para;</a></h3>
-<p>Rejected as the preferred framing.</p>
-<p>Pros:</p>
 <ul>
-<li>simpler to describe in isolation</li>
-<li>direct compiler ownership of the syntax</li>
+<li><strong>Keep shell and JavaScript glue only</strong></li>
+<li>Rejected because it leaves automation brittle, weakly typed, and difficult to test.</li>
+<li><strong>Make GitHub a builtin</strong></li>
+<li>Rejected because it introduces too much provider policy too early.</li>
+<li><strong>Push everything into <code>std.http</code> plus <code>std.fs</code></strong></li>
+<li>Rejected because CI environments do have a small amount of distinct execution-context behavior worth standardizing.</li>
 </ul>
-<p>Cons:</p>
-<ul>
-<li>misses RFC 027's vocabulary/desugaring architecture</li>
-<li>overstates how special <code>race</code> really is compared to the true primitive, <code>await</code></li>
-<li>makes the feature feel more compiler-owned and less stdlib-shaped than necessary</li>
-</ul>
-<h3 id="2-fixed-arity-helper-apis-only">2. Fixed-arity helper APIs only<a class="headerlink" href="#2-fixed-arity-helper-apis-only" title="Permanent link">&para;</a></h3>
-<p>Rejected as the long-term design.</p>
-<p>Pros:</p>
-<ul>
-<li>easy stepping stone for implementation</li>
-<li>no dependency on RFC 038</li>
-</ul>
-<p>Cons:</p>
-<ul>
-<li>proliferates <code>race2</code>, <code>race3</code>, <code>race4</code>, and so on</li>
-<li>teaches the wrong shape for the public API</li>
-<li>makes syntax sugar less cleanly explainable</li>
-</ul>
-<h3 id="3-pure-helper-apis-with-no-syntax-sugar">3. Pure helper APIs with no syntax sugar<a class="headerlink" href="#3-pure-helper-apis-with-no-syntax-sugar" title="Permanent link">&para;</a></h3>
-<p>Rejected as the user-facing design.</p>
-<p>Pros:</p>
-<ul>
-<li>minimal syntax work</li>
-<li>familiar to Python and TypeScript users</li>
-</ul>
-<p>Cons:</p>
-<ul>
-<li>clunkier for common first-wins code</li>
-<li>loses the clarity of an arm-oriented surface</li>
-<li>still requires <code>Awaitable[T]</code> work anyway</li>
-</ul>
-<p>The helpers should exist, but syntax sugar over them is worthwhile.</p>
-<h3 id="4-expose-rust-like-futureoutput-t">4. Expose Rust-like <code>Future&lt;Output = T&gt;</code><a class="headerlink" href="#4-expose-rust-like-futureoutput-t" title="Permanent link">&para;</a></h3>
-<p>Rejected for Incan source.</p>
-<p>Pros:</p>
-<ul>
-<li>maps closely to the Rust backend</li>
-</ul>
-<p>Cons:</p>
-<ul>
-<li>leaks Rust concepts into the public language model</li>
-<li>introduces associated-type syntax before users need to think in those terms</li>
-<li>conflicts with RFC 028's language-first philosophy</li>
-</ul>
-<h3 id="5-treat-race-as-a-hidden-intrinsic-instead-of-helper-sugar">5. Treat <code>race</code> as a hidden intrinsic instead of helper sugar<a class="headerlink" href="#5-treat-race-as-a-hidden-intrinsic-instead-of-helper-sugar" title="Permanent link">&para;</a></h3>
-<p>Not preferred.</p>
-<p>Pros:</p>
-<ul>
-<li>can simplify an initial backend implementation</li>
-</ul>
-<p>Cons:</p>
-<ul>
-<li>obscures the stdlib-facing model</li>
-<li>underuses RFC 035's function-reference story</li>
-<li>no longer benefits as directly from RFC 038's variadic design</li>
-</ul>
-<p>An implementation may still use internal specialization, but the public architecture should remain helper-shaped.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>Awaitable[T]</code> adds a new builtin protocol that the language implementation must understand.</li>
-<li><code>race</code> adds async-specific vocabulary users must learn.</li>
-<li>cancellation semantics require careful documentation and testing.</li>
-<li>RFC 027 may need a small extension if expression-position vocab blocks are not yet covered cleanly enough.</li>
-<li>RFC 038 becomes a meaningful architectural dependency for the ideal helper surface, even if fixed-arity helpers can bridge the gap temporarily.</li>
+<li>There is a real risk of overfitting the module to one provider if the design is not kept disciplined.</li>
+<li>Output-file and env-var conventions vary across systems, so portability rules need careful wording.</li>
+<li>Secret-handling expectations need to be conservative even if the module stays intentionally small.</li>
 </ul>
-<p>These costs are acceptable because they buy a much cleaner async story for the stdlib and future libraries.</p>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
+<p><em>(Non-normative.)</em> A sensible rollout starts with <code>env</code>, <code>fs</code>, and <code>process</code> primitives plus fixture-driven examples that demonstrate local testing against payload files. Once <code>std.http</code> is available, real CI automation flows can compose on top without needing any provider-specific builtin APIs.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Core async model</strong> — <code>Awaitable[T]</code> is the builtin protocol behind <code>await</code>; <code>await expr</code> must verify that the awaited expression satisfies <code>Awaitable[T]</code> and that the result type follows.</li>
-<li><strong>Vocabulary activation</strong> — <code>race for value:</code> is import-activated syntax through <code>std.async</code>, following RFC 027's vocabulary model; expression-position block forms may require a small RFC 027 extension.</li>
-<li><strong>Stdlib (<code>std.async</code>)</strong> — the module owns the helper surface (<code>RaceArm[R]</code>, <code>arm(awaitable, on_win)</code>, and <code>race(*arms: RaceArm[R])</code>); the older <code>select</code> placeholder story should converge on <code>race</code>.</li>
-<li><strong>Compilation handoff</strong> — implementations must preserve the contract that <code>race</code> maps onto the <code>std.async</code> helper model; transitional fixed-arity helpers (<code>race2</code>, <code>race3</code>) are acceptable until RFC 038 variadics land.</li>
-<li><strong>Backend realization</strong> — backends may realize <code>Awaitable[T]</code> and <code>std.async.race(...)</code> using native async primitives; for Rust that likely means future semantics plus a <code>tokio::select!</code>-like strategy, but that is backend guidance, not the normative language definition.</li>
+<li><strong>Stdlib / runtime</strong>: must provide the CI module family and its deterministic environment-facing helpers.</li>
+<li><strong>Language surface</strong>: the module family must be available as specified and must compose cleanly with ordinary Incan code.</li>
+<li><strong>Execution handoff</strong>: implementations must preserve explicit environment, file, and exit semantics without hidden provider-specific behavior.</li>
+<li><strong>Docs / tooling</strong>: examples should show local fixture-driven testing and explicit composition with <code>std.http</code> and <code>JsonValue</code>.</li>
 </ul>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
-<ol>
-<li>Should <code>Awaitable[T]</code> be user-implementable in v1, or compiler-recognized only?</li>
-<li>Should <code>std.async.select</code> be renamed to <code>std.async.race</code>, with compatibility exports left behind?</li>
-<li>Does RFC 027 need a dedicated expression-block surface kind for <code>race for value:</code>?</li>
-<li>Should a later version add a more general pattern-binding <code>race</code> form, or is <code>race for value:</code> plus ordinary <code>match</code> sufficient?</li>
-<li>Should a later version add <code>default</code> arms, guard expressions, or unbiased scheduling options?</li>
-</ol>
+<ul>
+<li>Should output-file helpers such as <code>set_output(...)</code> be first-class, or should the contract stay one layer lower and rely on environment variables plus file append helpers?</li>
+<li>Should <code>std.ci</code> standardize step-summary and annotation helpers in the base module family, or leave those to follow-up provider libraries?</li>
+<li>Does a minimal JWT-signing helper belong here for GitHub App workflows, or should all cryptographic behavior remain outside this RFC?</li>
+<li>Should a future <code>incan ci</code> CLI wrapper be part of the same design family, or remain separate from the stdlib contract?</li>
+</ul>
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 

@@ -4159,9 +4159,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#concrete-example-iterator-implementation" class="md-nav__link">
+  <a href="#concrete-example-iteration-and-async-traits" class="md-nav__link">
     <span class="md-ellipsis">
-      Concrete example: Iterator implementation
+      Concrete example: iteration and async traits
     </span>
   </a>
   
@@ -4230,7 +4230,7 @@
           <li class="md-nav__item">
   <a href="#pure-trait-forwarding" class="md-nav__link">
     <span class="md-ellipsis">
-      Pure Trait Forwarding
+      Pure trait forwarding
     </span>
   </a>
   
@@ -4467,19 +4467,19 @@
 <li>RFC 023 (Compilable stdlib &amp; Rust module binding)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> #200</li>
-<li><strong>RFC PR:</strong> -</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/200</li>
+<li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
-<li><strong>Shipped in:</strong> -</li>
+<li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC proposes that Incan authors can declare that a type satisfies a Rust trait contract, and the compiler generates the corresponding <code>impl</code> block in the emitted Rust code. This closes the gap between RFC 041's "use Rust APIs from Incan" and the reverse need: "make Incan types usable by Rust APIs that require trait bounds." Concretely, it introduces <code>impl</code> blocks on <code>rusttype</code> declarations, a <code>@rust.derive</code> decorator for forwarding Rust derive macros, and compiler-managed async Future bridging for <code>rusttype</code> wrappers over <code>Future</code>-implementing Rust types. It <strong>supersedes RFC 026</strong>: the separate <code>@rust.delegate</code> compiler feature is withdrawn; forwarding and glue reduction are expressed here via body-less <code>impl</code> blocks, <code>@rust.derive</code>, and (where the ecosystem already provides them) proc macros such as those used by <code>std.web</code> and <code>incan_web_macros</code>.</p>
+<p>This RFC proposes that Incan authors can declare that a type satisfies a Rust trait contract, and the language implementation produces the corresponding <code>impl</code> block in emitted Rust. This closes the gap between RFC 041's "use Rust APIs from Incan" and the reverse need: "make Incan types usable by Rust APIs that require trait bounds." Concretely, it introduces <code>impl</code> blocks on <code>rusttype</code> declarations, a <code>@rust.derive</code> decorator for forwarding Rust derive macros, and implementation-managed async Future bridging for <code>rusttype</code> wrappers over <code>Future</code>-implementing Rust types. It <strong>supersedes RFC 026</strong>: the separate <code>@rust.delegate</code> compiler feature is withdrawn; forwarding and glue reduction are expressed here via body-less <code>impl</code> blocks, <code>@rust.derive</code>, and (where the ecosystem already provides them) proc macros such as those used by <code>std.web</code> and <code>incan_web_macros</code>.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <p>Read this RFC as one foundation plus three mechanisms:</p>
 <p><strong>Foundation</strong>: after RFC 041, imported Rust items are first-class compiler symbols and Incan types can wrap Rust types via <code>rusttype</code>. What is still missing is the ability to make those Incan types satisfy Rust trait contracts — the reverse direction of interop.</p>
 <p><strong>Mechanisms</strong>:</p>
 <ol>
-<li><code>impl</code> blocks on <code>rusttype</code> declarations let authors declare that a type satisfies a Rust trait by providing method bodies in Incan. The compiler generates the corresponding <code>impl Trait for Type { ... }</code> in emitted Rust.</li>
+<li><code>impl</code> blocks on <code>rusttype</code> declarations let authors declare that a type satisfies a Rust trait by providing method bodies in Incan. The implementation produces the corresponding <code>impl Trait for Type { ... }</code> in emitted Rust.</li>
 <li><code>@rust.derive(...)</code> forwards Rust derive macros to the emitted struct, so Incan-authored models and newtypes can participate in Rust-ecosystem derive workflows (<code>Serialize</code>, <code>Deserialize</code>, <code>Clone</code>, etc.) without handwritten Rust.</li>
 <li>Compiler-managed async bridging auto-generates <code>impl Future</code> for <code>rusttype</code> declarations that wrap <code>Future</code>-implementing Rust types, eliminating manual <code>Pin</code>/<code>Context</code>/<code>Poll</code> glue.</li>
 </ol>
@@ -4490,7 +4490,7 @@
 <ol>
 <li><strong><code>@rust.derive(...)</code></strong> — Forward Rust proc-macro derives onto the emitted struct or enum (Serde, <code>Clone</code>, and third-party derives where authors declare the macro paths). This is the right default when the ecosystem exposes a derive for the trait (mirrors and generalizes the <code>std.web</code> + <code>incan_web_macros</code> pattern described in RFC 023 / RFC 024).</li>
 <li><strong><code>impl Trait:</code> on <code>rusttype</code> with Incan method bodies</strong> — Custom trait logic, error mapping, and framework extension points where no derive exists or behavior must differ from the inner type.</li>
-<li><strong>Body-less <code>impl Trait</code> on <code>rusttype</code></strong> — Pure forwarding when the backing Rust type already implements <code>Trait</code> and the wrapper should expose the same contract; the compiler generates the forwarding <code>impl</code> (see <a href="#reference-level-explanation-precise-rules">Reference-level explanation</a>). This is the deliberate replacement for RFC 026’s “list methods and delegate” story, expressed in the same syntax family as custom <code>impl</code>s.</li>
+<li><strong>Body-less <code>impl Trait</code> on <code>rusttype</code></strong> — Pure forwarding when the backing Rust type already implements <code>Trait</code> and the wrapper should expose the same contract; the implementation generates the forwarding <code>impl</code> (see <a href="#reference-level-explanation-precise-rules">Reference-level explanation</a>). This is the deliberate replacement for RFC 026’s “list methods and delegate” story, expressed in the same syntax family as custom <code>impl</code>s.</li>
 <li><strong>Compiler-managed <code>impl Future</code></strong> — Specialized delegation for awaitability without handwritten <code>poll</code> glue.</li>
 </ol>
 <p><strong>What we are not doing:</strong> a dedicated <code>@rust.delegate(trait=..., methods=[...])</code> surface. If a trait is only satisfiable via a hand-written or third-party proc macro today, authors keep using that macro through <code>@rust.derive</code> once the macro is importable, or contribute thin <code>impl</code> bodies when derives are inappropriate.</p>
@@ -4520,103 +4520,46 @@
 <p>they must create a parallel Rust adapter crate, maintain it separately, and wire it through <code>rust::</code> imports. This is the exact "parallel adapter layer" pattern that RFC 041's motivation section identifies as the problem.</p>
 <h3 id="the-goal-is-clear">The goal is clear<a class="headerlink" href="#the-goal-is-clear" title="Permanent link">&para;</a></h3>
 <p>Incan users should not have to write Rust to use Rust. RFC 041 achieved this for <strong>consuming</strong> Rust APIs. This RFC achieves it for <strong>satisfying</strong> Rust API contracts.</p>
-<h3 id="concrete-example-iterator-implementation">Concrete example: Iterator implementation<a class="headerlink" href="#concrete-example-iterator-implementation" title="Permanent link">&para;</a></h3>
-<p>To illustrate the complexity gap, consider implementing the <code>Iterator</code> trait in Rust versus Incan:</p>
-<p><strong>Rust (complex):</strong></p>
-<div class="language-rust highlight"><pre><span></span><code><span class="sd">/// A simple wrapper around Vec&lt;T&gt; to demonstrate custom iterator implementation.</span>
-<span class="k">struct</span><span class="w"> </span><span class="nc">MyVec</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">data</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">,</span>
-<span class="p">}</span>
-
-<span class="k">struct</span><span class="w"> </span><span class="nc">MyVecIter</span><span class="o">&lt;&#39;</span><span class="na">a</span><span class="p">,</span><span class="w"> </span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">vec</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">&#39;</span><span class="na">a</span><span class="w"> </span><span class="nc">MyVec</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">,</span>
-<span class="w">    </span><span class="n">index</span><span class="p">:</span><span class="w"> </span><span class="kt">usize</span><span class="p">,</span>
-<span class="p">}</span>
-
-<span class="k">impl</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="n">MyVec</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">iter</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">MyVecIter</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="n">MyVecIter</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">vec</span><span class="p">:</span><span class="w"> </span><span class="nc">self</span><span class="p">,</span><span class="w"> </span><span class="n">index</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">}</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="p">}</span>
-
-<span class="k">impl</span><span class="o">&lt;&#39;</span><span class="na">a</span><span class="p">,</span><span class="w"> </span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="nb">Iterator</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">MyVecIter</span><span class="o">&lt;&#39;</span><span class="na">a</span><span class="p">,</span><span class="w"> </span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Item</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;&#39;</span><span class="na">a</span><span class="w"> </span><span class="n">T</span><span class="p">;</span>
-
-<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">next</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">::</span><span class="n">Item</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">index</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">vec</span><span class="p">.</span><span class="n">data</span><span class="p">.</span><span class="n">len</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
-<span class="w">            </span><span class="kd">let</span><span class="w"> </span><span class="n">item</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;</span><span class="bp">self</span><span class="p">.</span><span class="n">vec</span><span class="p">.</span><span class="n">data</span><span class="p">[</span><span class="bp">self</span><span class="p">.</span><span class="n">index</span><span class="p">];</span>
-<span class="w">            </span><span class="bp">self</span><span class="p">.</span><span class="n">index</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
-<span class="w">            </span><span class="nb">Some</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
-<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
-<span class="w">            </span><span class="nb">None</span>
-<span class="w">        </span><span class="p">}</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="p">}</span>
-</code></pre></div>
-<p>This requires:</p>
-<ul>
-<li>Understanding lifetimes (<code>'a</code>)</li>
-<li>Creating a separate iterator struct</li>
-<li>Manual borrow checking</li>
-<li>Managing mutable vs immutable references</li>
-<li>Understanding associated types</li>
-</ul>
-<p><strong>Incan (simple - using the proposed new syntax)</strong>:</p>
+<h3 id="concrete-example-iteration-and-async-traits">Concrete example: iteration and async traits<a class="headerlink" href="#concrete-example-iteration-and-async-traits" title="Permanent link">&para;</a></h3>
+<p>The clearest examples are iterator-like and async traits.</p>
+<p>In Rust, implementing <code>Iterator</code>, <code>IntoIterator</code>, <code>Future</code>, or <code>Stream</code> often
+requires extra helper types, associated type declarations, lifetime-sensitive
+receiver forms, and, for async traits, <code>Pin</code>/<code>Context</code>/<code>Poll</code> machinery. Those
+details are exactly where wrapper types become painful: the author may know the
+intended behavior, but still has to build a parallel adapter layer just to make
+the wrapper satisfy the Rust contract.</p>
+<p>Under this RFC, the Incan author should be able to express the semantic intent
+directly:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">vec</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Vec</span>
 
 <span class="nb">type</span> <span class="nc">MyVec</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="kt">Vec</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-    <span class="c1"># The compiler generates the complex lifetime-managed Iterator impl</span>
-    <span class="n">impl</span> <span class="nc">IntoIterator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>  <span class="c1"># No need to write any code - pure forwarding!</span>
+    <span class="n">impl</span> <span class="nc">IntoIterator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
 
-    <span class="c1"># Or for custom iteration logic:</span>
     <span class="n">impl</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-        <span class="c1"># Iterator state fields</span>
-        <span class="nb">index</span><span class="p">:</span> <span class="n">usize</span>
         <span class="nb">type</span> <span class="nc">Item</span> <span class="o">=</span> <span class="nc">T</span>
+        <span class="nb">index</span><span class="p">:</span> <span class="n">usize</span>
 
         <span class="k">def</span><span class="w"> </span><span class="nf">next</span><span class="p">(</span><span class="k">mut</span> <span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-            <span class="c1"># Just write the logic - compiler handles borrowing</span>
             <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="nb">index</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="mf">.0</span><span class="p">):</span>
                 <span class="n">item</span> <span class="o">=</span> <span class="bp">self</span><span class="mf">.0</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="nb">index</span><span class="p">]</span>
                 <span class="bp">self</span><span class="o">.</span><span class="nb">index</span> <span class="o">+=</span> <span class="mi">1</span>
                 <span class="k">return</span> <span class="nb">Some</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
-            <span class="k">else</span><span class="p">:</span>
-                <span class="k">return</span> <span class="kc">None</span>
+            <span class="k">return</span> <span class="kc">None</span>
 </code></pre></div>
-<p><strong>Even more complex: Async Iterator</strong>:</p>
-<p>Consider implementing <code>Stream</code> (async iterator) in Rust vs Incan:</p>
-<p><strong>Rust (extremely complex)</strong>:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="k">impl</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="n">Stream</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">MyAsyncCollection</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Item</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">T</span><span class="p">;</span>
-
-<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">poll_next</span><span class="p">(</span>
-<span class="w">        </span><span class="bp">self</span><span class="p">:</span><span class="w"> </span><span class="nc">Pin</span><span class="o">&lt;&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">Self</span><span class="o">&gt;</span><span class="p">,</span><span class="w"> </span>
-<span class="w">        </span><span class="n">cx</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">mut</span><span class="w"> </span><span class="n">Context</span><span class="o">&lt;&#39;</span><span class="nb">_</span><span class="o">&gt;</span>
-<span class="w">    </span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Poll</span><span class="o">&lt;</span><span class="nb">Option</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">::</span><span class="n">Item</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="c1">// Complex pinning, context management, poll handling...</span>
-<span class="w">        </span><span class="c1">// Dozens of lines of unsafe code and lifetime management</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="p">}</span>
-</code></pre></div>
-<p><strong>Incan (simple)</strong>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">MyAsyncCollection</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="nc">SomeRustAsyncType</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-    <span class="n">impl</span> <span class="nc">Stream</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-        <span class="nb">type</span> <span class="nc">Item</span> <span class="o">=</span> <span class="nc">T</span>
-
-        <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">next</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-            <span class="c1"># Just write async Incan code</span>
-            <span class="c1"># Compiler handles Pin, Context, Poll, lifetimes</span>
-            <span class="k">return</span> <span class="k">await</span> <span class="bp">self</span><span class="mf">.0</span><span class="o">.</span><span class="n">get_next</span><span class="p">()</span>
-</code></pre></div>
-<p><strong>The key insight:</strong> this RFC's proposed <code>impl</code> blocks let you write <strong>high-level, borrow-checker-free code</strong> while the compiler generates all the low-level Rust ceremony:</p>
+<p>The point is not that Incan hides complexity by magic. The point is that the
+compiler owns the Rust-side ceremony while the author owns the behavioral
+intent. The same principle applies to async-facing traits:</p>
 <ul>
-<li><strong>No lifetime annotations</strong> - compiler infers them</li>
-<li><strong>No <code>Pin</code>/<code>Context</code>/<code>Poll</code> boilerplate</strong> - compiler generates a wrapper <code>poll_next(self: Pin&lt;&amp;mut Self&gt;, cx: &amp;mut Context&lt;'_&gt;) -&gt; Poll&lt;Option&lt;T&gt;&gt;</code> that calls your async <code>next(self)</code> implementation and returns a <code>Poll</code>-ready result.  </li>
-<li><strong>No borrow checker wrestling</strong> - write natural code</li>
-<li><strong>No unsafe blocks</strong> - compiler ensures memory safety</li>
-<li><strong>No separate iterator structs</strong> - compiler creates them as needed</li>
+<li>authors should not write <code>Pin</code>/<code>Context</code>/<code>Poll</code> boilerplate just to expose an
+  awaitable wrapper;</li>
+<li>authors should not create parallel hand-written adapter structs solely to
+  satisfy iteration contracts;</li>
+<li>authors should be able to forward or customize trait behavior using one
+  language-native <code>impl</code> surface.</li>
 </ul>
-<p>This is especially powerful for complex traits like <code>Future</code>, <code>Iterator</code>, <code>Stream</code>, <code>Deref</code>, etc. where Rust requires deep understanding of its ownership system, but Incan lets you focus on the logic rather than the ceremony. The compiler essentially acts as a "Rust expert" that translates your clean Incan intentions into correct, safe Rust implementations.</p>
+<p>This is especially important for traits such as <code>Future</code>, <code>Iterator</code>, <code>Stream</code>,
+<code>Deref</code>, <code>From</code>, and framework extension traits, where the semantic logic is
+often simple but the target-language implementation shape is not.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Trait Implementation</strong>: Allow <code>rusttype</code> declarations to implement Rust traits using Incan syntax, either by providing custom method implementations or by forwarding existing behavior from the wrapped Rust type.</li>
@@ -4645,14 +4588,14 @@
         <span class="k">def</span><span class="w"> </span><span class="nf">from</span><span class="p">(</span><span class="n">error</span><span class="p">:</span> <span class="nc">JoinError</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">TaskJoinError</span><span class="p">:</span>
             <span class="k">return</span> <span class="nc">TaskJoinError</span><span class="p">(</span><span class="n">error</span><span class="o">.</span><span class="nb">to_string</span><span class="p">())</span>
 </code></pre></div>
-<p>The compiler generates:</p>
+<p>The emitted Rust surface corresponds to:</p>
 <div class="language-rust highlight"><pre><span></span><code><span class="k">impl</span><span class="w"> </span><span class="nb">From</span><span class="o">&lt;</span><span class="n">tokio</span><span class="p">::</span><span class="n">task</span><span class="p">::</span><span class="n">JoinError</span><span class="o">&gt;</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">TaskJoinError</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">from</span><span class="p">(</span><span class="n">error</span><span class="p">:</span><span class="w"> </span><span class="nc">tokio</span><span class="p">::</span><span class="n">task</span><span class="p">::</span><span class="n">JoinError</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Self</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="bp">Self</span><span class="p">(</span><span class="n">error</span><span class="p">.</span><span class="n">to_string</span><span class="p">())</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-<p>The user writes Incan. The compiler writes Rust.</p>
+<p>The user writes Incan. The Rust glue is derived from that contract.</p>
 <h3 id="async-future-bridging">Async Future bridging<a class="headerlink" href="#async-future-bridging" title="Permanent link">&para;</a></h3>
 <p>For <code>rusttype</code> declarations that wrap a Rust type implementing <code>Future</code>, the compiler can auto-generate the <code>impl Future</code> delegation:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">tokio</span><span class="p">::</span><span class="n">task</span> <span class="kn">import</span><span class="w"> </span><span class="nn">JoinHandle</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">TokioJoinHandle</span>
@@ -4664,7 +4607,7 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">abort</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="o">...</span>
 </code></pre></div>
-<p>The <code>impl Future</code> block declares the associated type. The compiler generates the <code>poll</code> method by delegating to the backing type's <code>poll</code> implementation, mapping the output type through any declared interop edges (here, <code>JoinError</code> -&gt; <code>TaskJoinError</code> via the <code>From</code> impl above).</p>
+<p>The <code>impl Future</code> block declares the associated type. The implementation then derives the <code>poll</code> delegation by mapping the backing type's output through any declared interop edges (here, <code>JoinError</code> -&gt; <code>TaskJoinError</code> via the <code>From</code> impl above).</p>
 <p>Without this mechanism, the same code requires ~25 lines of handwritten Rust with <code>Pin</code>, <code>Context</code>, <code>Poll</code>, and manual error mapping.</p>
 <h3 id="forwarding-rust-derive-macros">Forwarding Rust derive macros<a class="headerlink" href="#forwarding-rust-derive-macros" title="Permanent link">&para;</a></h3>
 <p>For Incan models that need to participate in Rust derive workflows:</p>
@@ -4676,7 +4619,7 @@
     <span class="n">email</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">amount</span><span class="p">:</span> <span class="nb">int</span>
 </code></pre></div>
-<p>The compiler emits:</p>
+<p>The emitted Rust surface corresponds to:</p>
 <div class="language-rust highlight"><pre><span></span><code><span class="cp">#[derive(serde::Serialize, serde::Deserialize, Clone)]</span>
 <span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">CustomerEvent</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">customer_id</span><span class="p">:</span><span class="w"> </span><span class="nb">String</span><span class="p">,</span>
@@ -4685,47 +4628,16 @@
 <span class="p">}</span>
 </code></pre></div>
 <p><code>@rust.derive</code> is distinct from Incan's <code>@derive</code>: the former forwards to Rust derive macros, the latter uses the Incan derive protocol from RFC 024.</p>
-<h3 id="pure-trait-forwarding">Pure Trait Forwarding<a class="headerlink" href="#pure-trait-forwarding" title="Permanent link">&para;</a></h3>
-<p>Sometimes you want your <code>rusttype</code> wrapper to behave exactly like the Rust type it wraps - exposing all the same capabilities without any changes. This is called "pure forwarding" and is expressed with a body-less <code>impl</code> declaration:</p>
+<h3 id="pure-trait-forwarding">Pure trait forwarding<a class="headerlink" href="#pure-trait-forwarding" title="Permanent link">&para;</a></h3>
+<p>Sometimes a <code>rusttype</code> wrapper should expose the same Rust trait contract as the backing type without changing behavior. This is expressed with a body-less <code>impl</code> declaration:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">sqlx</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Executor</span><span class="o">,</span><span class="w"> </span><span class="nn">PgPool</span>
 
 <span class="nb">type</span> <span class="nc">Pool</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="nc">PgPool</span><span class="p">:</span>
     <span class="n">impl</span> <span class="nc">Executor</span>
 </code></pre></div>
-<p>This tells the compiler: "Generate an <code>impl Executor for Pool</code> that forwards all <code>Executor</code> methods to the inner <code>PgPool</code>." Your <code>Pool</code> type can now be used anywhere a SQLx <code>Executor</code> is expected.</p>
-<p><strong>Why is this powerful?</strong> Without this feature, you'd need to manually implement forwarding methods for every trait method. For traits with many methods (like <code>Iterator</code> with <code>next</code>, <code>size_hint</code>, <code>count</code>, etc.), this saves dozens of lines of boilerplate code.</p>
-<p>Here are common scenarios where pure forwarding shines:</p>
-<p><strong>Database Operations</strong>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">sqlx</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Transaction</span>
-
-<span class="nb">type</span> <span class="nc">MyTransaction</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="nc">Transaction</span><span class="p">[</span><span class="nc">MyPool</span><span class="p">]:</span>
-    <span class="n">impl</span> <span class="nc">Executor</span>  <span class="c1"># Forward query execution</span>
-    <span class="n">impl</span> <span class="nc">Commit</span>    <span class="c1"># Forward transaction commit</span>
-    <span class="n">impl</span> <span class="nc">Rollback</span>  <span class="c1"># Forward transaction rollback</span>
-</code></pre></div>
-<p><strong>HTTP Clients</strong>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">reqwest</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Client</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ReqwestClient</span>
-
-<span class="nb">type</span> <span class="nc">HttpClient</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="nc">ReqwestClient</span><span class="p">:</span>
-    <span class="n">impl</span> <span class="nc">SendRequest</span>  <span class="c1"># Forward all HTTP methods (get, post, put, etc.)</span>
-</code></pre></div>
-<p><strong>Collections</strong>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">vec</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Vec</span>
-
-<span class="nb">type</span> <span class="nc">MyVec</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="kt">Vec</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-    <span class="n">impl</span> <span class="nc">IntoIterator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>  <span class="c1"># Forward iteration</span>
-    <span class="n">impl</span> <span class="nc">AsRef</span><span class="p">[</span><span class="kt">Vec</span><span class="p">[</span><span class="nc">T</span><span class="p">]]</span>    <span class="c1"># Forward borrowing methods</span>
-</code></pre></div>
-<p><strong>Error Conversion</strong>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">io</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Error</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">IoError</span>
-
-<span class="nb">type</span> <span class="nc">AppError</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="n">impl</span> <span class="nc">From</span><span class="p">[</span><span class="nc">IoError</span><span class="p">]</span>  <span class="c1"># Forward error conversion</span>
-</code></pre></div>
-<p>The key insight: <code>impl Trait</code> without methods means "delegate this entire trait contract to the backing type." It's the Incan equivalent of Rust's newtype forwarding patterns, but without requiring handwritten delegation code.</p>
+<p>This means the wrapper should satisfy <code>Executor</code> by forwarding the entire trait contract to the inner <code>PgPool</code>. The point is not novelty. The point is removing handwritten delegation code when the wrapper is only adding nominal or API-surface meaning, not changing behavior.</p>
 <h3 id="implementing-arbitrary-rust-traits">Implementing arbitrary Rust traits<a class="headerlink" href="#implementing-arbitrary-rust-traits" title="Permanent link">&para;</a></h3>
-<p><strong>But sometimes you need more flexibility still.</strong> Pure forwarding works when you want your wrapper to behave identically to the backing type. But what if you need to customize the behavior (add validation, transform data, handle errors differently) or implement traits that the backing type doesn't support?</p>
-<p>For these cases, you provide custom method implementations in Incan:</p>
+<p>Pure forwarding is not the only path. When the wrapper needs different behavior, validation, data transformation, or trait support the backing type does not already provide, authors write method bodies in Incan:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">fmt</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Display</span><span class="o">,</span><span class="w"> </span><span class="nn">Formatter</span><span class="o">,</span><span class="w"> </span><span class="nn">FmtError</span>
 
 <span class="nb">type</span> <span class="nc">UserId</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="kt">i64</span><span class="p">:</span>
@@ -4733,8 +4645,7 @@
         <span class="k">def</span><span class="w"> </span><span class="nf">fmt</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="nc">Formatter</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">FmtError</span><span class="p">]:</span>
             <span class="k">return</span> <span class="n">f</span><span class="o">.</span><span class="n">write_str</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;user_</span><span class="si">{</span><span class="bp">self</span><span class="mf">.0</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p>Here, <code>UserId</code> (which wraps an <code>i64</code>) implements <code>Display</code> with custom formatting logic that prefixes the number with "user_". The compiler generates <code>impl std::fmt::Display for UserId { ... }</code> with the method body lowered from the Incan source.</p>
-<p>This pattern enables powerful customization: error mapping, data transformation, framework integration, and extension points that pure forwarding can't provide.</p>
+<p>Here <code>UserId</code> implements <code>Display</code> with custom formatting logic rather than forwarding the backing type unchanged.</p>
 <h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
 <h3 id="impl-block-syntax"><code>impl</code> block syntax<a class="headerlink" href="#impl-block-syntax" title="Permanent link">&para;</a></h3>
 <p>An <code>impl</code> block may only appear inside a <code>rusttype</code> declaration body:</p>
@@ -4747,60 +4658,32 @@
 <p>Normative rules:</p>
 <ul>
 <li><code>impl</code> blocks must appear inside <code>rusttype</code> declarations only. Ordinary <code>newtype</code> and <code>model</code> declarations must not contain <code>impl</code> blocks; the compiler must reject them with a clear diagnostic.</li>
-<li>The trait name must resolve to an imported Rust trait (via <code>rust::</code> or <code>std.rust</code>) and be available in the <code>rust_inspect</code> crate.</li>
-<li>Method signatures in the <code>impl</code> block must match the trait's method signatures as reported by rust-inspect metadata (in <code>rust_inspect</code>). The compiler must validate parameter types, return types, receiver shapes, and asyncness.</li>
+<li>The trait name must resolve to an imported Rust trait (via <code>rust::</code> or <code>std.rust</code>) and be available through the Rust interop metadata path.</li>
+<li>Method signatures in the <code>impl</code> block must match the trait's method signatures as exposed through Rust interop metadata. Implementations must validate parameter types, return types, receiver shapes, and asyncness.</li>
 <li>Associated types declared with <code>type AssocType = T</code> must be compatible with the trait's associated type constraints.</li>
 <li>If a trait item has associated types, either:<ul>
 <li>the <code>impl</code> block explicitly declares them, or</li>
-<li>the compiler infers them from the backing Rust type's trait impl via <code>rust_inspect</code>.
-  Otherwise the compiler must emit a diagnostic requiring explicit declarations.</li>
+<li>the implementation infers them from the backing Rust type's trait impl via Rust interop metadata.
+Otherwise a diagnostic must require explicit declarations.</li>
 </ul>
 </li>
-<li>
-<p><code>impl Trait</code> supports two modes:</p>
-<ol>
+<li><code>impl Trait</code> supports two modes:<ol>
 <li><strong>Custom behavior</strong> (method bodies present): authors provide explicit method implementations in Incan.</li>
-<li><strong>Pure forwarding</strong> (body-less): the compiler generates a full Rust <code>impl Trait for Type</code> by delegating trait items to the backing Rust type. This remains the primary substitute for the withdrawn <code>@rust.delegate</code> design.</li>
+<li><strong>Pure forwarding</strong> (body-less): the implementation generates a full Rust <code>impl Trait for Type</code> by delegating trait items to the backing Rust type. This remains the primary substitute for the withdrawn <code>@rust.delegate</code> design.</li>
 </ol>
-<p><strong>Example: custom behavior</strong></p>
-<p>This example shows a <code>rusttype</code> wrapper around Axum's <code>Query</code> extractor that implements <code>FromRequestParts</code> with custom logic. The Incan method body calls the backing type's implementation but wraps the result in the newtype, allowing for additional processing or error handling specific to the Incan type.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">axum</span><span class="p">::</span><span class="n">extract</span> <span class="kn">import</span><span class="w"> </span><span class="nn">FromRequestParts</span><span class="o">,</span><span class="w"> </span><span class="nn">Query</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">AxumQuery</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">axum</span><span class="p">::</span><span class="n">http</span><span class="p">::</span><span class="n">request</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Parts</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">HttpParts</span>
-
-<span class="nb">type</span> <span class="nc">MyQuery</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="nc">AxumQuery</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-    <span class="n">impl</span> <span class="nc">FromRequestParts</span><span class="p">[</span><span class="nc">State</span><span class="p">]:</span>
-        <span class="k">def</span><span class="w"> </span><span class="nf">from_request_parts</span><span class="p">(</span><span class="n">parts</span><span class="p">:</span> <span class="nc">HttpParts</span><span class="p">,</span> <span class="n">state</span><span class="p">:</span> <span class="nc">State</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">MyQuery</span><span class="p">[</span><span class="nc">T</span><span class="p">],</span> <span class="nc">Error</span><span class="p">]:</span>
-            <span class="n">inner</span> <span class="o">=</span> <span class="nc">AxumQuery</span><span class="o">.</span><span class="n">from_request_parts</span><span class="p">(</span><span class="n">parts</span><span class="p">,</span> <span class="n">state</span><span class="p">)</span>
-            <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nc">MyQuery</span><span class="p">(</span><span class="n">inner</span><span class="p">))</span>
-</code></pre></div>
-<p><strong>Example: pure forwarding (body-less)</strong></p>
-<p>This example demonstrates pure forwarding for the <code>Executor</code> trait. Since <code>PgPool</code> already implements <code>sqlx::Executor</code>, the body-less <code>impl Executor</code> instructs the compiler to generate a complete forwarding implementation that delegates all <code>Executor</code> methods to the backing <code>PgPool</code> instance.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">sqlx</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Executor</span><span class="o">,</span><span class="w"> </span><span class="nn">PgPool</span>
-
-<span class="nb">type</span> <span class="nc">Pool</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="nc">PgPool</span><span class="p">:</span>
-    <span class="n">impl</span> <span class="nc">Executor</span>
-</code></pre></div>
-<p>If <code>PgPool</code> already implements <code>sqlx::Executor</code>, this generates a forwarding <code>impl</code> that delegates all <code>Executor</code> trait items to <code>self.0</code>.</p>
 </li>
 <li>
-<p>Trait subset/rename semantics may be exposed through a <code>rusttype</code> <code>interop:</code> sub-block if desired, e.g.:</p>
-<p>This optional <code>interop:</code> sub-block illustrates controlling which trait methods are forwarded and how they are renamed in the Incan interface. This feature is not part of the initial RFC but shows how the design could accommodate more complex forwarding scenarios.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Pool</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="nc">PgPool</span><span class="p">:</span>
-    <span class="n">interop</span><span class="p">:</span>
-        <span class="k">trait</span> <span class="n">sqlx</span><span class="p">::</span><span class="nc">Executor</span><span class="p">:</span>
-            <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;execute&quot;</span><span class="p">,</span> <span class="s2">&quot;fetch_one&quot;</span><span class="p">]</span>
-            <span class="n">rename</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;execute&quot;</span><span class="p">:</span> <span class="s2">&quot;exec&quot;</span><span class="p">}</span>
-</code></pre></div>
+<p>Trait subset or rename semantics are out of scope for this RFC. A future extension could add narrower forwarding controls if experience shows the need, but the initial contract is whole-trait forwarding or explicit custom bodies.</p>
 </li>
 <li>
-<p>The compiler must generate a complete <code>impl Trait for Type { ... }</code> block in the emitted Rust, with method bodies lowered from the Incan source (or generated forwarding code for body-less impls).</p>
+<p>The implementation must produce a complete Rust <code>impl Trait for Type { ... }</code> block, with method bodies translated from the Incan source or forwarding behavior synthesized for body-less impls.</p>
 </li>
-<li>When the backing Rust type already implements the trait and the <code>impl</code> block contains <strong>no method bodies</strong> (and any required associated types are specified or inferred), the compiler <strong>must</strong> generate a forwarding <code>impl</code> that delegates each trait item to the backing type’s implementation. This is the normative replacement for the withdrawn <code>@rust.delegate</code> design from RFC 026.</li>
-<li>If both <code>@rust.derive</code> and an <code>impl Trait</code> block specify the same trait, the compiler must reject this as an ambiguity error and request the user choose one path.</li>
+<li>When the backing Rust type already implements the trait and the <code>impl</code> block contains <strong>no method bodies</strong> (and any required associated types are specified or inferred), the implementation <strong>must</strong> generate forwarding for each trait item. This is the normative replacement for the withdrawn <code>@rust.delegate</code> design from RFC 026.</li>
+<li>If both <code>@rust.derive</code> and an <code>impl Trait</code> block specify the same trait, the declaration must be rejected as ambiguous.</li>
 </ul>
 <h4 id="expected-diagnostics-for-implforwarding-path">Expected diagnostics for <code>impl</code>/forwarding path<a class="headerlink" href="#expected-diagnostics-for-implforwarding-path" title="Permanent link">&para;</a></h4>
 <ul>
-<li>Trait not found in scope: "Trait <code>X</code> not imported or not available in rust_inspect." </li>
+<li>Trait not found in scope: "Trait <code>X</code> not imported or not available through Rust interop metadata." </li>
 <li><code>impl</code> outside <code>rusttype</code>: "<code>impl</code> blocks are only allowed inside <code>rusttype</code> declarations." </li>
 <li>Signature mismatch: "Method <code>foo</code> signature differs from <code>Trait::foo</code>; expected <code>...</code>, found <code>...</code>."</li>
 <li>Forwarding failure: "Backing type does not implement <code>Trait</code> and no method bodies are present." </li>
@@ -4810,15 +4693,15 @@
 <ul>
 <li><code>@rust.derive(Name1, Name2, ...)</code> is valid on <code>model</code>, <code>class</code>, <code>enum</code>, <code>newtype</code>, and <code>rusttype</code> declarations (for <code>rusttype</code>, the attribute applies to the emitted Rust backing struct the same way as for tuple newtypes).</li>
 <li>Each name must resolve to an imported Rust derive macro (via <code>rust::</code> imports or known standard derives like <code>Clone</code>, <code>Debug</code>) and the derive macro path must be declared in <code>incan.toml</code> <code>[rust-dependencies]</code> unless it is one of the built-in standard derives approved by the compiler.</li>
-<li>The compiler emits <code>#[derive(path::Name1, path::Name2, ...)]</code> on the generated Rust struct/enum.</li>
-<li><code>@rust.derive</code> must not conflict with Incan's <code>@derive</code>: using both on the same declaration is valid when they target different derives. The compiler must reject duplicates that appear in both.</li>
+<li>The implementation emits <code>#[derive(path::Name1, path::Name2, ...)]</code> on the generated Rust struct or enum.</li>
+<li><code>@rust.derive</code> must not conflict with Incan's <code>@derive</code>: using both on the same declaration is valid when they target different derives. Duplicate derives across both systems must be rejected.</li>
 </ul>
 <h3 id="async-future-bridging-rules">Async Future bridging rules<a class="headerlink" href="#async-future-bridging-rules" title="Permanent link">&para;</a></h3>
 <ul>
-<li>When a <code>rusttype</code> declaration includes <code>impl Future:</code> with an associated <code>type Output = T</code>, the compiler generates <code>impl Future for Type</code> with a <code>poll</code> method that delegates to the backing type.</li>
-<li>The generated <code>poll</code> must handle <code>Pin</code> projection correctly, preserving Rust pinning guarantees. The compiler must maintain the invariant that <code>Pin&lt;&amp;mut Type&gt;</code> corresponds to a safe projection into <code>Pin&lt;&amp;mut backing_type&gt;</code>.</li>
+<li>When a <code>rusttype</code> declaration includes <code>impl Future:</code> with an associated <code>type Output = T</code>, the implementation generates <code>impl Future for Type</code> with a <code>poll</code> method that delegates to the backing type.</li>
+<li>The generated <code>poll</code> must handle <code>Pin</code> projection correctly, preserving Rust pinning guarantees. The implementation must maintain the invariant that <code>Pin&lt;&amp;mut Type&gt;</code> corresponds to a safe projection into <code>Pin&lt;&amp;mut backing_type&gt;</code>.</li>
 <li>Output type mapping: if the backing type's <code>Future::Output</code> differs from the declared <code>Output</code>, the compiler must insert the appropriate conversion (using <code>From</code> impls, <code>map</code>, or <code>map_err</code>) in the generated <code>poll</code> method.</li>
-<li>The compiler should verify (via <code>rust_inspect</code> when available) that the backing type actually implements <code>Future</code>. When metadata is unavailable, the compiler must accept the declaration and let rustc validate it.</li>
+<li>The implementation should verify, when Rust interop metadata is available, that the backing type actually implements <code>Future</code>. When that metadata is unavailable, the declaration may be accepted and left for rustc to validate.</li>
 </ul>
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <h4 id="rfc-026-superseded">RFC 026 (superseded)<a class="headerlink" href="#rfc-026-superseded" title="Permanent link">&para;</a></h4>
@@ -4839,9 +4722,9 @@
 <p>The semantic center of this RFC is:</p>
 <ol>
 <li><code>impl</code> blocks on <code>rusttype</code> are Incan-authored, Rust-emitted trait implementations.</li>
-<li>The compiler owns the translation: method signatures are validated against rust-inspect metadata, bodies are lowered through the standard Incan pipeline, and the output is a valid Rust <code>impl</code> block.</li>
-<li><code>@rust.derive</code> is a passthrough: the compiler does not interpret the derive macro, it forwards it to rustc.</li>
-<li>Async bridging is a specialization of <code>impl Future</code> that the compiler can optimize by delegating <code>poll</code> to the backing type.</li>
+<li>The implementation owns the translation: method signatures are validated against Rust interop metadata, bodies are translated through the standard Incan pipeline, and the output is a valid Rust <code>impl</code> block.</li>
+<li><code>@rust.derive</code> is a passthrough: the implementation does not interpret the derive macro, it forwards it to rustc.</li>
+<li>Async bridging is a specialization of <code>impl Future</code> that implementations can optimize by delegating <code>poll</code> to the backing type.</li>
 </ol>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
 <p>Existing code continues to work unchanged. The new features are purely additive:</p>
@@ -4871,24 +4754,23 @@
 </ul>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>The compiler must understand enough of Rust's trait system to validate <code>impl</code> block signatures. This is a significant increase in semantic complexity.</li>
+<li>The implementation must understand enough of Rust's trait system to validate <code>impl</code> block signatures. This is a significant increase in semantic complexity.</li>
 <li><code>Pin</code> projection for <code>impl Future</code> is notoriously tricky in Rust. Generating correct <code>poll</code> delegation requires careful handling of pinning guarantees.</li>
 <li>Associated types, default methods, and supertraits in Rust traits create a large surface area for edge cases.</li>
 <li>Orphan rules may confuse users who expect to implement any trait for any type (Rust's coherence rules will reject some combinations that seem natural from Incan's perspective).</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Parser / AST</strong>: <code>impl TraitName[Args...]:</code> blocks inside <code>rusttype</code> bodies; <code>type AssocType = T</code> declarations; <code>@rust.derive(...)</code> decorator parsing.</li>
-<li><strong>Typechecker / Symbol resolution</strong>: validate <code>impl</code> method signatures against Rust trait metadata; check associated type compatibility; validate <code>@rust.derive</code> targets resolve to known Rust derive macros.</li>
-<li><strong>IR Lowering</strong>: generate <code>impl</code>-block IR nodes from <code>impl</code> declarations; lower method bodies through the standard expression pipeline.</li>
-<li><strong>Emission</strong>: emit <code>impl Trait for Type { ... }</code> blocks with correct method signatures, associated types, and <code>Pin</code> projection for <code>Future</code>; emit <code>#[derive(...)]</code> attributes for <code>@rust.derive</code>.</li>
-<li><strong>Stdlib / Runtime (<code>incan_stdlib</code>)</strong>: migrate async task, time, sync, and channel Rust adapter modules to Incan <code>impl</code> blocks once the feature lands; shrink or remove handwritten Rust glue.</li>
-<li><strong>Formatter</strong>: format <code>impl</code> blocks and <code>@rust.derive</code> decorators stably.</li>
-<li><strong>LSP / Tooling</strong>: completions for trait method signatures inside <code>impl</code> blocks; diagnostics for signature mismatches.</li>
+<li><strong>Language surface</strong>: <code>impl TraitName[Args...]:</code> blocks inside <code>rusttype</code> bodies, associated type declarations, and <code>@rust.derive(...)</code> decorators must be supported as specified.</li>
+<li><strong>Interop validation</strong>: <code>impl</code> method signatures, associated types, and <code>@rust.derive</code> targets must validate against the Rust interop metadata model.</li>
+<li><strong>Execution handoff</strong>: implementations must produce correct Rust <code>impl</code> blocks, associated types, derive attributes, and <code>Future</code> projection behavior where this RFC requires them.</li>
+<li><strong>Stdlib / runtime (<code>incan_stdlib</code>)</strong>: async task, time, sync, and channel adapter surfaces should be migratable from handwritten Rust glue to Incan-authored <code>impl</code> blocks once the feature lands.</li>
+<li><strong>Formatter</strong>: <code>impl</code> blocks and <code>@rust.derive</code> decorators should format stably.</li>
+<li><strong>LSP / tooling</strong>: completions for trait method signatures inside <code>impl</code> blocks and diagnostics for signature mismatches should be supported.</li>
 </ul>
 <h2 id="design-decisions">Design decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Self receiver types</strong>: Users write <code>self</code> in method signatures; the compiler infers the appropriate Rust receiver form (<code>self</code>, <code>&amp;self</code>, <code>&amp;mut self</code>, or <code>Pin&lt;&amp;mut Self&gt;</code>) based on the trait's expected signature and the method's context. This "duckborrowing" approach means lifetimes and borrow checking are compiler concerns, not user concerns. Users write natural Incan code without worrying about receiver forms.</li>
+<li><strong>Self receiver types</strong>: Users write <code>self</code> in method signatures; the implementation infers the appropriate Rust receiver form (<code>self</code>, <code>&amp;self</code>, <code>&amp;mut self</code>, or <code>Pin&lt;&amp;mut Self&gt;</code>) based on the trait's expected signature and the method's context. This keeps lifetime and borrow-shape concerns out of the user-facing Incan surface.</li>
 </ul>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ul>
@@ -4897,14 +4779,9 @@
 <li>Should <code>@rust.derive</code> require the derive macro's crate to be declared in <code>incan.toml</code> <code>[rust-dependencies]</code>, or should well-known standard derives (<code>Clone</code>, <code>Debug</code>, <code>Copy</code>) be allowed without explicit declarations?</li>
 <li>When both <code>@rust.derive</code> and a body-less <code>impl Trait:</code> could apply to the same trait on the same <code>rusttype</code>, which takes precedence, or should the compiler reject the combination as ambiguous?</li>
 <li>Should blanket impls (e.g. <code>impl&lt;F: FnOnce&gt; RuntimeFuture for F</code>) be expressible in a future extension of this RFC, or should they remain Rust-only?</li>
-<li>What diagnostics should the compiler produce when an <code>impl</code> block's method signature does not match the Rust trait's expected signature? Should it show the expected Rust signature alongside the Incan mismatch?</li>
+<li>What diagnostics should the implementation produce when an <code>impl</code> block's method signature does not match the Rust trait's expected signature? Should it show the expected Rust signature alongside the Incan mismatch?</li>
 </ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
-
-<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
-
-<!-- RFC reference links for reuse: '[RFC 018]' or '[RFC 018: Title][RFC 018]' -->
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

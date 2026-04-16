@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 003: Frontend & WebAssembly Support - Incan Documentation</title>
+        <title>RFC 003: frontend and WebAssembly support - Incan Documentation</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-003-frontend-webassembly-support" class="md-skip">
+        <a href="#rfc-003-frontend-and-webassembly-support" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 003: Frontend &amp; WebAssembly Support
+              RFC 003: frontend and WebAssembly support
             
           </span>
         </div>
@@ -4146,13 +4146,31 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#design" class="md-nav__link">
+  <a href="#goals" class="md-nav__link">
     <span class="md-ellipsis">
-      Design
+      Goals
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Design">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Guide-level explanation">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4166,9 +4184,9 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#generated-structure" class="md-nav__link">
+  <a href="#illustrative-generated-structure" class="md-nav__link">
     <span class="md-ellipsis">
-      Generated Structure
+      Illustrative generated structure
     </span>
   </a>
   
@@ -4496,9 +4514,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#configuration-cargotoml" class="md-nav__link">
+  <a href="#illustrative-configuration-cargotoml" class="md-nav__link">
     <span class="md-ellipsis">
-      Configuration (Cargo.toml)
+      Illustrative configuration (Cargo.toml)
     </span>
   </a>
   
@@ -4515,46 +4533,46 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-strategy" class="md-nav__link">
+  <a href="#reference-level-explanation" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation Strategy
+      Reference-level explanation
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Implementation Strategy">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#foundation-layer" class="md-nav__link">
+  <a href="#surface-decomposition" class="md-nav__link">
     <span class="md-ellipsis">
-      Foundation Layer
+      Surface decomposition
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#ui-layer-builds-on-foundation" class="md-nav__link">
+  <a href="#example-rust-ecosystem-backing-non-normative" class="md-nav__link">
     <span class="md-ellipsis">
-      UI Layer (builds on Foundation)
+      Example Rust ecosystem backing (non-normative)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#graphics-layer-builds-on-foundation" class="md-nav__link">
+  <a href="#demonstration-targets" class="md-nav__link">
     <span class="md-ellipsis">
-      Graphics Layer (builds on Foundation)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tooling-layer-parallel" class="md-nav__link">
-    <span class="md-ellipsis">
-      Tooling Layer (parallel)
+      Demonstration targets
     </span>
   </a>
   
@@ -4566,33 +4584,16 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#rust-crate-dependencies" class="md-nav__link">
+  <a href="#alternatives-considered" class="md-nav__link">
     <span class="md-ellipsis">
-      Rust Crate Dependencies
+      Alternatives considered
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#success-criteria" class="md-nav__link">
-    <span class="md-ellipsis">
-      Success Criteria
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#future-extensions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Future Extensions
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
+    <nav class="md-nav" aria-label="Alternatives considered">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
   <a href="#references" class="md-nav__link">
     <span class="md-ellipsis">
       References
@@ -4600,11 +4601,34 @@
   </a>
   
 </li>
+        
+      </ul>
+    </nav>
+  
+</li>
       
         <li class="md-nav__item">
-  <a href="#checklist" class="md-nav__link">
+  <a href="#drawbacks" class="md-nav__link">
     <span class="md-ellipsis">
-      Checklist
+      Drawbacks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unresolved-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unresolved questions
     </span>
   </a>
   
@@ -4628,13 +4652,19 @@
   
 
 
-<h1 id="rfc-003-frontend-webassembly-support">RFC 003: Frontend &amp; WebAssembly Support<a class="headerlink" href="#rfc-003-frontend-webassembly-support" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> Blocked
-<strong>Category</strong>: Major Feature</p>
+<h1 id="rfc-003-frontend-and-webassembly-support">RFC 003: frontend and WebAssembly support<a class="headerlink" href="#rfc-003-frontend-and-webassembly-support" title="Permanent link">&para;</a></h1>
+<ul>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2025-12-11</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong> —</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/312</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.1</li>
+<li><strong>Shipped in:</strong> —</li>
+</ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Enable Incan to compile to WebAssembly (WASM) and provide first-class support for building frontend applications,
-including reactive UI components and 3D graphics.
-This positions Incan as a full-stack alternative to JavaScript frameworks like React and Three.js.</p>
+<p>This RFC proposes a browser-facing Incan story built around a WebAssembly compilation target plus first-class frontend and graphics APIs. The north-star is that Incan can compile to native server binaries and to browser-deployable WASM output while offering a reactive UI surface, browser tooling, and a scene-graph style graphics layer, so Python-oriented users do not need to split their application model across Python on the backend and JavaScript on the frontend. The document currently acts as an umbrella RFC for those surfaces; if later review splits it, that split should preserve this end-state rather than narrowing the ambition.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <h3 id="the-python-full-stack-problem">The Python Full-Stack Problem<a class="headerlink" href="#the-python-full-stack-problem" title="Permanent link">&para;</a></h3>
 <p>Python developers building full-stack applications face a common frustration:
@@ -4707,8 +4737,7 @@ Frontend:<span class="w"> </span>JavaScript/TypeScript<span class="w"> </span><s
 <li><strong>Lifetime annotations</strong> — complex syntax for memory management</li>
 <li><strong>Verbose syntax</strong> — more ceremony than Python</li>
 </ul>
-<p>TypeScript developers have a smaller gap to Rust (similar syntax, static types).
-But Python developers face a steeper learning curve.</p>
+<p>TypeScript developers have a smaller gap to Rust (similar syntax, static types). But Python developers face a steeper learning curve.</p>
 <h3 id="incans-opportunity">Incan's Opportunity<a class="headerlink" href="#incans-opportunity" title="Permanent link">&para;</a></h3>
 <p><strong>Full-stack Python without JavaScript</strong> — one language for backend APIs, frontend UIs, and 3D graphics,
 all compiling to native performance:</p>
@@ -4726,7 +4755,22 @@ Native<span class="w"> </span>binary<span class="w"> </span><span class="o">(</s
 <li><strong>Rust's safety</strong> — memory safety without learning ownership</li>
 <li><strong>Modern tooling</strong> — single build system, unified debugging</li>
 </ul>
-<h2 id="design">Design<a class="headerlink" href="#design" title="Permanent link">&para;</a></h2>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Give Incan an explicit WebAssembly/browser compilation target.</li>
+<li>Define a first-class frontend UI story rather than treating browser work as pure Rust interop.</li>
+<li>Define a graphics surface suitable for browser-based interactive and 3D applications.</li>
+<li>Standardize dev and production browser tooling as part of the end-state developer experience.</li>
+<li>Keep the user-facing surface Incan-first even when it lowers to Rust and WASM underneath.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Promising that every surface in this RFC lands in one implementation phase.</li>
+<li>Replacing the entire JavaScript ecosystem or every frontend-specialized framework.</li>
+<li>Standardizing server-side rendering, static-site generation, desktop, mobile, VR, or AR in this RFC.</li>
+<li>Committing to one specific Rust crate stack as part of the public language contract.</li>
+</ul>
+<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="part-1-wasm-compilation-target">Part 1: WASM Compilation Target<a class="headerlink" href="#part-1-wasm-compilation-target" title="Permanent link">&para;</a></h3>
 <p>Add a <code>--target wasm</code> flag to the Incan compiler:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>wasm<span class="w"> </span>app.incn
@@ -4737,7 +4781,7 @@ Native<span class="w"> </span>binary<span class="w"> </span><span class="o">(</s
 <li><code>Cargo.toml</code> configured for <code>wasm32-unknown-unknown</code></li>
 <li>Build artifacts ready for browser deployment</li>
 </ul>
-<h4 id="generated-structure">Generated Structure<a class="headerlink" href="#generated-structure" title="Permanent link">&para;</a></h4>
+<h4 id="illustrative-generated-structure">Illustrative generated structure<a class="headerlink" href="#illustrative-generated-structure" title="Permanent link">&para;</a></h4>
 <div class="language-bash highlight"><pre><span></span><code>target/wasm/my_app/
 ├──<span class="w"> </span>Cargo.toml
 ├──<span class="w"> </span>src/
@@ -4939,8 +4983,7 @@ Native<span class="w"> </span>binary<span class="w"> </span><span class="o">(</s
 </code></pre></div>
 <hr />
 <h3 id="part-2b-jsx-template-syntax-alternative">Part 2b: JSX Template Syntax (Alternative)<a class="headerlink" href="#part-2b-jsx-template-syntax-alternative" title="Permanent link">&para;</a></h3>
-<p>As an alternative to <code>html()</code> string templates, Incan supports JSX (JavaScript XML) syntax via the <code>jsx()</code> wrapper.
-This provides a more familiar experience for developers coming from React/TypeScript, with full IDE support.</p>
+<p>As an alternative to <code>html()</code> string templates, Incan supports JSX (JavaScript XML) syntax via the <code>jsx()</code> wrapper. This provides a more familiar experience for developers coming from React/TypeScript, with full IDE support.</p>
 <h4 id="why-a-jsx-wrapper">Why a <code>jsx()</code> Wrapper?<a class="headerlink" href="#why-a-jsx-wrapper" title="Permanent link">&para;</a></h4>
 <p>Raw JSX in Incan would create parser ambiguity:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span> <span class="o">=</span> <span class="o">&lt;</span><span class="n">div</span><span class="o">&gt;</span><span class="n">content</span><span class="o">&lt;/</span><span class="n">div</span><span class="o">&gt;</span>    <span class="c1"># JSX? Or...</span>
@@ -5128,8 +5171,7 @@ This provides a more familiar experience for developers coming from React/TypeSc
 <span class="o">&lt;/</span><span class="n">div</span><span class="o">&gt;</span>
 </code></pre></div>
 <h4 id="parser-implementation-notes">Parser Implementation Notes<a class="headerlink" href="#parser-implementation-notes" title="Permanent link">&para;</a></h4>
-<p>Incan supports two wrapper modes: <code>html()</code> and <code>jsx()</code>.
-Both compile to the same output (Leptos view nodes), but they parse differently:
+<p>Incan supports two wrapper modes: <code>html()</code> and <code>jsx()</code>. Both compile to the same output (Leptos view nodes), but they parse differently:
 <code>html()</code> takes a string, while <code>jsx()</code> is native syntax the IDE can understand.</p>
 <ul>
 <li>
@@ -5397,11 +5439,8 @@ Your IDE sees markup, not a string.</p>
 │<span class="w">   </span>└──<span class="w"> </span>index.html
 └──<span class="w"> </span>Cargo.toml<span class="w">             </span><span class="c1"># Project config (with Incan metadata)</span>
 </code></pre></div>
-<h4 id="configuration-cargotoml">Configuration (Cargo.toml)<a class="headerlink" href="#configuration-cargotoml" title="Permanent link">&para;</a></h4>
-<p>Incan uses Cargo.toml with <code>[package.metadata.incan]</code> for Incan-specific settings.
-This follows Rust ecosystem conventions (used by wasm-pack, cargo-deb, etc.).
-Rust dependencies are auto-injected by the Incan toolchain based on what your
-Incan code imports and the build target.</p>
+<h4 id="illustrative-configuration-cargotoml">Illustrative configuration (<code>Cargo.toml</code>)<a class="headerlink" href="#illustrative-configuration-cargotoml" title="Permanent link">&para;</a></h4>
+<p>Incan uses Cargo.toml with <code>[package.metadata.incan]</code> for Incan-specific settings. This follows Rust ecosystem conventions (used by wasm-pack, cargo-deb, etc.). Rust dependencies are auto-injected by the Incan toolchain based on what your Incan code imports and the build target.</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[package]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;my_app&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
@@ -5420,7 +5459,7 @@ Incan code imports and the build target.</p>
 <span class="n">port</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3000</span>
 <span class="n">open_browser</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 </code></pre></div>
-<p>Auto-added dependencies (examples):</p>
+<p>Illustrative dependency mapping examples:</p>
 <table>
 <thead>
 <tr>
@@ -5447,39 +5486,26 @@ Incan code imports and the build target.</p>
 </tr>
 </tbody>
 </table>
-<hr />
-<h2 id="implementation-strategy">Implementation Strategy<a class="headerlink" href="#implementation-strategy" title="Permanent link">&para;</a></h2>
-<h3 id="foundation-layer">Foundation Layer<a class="headerlink" href="#foundation-layer" title="Permanent link">&para;</a></h3>
-<ol>
-<li>WASM codegen target</li>
-<li>wasm-bindgen integration</li>
-<li>Basic JS interop</li>
-</ol>
-<h3 id="ui-layer-builds-on-foundation">UI Layer (builds on Foundation)<a class="headerlink" href="#ui-layer-builds-on-foundation" title="Permanent link">&para;</a></h3>
-<ol>
-<li>Signal/reactive primitives</li>
-<li>HTML template parser</li>
-<li>Component model</li>
-<li>Event handling</li>
-<li>Routing</li>
-</ol>
-<h3 id="graphics-layer-builds-on-foundation">Graphics Layer (builds on Foundation)<a class="headerlink" href="#graphics-layer-builds-on-foundation" title="Permanent link">&para;</a></h3>
-<ol>
-<li>wgpu bindings</li>
-<li>Scene graph</li>
-<li>Geometries and materials</li>
-<li>Asset loading</li>
-<li>Animation system</li>
-</ol>
-<h3 id="tooling-layer-parallel">Tooling Layer (parallel)<a class="headerlink" href="#tooling-layer-parallel" title="Permanent link">&para;</a></h3>
-<ol>
-<li>Dev server with HMR</li>
-<li>Production bundler</li>
-<li>Source maps</li>
-<li>Error overlay</li>
-</ol>
-<hr />
-<h2 id="rust-crate-dependencies">Rust Crate Dependencies<a class="headerlink" href="#rust-crate-dependencies" title="Permanent link">&para;</a></h2>
+<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
+<p>The RFC proposes four coupled surfaces: an explicit WASM target, a reactive UI layer, a browser-oriented graphics layer, and browser-focused tooling.</p>
+<ul>
+<li>The language and tooling must support an explicit browser or WASM target rather than treating browser emission as ad hoc Rust interop.</li>
+<li>The browser target should produce deployable artifacts and preserve a stable mapping between Incan values and browser-facing JavaScript boundaries.</li>
+<li>The UI surface should provide components, local reactive state, effects, templating, event binding, and routing.</li>
+<li>The graphics surface should provide a scene-graph style API with cameras, meshes, materials, asset loading, and animation hooks.</li>
+<li>Browser tooling should provide distinct development and production flows rather than requiring users to hand-assemble Rust or WASM build commands.</li>
+<li>The RFC currently describes both <code>html(...)</code> string templates and <code>jsx(...)</code> wrapper syntax; it does not yet settle whether both belong in the final public contract.</li>
+<li>The RFC currently bundles browser UI and 3D graphics into one umbrella proposal; that coupling remains open to revision if later review concludes they should become separate RFCs.</li>
+</ul>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="surface-decomposition">Surface decomposition<a class="headerlink" href="#surface-decomposition" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Target layer</strong>: <code>incan build --target wasm ...</code> and <code>incan dev --target wasm</code> represent the intended user-facing entry points for browser work.</li>
+<li><strong>UI layer</strong>: the proposal includes components, signals, effects, routing, and template-based rendering.</li>
+<li><strong>Graphics layer</strong>: the proposal includes a browser-friendly scene graph, materials, asset loading, and animation support.</li>
+<li><strong>Tooling layer</strong>: the proposal includes a dev server, browser refresh or HMR-style feedback loops, source maps, and optimized production output.</li>
+</ul>
+<h3 id="example-rust-ecosystem-backing-non-normative">Example Rust ecosystem backing (non-normative)<a class="headerlink" href="#example-rust-ecosystem-backing-non-normative" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
@@ -5526,28 +5552,33 @@ Incan code imports and the build target.</p>
 </tr>
 </tbody>
 </table>
-<hr />
-<h2 id="success-criteria">Success Criteria<a class="headerlink" href="#success-criteria" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>"Hello World" WASM app</strong> compiles and runs in browser</li>
-<li><strong>Counter component</strong> demonstrates reactive state</li>
-<li><strong>TodoMVC</strong> proves component model completeness  </li>
-<li><strong>Rotating cube</strong> demonstrates basic 3D</li>
-<li><strong>Animated character</strong> demonstrates asset loading + animation</li>
-<li><strong>Full demo app</strong> combines UI + 3D (e.g., 3D product viewer)</li>
-</ol>
-<hr />
-<h2 id="future-extensions">Future Extensions<a class="headerlink" href="#future-extensions" title="Permanent link">&para;</a></h2>
+<h3 id="demonstration-targets">Demonstration targets<a class="headerlink" href="#demonstration-targets" title="Permanent link">&para;</a></h3>
+<p>The intended surface should be strong enough to cover:</p>
 <ul>
-<li>Server-side rendering (SSR) with hydration</li>
-<li>Static site generation (SSG)</li>
-<li>Native desktop via wgpu (non-WASM)</li>
-<li>Mobile via wgpu + platform bindings</li>
-<li>VR/AR support via WebXR</li>
-<li>Collaborative editing (CRDTs)</li>
+<li>a "hello world" WASM app;</li>
+<li>a reactive counter-style component;</li>
+<li>a TodoMVC-scale UI application;</li>
+<li>a rotating-cube style graphics demo; and</li>
+<li>a combined UI plus graphics demo such as a 3D product viewer.</li>
 </ul>
-<hr />
-<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Keep the status quo: Python backend plus JavaScript or TypeScript frontend</strong></li>
+<li>
+<p>Rejected because it preserves the split-language experience the RFC is trying to eliminate.</p>
+</li>
+<li>
+<p><strong>Tell users to write Rust directly for browser work</strong></p>
+</li>
+<li>
+<p>Rejected because it defeats the Python-first positioning of Incan and pushes users into a different language and mental model at exactly the point where a full-stack story is most valuable.</p>
+</li>
+<li>
+<p><strong>Treat frontend UI and graphics strictly as third-party ecosystem work</strong></p>
+</li>
+<li>Rejected as the north-star because it leaves one of the largest developer-experience gaps in the language outside the standard design story.</li>
+</ol>
+<h3 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h3>
 <ul>
 <li><a href="https://rustwasm.github.io/wasm-bindgen/">wasm-bindgen</a></li>
 <li><a href="https://leptos.dev/">Leptos</a> - Rust reactive framework</li>
@@ -5556,22 +5587,29 @@ Incan code imports and the build target.</p>
 <li><a href="https://threejs.org/">Three.js</a> - JS 3D library (inspiration)</li>
 <li><a href="https://www.solidjs.com/">SolidJS</a> - JS signals (inspiration)</li>
 </ul>
-<hr />
-<h2 id="checklist">Checklist<a class="headerlink" href="#checklist" title="Permanent link">&para;</a></h2>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>[ ] CLI: <code>incan build --target wasm</code> plumbing</li>
-<li>[ ] Codegen: wasm-bindgen output for <code>wasm32-unknown-unknown</code></li>
-<li>[ ] Auto-deps: inject wasm-bindgen/web-sys/leptos/etc. from usage</li>
-<li>[ ] UI: signals/effect/component runtime surface</li>
-<li>[ ] Templates: <code>html()</code> strings</li>
-<li>[ ] Templates: <code>jsx()</code> wrapper parsing/emission</li>
-<li>[ ] Event handlers: named + arrow inline support</li>
-<li>[ ] Routing: Router/Route/Link mapping</li>
-<li>[ ] Dev server: <code>incan dev --target wasm</code> with HMR/overlay</li>
-<li>[ ] Prod build: wasm-opt/minify/tree-shake/assets</li>
-<li>[ ] 3D: wgpu bindings + scene graph + loaders</li>
-<li>[ ] Examples: counter, TodoMVC, rotating cube, 3D demo</li>
+<li>This RFC is very broad: it couples a compiler target, UI framework ideas, graphics abstractions, and tooling expectations in one document.</li>
+<li>Browser runtimes and frontend ergonomics evolve quickly, so locking down the wrong abstraction too early would be costly.</li>
+<li>The document currently mixes mature target-shape ideas with much more speculative UI and graphics surface design.</li>
+<li>Supporting browser and WASM workflows well would add substantial compiler, runtime, and tooling scope.</li>
 </ul>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>CLI / tooling</strong>: must expose explicit browser-target build and dev commands rather than forcing manual Rust or WASM workflows.</li>
+<li><strong>Execution handoff</strong>: implementations must support browser-oriented output that preserves stable browser-boundary semantics.</li>
+<li><strong>Stdlib / runtime</strong>: browser-facing UI, graphics, and support libraries would be required if this RFC remains bundled as one proposal.</li>
+<li><strong>Language surface</strong>: the proposed browser-facing module surfaces must be recognized and validated coherently.</li>
+<li><strong>Docs / examples</strong>: the browser build model, UI reactivity model, and graphics model must be explained coherently.</li>
+</ul>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Should the WebAssembly target, UI framework, and graphics framework remain in one RFC, or should this be split into smaller but still complete north-star RFCs?</li>
+<li>Should both <code>html(...)</code> and <code>jsx(...)</code> remain in scope, or should the long-term contract standardize one primary templating surface?</li>
+<li>Should browser tooling such as dev-server and bundling behavior be part of this RFC's public contract, or should they move to a separate tooling RFC?</li>
+<li>How much of the proposed graphics surface belongs in core stdlib versus a purpose-built library layer?</li>
+</ul>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

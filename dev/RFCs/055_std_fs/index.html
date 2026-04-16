@@ -4599,8 +4599,8 @@
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Stdlib / runtime (<code>incan_stdlib</code>)</strong>: new <code>std.fs</code> module and supporting types such as <code>Path</code>, <code>File</code>, <code>OpenOptions</code>, and <code>DirEntry</code>.</li>
-<li><strong>Typechecker / symbol resolution</strong>: registration of the new module and types so imports and method calls resolve without ad hoc compiler cases.</li>
-<li><strong>Compiler builtins / reference docs</strong>: docs must explain the difference between whole-file helpers and chunked file-handle APIs.</li>
+<li><strong>Language surface</strong>: imports, constructors, methods, and helpers must be available without ad hoc special cases.</li>
+<li><strong>Reference docs</strong>: documentation must explain the difference between whole-file helpers and chunked file-handle APIs.</li>
 <li><strong>LSP / tooling</strong>: completions and hovers for <code>std.fs</code> members.</li>
 <li><strong>Tests / docs-site</strong>: API docs and examples must cover both whole-file and chunked large-file workflows.</li>
 </ul>

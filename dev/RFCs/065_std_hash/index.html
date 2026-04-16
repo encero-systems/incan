@@ -4326,7 +4326,7 @@
 <li>RFC 064 (<code>std.encoding</code> binary-text encoding and decoding)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> —</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/343</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -4450,8 +4450,8 @@
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Stdlib / runtime</strong>: algorithm implementations and stable output behavior.</li>
-<li><strong>Typechecker / symbol resolution</strong>: module/type registration.</li>
-<li><strong>Lowering / emission</strong>: preserve deterministic hashing semantics.</li>
+<li><strong>Language surface</strong>: the module families, hasher types, and helper functions must be available as specified.</li>
+<li><strong>Execution handoff</strong>: implementations must preserve deterministic hashing semantics.</li>
 <li><strong>Docs / examples</strong>: algorithm selection guidance and misuse avoidance.</li>
 </ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>

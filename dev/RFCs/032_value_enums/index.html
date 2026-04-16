@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 032: Value Enums — StrEnum and IntEnum - Incan Documentation</title>
+        <title>RFC 032: value enums — StrEnum and IntEnum - Incan Documentation</title>
       
     
     
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 032: Value Enums — StrEnum and IntEnum
+              RFC 032: value enums — StrEnum and IntEnum
             
           </span>
         </div>
@@ -4243,9 +4243,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rust-lowering" class="md-nav__link">
+  <a href="#lowering-model" class="md-nav__link">
     <span class="md-ellipsis">
-      Rust lowering
+      Lowering model
     </span>
   </a>
   
@@ -4368,53 +4368,20 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-plan" class="md-nav__link">
+  <a href="#implementation-architecture" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation plan
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Implementation plan">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#frontend" class="md-nav__link">
-    <span class="md-ellipsis">
-      Frontend
+      Implementation architecture
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#backend" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
     <span class="md-ellipsis">
-      Backend
+      Layers affected
     </span>
   </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tooling" class="md-nav__link">
-    <span class="md-ellipsis">
-      Tooling
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tests" class="md-nav__link">
-    <span class="md-ellipsis">
-      Tests
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -4445,15 +4412,16 @@
   
 
 
-<h1 id="rfc-032-value-enums-strenum-and-intenum">RFC 032: Value Enums — <code>StrEnum</code> and <code>IntEnum</code><a class="headerlink" href="#rfc-032-value-enums-strenum-and-intenum" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-032-value-enums-strenum-and-intenum">RFC 032: value enums — <code>StrEnum</code> and <code>IntEnum</code><a class="headerlink" href="#rfc-032-value-enums-strenum-and-intenum" title="Permanent link">&para;</a></h1>
 <ul>
 <li><strong>Status:</strong> Draft</li>
 <li><strong>Created:</strong> 2026-03-06</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong> RFC 050 (Enum Methods &amp; Trait Adoption), RFC 033 (<code>ctx</code> Keyword)</li>
-<li><strong>Issue:</strong> —</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/317</li>
 <li><strong>RFC PR:</strong> —</li>
-<li><strong>Target version:</strong> TBD</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>Introduce <strong>value enums</strong> — enums whose variants carry an associated primitive value (<code>str</code> or <code>int</code>). This gives Incan a Python <code>StrEnum</code>/<code>IntEnum</code>-equivalent: enums that are more than labels but less than full ADTs. Value enums auto-generate <code>value()</code>, <code>from_value()</code>, <code>Display</code>, and <code>FromStr</code> implementations, enabling clean string/integer lookups, serde round-tripping, and environment-variable resolution.</p>
@@ -4655,76 +4623,11 @@
 <ul>
 <li>Serialization: emits the <strong>value</strong>, not the variant name (<code>"production"</code> not <code>"Prod"</code>)</li>
 <li>Deserialization: matches on the <strong>value</strong> (<code>"production"</code> → <code>Env.Prod</code>)</li>
-<li>This is implemented via <code>#[serde(rename = "...")]</code> on each variant</li>
+<li>Backends may realize this through per-variant rename metadata or an equivalent serialization hook.</li>
 </ul>
-<h3 id="rust-lowering">Rust lowering<a class="headerlink" href="#rust-lowering" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Env</span><span class="p">(</span><span class="nb">str</span><span class="p">):</span>
-    <span class="nc">Dev</span> <span class="o">=</span> <span class="s2">&quot;development&quot;</span>
-    <span class="nc">QA</span> <span class="o">=</span> <span class="s2">&quot;qa&quot;</span>
-    <span class="nc">Prod</span> <span class="o">=</span> <span class="s2">&quot;production&quot;</span>
-</code></pre></div>
-<p>Lowers to:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="cp">#[derive(Debug, Clone, PartialEq, Eq, Hash)]</span>
-<span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">Env</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">Dev</span><span class="p">,</span>
-<span class="w">    </span><span class="n">QA</span><span class="p">,</span>
-<span class="w">    </span><span class="n">Prod</span><span class="p">,</span>
-<span class="p">}</span>
-
-<span class="k">impl</span><span class="w"> </span><span class="n">Env</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">value</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kp">&amp;</span><span class="kt">str</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="k">match</span><span class="w"> </span><span class="bp">self</span><span class="w"> </span><span class="p">{</span>
-<span class="w">            </span><span class="n">Env</span><span class="p">::</span><span class="n">Dev</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;development&quot;</span><span class="p">,</span>
-<span class="w">            </span><span class="n">Env</span><span class="p">::</span><span class="n">QA</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;qa&quot;</span><span class="p">,</span>
-<span class="w">            </span><span class="n">Env</span><span class="p">::</span><span class="n">Prod</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;production&quot;</span><span class="p">,</span>
-<span class="w">        </span><span class="p">}</span>
-<span class="w">    </span><span class="p">}</span>
-
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">from_value</span><span class="p">(</span><span class="n">s</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="kt">str</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">Env</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="k">match</span><span class="w"> </span><span class="n">s</span><span class="w"> </span><span class="p">{</span>
-<span class="w">            </span><span class="s">&quot;development&quot;</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="n">Env</span><span class="p">::</span><span class="n">Dev</span><span class="p">),</span>
-<span class="w">            </span><span class="s">&quot;qa&quot;</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="n">Env</span><span class="p">::</span><span class="n">QA</span><span class="p">),</span>
-<span class="w">            </span><span class="s">&quot;production&quot;</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="n">Env</span><span class="p">::</span><span class="n">Prod</span><span class="p">),</span>
-<span class="w">            </span><span class="n">_</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="nb">None</span><span class="p">,</span>
-<span class="w">        </span><span class="p">}</span>
-<span class="w">    </span><span class="p">}</span>
-
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">message</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">String</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="k">match</span><span class="w"> </span><span class="bp">self</span><span class="w"> </span><span class="p">{</span>
-<span class="w">            </span><span class="n">Env</span><span class="p">::</span><span class="n">Dev</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="nb">String</span><span class="p">::</span><span class="n">from</span><span class="p">(</span><span class="s">&quot;Dev&quot;</span><span class="p">),</span>
-<span class="w">            </span><span class="n">Env</span><span class="p">::</span><span class="n">QA</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="nb">String</span><span class="p">::</span><span class="n">from</span><span class="p">(</span><span class="s">&quot;QA&quot;</span><span class="p">),</span>
-<span class="w">            </span><span class="n">Env</span><span class="p">::</span><span class="n">Prod</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="nb">String</span><span class="p">::</span><span class="n">from</span><span class="p">(</span><span class="s">&quot;Prod&quot;</span><span class="p">),</span>
-<span class="w">        </span><span class="p">}</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="p">}</span>
-
-<span class="k">impl</span><span class="w"> </span><span class="n">std</span><span class="p">::</span><span class="n">fmt</span><span class="p">::</span><span class="n">Display</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">Env</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">fmt</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">f</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">mut</span><span class="w"> </span><span class="n">std</span><span class="p">::</span><span class="n">fmt</span><span class="p">::</span><span class="n">Formatter</span><span class="o">&lt;&#39;</span><span class="nb">_</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">std</span><span class="p">::</span><span class="n">fmt</span><span class="p">::</span><span class="nb">Result</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="fm">write!</span><span class="p">(</span><span class="n">f</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">value</span><span class="p">())</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="p">}</span>
-
-<span class="k">impl</span><span class="w"> </span><span class="n">std</span><span class="p">::</span><span class="kt">str</span><span class="p">::</span><span class="n">FromStr</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">Env</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nb">Err</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">String</span><span class="p">;</span>
-
-<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">from_str</span><span class="p">(</span><span class="n">s</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="kt">str</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">,</span><span class="w"> </span><span class="bp">Self</span><span class="p">::</span><span class="nb">Err</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="bp">Self</span><span class="p">::</span><span class="n">from_value</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
-<span class="w">            </span><span class="p">.</span><span class="n">ok_or_else</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="fm">format!</span><span class="p">(</span><span class="s">&quot;invalid value for Env: {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">s</span><span class="p">))</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="p">}</span>
-</code></pre></div>
-<p>With serde enabled:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="cp">#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]</span>
-<span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">Env</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="cp">#[serde(rename = </span><span class="s">&quot;development&quot;</span><span class="cp">)]</span>
-<span class="w">    </span><span class="n">Dev</span><span class="p">,</span>
-<span class="w">    </span><span class="cp">#[serde(rename = </span><span class="s">&quot;qa&quot;</span><span class="cp">)]</span>
-<span class="w">    </span><span class="n">QA</span><span class="p">,</span>
-<span class="w">    </span><span class="cp">#[serde(rename = </span><span class="s">&quot;production&quot;</span><span class="cp">)]</span>
-<span class="w">    </span><span class="n">Prod</span><span class="p">,</span>
-<span class="p">}</span>
-</code></pre></div>
-<p>For <code>IntEnum</code>, the pattern is identical but with <code>i64</code> values, <code>TryFrom&lt;i64&gt;</code> instead of <code>FromStr</code>, and serde uses <code>#[serde(rename = "200")]</code> etc.</p>
+<h3 id="lowering-model">Lowering model<a class="headerlink" href="#lowering-model" title="Permanent link">&para;</a></h3>
+<p>Backends should lower value enums to an ordinary closed enum representation plus generated helpers for value lookup, reverse lookup, display behavior, and any serialization metadata required by the chosen backend. The exact emitted code shape is implementation detail; the language-level contract is the generated method and serialization behavior described above.</p>
+<p>For <code>IntEnum</code>, the same model applies with integer-valued lookup and reverse lookup rather than string parsing.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="proposed-syntax">Proposed Syntax<a class="headerlink" href="#proposed-syntax" title="Permanent link">&para;</a></h3>
 <p>The value type specifier <code>(str)</code> or <code>(int)</code> appears after the enum name, before the colon. This mirrors Python's <code>class Env(StrEnum):</code> parenthesized base class syntax while remaining consistent with Incan's existing <code>enum Name:</code> declaration pattern.</p>
@@ -4742,7 +4645,7 @@ enum Name:          # Regular ADT enum (unchanged)
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <p><strong>Pattern matching</strong>: Value enums match by variant, not by value. <code>case Env.Dev:</code> matches the variant, regardless of the associated value. To match on the raw value, use <code>match env_string: case "production": ...</code>.</p>
 <p><strong>Traits (RFC 050)</strong>: Once enum methods and trait adoption land, value enums can have additional methods. The auto-generated <code>value()</code>, <code>from_value()</code>, and <code>message()</code> methods will coexist with user-defined methods.</p>
-<p><strong>Serde</strong>: Value enums integrate with the existing serde derive scanning in <code>IrCodegen</code>. The <code>#[serde(rename)]</code> attributes are added per-variant.</p>
+<p><strong>Serde</strong>: When serde-style serialization is active, value enums serialize and deserialize using their associated values rather than their variant names.</p>
 <p><strong><code>ctx</code> (RFC 033)</strong>: Axis resolution gains a two-step lookup: (1) try <code>from_value()</code> for exact value match, (2) fall back to case-insensitive variant name match. This means <code>PIPELINE_ENV=production</code> resolves via value, and <code>PIPELINE_ENV=Prod</code> resolves via name.</p>
 <p><strong>Generics</strong>: Value enums cannot have type parameters. <code>enum Foo[T](str):</code> is a compile error — value enums are inherently concrete.</p>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
@@ -4777,45 +4680,16 @@ enum Name:          # Regular ADT enum (unchanged)
 <li><strong>Value type restriction</strong>: Only <code>str</code> and <code>int</code> are supported. Users wanting <code>float</code> or custom types must use regular enums with methods. This is intentional (simple values should be simple) but may require explanation.</li>
 <li><strong>Display uses value, not name</strong>: Printing an <code>Env.Dev</code> shows <code>"development"</code>, not <code>"Dev"</code>. This is the right default for wire-format types but could surprise users who expect the variant name. <code>message()</code> exists for that use case.</li>
 </ul>
-<h2 id="implementation-plan">Implementation plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
-<!-- markdownlint-disable MD029 -->
-<h3 id="frontend">Frontend<a class="headerlink" href="#frontend" title="Permanent link">&para;</a></h3>
-<ol>
-<li><strong>Parser</strong> (<code>crates/incan_syntax/src/parser/decl.rs</code>): After parsing <code>enum</code>, check for <code>(str)</code> or <code>(int)</code> value type specifier. Parse variant assignments <code>Name = &lt;literal&gt;</code>.</li>
-<li><strong>AST</strong> (<code>crates/incan_syntax/src/ast/decls.rs</code>): Add <code>value_type: Option&lt;Spanned&lt;Type&gt;&gt;</code> to <code>EnumDecl</code>. Add <code>value: Option&lt;Spanned&lt;Expr&gt;&gt;</code> to <code>VariantDecl</code>.</li>
-<li><strong>Typechecker</strong> (<code>src/frontend/typechecker/</code>):<ul>
-<li>Validate that all variants have values when <code>value_type</code> is set (and none when it isn't).</li>
-<li>Validate value literals match the declared type.</li>
-<li>Validate value uniqueness.</li>
-<li>Reject value enums with tuple/struct variant fields.</li>
-<li>Reject value enums with type parameters.</li>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
+<p><em>(Non-normative.)</em> A practical implementation preserves enum-level value-type metadata and per-variant literal values as first-class enum information rather than treating them as ad hoc attributes. Later compilation stages can then derive the standardized helper surface (<code>value()</code>, <code>from_value()</code>, display and parsing support, and serde-facing value mapping) from that single canonical representation. Tooling should use the same representation so completions, hover text, formatting, and diagnostics remain consistent.</p>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Language surface</strong>: value-carrying enum declarations must preserve explicit variant values as part of the enum contract.</li>
+<li><strong>Type system</strong>: allowed value types, uniqueness, and interactions with enum method surfaces must be validated.</li>
+<li><strong>Execution handoff</strong>: implementations must preserve variant values and generate the standardized helper surface such as <code>value()</code> and <code>from_value()</code>.</li>
+<li><strong>Serde / runtime interop</strong>: integrations must preserve the documented value mapping for serialization and parsing behavior.</li>
+<li><strong>Docs / tooling</strong>: the distinction between value enums, plain enums, and general ADTs must be explained clearly.</li>
 </ul>
-</li>
-</ol>
-<h3 id="backend">Backend<a class="headerlink" href="#backend" title="Permanent link">&para;</a></h3>
-<ol>
-<li><strong>IR</strong> (<code>src/backend/ir/decl.rs</code>): Add <code>value_type: Option&lt;IrType&gt;</code> to <code>IrEnum</code>. Add <code>value: Option&lt;IrLiteral&gt;</code> to <code>EnumVariant</code>.</li>
-<li><strong>Lowering</strong> (<code>src/backend/ir/lower/decl.rs</code>): Lower value type and variant values from AST to IR.</li>
-<li><strong>Emission</strong> (<code>src/backend/ir/emit/decls/structures.rs</code>): Extend <code>emit_enum()</code> to generate:<ul>
-<li><code>value()</code> method (match on variants → literal values)</li>
-<li><code>from_value()</code> method (match on literal values → variants)</li>
-<li><code>Display</code> impl (delegates to <code>value()</code>)</li>
-<li><code>FromStr</code> impl (delegates to <code>from_value()</code>)</li>
-<li><code>#[serde(rename = "...")]</code> attributes per variant when serde is active</li>
-</ul>
-</li>
-</ol>
-<h3 id="tooling">Tooling<a class="headerlink" href="#tooling" title="Permanent link">&para;</a></h3>
-<ol>
-<li><strong>Formatter</strong> (<code>src/format/</code>): Format value enum syntax (alignment of <code>= "value"</code> assignments).</li>
-<li><strong>LSP</strong> (<code>src/lsp/</code>): Completion for value enum variants, hover showing value.</li>
-</ol>
-<h3 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h3>
-<ol>
-<li><strong>Snapshot tests</strong>: Add codegen snapshot for <code>StrEnum</code> and <code>IntEnum</code> variants.</li>
-<li><strong>Integration tests</strong>: End-to-end test exercising <code>value()</code>, <code>from_value()</code>, <code>Display</code>, serde round-trip.</li>
-<li><strong>Error tests</strong>: Missing values, duplicate values, type mismatches, generics rejected.</li>
-</ol>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ol>
 <li>
@@ -4834,6 +4708,7 @@ enum Name:          # Regular ADT enum (unchanged)
 <p><strong>Relationship with RFC 050 enum methods</strong>: Once RFC 050 lands, value enums should be able to have user-defined methods alongside the auto-generated ones. Need to ensure no naming conflicts (e.g., user defines their own <code>value()</code> method on a value enum — should this be an error?).</p>
 </li>
 </ol>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 020: Offline / Locked / Reproducible Builds (Cargo Policy + Generated Project Contract) - Incan Documentation</title>
+        <title>RFC 020: offline / locked / reproducible builds (Cargo policy + generated project contract) - Incan Documentation</title>
       
     
     
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 020: Offline / Locked / Reproducible Builds (Cargo Policy + Generated Project Contract)
+              RFC 020: offline / locked / reproducible builds (Cargo policy + generated project contract)
             
           </span>
         </div>
@@ -4350,13 +4350,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-plan" class="md-nav__link">
+  <a href="#layers-affected" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation plan
+      Layers affected
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Implementation plan">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation architecture
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation architecture">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4400,12 +4409,17 @@
   
 
 
-<h1 id="rfc-020-offline-locked-reproducible-builds-cargo-policy-generated-project-contract">RFC 020: Offline / Locked / Reproducible Builds (Cargo Policy + Generated Project Contract)<a class="headerlink" href="#rfc-020-offline-locked-reproducible-builds-cargo-policy-generated-project-contract" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> Planned<br />
-<strong>Created:</strong> 2026-01-21<br />
-<strong>Author(s):</strong> Danny Meijer (@danny-meijer)<br />
-<strong>Issue:</strong> <code>https://github.com/dannys-code-corner/incan/issues/38</code><br />
-<strong>Related:</strong> RFC 013 (dependency + lockfile direction), RFC 015 (project lifecycle CLI), RFC 019 (test runner + CLI)</p>
+<h1 id="rfc-020-offline-locked-reproducible-builds-cargo-policy-generated-project-contract">RFC 020: offline / locked / reproducible builds (Cargo policy + generated project contract)<a class="headerlink" href="#rfc-020-offline-locked-reproducible-builds-cargo-policy-generated-project-contract" title="Permanent link">&para;</a></h1>
+<ul>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2026-01-21</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong> RFC 013 (dependency + lockfile direction), RFC 015 (project lifecycle CLI), RFC 019 (test runner + CLI)</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/38</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.1</li>
+<li><strong>Shipped in:</strong> —</li>
+</ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>Define a first-class, user-facing <strong>Cargo policy contract</strong> for Incan that supports enterprise/restricted environments:</p>
 <ul>
@@ -4417,14 +4431,15 @@
 </li>
 <li>A <strong>precedence model</strong> for policy (CLI flags + CI-friendly env vars; project config is explicitly out of scope here).</li>
 <li>A <strong>generated-project persistence contract</strong> for <code>target/incan/**</code> and <code>target/incan_tests/**</code>:
-  what is regenerated vs preserved, and where artifacts live.</li>
+    what is regenerated vs preserved, and where artifacts live.</li>
 </ul>
 <p>This RFC intentionally avoids overlap with:</p>
 <ul>
 <li><strong>RFC 013</strong> (dependency specification + <code>incan.lock</code>): this RFC does <em>not</em> define <code>incan.lock</code> or <code>incan lock/update</code>.</li>
 <li><strong>RFC 015</strong> (project metadata + lifecycle): this RFC does <em>not</em> define <code>incan.toml</code> schema or project layout/init/new.</li>
-<li><strong>RFC 019</strong> (test runner + CLI): this RFC does <em>not</em> define test discovery/selection/reporting flags; it only adds Cargo
-  policy flags that constrain the underlying Cargo subprocess invocations used by <code>incan test</code>.</li>
+<li><strong>RFC 019</strong> (test runner + CLI): this RFC does <em>not</em> define
+test discovery/selection/reporting flags; it only adds Cargo policy flags that constrain the underlying Cargo subprocess invocations used by
+  <code>incan test</code>.</li>
 </ul>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>In enterprise or restricted environments, adopting a compiler/toolchain depends on <strong>predictable, enforceable policy</strong>:</p>
@@ -4438,8 +4453,7 @@
 <li><code>incan build</code> and <code>incan run</code> (via <code>cargo build/run</code> on a generated project under <code>target/incan/&lt;name&gt;</code>)</li>
 <li><code>incan test</code> (via <code>cargo test</code> on a generated harness project under <code>target/incan_tests/...</code>)</li>
 </ul>
-<p>Users can work around this by <code>cd</code>-ing into generated Cargo projects and running <code>cargo --offline --locked ...</code>
-themselves, but that undermines the promise of a coherent toolchain and makes CI policy inconsistent.</p>
+<p>Users can work around this by <code>cd</code>-ing into generated Cargo projects and running <code>cargo --offline --locked ...</code> themselves, but that undermines the promise of a coherent toolchain and makes CI policy inconsistent.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Provide an official way to run builds/tests with Cargo policies (<code>--offline</code>, <code>--locked</code>, optionally <code>--frozen</code>).</li>
@@ -4461,7 +4475,8 @@ themselves, but that undermines the promise of a coherent toolchain and makes CI
 <li><strong>Policy</strong>: constraints applied to underlying Cargo invocation(s) (offline/locked/frozen, plus advanced cargo args).</li>
 <li><strong>Lockfile</strong>:<ul>
 <li><strong>Cargo lockfile</strong>: <code>Cargo.lock</code> used by Cargo to pin transitive crates.</li>
-<li><strong>Incan lockfile</strong> (future): <code>incan.lock</code> (RFC 013 direction), a source-of-truth lock that can materialize Cargo state.</li>
+<li><strong>Incan lockfile</strong> (future): <code>incan.lock</code> (RFC 013 direction), a
+  source-of-truth lock that can materialize Cargo state.</li>
 </ul>
 </li>
 </ul>
@@ -4509,8 +4524,8 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 <ul>
 <li><code>--offline</code><ul>
 <li>Semantics: underlying Cargo invocations must not access the network.</li>
-<li>Implementation requirement: pass Cargo’s offline semantics through (e.g. <code>cargo ... --offline</code> and/or
-  <code>CARGO_NET_OFFLINE=true</code>).</li>
+<li>Implementation requirement: pass Cargo’s offline semantics through
+  (e.g. <code>cargo ... --offline</code> and/or <code>CARGO_NET_OFFLINE=true</code>).</li>
 </ul>
 </li>
 <li><code>--locked</code><ul>
@@ -4524,8 +4539,8 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 </ul>
 </li>
 <li><code>--cargo-args &lt;ARGS...&gt;</code><ul>
-<li>Semantics: additional arguments forwarded to the underlying Cargo invocation <strong>after</strong> policy flags, as an
-  escape hatch.</li>
+<li>Semantics: additional arguments forwarded to the underlying Cargo
+  invocation <strong>after</strong> policy flags, as an escape hatch.</li>
 <li>Safety: <code>incan</code> should not attempt to validate arbitrary Cargo args beyond basic well-formedness.</li>
 </ul>
 </li>
@@ -4555,8 +4570,7 @@ incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span cla
 </code></pre></div>
 <p>If <code>--</code> is present, all arguments after it are treated as Cargo args (and <code>--cargo-args</code> is not needed).</p>
 <p><strong>Environment variable</strong> (<code>INCAN_CARGO_ARGS</code>):</p>
-<p>The environment variable is split on whitespace. Quoting is <strong>not</strong> supported to avoid cross-platform shell escaping
-issues.</p>
+<p>The environment variable is split on whitespace. Quoting is <strong>not</strong> supported to avoid cross-platform shell escaping issues.</p>
 <div class="language-bash highlight"><pre><span></span><code><span class="c1"># Simple whitespace-separated args</span>
 <span class="nv">INCAN_CARGO_ARGS</span><span class="o">=</span><span class="s2">&quot;--features my_feature --no-default-features&quot;</span>
 
@@ -4572,8 +4586,8 @@ issues.</p>
 <p>Out of scope (to avoid overlap with RFC 015):</p>
 <ul>
 <li>A project-level config key in <code>incan.toml</code> that sets default Cargo policy.
-  If/when we add it, it must follow RFC 015’s <code>incan.toml</code> approach and must not conflict with the CLI/env precedence
-  defined above.</li>
+    If and when we add it, it must follow RFC 015’s <code>incan.toml</code> approach and
+    must not conflict with the CLI/env precedence defined above.</li>
 </ul>
 <h3 id="generated-project-locations-and-persistence-normative">Generated project locations and persistence (normative)<a class="headerlink" href="#generated-project-locations-and-persistence-normative" title="Permanent link">&para;</a></h3>
 <h4 id="default-output-directories">Default output directories<a class="headerlink" href="#default-output-directories" title="Permanent link">&para;</a></h4>
@@ -4592,8 +4606,8 @@ issues.</p>
 <li>
 <p><strong>Single-file mode</strong> (no <code>incan.toml</code>):</p>
 </li>
-<li>Use the file's path relative to the current working directory, with path separators replaced by <code>_</code> and the <code>.incn</code>
-     extension removed.</li>
+<li>Use the file's path relative to the current working directory, with path
+     separators replaced by <code>_</code> and the <code>.incn</code> extension removed.</li>
 <li>Examples (the <code>&lt;name&gt;</code> portion is shown in <strong>bold</strong>):<ul>
 <li><code>incan run src/main.incn</code> → <code>target/incan/</code><strong><code>src_main</code></strong><code>/</code></li>
 <li><code>incan run examples/main.incn</code> → <code>target/incan/</code><strong><code>examples_main</code></strong><code>/</code></li>
@@ -4602,14 +4616,13 @@ issues.</p>
 </ul>
 </li>
 </ol>
-<p>Rationale: this prevents collisions between files with the same basename in different directories, while keeping names
-readable and predictable.</p>
+<p>Rationale: this prevents collisions between files with the same basename in different directories, while keeping names readable and predictable.</p>
 <h4 id="regeneration-rules">Regeneration rules<a class="headerlink" href="#regeneration-rules" title="Permanent link">&para;</a></h4>
 <p>Within a generated project directory, files are classified as:</p>
 <ul>
 <li><strong>Generated (owned by Incan)</strong>: may be overwritten on each run.<ul>
 <li><code>Cargo.toml</code></li>
-<li><code>src/**</code> (generated Rust code)</li>
+<li><code>src/**</code> (generated backend code)</li>
 <li>Any other files explicitly emitted by Incan in the future</li>
 </ul>
 </li>
@@ -4620,13 +4633,13 @@ readable and predictable.</p>
 </ul>
 </li>
 </ul>
-<p>Rationale: preserving <code>Cargo.lock</code> is required for meaningful <code>--locked</code> behavior across invocations
-<em>when <code>Cargo.lock</code> is the only lock artifact in play</em>.</p>
+<p>Rationale: preserving <code>Cargo.lock</code> is required for meaningful <code>--locked</code> behavior across invocations when <code>Cargo.lock</code> is the only lock artifact in play.</p>
 <p>Future compatibility note (RFC 013):</p>
 <ul>
 <li>RFC 013 introduces a project-root <code>incan.lock</code> as the source-of-truth lockfile, embedding a Cargo lock payload.</li>
-<li>If/when RFC 013 is implemented, <code>Cargo.lock</code> files inside generated project directories become <strong>derived artifacts</strong>
-  materialized from <code>incan.lock</code> and may be overwritten deterministically.</li>
+<li>If and when RFC 013 is implemented, <code>Cargo.lock</code> files inside generated
+project directories become <strong>derived artifacts</strong> materialized from
+  <code>incan.lock</code> and may be overwritten deterministically.</li>
 <li>In that world, the “preserved <code>Cargo.lock</code>” rule is superseded by RFC 013’s lock materialization contract.</li>
 </ul>
 <h4 id="lockfile-requirements-for-policy-modes">Lockfile requirements for policy modes<a class="headerlink" href="#lockfile-requirements-for-policy-modes" title="Permanent link">&para;</a></h4>
@@ -4642,8 +4655,9 @@ readable and predictable.</p>
 <li>point to the project root (<code>incan.toml</code> location)</li>
 </ul>
 </li>
-<li>Incan must materialize the embedded Cargo lock payload from <code>incan.lock</code> into <code>Cargo.lock</code> inside the generated
-  project directory before invoking Cargo.</li>
+<li>Incan must materialize the embedded Cargo lock payload from <code>incan.lock</code>
+  into <code>Cargo.lock</code> inside the generated project directory before invoking
+  Cargo.</li>
 </ul>
 </li>
 <li>
@@ -4661,7 +4675,8 @@ readable and predictable.</p>
 </ul>
 <p>When <code>--offline</code> or <code>--frozen</code> is set:</p>
 <ul>
-<li>If Cargo would require network access (registry index, git fetch, etc.), the command must fail and surface Cargo’s error.</li>
+<li>If Cargo would require network access (registry index, git fetch, etc.), the
+command must fail and surface Cargo’s error.</li>
 <li>Incan should add a short prefix that clarifies that this failure was expected under offline policy.</li>
 </ul>
 <h3 id="relationship-to-rfc-013-incanlock-informative-non-normative">Relationship to RFC 013 (<code>incan.lock</code>) (informative, non-normative)<a class="headerlink" href="#relationship-to-rfc-013-incanlock-informative-non-normative" title="Permanent link">&para;</a></h3>
@@ -4669,17 +4684,16 @@ readable and predictable.</p>
 <p>This RFC does <strong>not</strong> define <code>incan.lock</code>. It only defines:</p>
 <ul>
 <li>how <code>incan</code> forwards Cargo policy flags (<code>--offline/--locked/--frozen</code>)</li>
-<li>how generated Cargo projects are treated (notably: <code>Cargo.lock</code> handling differs by project vs single-file mode; see above)</li>
+<li>how generated Cargo projects are treated (notably: <code>Cargo.lock</code> handling
+differs by project vs single-file mode; see above)</li>
 </ul>
-<p>If/when RFC 013 is implemented, its <code>incan.lock</code> workflow must compose with this RFC’s guarantees (in particular: policy
-flags still constrain Cargo subprocesses, and generated-project persistence rules remain true unless superseded by a newer
-RFC).</p>
+<p>If and when RFC 013 is implemented, its <code>incan.lock</code> workflow must compose with this RFC’s guarantees. In particular, policy flags still constrain Cargo subprocesses, and generated-project persistence rules remain true unless superseded by a newer RFC.</p>
 <p>In practice, that means:</p>
 <ul>
 <li>The same CLI flags (<code>--offline/--locked/--frozen</code>) constrain Cargo subprocesses exactly as specified here.</li>
 <li>RFC 013 additionally defines Incan-level lock freshness requirements for <code>incan.lock</code> under strict modes.</li>
-<li>Generated-project lockfile handling may change from “preserve <code>Cargo.lock</code>” to “materialize <code>Cargo.lock</code> from
-  <code>incan.lock</code>” once RFC 013 is implemented.</li>
+<li>Generated-project lockfile handling may change from “preserve <code>Cargo.lock</code>”
+to “materialize <code>Cargo.lock</code> from <code>incan.lock</code>” once RFC 013 is implemented.</li>
 </ul>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="policy-application-which-cargo-invocations-are-affected">Policy application: which Cargo invocations are affected<a class="headerlink" href="#policy-application-which-cargo-invocations-are-affected" title="Permanent link">&para;</a></h3>
@@ -4690,9 +4704,7 @@ RFC).</p>
 <li><code>incan test</code>: <code>cargo test ...</code></li>
 </ul>
 <h3 id="policy-does-not-mean-no-rust-dependencies">Policy does not mean “no Rust dependencies”<a class="headerlink" href="#policy-does-not-mean-no-rust-dependencies" title="Permanent link">&para;</a></h3>
-<p>Offline/locked policy constrains resolution and fetching, not whether crates are used.
-If a project depends on crates not already available in Cargo’s local cache (or a vendor directory), offline builds will
-fail—this is intended and is part of the contract.</p>
+<p>Offline/locked policy constrains resolution and fetching, not whether crates are used. If a project depends on crates not already available in Cargo’s local cache (or a vendor directory), offline builds will fail. That is intended and is part of the contract.</p>
 <h3 id="escape-hatch-stability">“Escape hatch” stability<a class="headerlink" href="#escape-hatch-stability" title="Permanent link">&para;</a></h3>
 <p><code>--cargo-args</code> is intentionally a thin pass-through and is not guaranteed stable across major versions beyond:</p>
 <ul>
@@ -4717,8 +4729,8 @@ fail—this is intended and is part of the contract.</p>
 </ul>
 </li>
 <li><strong>Make offline/locked the default</strong>:<ul>
-<li>Rejected (for now): would be breaking for new users and for first-time builds; revisit once <code>incan lock</code> + vendoring
-  exist.</li>
+<li>Rejected (for now): would be breaking for new users and for first-time
+  builds; revisit once <code>incan lock</code> and vendoring exist.</li>
 </ul>
 </li>
 </ul>
@@ -4728,7 +4740,18 @@ fail—this is intended and is part of the contract.</p>
 <li>Offline mode can be confusing without a vendoring/mirroring story (addressed via phased plan and clear diagnostics).</li>
 <li>The generated-project contract commits us to a persistence model that later RFCs must respect.</li>
 </ul>
-<h2 id="implementation-plan">Implementation plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>CLI / tooling</strong>: must expose and propagate Cargo policy flags consistently
+across <code>incan build</code>, <code>incan run</code>, and <code>incan test</code>.</li>
+<li><strong>Build orchestration</strong>: must thread policy through all Cargo subprocess
+invocation paths rather than only selected commands.</li>
+<li><strong>Generated project management</strong>: must preserve the documented persistence
+and overwrite behavior for generated Cargo projects under <code>target/incan/**</code> and <code>target/incan_tests/**</code>.</li>
+<li><strong>Docs / examples</strong>: must explain offline, locked, and frozen behavior
+clearly enough that CI and restricted-environment users can reason about failure modes.</li>
+</ul>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Tooling changes:<ul>
 <li>Add <code>--offline/--locked/--frozen/--cargo-args</code> to <code>build</code>, <code>run</code>, <code>test</code></li>
@@ -4736,12 +4759,7 @@ fail—this is intended and is part of the contract.</p>
 </ul>
 </li>
 <li>Backend changes:<ul>
-<li>Apply policy to:<ul>
-<li><code>ProjectGenerator::build()</code></li>
-<li><code>ProjectGenerator::run()</code></li>
-<li>the <code>incan test</code> Cargo invocation</li>
-</ul>
-</li>
+<li>Apply policy consistently to every Cargo subprocess path used by <code>incan build</code>, <code>incan run</code>, and <code>incan test</code></li>
 </ul>
 </li>
 <li>Tests to add:<ul>
@@ -4760,9 +4778,10 @@ fail—this is intended and is part of the contract.</p>
 <ol>
 <li>Should <code>--frozen</code> be implemented immediately, or deferred until <code>incan.lock</code> exists (RFC 013)?</li>
 <li>For <code>incan test</code>, what is the preferred harness caching strategy under <code>target/incan_tests/**</code> (per-test vs per-run)?</li>
-<li>Do we want an <code>incan doctor</code> check that validates offline readiness (Cargo cache present, vendor dir present, etc.) as
-   part of RFC 015, or as a follow-up RFC?</li>
+<li>Do we want an <code>incan doctor</code> check that validates offline readiness
+(Cargo cache present, vendor dir present, etc.) as part of RFC 015, or as a follow-up RFC?</li>
 </ol>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

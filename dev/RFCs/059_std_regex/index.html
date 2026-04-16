@@ -4606,8 +4606,8 @@
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Stdlib / runtime</strong>: must provide the regex types, errors, and documented matching and replacement behavior.</li>
-<li><strong>Typechecker / symbol resolution</strong>: must register the module and its result types.</li>
-<li><strong>Lowering / emission</strong>: must preserve the chosen matching and replacement semantics without leaking backend-specific quirks.</li>
+<li><strong>Language surface</strong>: the module and result types must be available as specified.</li>
+<li><strong>Execution handoff</strong>: implementations must preserve the chosen matching and replacement semantics without leaking backend-specific quirks.</li>
 <li><strong>Docs / tooling</strong>: should standardize regex examples, error reporting expectations, and the distinction between stdlib-safe regex and any later fancy-regex package.</li>
 </ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>

@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 004: Async Fixtures - Incan Documentation</title>
+        <title>RFC 004: async fixtures - Incan Documentation</title>
       
     
     
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 004: Async Fixtures
+              RFC 004: async fixtures
             
           </span>
         </div>
@@ -4104,88 +4104,73 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#design-goals" class="md-nav__link">
+  <a href="#goals" class="md-nav__link">
     <span class="md-ellipsis">
-      Design Goals
+      Goals
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#proposed-design" class="md-nav__link">
+  <a href="#non-goals" class="md-nav__link">
     <span class="md-ellipsis">
-      Proposed Design
+      Non-Goals
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Proposed Design">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reference-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reference-level explanation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#syntax" class="md-nav__link">
+  <a href="#runtime-model" class="md-nav__link">
     <span class="md-ellipsis">
-      Syntax
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Syntax">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#teardown-guarantee" class="md-nav__link">
-    <span class="md-ellipsis">
-      Teardown guarantee
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#semantics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Semantics
+      Runtime model
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#tokio-integration" class="md-nav__link">
+  <a href="#mixed-sync-and-async-fixture-graphs" class="md-nav__link">
     <span class="md-ellipsis">
-      Tokio Integration
+      Mixed sync and async fixture graphs
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#fixture-graph-with-mixed-syncasync" class="md-nav__link">
+  <a href="#failure-and-teardown-behavior" class="md-nav__link">
     <span class="md-ellipsis">
-      Fixture Graph with Mixed Sync/Async
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#parametrize-interop" class="md-nav__link">
-    <span class="md-ellipsis">
-      Parametrize Interop
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#error-handling" class="md-nav__link">
-    <span class="md-ellipsis">
-      Error Handling
+      Failure and teardown behavior
     </span>
   </a>
   
@@ -4197,27 +4182,36 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-phases" class="md-nav__link">
+  <a href="#alternatives-considered" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation Phases
+      Alternatives considered
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#open-questions" class="md-nav__link">
+  <a href="#drawbacks" class="md-nav__link">
     <span class="md-ellipsis">
-      Open Questions
+      Drawbacks
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#checklist" class="md-nav__link">
+  <a href="#layers-affected" class="md-nav__link">
     <span class="md-ellipsis">
-      Checklist
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unresolved-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unresolved questions
     </span>
   </a>
   
@@ -4241,28 +4235,41 @@
   
 
 
-<h1 id="rfc-004-async-fixtures">RFC 004: Async Fixtures<a class="headerlink" href="#rfc-004-async-fixtures" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> Draft
-<strong>Created:</strong> 2025-12-10</p>
+<h1 id="rfc-004-async-fixtures">RFC 004: async fixtures<a class="headerlink" href="#rfc-004-async-fixtures" title="Permanent link">&para;</a></h1>
+<ul>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2025-12-10</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong> RFC 018 (testing), RFC 019 (runner testing)</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/78</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.1</li>
+<li><strong>Shipped in:</strong> —</li>
+</ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Define async fixtures for the Incan test framework, integrating with Tokio so <code>async def</code> fixtures can perform async
-setup/teardown and participate in fixture dependency injection.</p>
+<p>This RFC proposes async fixtures for Incan's test framework so <code>async def</code> fixtures can perform awaited setup and teardown while participating in ordinary fixture injection and scope management. The intended user experience stays close to the existing <code>@fixture</code> plus <code>yield</code> model, but the runtime contract becomes async-aware and guarantees awaited teardown ordering.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Enable async setup (e.g., HTTP servers, DB pools, queues).</li>
-<li>Align with async tests and existing <code>@fixture</code> ergonomics.</li>
-<li>Ensure teardown always runs, even on panic/cancellation.</li>
+<li>Tests increasingly need async setup for HTTP servers, database pools, queues, and other service dependencies.</li>
+<li>Async tests and async fixtures should share one coherent model rather than forcing users into ad hoc setup helpers.</li>
+<li>Teardown must remain reliable even when async tests fail, panic, or are cancelled.</li>
 </ul>
-<h2 id="design-goals">Design Goals<a class="headerlink" href="#design-goals" title="Permanent link">&para;</a></h2>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Preserve pytest-like ergonomics: <code>@fixture</code> + <code>yield</code>, but async-capable.</li>
-<li>Support the same scopes: function / module / session.</li>
-<li>Integrate with Tokio (single runtime per test run).</li>
-<li>Ensure deterministic teardown ordering for async fixtures.</li>
-<li>Work with parametrized tests and regular fixtures.</li>
+<li>Preserve pytest-like fixture ergonomics while allowing async setup and teardown.</li>
+<li>Support the same fixture scopes as synchronous fixtures.</li>
+<li>Define deterministic teardown ordering for async fixtures and mixed sync/async graphs.</li>
+<li>Make async fixtures compose with parametrized tests.</li>
+<li>Keep the public test authoring model Incan-first even if the runtime is backed by Tokio underneath.</li>
 </ul>
-<h2 id="proposed-design">Proposed Design<a class="headerlink" href="#proposed-design" title="Permanent link">&para;</a></h2>
-<h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Introducing a second, unrelated async-fixture decorator surface.</li>
+<li>Replacing the general fixture model with a distinct async-only testing subsystem.</li>
+<li>Settling every runtime-configuration choice in this RFC.</li>
+</ul>
+<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
+<p>Async fixtures follow the same shape as normal yield-based fixtures, except the fixture function is declared with <code>async def</code> and can await during both setup and teardown.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
 
@@ -4272,77 +4279,64 @@ setup/teardown and participate in fixture dependency injection.</p>
     <span class="k">yield</span> <span class="n">server</span>
     <span class="k">await</span> <span class="n">server</span><span class="o">.</span><span class="n">shutdown</span><span class="p">()</span>
 </code></pre></div>
-<h4 id="teardown-guarantee">Teardown guarantee<a class="headerlink" href="#teardown-guarantee" title="Permanent link">&para;</a></h4>
-<p>The test runner ensures fixture teardowns run even if the test panics or is cancelled.
-For async fixtures, teardown is awaited before proceeding to dependent teardowns.</p>
-<h3 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h3>
+<p>The yielded value is injected into dependent tests and fixtures as usual. The important difference is that teardown is awaited before the runner proceeds to dependent teardowns.</p>
+<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Async fixtures must be <code>async def</code> and use <code>yield</code> exactly once.</li>
-<li>The value yielded is injected into dependent tests/fixtures.</li>
-<li>Teardown is awaited even if the test panics or is cancelled.</li>
-<li>Scoping rules mirror sync fixtures; session/module fixtures are awaited once per scope.</li>
+<li>Async fixtures must be declared with <code>async def</code>.</li>
+<li>Async fixtures must use <code>yield</code> exactly once.</li>
+<li>The yielded value is the fixture value injected into dependent tests or fixtures.</li>
+<li>Fixture scopes mirror the synchronous fixture story: function, module, and session fixtures remain valid.</li>
+<li>If a dependency in the fixture graph is async, dependents must await its setup before running.</li>
+<li>Teardown order must remain reverse-topological across the fixture graph, and async teardowns must be awaited before the runner continues.</li>
+<li>Setup failures fail the dependent test or scope as appropriate.</li>
+<li>Teardown failures must be reported and must not silently disappear; when multiple teardowns fail, the runner should preserve aggregate error reporting semantics.</li>
+<li>Parametrized tests expand first, and fixture resolution then happens per expanded test case under the normal scope rules.</li>
 </ul>
-<h3 id="tokio-integration">Tokio Integration<a class="headerlink" href="#tokio-integration" title="Permanent link">&para;</a></h3>
-<ul>
-<li>A single Tokio runtime is created per test run (multi-threaded).</li>
-<li>Fixtures run on that runtime; no nested runtimes.</li>
-<li>Blocking operations inside async fixtures must use <code>tokio::task::spawn_blocking</code>.</li>
-</ul>
-<h3 id="fixture-graph-with-mixed-syncasync">Fixture Graph with Mixed Sync/Async<a class="headerlink" href="#fixture-graph-with-mixed-syncasync" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Dependency resolution builds a DAG of fixtures.</li>
-<li>If any dependency is async, dependents await it before running.</li>
-<li>Teardown order is reverse topological; async teardowns are awaited.</li>
-</ul>
-<h3 id="parametrize-interop">Parametrize Interop<a class="headerlink" href="#parametrize-interop" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Parametrized tests expand first, then fixtures are resolved per test case.</li>
-<li>Async fixtures can be used alongside <code>@parametrize</code> without changes to test syntax.</li>
-</ul>
-<h3 id="error-handling">Error Handling<a class="headerlink" href="#error-handling" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Setup errors fail the test (or all tests in the scope for module/session fixtures).</li>
-<li>Teardown errors are reported but do not mask setup failures; aggregate errors if multiple teardowns fail.</li>
-</ul>
-<h2 id="implementation-phases">Implementation Phases<a class="headerlink" href="#implementation-phases" title="Permanent link">&para;</a></h2>
-<p>1) Parser/AST</p>
-<div class="language-text highlight"><pre><span></span><code>- Add `Yield` expression support inside `async def`.
-- Validate single `yield` per fixture function.
-</code></pre></div>
-<p>2) Test Runner</p>
-<div class="language-text highlight"><pre><span></span><code>- Create shared Tokio runtime for the run.
-- Resolve fixture graph; support async setup/teardown with scopes.
-- Ensure teardown runs on panic using `catch_unwind` + `DropGuard`-like patterns.
-</code></pre></div>
-<p>3) Codegen</p>
-<div class="language-text highlight"><pre><span></span><code>- Emit Rust async fixtures as async functions returning the yielded value.
-- Generate await points for setup/teardown.
-- Enforce scoping caches for module/session fixtures.
-</code></pre></div>
-<p>4) Parametrize Integration</p>
-<div class="language-text highlight"><pre><span></span><code>- Expand parametrized tests first, then resolve fixtures per case.
-- Ensure async fixtures are awaited per case (function scope) or cached (module/session).
-</code></pre></div>
-<p>5) Documentation &amp; Examples</p>
-<div class="language-text highlight"><pre><span></span><code>- Add examples for async HTTP server fixture, DB pool fixture, and queue client fixture.
-</code></pre></div>
-<h2 id="open-questions">Open Questions<a class="headerlink" href="#open-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="runtime-model">Runtime model<a class="headerlink" href="#runtime-model" title="Permanent link">&para;</a></h3>
+<p>The current design assumes a shared async runtime per test run rather than nested runtimes per fixture or per test. The RFC is motivated by Tokio-backed execution, but the public contract is that async fixtures run on the test runner's async runtime and may await normally.</p>
+<h3 id="mixed-sync-and-async-fixture-graphs">Mixed sync and async fixture graphs<a class="headerlink" href="#mixed-sync-and-async-fixture-graphs" title="Permanent link">&para;</a></h3>
+<p>Synchronous and asynchronous fixtures must compose in one dependency graph. Async boundaries must be handled by the runner rather than leaked into user-facing fixture syntax beyond <code>async def</code>.</p>
+<h3 id="failure-and-teardown-behavior">Failure and teardown behavior<a class="headerlink" href="#failure-and-teardown-behavior" title="Permanent link">&para;</a></h3>
+<p>The runner must treat teardown as mandatory cleanup work. Async teardown is part of the fixture contract, not a best-effort callback.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Cancellation semantics: how do we handle long-running fixtures on test abort?</li>
-<li>Timeouts: should fixtures support per-fixture timeout configuration?</li>
-<li>Runtime configuration: allow opting into current-thread runtime?</li>
+<li><strong>Keep fixtures synchronous and force async setup into helper functions inside tests</strong></li>
+<li>
+<p>Rejected because it duplicates setup logic, weakens reuse, and breaks the fixture model exactly where async resources are most useful.</p>
+</li>
+<li>
+<p><strong>Introduce a separate async-fixture API unrelated to <code>@fixture</code></strong></p>
+</li>
+<li>
+<p>Rejected because it creates two mental models for the same concept and weakens the existing fixture ergonomics.</p>
+</li>
+<li>
+<p><strong>Run a fresh async runtime per fixture</strong></p>
+</li>
+<li>Rejected because it complicates scope sharing, increases overhead, and makes composed async fixture graphs harder to reason about.</li>
 </ol>
-<h2 id="checklist">Checklist<a class="headerlink" href="#checklist" title="Permanent link">&para;</a></h2>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>[ ] Parser: <code>yield</code> inside <code>async def</code> fixtures</li>
-<li>[ ] Validator: single <code>yield</code> per fixture</li>
-<li>[ ] Runner: shared Tokio runtime per test run</li>
-<li>[ ] Runner: async fixture setup/teardown with scopes</li>
-<li>[ ] Teardown: always awaited, even on panic</li>
-<li>[ ] Parametrize interop with async fixtures</li>
-<li>[ ] Error reporting: setup vs teardown aggregation</li>
-<li>[ ] Docs/examples for async fixtures (HTTP server, DB pool, queue)</li>
+<li>Async fixture teardown and failure aggregation add complexity to the test runner.</li>
+<li>Cancellation and timeout semantics become materially more important once fixture setup can await external resources.</li>
+<li>The RFC currently leans on a Tokio-backed implementation story, which may need tighter wording so the public contract remains Incan-owned rather than Tokio-shaped.</li>
 </ul>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Parser / AST</strong>: must allow and validate yield-based fixture shape inside <code>async def</code>.</li>
+<li><strong>Typechecker / symbol resolution</strong>: must validate legal async fixture declarations and fixture dependency usage.</li>
+<li><strong>Test runner</strong>: must execute async setup and awaited teardown while preserving scope and dependency ordering.</li>
+<li><strong>Lowering / emission</strong>: must preserve the async fixture contract without leaking backend runtime details into user-facing semantics.</li>
+<li><strong>Docs / examples</strong>: must explain the async fixture model, teardown guarantees, and mixed sync/async composition clearly.</li>
+</ul>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>What should cancellation semantics be for long-running async fixtures when a test run is aborted?</li>
+<li>Should fixtures support per-fixture timeout configuration, or should timeout handling stay outside the fixture contract?</li>
+<li>Does the runner need an explicit public runtime-configuration story, or is one shared async runtime enough for the RFC's contract?</li>
+</ul>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

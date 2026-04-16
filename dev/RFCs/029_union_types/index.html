@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 029: Union Types and Type Narrowing - Incan Documentation</title>
+        <title>RFC 029: union types and type narrowing - Incan Documentation</title>
       
     
     
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 029: Union Types and Type Narrowing
+              RFC 029: union types and type narrowing
             
           </span>
         </div>
@@ -4225,37 +4225,37 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rust-lowering" class="md-nav__link">
+  <a href="#lowering-model" class="md-nav__link">
     <span class="md-ellipsis">
-      Rust lowering
+      Lowering model
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Rust lowering">
+    <nav class="md-nav" aria-label="Lowering model">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#pattern-matching-lowering" class="md-nav__link">
+  <a href="#pattern-matching-behavior" class="md-nav__link">
     <span class="md-ellipsis">
-      Pattern matching lowering
+      Pattern matching behavior
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#isinstance-lowering-compile-time-only" class="md-nav__link">
+  <a href="#isinstance-behavior-compile-time-only" class="md-nav__link">
     <span class="md-ellipsis">
-      isinstance lowering (compile-time only)
+      isinstance behavior (compile-time only)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#construction-lowering" class="md-nav__link">
+  <a href="#construction-behavior" class="md-nav__link">
     <span class="md-ellipsis">
-      Construction lowering
+      Construction behavior
     </span>
   </a>
   
@@ -4349,6 +4349,24 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design Decisions
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4367,13 +4385,16 @@
   
 
 
-<h1 id="rfc-029-union-types-and-type-narrowing">RFC 029: Union Types and Type Narrowing<a class="headerlink" href="#rfc-029-union-types-and-type-narrowing" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-029-union-types-and-type-narrowing">RFC 029: union types and type narrowing<a class="headerlink" href="#rfc-029-union-types-and-type-narrowing" title="Permanent link">&para;</a></h1>
 <ul>
 <li><strong>Status:</strong> Draft</li>
 <li><strong>Created:</strong> 2026-03-06</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong> RFC 028 (trait-based operator overloading)</li>
-<li><strong>Target version:</strong> v0.2</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/315</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>Introduce first-class union types to Incan. <code>Union[A, B, ...]</code> is the canonical form, and <code>A | B</code> is equivalent syntactic sugar.</p>
@@ -4500,8 +4521,7 @@ none_pattern       ::= &quot;None&quot;
         <span class="o">...</span>
 </code></pre></div>
 <p>A type pattern <code>T(name)</code> is valid only when the scrutinee has a union type containing <code>T</code>.</p>
-<p>The binding captures the <strong>whole narrowed value</strong> of type <code>T</code>. It is not structural destructuring of the internals of <code>T</code>.
-For example:</p>
+<p>The binding captures the <strong>whole narrowed value</strong> of type <code>T</code>. It is not structural destructuring of the internals of <code>T</code>. For example:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">handle</span><span class="p">(</span><span class="kt">result</span><span class="p">:</span> <span class="kt">Response</span> <span class="o">|</span> <span class="nc">Error</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">match</span> <span class="kt">result</span><span class="p">:</span>
         <span class="k">case</span> <span class="kt">Response</span><span class="p">(</span><span class="n">r</span><span class="p">):</span>
@@ -4558,18 +4578,16 @@ For example:</p>
 </tr>
 </tbody>
 </table>
-<h3 id="rust-lowering">Rust lowering<a class="headerlink" href="#rust-lowering" title="Permanent link">&para;</a></h3>
-<p>Rust does not have anonymous union types. Incan lowers unions to <strong>auto-generated enums</strong>, except for the <code>... | None</code> family which canonicalizes through <code>Option[...]</code>.</p>
-<p>Examples:</p>
+<h3 id="lowering-model">Lowering model<a class="headerlink" href="#lowering-model" title="Permanent link">&para;</a></h3>
+<p>Backends need a closed internal representation for union values. The important language-level constraint is that this representation must preserve:</p>
 <ul>
-<li><code>int | str</code> -&gt; <code>enum Union_Int_String { Int(i64), String(String) }</code></li>
-<li><code>int | str | None</code> -&gt; <code>Option&lt;Union_Int_String&gt;</code></li>
-<li><code>Response | Redirect | Error</code> -&gt; <code>enum Union_Response_Redirect_Error { ... }</code></li>
+<li>the fixed set of member alternatives;</li>
+<li>compile-time narrowing semantics;</li>
+<li>exhaustive matching behavior;</li>
+<li><code>T | None</code> canonicalization through <code>Option[T]</code>.</li>
 </ul>
-<p><strong>Naming</strong>: Auto-generated enum names are deterministic, based on sorted constituent type names: <code>Union_</code> followed by PascalCase type names joined with <code>_</code>.</p>
-<p><strong>Deduplication</strong>: The compiler generates each unique union enum once per compilation unit.</p>
-<p><strong><code>T | None</code> lowering</strong>: Because <code>T | None</code> is source-level equivalent to <code>Option[T]</code>, the Rust backend lowers it directly to <code>Option&lt;T&gt;</code> rather than generating a separate union enum with a <code>None</code> variant.</p>
-<h4 id="pattern-matching-lowering">Pattern matching lowering<a class="headerlink" href="#pattern-matching-lowering" title="Permanent link">&para;</a></h4>
+<p>One reasonable backend strategy is a compiler-generated closed sum representation for each distinct union shape, while unions containing <code>None</code> reuse the ordinary <code>Option[...]</code> path. The specific emitted type names and backend data structures are implementation detail rather than part of the language contract.</p>
+<h4 id="pattern-matching-behavior">Pattern matching behavior<a class="headerlink" href="#pattern-matching-behavior" title="Permanent link">&para;</a></h4>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">normalize</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">match</span> <span class="n">value</span><span class="p">:</span>
         <span class="k">case</span> <span class="nb">int</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
@@ -4577,31 +4595,17 @@ For example:</p>
         <span class="k">case</span> <span class="nb">str</span><span class="p">(</span><span class="n">s</span><span class="p">):</span>
             <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
 </code></pre></div>
-<p>Lowers to:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="k">fn</span><span class="w"> </span><span class="nf">normalize</span><span class="p">(</span><span class="n">value</span><span class="p">:</span><span class="w"> </span><span class="nc">Union_Int_String</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">match</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="n">Union_Int_String</span><span class="p">::</span><span class="n">Int</span><span class="p">(</span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-<span class="w">        </span><span class="n">Union_Int_String</span><span class="p">::</span><span class="nb">String</span><span class="p">(</span><span class="n">s</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">s</span><span class="p">.</span><span class="n">len</span><span class="p">()</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">i64</span><span class="p">,</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="p">}</span>
-</code></pre></div>
-<h4 id="isinstance-lowering-compile-time-only"><code>isinstance</code> lowering (compile-time only)<a class="headerlink" href="#isinstance-lowering-compile-time-only" title="Permanent link">&para;</a></h4>
-<p><code>isinstance</code> is resolved entirely at compile time. It generates a Rust <code>if let</code> pattern match — no runtime reflection:</p>
+<p>The language-level meaning is that each arm sees the narrowed member type and exhaustive coverage is checked against the full closed set of member types.</p>
+<h4 id="isinstance-behavior-compile-time-only"><code>isinstance</code> behavior (compile-time only)<a class="headerlink" href="#isinstance-behavior-compile-time-only" title="Permanent link">&para;</a></h4>
+<p><code>isinstance</code> is resolved entirely through the compiler's type and control-flow reasoning. There is no runtime reflection requirement in this RFC.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="nb">int</span><span class="p">):</span>
     <span class="n">use_int</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
 </code></pre></div>
-<p>Lowers to:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="k">if</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="n">Union_Int_String</span><span class="p">::</span><span class="n">Int</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">use_int</span><span class="p">(</span><span class="n">value</span><span class="p">);</span>
-<span class="p">}</span>
-</code></pre></div>
-<h4 id="construction-lowering">Construction lowering<a class="headerlink" href="#construction-lowering" title="Permanent link">&para;</a></h4>
+<h4 id="construction-behavior">Construction behavior<a class="headerlink" href="#construction-behavior" title="Permanent link">&para;</a></h4>
 <p>Assigning a concrete value to a union-typed binding wraps it in the appropriate variant:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">x</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">=</span> <span class="mi">42</span>
 </code></pre></div>
-<p>Lowers to:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="kd">let</span><span class="w"> </span><span class="n">x</span><span class="p">:</span><span class="w"> </span><span class="nc">Union_Int_String</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Union_Int_String</span><span class="p">::</span><span class="n">Int</span><span class="p">(</span><span class="mi">42</span><span class="p">);</span>
-</code></pre></div>
+<p>The backend may materialize an internal tagged representation, but the source-level contract is simply that <code>42</code> is accepted as a member of <code>int | str</code>.</p>
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong><code>Option[T]</code></strong>: <code>T | None</code> and <code>A | B | None</code> canonicalize through <code>Option[...]</code>. Existing <code>Option[T]</code> code and <code>Some(...)</code> / <code>None</code> matching continue to work exactly as they do today.</li>
@@ -4625,8 +4629,23 @@ For example:</p>
 <p>Require users to define their own Rust-style enums for sum types. Rejected because the goal is Python-like ergonomics — Python's <code>int | str</code> type hints don't require boilerplate wrapper types.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Hidden codegen</strong>: Auto-generated enum types are invisible to the user but appear in error messages and generated Rust code. This can be confusing when debugging.</li>
+<li><strong>Hidden representation</strong>: Backends need a concrete closed representation for unions, and that representation may occasionally leak into low-level debugging contexts.</li>
 <li><strong>Inference complexity</strong>: Union types interact with generic inference in subtle ways. This RFC takes the conservative rule that the compiler does not synthesize fresh union types during otherwise unconstrained generic inference.</li>
+</ul>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Language surface</strong>: both <code>Union[...]</code> and <code>A | B</code> must be accepted as the same type-level construct.</li>
+<li><strong>Type system</strong>: union members must be canonicalized, narrowing rules enforced, and exhaustiveness checking performed where this RFC requires it.</li>
+<li><strong>Execution handoff</strong>: implementations must use a stable closed representation for unions without changing the language-level narrowing semantics.</li>
+<li><strong>Docs / tooling</strong>: the relationship between unions, <code>Option</code>, <code>match</code>, and narrowing must be explained clearly enough that users can predict when narrowing is required.</li>
+</ul>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>Union[A, B, ...]</code> is the canonical form, and <code>A | B</code> is equivalent syntactic sugar.</li>
+<li>Unions are closed, compile-time-known alternatives rather than an open-ended dynamic <code>Variant</code> type.</li>
+<li><code>T | None</code> canonicalizes through <code>Option[T]</code> rather than defining a separate nullable union representation.</li>
+<li>Narrowing is compile-time-driven and occurs through <code>isinstance(...)</code> and exhaustive <code>match</code>.</li>
+<li>Union values do not implicitly expose the full method or operator surface of all members until they have been narrowed.</li>
 </ul>
 
 

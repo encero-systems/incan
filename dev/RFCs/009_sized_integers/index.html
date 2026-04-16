@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 009: Sized integer types and builtin type registry - Incan Documentation</title>
+        <title>RFC 009: Sized numeric types and builtin type registry - Incan Documentation</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-009-sized-integer-types-and-builtin-type-registry" class="md-skip">
+        <a href="#rfc-009-sized-numeric-types-and-builtin-type-registry" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 009: Sized integer types and builtin type registry
+              RFC 009: Sized numeric types and builtin type registry
             
           </span>
         </div>
@@ -4319,13 +4319,13 @@
   
 
 
-<h1 id="rfc-009-sized-integer-types-and-builtin-type-registry">RFC 009: Sized integer types and builtin type registry<a class="headerlink" href="#rfc-009-sized-integer-types-and-builtin-type-registry" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-009-sized-numeric-types-and-builtin-type-registry">RFC 009: Sized numeric types and builtin type registry<a class="headerlink" href="#rfc-009-sized-numeric-types-and-builtin-type-registry" title="Permanent link">&para;</a></h1>
 <ul>
 <li><strong>Status:</strong> Draft</li>
 <li><strong>Created:</strong> 2024-12-11</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong> RFC 005 (Rust interop)</li>
-<li><strong>Issue:</strong> —</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/325</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.1</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -4333,7 +4333,9 @@
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>This RFC introduces explicit sized numeric types such as <code>i8</code>, <code>u16</code>, <code>f32</code>, and <code>usize</code>, together with a centralized builtin-type registry. The coupling is intentional: once Incan exposes a broader builtin numeric surface, the language needs one canonical vocabulary source for builtin spellings, methods, and typing behavior rather than a growing set of scattered compiler special cases.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>The current numeric surface is intentionally simple: <code>int</code> lowers to <code>i64</code> and <code>float</code> lowers to <code>f64</code>. That is fine for general application code, but it is too blunt for several real cases:</p>
+<p>The current numeric surface is intentionally simple: <code>int</code> lowers to <code>i64</code> and
+<code>float</code> lowers to <code>f64</code>. That is fine for general application code, but it is
+too blunt for several real cases:</p>
 <ul>
 <li>Rust interop and FFI frequently require exact-width numeric types.</li>
 <li>Binary protocols and file formats encode fixed-width fields.</li>
@@ -4408,8 +4410,10 @@
 <p><code>int</code> remains an alias for <code>i64</code>. <code>float</code> remains an alias for <code>f64</code>.</p>
 <h3 id="literals">Literals<a class="headerlink" href="#literals" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Unsuffixed integer literals default to <code>int</code> unless a surrounding annotation or inference context requires a different numeric type.</li>
-<li>Unsuffixed float literals default to <code>float</code> unless a surrounding annotation or inference context requires a different float type.</li>
+<li>Unsuffixed integer literals default to <code>int</code> unless a surrounding annotation
+or inference context requires a different numeric type.</li>
+<li>Unsuffixed float literals default to <code>float</code> unless a surrounding annotation
+or inference context requires a different float type.</li>
 <li>Suffixed literals such as <code>42u16</code>, <code>7i8</code>, and <code>3.14f32</code> must construct the explicitly named type.</li>
 <li>Out-of-range suffixed literals are compile-time errors.</li>
 </ul>
@@ -4418,7 +4422,8 @@
 <li>Same-type arithmetic yields the same type.</li>
 <li>Mixed-width arithmetic requires an explicit conversion.</li>
 <li>Narrowing or sign-changing conversions must be explicit.</li>
-<li>Widening conversions may be provided as named constructors or helpers, but this RFC does not permit silent widening in ordinary arithmetic expressions.</li>
+<li>Widening conversions may be provided as named constructors or helpers, but
+this RFC does not permit silent widening in ordinary arithmetic expressions.</li>
 </ul>
 <h3 id="overflow-behavior">Overflow behavior<a class="headerlink" href="#overflow-behavior" title="Permanent link">&para;</a></h3>
 <p>Sized integers follow Rust's overflow behavior:</p>
@@ -4442,7 +4447,8 @@
 <ul>
 <li>Rust interop benefits directly because exact-width types can map to exact-width Rust signatures.</li>
 <li>Existing <code>int</code> and <code>float</code> code keeps working unchanged.</li>
-<li>Container indexing becomes more important once <code>usize</code> exists, but this RFC does not silently settle every indexing coercion rule yet.</li>
+<li>Container indexing becomes more important once <code>usize</code> exists, but this RFC
+does not silently settle every indexing coercion rule yet.</li>
 </ul>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
 <p>The feature is additive. Existing programs using <code>int</code> and <code>float</code> continue to compile. New code can opt into explicit widths incrementally.</p>
@@ -4456,7 +4462,8 @@
 <p><strong>Python-style arbitrary-precision <code>int</code> only</strong></p>
 </li>
 <li>
-<p>That improves some numeric ergonomics, but it does not solve fixed-width interop, protocol parsing, or explicit layout control.</p>
+<p>That improves some numeric ergonomics, but it does not solve fixed-width
+     interop, protocol parsing, or explicit layout control.</p>
 </li>
 <li>
 <p><strong>Wrapper types only</strong></p>
@@ -4473,21 +4480,26 @@
 <ul>
 <li>More builtin numeric types increase the language surface and the testing matrix.</li>
 <li><code>isize</code> and <code>usize</code> expose target-dependent widths, which slightly weakens the otherwise explicit story.</li>
-<li>The registry requirement raises the implementation bar, but that is preferable to baking in more ad hoc builtin behavior.</li>
+<li>The registry requirement raises the implementation bar, but that is
+preferable to baking in more ad hoc builtin behavior.</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Lexer / parser</strong>: must recognize the added type names and suffixed numeric literals.</li>
-<li><strong>Typechecker</strong>: must model exact-width numeric types, enforce explicit conversions, and diagnose out-of-range literals.</li>
-<li><strong>Lowering / emission</strong>: must preserve exact widths when lowering to Rust or other backend representations.</li>
+<li><strong>Typechecker</strong>: must model exact-width numeric types, enforce explicit
+conversions, and diagnose out-of-range literals.</li>
+<li><strong>Lowering / emission</strong>: must preserve exact widths when lowering to backend
+representations.</li>
 <li><strong>Builtin surface registry</strong>: must own the canonical spelling and method vocabulary for builtin numeric types.</li>
 <li><strong>Docs / tooling</strong>: should surface width-specific help, conversions, and overflow behavior consistently.</li>
 </ul>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ol>
-<li>What is the exact rule for container indexing: explicit <code>as usize</code>, a targeted compiler coercion in indexing position, or something else?</li>
+<li>What is the exact rule for container indexing: explicit <code>as usize</code>, a
+targeted compiler coercion in indexing position, or something else?</li>
 <li>Should <code>char</code> join this RFC, or remain a separate feature with its own semantics?</li>
-<li>Which sized-type helper methods are language promises in v1, and which remain stdlib conveniences that can evolve separately?</li>
+<li>Which sized-type helper methods are language promises in v1, and which
+remain stdlib conveniences that can evolve separately?</li>
 </ol>
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 

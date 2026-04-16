@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 018: Language Primitives for Testing - Incan Documentation</title>
+        <title>RFC 018: language primitives for testing - Incan Documentation</title>
       
     
     
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 018: Language Primitives for Testing
+              RFC 018: language primitives for testing
             
           </span>
         </div>
@@ -4104,6 +4104,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
     <span class="md-ellipsis">
       Guide-level explanation (how users think about it)
@@ -4362,6 +4380,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#design-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design Decisions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#references" class="md-nav__link">
     <span class="md-ellipsis">
       References
@@ -4388,16 +4415,17 @@
   
 
 
-<h1 id="rfc-018-language-primitives-for-testing">RFC 018: Language Primitives for Testing<a class="headerlink" href="#rfc-018-language-primitives-for-testing" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> Planned<br />
-<strong>Created:</strong> 2026-01-14<br />
-<strong>Author(s):</strong> Danny Meijer (@danny-meijer)<br />
-<strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/76">#76</a><br />
-<strong>RFC PR:</strong> —<br />
-<strong>Related:</strong> RFC 019 (test runner and CLI)<br />
-<strong>Written against:</strong> v0.1
-<strong>Shipped in:</strong> —
-<strong>Supersedes:</strong> RFC 001 (language portions), RFC 002 (language portions)  </p>
+<h1 id="rfc-018-language-primitives-for-testing">RFC 018: language primitives for testing<a class="headerlink" href="#rfc-018-language-primitives-for-testing" title="Permanent link">&para;</a></h1>
+<ul>
+<li><strong>Status:</strong> Planned</li>
+<li><strong>Created:</strong> 2026-01-14</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong> RFC 019 (test runner and CLI), RFC 001 (language portions; superseded), RFC 002 (language portions; superseded)</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/76</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.1</li>
+<li><strong>Shipped in:</strong> —</li>
+</ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>Define the language-level testing primitives for Incan:</p>
 <ul>
@@ -4408,13 +4436,23 @@
 <li>build/check stripping semantics for inline tests</li>
 </ul>
 <p>Testing decorators/markers are gated behind the <code>testing</code> standard library module (no magic global names).</p>
-<p>This RFC is jointly normative with <strong>RFC 019</strong>, which defines runner and CLI behavior (discovery, fixtures,
-parametrization, markers, parallelism, timeouts, reporting).</p>
+<p>This RFC is jointly normative with <strong>RFC 019</strong>, which defines runner and CLI behavior (discovery, fixtures, parametrization, markers, parallelism, timeouts, reporting).</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Testing spans both <strong>language</strong> concerns (syntax, scoping, desugaring) and <strong>runner</strong> concerns (discovery, fixtures,
-selection, reporting). Keeping those concerns in separate RFCs lets the compiler and the test runner evolve
-independently while still sharing precise invariants.</p>
+<p>Testing spans both <strong>language</strong> concerns (syntax, scoping, desugaring) and <strong>runner</strong> concerns (discovery, fixtures, selection, reporting). Keeping those concerns in separate RFCs lets the compiler and the test runner evolve independently while still sharing precise invariants.</p>
 <p>This RFC defines only the language primitives; RFC 019 specifies the runner and CLI semantics that consume them.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Define the language-owned testing primitives independently from runner and CLI behavior.</li>
+<li>Standardize <code>assert</code>, <code>assert ... raises ErrorType</code>, and inline <code>module tests:</code> blocks.</li>
+<li>Require <code>testing</code>-gated name resolution for test-only decorators and helpers.</li>
+<li>Preserve a clean split between compiler semantics and test-runner semantics across RFC 018 and RFC 019.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Defining test discovery, fixtures, parametrization, markers, parallelism, or reporting semantics in this RFC.</li>
+<li>Introducing magic global test names outside the <code>testing</code> module gate.</li>
+<li>Changing production-code semantics beyond the explicitly defined testing primitives in this document.</li>
+</ul>
 <h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
 <h3 id="how-to-read-this-rfc">How to read this RFC<a class="headerlink" href="#how-to-read-this-rfc" title="Permanent link">&para;</a></h3>
 <p>This RFC covers <strong>language-level</strong> testing primitives only:</p>
@@ -4426,8 +4464,7 @@ independently while still sharing precise invariants.</p>
 </ul>
 <p>Runner/CLI behavior (discovery, fixtures, parametrization, markers, parallelism, timeouts, reporting) is defined in
 <strong>RFC 019</strong>.</p>
-<p>If you are implementing this RFC, start with the conformance checklist near the end and the reference-level rules above,
-then implement in dependency order.</p>
+<p>If you are implementing this RFC, start with the conformance checklist near the end and the reference-level rules above, then implement in dependency order.</p>
 <h3 id="the-testing-module">The <code>testing</code> module<a class="headerlink" href="#the-testing-module" title="Permanent link">&para;</a></h3>
 <p>Testing utilities are normal functions/decorators imported from the <code>testing</code> module:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_false</span><span class="p">,</span> <span class="n">fail</span>
@@ -4436,28 +4473,26 @@ then implement in dependency order.</p>
 <code>testing.assert_*</code> surface. Execution semantics for fixtures, parametrization, markers, and CLI options are defined in
 RFC 019.</p>
 <h3 id="assertions-assert-keyword">Assertions: <code>assert ...</code> (keyword)<a class="headerlink" href="#assertions-assert-keyword" title="Permanent link">&para;</a></h3>
-<p>This RFC introduces an <code>assert</code> keyword that can be used <strong>anywhere</strong> (tests or production code) without importing
-anything:</p>
+<p>This RFC introduces an <code>assert</code> keyword that can be used <strong>anywhere</strong> (tests or production code) without importing anything:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">assert</span> <span class="mi">1</span> <span class="o">+</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">3</span>
 <span class="k">assert</span> <span class="mi">2</span> <span class="o">&lt;</span> <span class="mi">3</span>
 <span class="k">assert</span> <span class="n">user</span> <span class="ow">is</span> <span class="nb">Some</span><span class="p">(</span><span class="n">_</span><span class="p">),</span> <span class="s2">&quot;user must be present&quot;</span>
 </code></pre></div>
-<p>It is syntax sugar for a <strong>language-level assertion primitive</strong> with the same user-facing behavior as the <code>testing</code>
-module’s assertion functions. See the reference-level table below for the full, exhaustive mapping.</p>
+<p>It is syntax sugar for a <strong>language-level assertion primitive</strong> with the same user-facing behavior as the <code>testing</code> module’s assertion functions. See the reference-level table below for the full, exhaustive mapping.</p>
 <p>Design note (important semantic commitment):</p>
 <ul>
 <li><code>assert</code> must be valid in production code <strong>without</strong> pulling in the test runner or requiring <code>incan test</code>.</li>
 <li>Implementations may lower <code>assert</code> to a compiler intrinsic / core runtime primitive. The <code>testing.assert_*</code> helpers are
-  the test-oriented, explicit API surface and must remain consistent with <code>assert</code> behavior (messages, formatting, etc.).</li>
+the test-oriented, explicit API surface and must remain consistent with <code>assert</code> behavior (messages, formatting, etc.).</li>
 <li>This RFC defines <code>assert</code> as <strong>always-on</strong> runtime checking (like Python). A compile-out variant (e.g. <code>debug_assert</code>)
-  may be introduced in a future RFC, but is out of scope here.</li>
+may be introduced in a future RFC, but is out of scope here.</li>
 </ul>
 <p>Rationale (brief):</p>
 <ul>
 <li><code>assert</code> is used both in tests and in production code for invariants (“this should never happen”).</li>
 <li>Always-on semantics avoid “works in tests/debug, breaks in release” surprises.</li>
 <li>Mitigation: avoid asserts in hot paths and prefer explicit <code>Result</code>/<code>Option</code>-based error handling for recoverable
-  conditions. A future <code>debug_assert</code> can address performance-sensitive checks.</li>
+conditions. A future <code>debug_assert</code> can address performance-sensitive checks.</li>
 </ul>
 <p>The <code>testing</code> module remains available for explicit imports, and richer APIs.</p>
 <p>Note: this RFC specifies <strong>assertion messages</strong> (e.g. <code>assert x &gt; 0, "x must be positive"</code>) and requires the underlying
@@ -4477,8 +4512,7 @@ common shapes.</p>
 </code></pre></div>
 <h4 id="expected-failure-output-illustrative">Expected failure output (illustrative)<a class="headerlink" href="#expected-failure-output-illustrative" title="Permanent link">&para;</a></h4>
 <p>Exact formatting is implementation-defined, but failures should be understandable.</p>
-<p>At minimum, failed <code>assert</code> statements should be reported as an <code>AssertionError</code> (Python-inspired), with the optional
-message rendered as <code>AssertionError: &lt;msg&gt;</code>.</p>
+<p>At minimum, failed <code>assert</code> statements should be reported as an <code>AssertionError</code> (Python-inspired), with the optional message rendered as <code>AssertionError: &lt;msg&gt;</code>.</p>
 <p>Minimum examples:</p>
 <div class="language-text highlight"><pre><span></span><code># assert x &gt; 0, &quot;x must be positive&quot;
 FAILED: AssertionError: x must be positive
@@ -4527,14 +4561,14 @@ FAILED: AssertionError: values must match
 <p>Binding notes (important semantic commitment):</p>
 <ul>
 <li><code>assert x is Some(v)</code> may introduce a binding (here: <code>v</code>) for the <strong>remainder of the current block scope</strong>, as if the
-  compiler had emitted <code>let v = ...</code> at that point.</li>
+compiler had emitted <code>let v = ...</code> at that point.</li>
 <li>In RFC 018, only the following binding patterns are supported in <code>assert</code>:<ul>
 <li><code>Some(name)</code> and <code>Ok(name)</code> / <code>Err(name)</code> where <code>name</code> is a single identifier, OR</li>
 <li>the wildcard <code>_</code> (no binding).</li>
 </ul>
 </li>
 <li>Nested patterns, multiple bindings, and guards are out of scope for this RFC (they may be added later if/when the
-  general pattern-matching system is specified).</li>
+general pattern-matching system is specified).</li>
 </ul>
 <p>“Contains” / membership style checks:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">assert</span> <span class="n">name</span> <span class="o">!=</span> <span class="s2">&quot;&quot;</span>
@@ -4542,9 +4576,7 @@ FAILED: AssertionError: values must match
 <span class="c1"># If the type exposes an API (e.g. `contains(...)`) this works naturally:</span>
 <span class="k">assert</span> <span class="n">tags</span><span class="o">.</span><span class="nb">contains</span><span class="p">(</span><span class="s2">&quot;release&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p>Identity checks (Python’s <code>is</code>) are intentionally <strong>not</strong> part of <code>assert</code> in this RFC, because <code>is</code> already has a
-different meaning (pattern matching). If/when Incan adds a reference-identity operation, it should be spelled
-explicitly (e.g. <code>ref_eq(a, b)</code>), not overloaded onto <code>is</code>.</p>
+<p>Identity checks (Python’s <code>is</code>) are intentionally <strong>not</strong> part of <code>assert</code> in this RFC, because <code>is</code> already has a different meaning (pattern matching). If/when Incan adds a reference-identity operation, it should be spelled explicitly (e.g. <code>ref_eq(a, b)</code>), not overloaded onto <code>is</code>.</p>
 <h3 id="inline-test-only-module-blocks">Inline test-only module blocks<a class="headerlink" href="#inline-test-only-module-blocks" title="Permanent link">&para;</a></h3>
 <p>Inline tests live next to production code, but inside a <strong>test-only module block</strong>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
@@ -4561,18 +4593,16 @@ explicitly (e.g. <code>ref_eq(a, b)</code>), not overloaded onto <code>is</code>
     <span class="k">def</span><span class="w"> </span><span class="nf">explicit_test</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="k">assert</span> <span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="o">==</span> <span class="mi">5</span>
 </code></pre></div>
-<p>This keeps helpers/fixtures/test imports scoped to the test module and allows the compiler to strip all test-only code
-from <code>incan build</code> and <code>incan run</code>.</p>
+<p>This keeps helpers/fixtures/test imports scoped to the test module and allows the compiler to strip all test-only code from <code>incan build</code> and <code>incan run</code>.</p>
 <p>Rule of thumb:</p>
 <ul>
 <li>In inline tests (<code>module tests:</code> inside a production file), put <code>from testing import ...</code> <strong>inside the <code>module tests:</code>
-  block</strong> so the production module namespace stays clean.</li>
+block</strong> so the production module namespace stays clean.</li>
 </ul>
 <p>Test file discovery and runner behavior are defined in <strong>RFC 019</strong>.</p>
 <h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
 <h3 id="core-principle-testing-is-gated-behind-testing">Core principle: testing is gated behind <code>testing</code><a class="headerlink" href="#core-principle-testing-is-gated-behind-testing" title="Permanent link">&para;</a></h3>
-<p>Test tooling must only recognize testing constructs when they resolve to the <code>testing</code> module. The compiler must resolve
-imports/aliases consistently so runner semantics (defined in RFC 019) can rely on these identities.</p>
+<p>Test tooling must only recognize testing constructs when they resolve to the <code>testing</code> module. The compiler must resolve imports/aliases consistently so runner semantics (defined in RFC 019) can rely on these identities.</p>
 <p>Runner-recognized constructs (see RFC 019) include:</p>
 <ul>
 <li><code>@test</code> = <code>testing.test</code></li>
@@ -4593,17 +4623,17 @@ imports/aliases consistently so runner semantics (defined in RFC 019) can rely o
 <p>Rationale:</p>
 <ul>
 <li>Unlike ordinary modules (e.g. <code>web</code>), <code>testing</code> is a gateway for discovery and special semantics. Resolution must be
-  explicit and auditable, so only symbols that <em>resolve to</em> <code>testing</code> are treated as test constructs.</li>
+explicit and auditable, so only symbols that <em>resolve to</em> <code>testing</code> are treated as test constructs.</li>
 </ul>
 <p>Module aliasing:</p>
 <ul>
 <li>A decorator expression of the form <code>@M.&lt;name&gt;</code> is treated as <code>testing.&lt;name&gt;</code> only if <code>M</code> resolves to the <code>testing</code>
-  module (e.g. <code>import testing as t; @t.fixture</code>).</li>
+module (e.g. <code>import testing as t; @t.fixture</code>).</li>
 </ul>
 <p>Re-exports:</p>
 <ul>
 <li>If a decorator name resolves to a symbol re-exported from another module, it is treated as <code>testing.&lt;name&gt;</code> only if the
-  resolver can prove the symbol originates from <code>testing</code>. Otherwise it is treated as a normal decorator.</li>
+resolver can prove the symbol originates from <code>testing</code>. Otherwise it is treated as a normal decorator.</li>
 </ul>
 <p>Star imports are disallowed for the <code>testing</code> module:</p>
 <ul>
@@ -4617,8 +4647,7 @@ imports/aliases consistently so runner semantics (defined in RFC 019) can rely o
 <li><code>assert &lt;expr&gt;</code> where <code>&lt;expr&gt;</code> type-checks as <code>bool</code></li>
 <li><code>assert &lt;expr&gt;, &lt;msg&gt;</code> where <code>&lt;msg&gt;</code> type-checks as <code>str</code> (optional failure message)</li>
 </ul>
-<p>The optional message is passed through to the underlying <code>testing.assert_*</code> helper and should be displayed as part of the
-assertion failure output.</p>
+<p>The optional message is passed through to the underlying <code>testing.assert_*</code> helper and should be displayed as part of the assertion failure output.</p>
 <p>Message presence:</p>
 <ul>
 <li>If no message is provided, output should not render a message line.</li>
@@ -4627,9 +4656,9 @@ assertion failure output.</p>
 <p>Minimum diagnostics guarantee:</p>
 <ul>
 <li>On failure, assertion output must include the optional message (if provided) and enough detail to diagnose the failing
-  condition.</li>
+condition.</li>
 <li>For equality/inequality assertions (<code>assert a == b</code> / <code>assert a != b</code>), the minimum guarantee is that the output
-  includes both “left” and “right” values (via <code>Debug</code>-style formatting) plus the optional message.</li>
+includes both “left” and “right” values (via <code>Debug</code>-style formatting) plus the optional message.</li>
 </ul>
 <p>Runtime error model:</p>
 <ul>
@@ -4750,12 +4779,9 @@ assertion failure output.</p>
 <p>Note: the “lowers to” wording describes the required behavior and message propagation. Implementations may choose to lower
 <code>assert</code> to a compiler intrinsic and have <code>testing.assert_*</code> call into that intrinsic, as long as the user-visible
 semantics match this mapping.</p>
-<p>The <code>testing</code> module is <strong>not</strong> required at runtime for <code>assert</code>; the mapping is semantic, and <code>testing.assert_*</code> must
-mirror the intrinsic behavior.</p>
-<p>The <code>assert_true</code> / <code>assert_false</code> helpers are aliases/conveniences in the <code>testing</code> API; the compiler does not need to
-emit them directly.</p>
-<p>On failure, assertions must produce the same failure semantics and (as much as possible) the same message formatting as
-the underlying <code>testing</code> assertion functions.</p>
+<p>The <code>testing</code> module is <strong>not</strong> required at runtime for <code>assert</code>; the mapping is semantic, and <code>testing.assert_*</code> must mirror the intrinsic behavior.</p>
+<p>The <code>assert_true</code> / <code>assert_false</code> helpers are aliases/conveniences in the <code>testing</code> API; the compiler does not need to emit them directly.</p>
+<p>On failure, assertions must produce the same failure semantics and (as much as possible) the same message formatting as the underlying <code>testing</code> assertion functions.</p>
 <h4 id="pattern-binding-scope-and-allowed-patterns-reference-rules">Pattern-binding scope and allowed patterns (reference rules)<a class="headerlink" href="#pattern-binding-scope-and-allowed-patterns-reference-rules" title="Permanent link">&para;</a></h4>
 <p><code>assert</code> supports a limited form of pattern binding via <code>is</code> (leveraging Incan’s existing pattern-matching semantics).</p>
 <p>Allowed <code>Option</code> patterns:</p>
@@ -4775,11 +4801,11 @@ the underlying <code>testing</code> assertion functions.</p>
 <ul>
 <li>No nested patterns (e.g. <code>Some(Ok(x))</code>) and no multiple bindings in a single <code>assert</code>.</li>
 <li>The bound name is introduced in the <em>current</em> scope exactly as if the compiler had emitted <code>let &lt;ident&gt; = ...</code> at the
-  assertion site; it is in scope for subsequent statements in the same block.</li>
+assertion site; it is in scope for subsequent statements in the same block.</li>
 <li>The bound name has the inner type of the matched value (e.g. <code>T</code> for <code>Option[T]</code>, <code>T</code>/<code>E</code> for <code>Result[T, E]</code>), and the
-  assertion does not otherwise narrow the type of the tested expression.</li>
+assertion does not otherwise narrow the type of the tested expression.</li>
 <li>Shadowing: if the bound identifier already exists in the current lexical block, the assertion is a compile-time error.
-  Users should pick a new name or bind in an inner block to avoid ambiguity.</li>
+Users should pick a new name or bind in an inner block to avoid ambiguity.</li>
 </ul>
 <p>Guidance (non-normative): avoid using <code>assert</code> as control flow in production code. Prefer explicit pattern matching or
 <code>assert_is_*</code> helpers when unwrapping <code>Option</code>/<code>Result</code> values.</p>
@@ -4791,7 +4817,7 @@ the underlying <code>testing</code> assertion functions.</p>
 <li>It does <strong>not</strong> refer to <code>Result</code>-returning APIs; for results, use <code>assert res is Err(e)</code> / <code>assert_is_err</code>.</li>
 <li>Block-style “raises” assertions are out of scope; use <code>testing.assert_raises</code> for multi-statement checks.</li>
 <li>Matching: <code>ErrorType</code> matches that exact type or any of its subtypes.
-  If an implementation lacks subtype information, it MUST at minimum match the exact type.</li>
+If an implementation lacks subtype information, it MUST at minimum match the exact type.</li>
 <li>Async “raises” is out of scope for this RFC.</li>
 </ul>
 <h3 id="inline-test-module-context-reference-rules">Inline test module context (reference rules)<a class="headerlink" href="#inline-test-module-context-reference-rules" title="Permanent link">&para;</a></h3>
@@ -4832,8 +4858,7 @@ strip-able in non-test compilation modes.</p>
 </tbody>
 </table>
 <p>Test files are only relevant to <code>incan test</code> (they are not part of production builds).</p>
-<p>Note: <code>incan --check</code> type-checks inline <code>module tests:</code> blocks in source files, but does not include <code>tests/</code> unless
-explicitly passed as a path argument.</p>
+<p>Note: <code>incan --check</code> type-checks inline <code>module tests:</code> blocks in source files, but does not include <code>tests/</code> unless explicitly passed as a path argument.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="inline-test-module-scoping">Inline test module scoping<a class="headerlink" href="#inline-test-module-scoping" title="Permanent link">&para;</a></h3>
 <p>The inline test module:</p>
@@ -4845,13 +4870,12 @@ explicitly passed as a path argument.</p>
 <ul>
 <li>Names declared in the enclosing module (including private names not marked <code>pub</code>) are visible inside <code>module tests:</code>.</li>
 <li>This is <strong>lexical visibility</strong>, not an implicit import: the test block can reference any name that is in scope at
-  the file level, as if the test block were nested code in the same file.</li>
+the file level, as if the test block were nested code in the same file.</li>
 <li>Names declared inside <code>module tests:</code> (functions, imports, bindings) are <strong>not</strong> visible outside the test block.</li>
 <li>The test block does not introduce a separate module namespace for the purpose of <code>pub</code> visibility; it is purely a
-  scoped block that can be stripped.</li>
+scoped block that can be stripped.</li>
 </ul>
-<p>This RFC does <strong>not</strong> define a general-purpose module system beyond existing file/module semantics; <code>module tests:</code>
-inside a file is specifically a scoped block that can be stripped in non-test compilation modes.</p>
+<p>This RFC does <strong>not</strong> define a general-purpose module system beyond existing file/module semantics; <code>module tests:</code> inside a file is specifically a scoped block that can be stripped in non-test compilation modes.</p>
 <h2 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Existing code that uses <code>testing.assert_*</code> continues to work; <code>assert</code> is additive syntax sugar.</li>
@@ -4861,7 +4885,7 @@ inside a file is specifically a scoped block that can be stripped in non-test co
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Top-level <code>@test</code> next to production functions</strong>: rejected; it pollutes the production namespace and makes it hard
-  to keep test-only imports/helpers contained.</li>
+to keep test-only imports/helpers contained.</li>
 <li><strong>Magic language keywords for tests/fixtures</strong>: rejected; harms tooling and contradicts the “stdlib-gated” principle.</li>
 <li><strong>Compile-time-only assertions</strong>: rejected; <code>assert</code> is intended for always-on runtime invariants.</li>
 </ul>
@@ -4871,9 +4895,7 @@ inside a file is specifically a scoped block that can be stripped in non-test co
 <li>richer pattern matching in <code>assert</code> (nested patterns, guards)</li>
 </ul>
 <h2 id="appendix-testing-surface-inventory-informative">Appendix: testing surface inventory (informative)<a class="headerlink" href="#appendix-testing-surface-inventory-informative" title="Permanent link">&para;</a></h2>
-<p>This appendix is a contributor-oriented inventory of the testing surface <strong>after this RFC is implemented</strong>, with an
-informative snapshot of what exists <strong>today</strong> (at time of writing). It is <strong>not normative</strong>; the spec sections above are
-authoritative.</p>
+<p>This appendix is a contributor-oriented inventory of the testing surface <strong>after this RFC is implemented</strong>, with an informative snapshot of what exists <strong>today</strong> (at time of writing). It is <strong>not normative</strong>; the spec sections above are authoritative.</p>
 <p>Legend:</p>
 <ul>
 <li><strong>Today</strong>: implementation status in the current repository at RFC creation time<ul>
@@ -4958,6 +4980,13 @@ authoritative.</p>
 <li><strong>Lowering</strong> — must lower <code>assert &lt;expr&gt;</code> to the appropriate <code>testing.assert_*</code> call based on expression shape (equality, inequality, option/result, pattern binding); must lower <code>assert &lt;expr&gt; raises &lt;Type&gt;</code> to <code>testing.assert_raises</code>; must strip <code>module tests:</code> bodies from non-test compilation modes.</li>
 <li><strong>Stdlib (<code>std.testing</code>)</strong> — <code>assert_eq</code>, <code>assert_ne</code>, <code>assert_is_some</code>, <code>assert_is_none</code>, <code>assert_raises</code>, <code>assert</code>, and their message-accepting overloads must conform to the desugaring rules specified in this RFC.</li>
 <li><strong>CLI</strong> — <code>incan build</code> and <code>incan run</code> must strip <code>module tests:</code> bodies; <code>incan --check</code> must typecheck them; <code>incan test</code> must include them in the compilation unit.</li>
+</ul>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>assert</code> is an always-on language primitive and is not compiled out in release builds by this RFC.</li>
+<li>Testing-specific decorators and helpers are gated behind the <code>testing</code> module rather than treated as ambient global names.</li>
+<li><code>module tests:</code> is the reserved inline scope for test-only code in production modules.</li>
+<li>Runner and CLI semantics remain split into RFC 019 rather than being folded into this language-level RFC.</li>
 </ul>
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
 <ul>

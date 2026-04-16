@@ -4360,18 +4360,18 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#selected-providers" class="md-nav__link">
+  <a href="#reference-deployment-candidates-informative" class="md-nav__link">
     <span class="md-ellipsis">
-      Selected providers
+      Reference deployment candidates (informative)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#cost-projections-with-hard-caps" class="md-nav__link">
+  <a href="#illustrative-cost-envelope-informative" class="md-nav__link">
     <span class="md-ellipsis">
-      Cost projections with hard caps
+      Illustrative cost envelope (informative)
     </span>
   </a>
   
@@ -4401,9 +4401,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-registry-service-written-in-incan" class="md-nav__link">
+  <a href="#reference-service-implementation-informative" class="md-nav__link">
     <span class="md-ellipsis">
-      The registry service: written in Incan
+      Reference service implementation (informative)
     </span>
   </a>
   
@@ -4488,13 +4488,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-plan" class="md-nav__link">
+  <a href="#implementation-architecture" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation plan
+      Implementation architecture
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Implementation plan">
+    <nav class="md-nav" aria-label="Implementation architecture">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4526,6 +4526,15 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
   
 </li>
       
@@ -4571,10 +4580,13 @@
 <li><strong>Created:</strong> 2026-03-06</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong> RFC 031 (library system phase 1), RFC 027 (incan-vocab)</li>
-<li><strong>Target version:</strong> TBD</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/319</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Define the <code>incan.pub</code> package registry: the infrastructure, protocols, and CLI commands that allow Incan library authors to publish packages and consumers to resolve them. The registry is an Incan web service backed by S3-compatible European object storage, with SHA256 integrity verification and Sigstore-based package signing. It costs €0 at launch and scales predictably with hard spending caps.</p>
+<p>Define the <code>incan.pub</code> package registry: the protocols, guarantees, and CLI commands that allow Incan library authors to publish packages and consumers to resolve them. The registry must be EU-hosted, integrity-verified, signature-aware, and operationally cheap enough to run with predictable capped spend. Exact vendor choice and launch-era cost numbers are implementation details, not the core contract.</p>
 <h2 id="constraints">Constraints<a class="headerlink" href="#constraints" title="Permanent link">&para;</a></h2>
 <p>Two non-negotiable requirements drive every decision in this RFC:</p>
 <ol>
@@ -4651,48 +4663,33 @@ $<span class="w"> </span>incan<span class="w"> </span>publish
 <p>This is a static site generated from the index — no dynamic server needed for the web UI.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="architecture-overview">Architecture overview<a class="headerlink" href="#architecture-overview" title="Permanent link">&para;</a></h3>
-<div class="language-text highlight"><pre><span></span><code>             ┌──────────────────────────────────┐
-             │         incan.pub                │
-             │         (DNS)                    │
-             └────────┬──────────┬──────────────┘
-                      │          │
-             GET /crates/*       │  POST /api/v1/*
-             GET /index/*        │  (publish, yank, login)
-                      │          │
-                      ▼          ▼
-             ┌────────────────────────────────────┐
-             │  CDN Layer (Bunny.net — Slovenia)  │
-             │  Caches all GET requests at edge   │
-             │  Hard bandwidth cap configurable   │
-             │  EU PoPs only (or worldwide later) │
-             └────────┬───────────────────────────┘
-                      │ cache miss
-                      ▼
-             ┌────────────────────────────────────┐
-             │  Registry Service                  │
-             │  (Incan binary on Scaleway         │
-             │   Serverless Containers — Paris)   │
-             │                                    │
-             │  Handles:                          │
-             │  - POST /api/v1/publish            │
-             │  - POST /api/v1/yank               │
-             │  - POST /api/v1/login              │
-             │  - GET fallthrough (cache miss)    │
-             │  Scales to zero when idle          │
-             └────────┬───────────────────────────┘
-                      │
-                      ▼
-             ┌────────────────────────────────────┐
-             │  Scaleway Object Storage (Paris)   │
-             │  S3-compatible                     │
-             │  75 GB free tier                   │
-             │                                    │
-             │  Bucket layout:                    │
-             │    crates/&lt;name&gt;/&lt;ver&gt;.crate       │
-             │    crates/&lt;name&gt;/&lt;ver&gt;.crate.sig   │
-             │    crates/&lt;name&gt;/&lt;ver&gt;.crate.cert  │
-             │    index/&lt;prefix&gt;/&lt;name&gt;           │
-             └────────────────────────────────────┘
+<div class="language-text highlight"><pre><span></span><code>            ┌─────────────────────────────┐
+            │          incan.pub          │
+            │            (DNS)            │
+            └────────────┬────────────────┘
+                         │
+              GET /crates/*, GET /index/*
+                         │
+                         ▼
+            ┌─────────────────────────────┐
+            │       EU CDN / cache        │
+            │ immutable package + index   │
+            │       distribution          │
+            └────────────┬────────────────┘
+                         │ cache miss / API
+                         ▼
+            ┌─────────────────────────────┐
+            │      Registry service       │
+            │ publish, yank, auth, index  │
+            │      update, verification   │
+            └────────────┬────────────────┘
+                         │
+                         ▼
+            ┌─────────────────────────────┐
+            │   EU object storage + DB    │
+            │ packages, index, signatures │
+            │       auth/ownership        │
+            └─────────────────────────────┘
 </code></pre></div>
 <h3 id="the-package-format">The package format<a class="headerlink" href="#the-package-format" title="Permanent link">&para;</a></h3>
 <p>A <code>.crate</code> file is a gzipped tarball containing the Rust crate output from <code>incan build --lib</code> plus the <code>.incnlib</code> type manifest:</p>
@@ -4822,8 +4819,7 @@ Body: .crate tarball (binary)
 <li>Store <code>.crate</code> in object storage: <code>crates/&lt;name&gt;/&lt;version&gt;.crate</code></li>
 <li>Store signature artifacts: <code>crates/&lt;name&gt;/&lt;version&gt;.crate.sig</code>, <code>.cert</code></li>
 <li>Update index: append version line to <code>index/&lt;prefix&gt;/&lt;name&gt;</code></li>
-<li>Invalidate CDN cache for the index entry</li>
-<li>Return 200</li>
+<li>Invalidate CDN cache for the index entry 11. Return 200</li>
 </ol>
 <p><strong>Response:</strong> <code>{ "published": "mylib", "version": "0.1.0" }</code></p>
 <h4 id="post-apiv1yank"><code>POST /api/v1/yank</code><a class="headerlink" href="#post-apiv1yank" title="Permanent link">&para;</a></h4>
@@ -4877,7 +4873,8 @@ Body: { &quot;name&quot;: &quot;mylib&quot;, &quot;version&quot;: &quot;0.1.0&qu
 </ol>
 <p>If verification fails, <code>incan build</code> refuses to use the package and emits a clear diagnostic.</p>
 <p><strong>Sigstore is optional in Phase 1</strong> — the <code>signatures</code> field in the index is nullable. Unsigned packages are accepted but display a warning during <code>incan build</code>. The goal is to make signing the default from early on, then make it mandatory once the tooling is proven.</p>
-<p><strong>Rust integration:</strong> the <code>sigstore-rs</code> crate provides the Sigstore client libraries. The registry service itself verifies signatures on publish (to reject invalid signatures early).</p>
+<p><strong>Implementation note:</strong> the service can rely on existing Sigstore client
+libraries rather than inventing its own signing stack. The registry still verifies signatures on publish so invalid artifacts are rejected early.</p>
 <h3 id="security-properties">Security properties<a class="headerlink" href="#security-properties" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -5053,7 +5050,7 @@ $<span class="w"> </span>incan<span class="w"> </span>add<span class="w"> </span
 </tr>
 </tbody>
 </table>
-<h3 id="selected-providers">Selected providers<a class="headerlink" href="#selected-providers" title="Permanent link">&para;</a></h3>
+<h3 id="reference-deployment-candidates-informative">Reference deployment candidates (informative)<a class="headerlink" href="#reference-deployment-candidates-informative" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
@@ -5090,7 +5087,7 @@ $<span class="w"> </span>incan<span class="w"> </span>add<span class="w"> </span
 </tr>
 </tbody>
 </table>
-<h3 id="cost-projections-with-hard-caps">Cost projections with hard caps<a class="headerlink" href="#cost-projections-with-hard-caps" title="Permanent link">&para;</a></h3>
+<h3 id="illustrative-cost-envelope-informative">Illustrative cost envelope (informative)<a class="headerlink" href="#illustrative-cost-envelope-informative" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
@@ -5147,6 +5144,7 @@ $<span class="w"> </span>incan<span class="w"> </span>add<span class="w"> </span
 </tr>
 </tbody>
 </table>
+<p>These figures are illustrative deployment planning guidance rather than normative RFC commitments.</p>
 <p><strong>How caps work:</strong></p>
 <ul>
 <li><strong>Scaleway:</strong> billing alerts + hard spending limits per project. Set a monthly budget; services are suspended (not billed) when exceeded.</li>
@@ -5154,14 +5152,7 @@ $<span class="w"> </span>incan<span class="w"> </span>add<span class="w"> </span
 </ul>
 <p><strong>The worst case</strong> of "sudden PyPI-scale fame" is: CDN hits its bandwidth cap, new downloads get 503, existing cached packages keep working. You notice, evaluate whether to raise the cap, and decide. You never wake up to a €10K bill.</p>
 <h3 id="provider-portability">Provider portability<a class="headerlink" href="#provider-portability" title="Permanent link">&para;</a></h3>
-<p>The registry service talks to object storage via the S3 API (<code>rust::aws_sdk_s3</code>). Configuration is environment variables:</p>
-<div class="language-text highlight"><pre><span></span><code>S3_ENDPOINT=https://s3.fr-par.scw.cloud
-S3_BUCKET=incan-pub
-S3_REGION=fr-par
-S3_ACCESS_KEY=...
-S3_SECRET_KEY=...
-</code></pre></div>
-<p>Switching providers means changing these variables and running an <code>rclone sync</code> to migrate existing objects. Zero code changes.</p>
+<p>The registry service should talk to object storage via an S3-compatible API or equivalent portable abstraction, configured through ordinary deployment variables or service configuration. Switching providers should mean changing configuration and migrating stored objects, not rewriting registry logic.</p>
 <h3 id="why-not-self-hosted-kellnr">Why not self-hosted Kellnr?<a class="headerlink" href="#why-not-self-hosted-kellnr" title="Permanent link">&para;</a></h3>
 <p>Kellnr is a self-hosted Rust crate registry that implements the Cargo registry protocol. It was considered and rejected because:</p>
 <ul>
@@ -5170,43 +5161,15 @@ S3_SECRET_KEY=...
 <li>Written in Rust, not Incan (misses the dogfooding opportunity)</li>
 <li>The <code>.incnlib</code>-in-<code>.crate</code> trick makes Cargo protocol compatibility free anyway — any tool that can download a <code>.crate</code> gets both the Rust source and the type manifest</li>
 </ul>
-<h2 id="the-registry-service-written-in-incan">The registry service: written in Incan<a class="headerlink" href="#the-registry-service-written-in-incan" title="Permanent link">&para;</a></h2>
-<p>The <code>incan.pub</code> registry API is itself an Incan project. This is deliberate:</p>
+<h2 id="reference-service-implementation-informative">Reference service implementation (informative)<a class="headerlink" href="#reference-service-implementation-informative" title="Permanent link">&para;</a></h2>
+<p>The preferred long-term direction is for the <code>incan.pub</code> registry API to be an Incan service. That gives the project a strong dogfooding story and validates that Incan can support its own ecosystem infrastructure. However, the language used for the first service implementation is not the public contract of this RFC. The contract is the registry protocol, package format, integrity model, and CLI behavior.</p>
+<p>The important design constraint is portability:</p>
 <ol>
-<li><strong>Dogfooding.</strong> The registry is the first production Incan web service. If <code>std.web</code> can't handle it, that's a bug we need to find.</li>
-<li><strong>Marketing.</strong> "Our package registry is written in Incan" demonstrates the language's production readiness.</li>
-<li><strong>Simplicity.</strong> Incan compiles to a native Rust binary — no runtime dependencies, no container base image beyond <code>scratch</code>.</li>
+<li>the service must be able to run on EU-hosted infrastructure with hard cost caps;</li>
+<li>object storage and CDN choices should remain replaceable;</li>
+<li>the registry protocol must not depend on whether the service is implemented
+in Incan or in a temporary bootstrap implementation.</li>
 </ol>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># registry/src/main.incn</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">std.web</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.web</span><span class="w"> </span><span class="kn">import</span> <span class="kt">App</span><span class="p">,</span> <span class="kt">Request</span><span class="p">,</span> <span class="kt">Response</span><span class="p">,</span> <span class="n">route</span><span class="p">,</span> <span class="n">status</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">handlers</span><span class="w"> </span><span class="kn">import</span> <span class="n">publish</span><span class="p">,</span> <span class="n">yank</span><span class="p">,</span> <span class="n">get_index</span><span class="p">,</span> <span class="n">download_crate</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">middleware</span><span class="w"> </span><span class="kn">import</span> <span class="n">require_auth</span><span class="p">,</span> <span class="n">log_request</span>
-
-<span class="n">app</span> <span class="o">=</span> <span class="kt">App</span><span class="p">()</span>
-<span class="n">app</span><span class="o">.</span><span class="n">use</span><span class="p">(</span><span class="n">log_request</span><span class="p">)</span>
-
-<span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;POST&quot;</span><span class="p">,</span> <span class="s2">&quot;/api/v1/publish&quot;</span><span class="p">)</span>
-<span class="nd">@require_auth</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">handle_publish</span><span class="p">(</span><span class="n">req</span><span class="p">:</span> <span class="kt">Request</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
-    <span class="k">return</span> <span class="k">await</span> <span class="n">publish</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
-
-<span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;POST&quot;</span><span class="p">,</span> <span class="s2">&quot;/api/v1/yank&quot;</span><span class="p">)</span>
-<span class="nd">@require_auth</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">handle_yank</span><span class="p">(</span><span class="n">req</span><span class="p">:</span> <span class="kt">Request</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
-    <span class="k">return</span> <span class="k">await</span> <span class="n">yank</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
-
-<span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;GET&quot;</span><span class="p">,</span> <span class="s2">&quot;/index/</span><span class="si">{prefix}</span><span class="s2">/</span><span class="si">{name}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">handle_index</span><span class="p">(</span><span class="n">req</span><span class="p">:</span> <span class="kt">Request</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
-    <span class="k">return</span> <span class="k">await</span> <span class="n">get_index</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
-
-<span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;GET&quot;</span><span class="p">,</span> <span class="s2">&quot;/crates/</span><span class="si">{name}</span><span class="s2">/</span><span class="si">{version}</span><span class="s2">.crate&quot;</span><span class="p">)</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">handle_download</span><span class="p">(</span><span class="n">req</span><span class="p">:</span> <span class="kt">Request</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
-    <span class="k">return</span> <span class="k">await</span> <span class="n">download_crate</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
-
-<span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s2">&quot;0.0.0.0&quot;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span>
-</code></pre></div>
-<p>Deployed as a Docker container on Scaleway Serverless Containers. The container image is minimal (~10 MB): the compiled binary plus TLS root certificates.</p>
 <h2 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>RFC 031 (library system):</strong> This RFC builds directly on RFC 031. The <code>.incnlib</code> manifest format, <code>pub::</code> import syntax, and <code>incan build --lib</code> command are defined there. This RFC adds the distribution layer on top.</li>
@@ -5229,111 +5192,40 @@ S3_SECRET_KEY=...
 <li><strong>Complexity.</strong> A package registry is a significant piece of infrastructure to build and maintain, even a simple one.</li>
 <li><strong>Dependency on Scaleway/Bunny.net.</strong> The architecture is provider-portable (S3 API + HTTP CDN), but the initial deployment is tied to these specific providers.</li>
 <li><strong>Sigstore learning curve.</strong> Keyless signing via OIDC is unfamiliar to many developers. Clear documentation and good CLI UX can mitigate this.</li>
-<li><strong><code>std.web</code> dependency.</strong> Writing the registry in Incan means <code>std.web</code> (RFC 023) must ship first. If <code>std.web</code> is delayed, the registry could be written in Rust as a temporary measure and rewritten in Incan later.</li>
+<li><strong>Bootstrap dependency.</strong> A first-class Incan implementation depends on the
+relevant web/runtime capabilities shipping in time. A temporary bootstrap implementation may be needed if ecosystem timing forces the registry to arrive earlier.</li>
 </ul>
-<h2 id="implementation-plan">Implementation plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
 <h3 id="phase-1-mvp-registry-alongside-rfc-031-implementation">Phase 1: MVP registry (alongside RFC 031 implementation)<a class="headerlink" href="#phase-1-mvp-registry-alongside-rfc-031-implementation" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Component</th>
-<th>What</th>
-<th>Estimated size</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Registry service (Incan)</td>
-<td>HTTP API: publish, yank, index, download</td>
-<td>~300 lines</td>
-</tr>
-<tr>
-<td>S3 storage layer</td>
-<td>Object storage client for crate + index read/write</td>
-<td>~150 lines</td>
-</tr>
-<tr>
-<td><code>incan login</code> CLI command</td>
-<td>Token prompt, save to <code>~/.incan/credentials</code></td>
-<td>~50 lines</td>
-</tr>
-<tr>
-<td><code>incan publish</code> CLI command</td>
-<td>Build lib, package <code>.crate</code>, upload with checksum</td>
-<td>~150 lines</td>
-</tr>
-<tr>
-<td>Index reader (in compiler)</td>
-<td>Fetch + parse sparse index, resolve versions</td>
-<td>~200 lines</td>
-</tr>
-<tr>
-<td>Cache manager</td>
-<td><code>~/.incan/libs/</code> cache with checksum verification</td>
-<td>~100 lines</td>
-</tr>
-<tr>
-<td>Lockfile (<code>incan.lock</code>)</td>
-<td>Write/read resolved dependency versions</td>
-<td>~150 lines</td>
-</tr>
-<tr>
-<td>Scaleway + Bunny.net setup</td>
-<td>Infra provisioning (one-time)</td>
-<td>~2 hours</td>
-</tr>
-</tbody>
-</table>
+<ul>
+<li>Registry service for publish, yank, index reads, and package downloads</li>
+<li>Object storage integration for package, index, and signature artifacts</li>
+<li><code>incan login</code> credential management</li>
+<li><code>incan publish</code> packaging and upload flow</li>
+<li>Index reader and package cache integration on the consumer side</li>
+<li>Lockfile integration consistent with the broader library-resolution story</li>
+</ul>
 <h3 id="phase-2-sigstore-signing">Phase 2: Sigstore signing<a class="headerlink" href="#phase-2-sigstore-signing" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Component</th>
-<th>What</th>
-<th>Estimated size</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Signing in <code>incan publish</code></td>
-<td>OIDC flow + Sigstore signing via <code>sigstore-rs</code></td>
-<td>~80 lines</td>
-</tr>
-<tr>
-<td>Verification in <code>incan build</code></td>
-<td>Signature + certificate + Rekor verification</td>
-<td>~100 lines</td>
-</tr>
-<tr>
-<td>Registry-side validation</td>
-<td>Verify signature on publish before storing</td>
-<td>~50 lines</td>
-</tr>
-</tbody>
-</table>
+<ul>
+<li><code>incan publish</code> integration for keyless signing</li>
+<li>Registry-side signature verification on publish</li>
+<li>Consumer-side verification during download/build</li>
+<li>Web and CLI surfacing of signer identity and verification status</li>
+</ul>
 <h3 id="phase-3-web-ui-search">Phase 3: Web UI + search<a class="headerlink" href="#phase-3-web-ui-search" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Component</th>
-<th>What</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Static site generator</td>
-<td>Generate HTML from index data (package pages, search)</td>
-</tr>
-<tr>
-<td><code>incan search</code> CLI</td>
-<td>Client-side search over cached index</td>
-</tr>
-<tr>
-<td>Download counters</td>
-<td>Increment counter in object storage metadata on each download</td>
-</tr>
-</tbody>
-</table>
+<ul>
+<li>Static site generation for package pages from index data</li>
+<li><code>incan search</code> over registry metadata</li>
+<li>Download counters or equivalent package-usage reporting</li>
+</ul>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Registry service</strong>: must implement package publication, index updates, integrity verification, and storage semantics consistent with the RFC.</li>
+<li><strong>CLI / client</strong>: must support publish, resolution, download, verification, and cache-management behavior against the registry protocol.</li>
+<li><strong>Dependency resolution / lockfile tooling</strong>: must consume registry metadata in a way that composes with the broader library and lockfile story.</li>
+<li><strong>Infra / operations</strong>: must preserve the EU-hosting and hard-cost-cap constraints that are core to this RFC's design.</li>
+<li><strong>Docs / ecosystem guidance</strong>: must explain publish, signing, verification, and failure-mode behavior clearly for package authors and consumers.</li>
+</ul>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ol>
 <li>
@@ -5352,6 +5244,8 @@ S3_SECRET_KEY=...
 <p><strong>Fallback when CDN cap is reached.</strong> When Bunny.net hits its bandwidth cap, should the client fall back to direct origin requests (slower but functional) or fail with a clear "registry bandwidth limit reached" error? Fallback is better UX but could overload the origin.</p>
 </li>
 </ol>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+
 <h2 id="future-extensions-out-of-scope">Future extensions (out of scope)<a class="headerlink" href="#future-extensions-out-of-scope" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Private registries.</strong> Organizations running their own <code>incan.pub</code>-compatible registry for internal packages. Uses the same protocol and CLI commands with a different registry URL in <code>incan.toml</code>.</li>

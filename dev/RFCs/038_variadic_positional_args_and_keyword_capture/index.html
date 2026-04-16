@@ -4440,7 +4440,10 @@
 <li>RFC 039 (<code>race</code> for awaitable concurrency)</li>
 </ul>
 </li>
-<li><strong>Target version:</strong> TBD</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/83</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>Add Python-style rest parameters (<code>*args</code> / <code>**kwargs</code>) to Incan function definitions:</p>
@@ -4552,8 +4555,7 @@
         <span class="n">arm</span><span class="p">(</span><span class="n">fetch_cache</span><span class="p">(),</span> <span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">value</span><span class="p">),</span>
     <span class="p">)</span>
 </code></pre></div>
-<p>The repeated thing here is not "awaitable, callback, awaitable, callback". The repeated thing is <code>RaceArm[str]</code>.
-That is the kind of API variadics make elegant.</p>
+<p>The repeated thing here is not "awaitable, callback, awaitable, callback". The repeated thing is <code>RaceArm[str]</code>. That is the kind of API variadics make elegant.</p>
 <h3 id="calls-through-variables">Calls through variables<a class="headerlink" href="#calls-through-variables" title="Permanent link">&para;</a></h3>
 <p>For calls where the compiler cannot reliably identify the callee signature, Incan may require explicit list/dict arguments rather than applying rest-capture sugar automatically:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">log</span><span class="p">(</span><span class="n">level</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="n">msgs</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -4684,19 +4686,18 @@ That is the kind of API variadics make elegant.</p>
 <p>The homogeneous model is clearer, easier to typecheck, and already sufficient for many important APIs once repeated inputs are packaged into a common type.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>adds parser, AST, typechecker, and diagnostics complexity</li>
+<li>adds syntax, typing, and diagnostics complexity</li>
 <li>increases the number of ways to express APIs, which can fragment style</li>
 <li>leaves an important open question about calls through function values</li>
 <li>may encourage over-flexible APIs if used without discipline</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Parser</strong> — new <code>*</code> / <code>**</code> parameter forms in function signatures; the AST parameter representation must capture the parameter kind (normal, rest positional, rest keyword)</li>
-<li><strong>Typechecker</strong> — rest-parameter metadata on function and method symbols; binding and type-checking rules for extra positional arguments, unknown named arguments, and element/value type mismatches</li>
-<li><strong>IR Lowering</strong> — call sites where the callee signature is known must rewrite extra positionals into a <code>List[...]</code> literal and extra named arguments into a <code>Dict[str, ...]</code> literal as trailing arguments</li>
-<li><strong>IR Emission</strong> — the emitter must generate correct Rust <code>Vec&lt;T&gt;</code> / <code>HashMap&lt;String, V&gt;</code> construction for those lowered container literals</li>
-<li><strong>Formatter</strong> — print <code>*</code> / <code>**</code> markers on rest parameters</li>
-<li><strong>LSP</strong> — rest parameter variables should display as <code>List[T]</code> / <code>Dict[str, V]</code> on hover and in completions</li>
+<li><strong>Language surface</strong> — <code>*</code> and <code>**</code> parameter forms in function signatures must be supported and remain distinct from ordinary parameters.</li>
+<li><strong>Type system</strong> — rest-parameter metadata, binding rules for extra positional or named arguments, and element or value type mismatches must be validated.</li>
+<li><strong>Execution handoff</strong> — implementations may rewrite extra positionals into <code>List[...]</code> values and extra named arguments into <code>Dict[str, ...]</code> values, but the observable call semantics must match this RFC.</li>
+<li><strong>Formatter</strong> — <code>*</code> and <code>**</code> markers on rest parameters should print predictably.</li>
+<li><strong>LSP</strong> — rest parameter variables should display as <code>List[T]</code> and <code>Dict[str, V]</code> on hover and in completions.</li>
 </ul>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ol>
@@ -4705,6 +4706,7 @@ That is the kind of API variadics make elegant.</p>
 <li>Should a follow-up RFC add call-site unpacking (<code>f(*xs)</code> / <code>f(**m)</code> / <code>f(*xs, **m)</code>)?</li>
 <li>Is <code>Dict[str, V]</code> sufficient for keyword captures, or will some ecosystems eventually want a richer tagged-union or structured-options story?</li>
 </ol>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

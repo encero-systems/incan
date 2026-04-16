@@ -4293,6 +4293,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#design-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design Decisions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#unresolved-questions" class="md-nav__link">
     <span class="md-ellipsis">
       Unresolved questions
@@ -4325,7 +4334,7 @@
 <li><strong>Created:</strong> 2024-12-11</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong> RFC 019 (runner testing), RFC 023 (stdlib namespacing and compiler handoff)</li>
-<li><strong>Issue:</strong> —</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/79</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.1</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -4360,7 +4369,7 @@
 <h3 id="named-temporary-files">Named temporary files<a class="headerlink" href="#named-temporary-files" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.tempfile</span><span class="w"> </span><span class="kn">import</span> <span class="nc">NamedTemporaryFile</span>
 
-<span class="n">temp</span> <span class="o">=</span> <span class="nc">NamedTemporaryFile</span><span class="o">.</span><span class="n">new</span><span class="p">()</span><span class="o">?</span>
+<span class="n">temp</span> <span class="o">=</span> <span class="nc">NamedTemporaryFile</span><span class="p">()</span><span class="o">?</span>
 <span class="n">temp</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s2">&quot;some data&quot;</span><span class="p">)</span><span class="o">?</span>
 
 <span class="n">process_file</span><span class="p">(</span><span class="n">temp</span><span class="o">.</span><span class="n">path</span><span class="p">())</span>
@@ -4369,7 +4378,7 @@
 <h3 id="temporary-directories">Temporary directories<a class="headerlink" href="#temporary-directories" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.tempfile</span><span class="w"> </span><span class="kn">import</span> <span class="nc">TemporaryDirectory</span>
 
-<span class="n">temp_dir</span> <span class="o">=</span> <span class="nc">TemporaryDirectory</span><span class="o">.</span><span class="n">new</span><span class="p">()</span><span class="o">?</span>
+<span class="n">temp_dir</span> <span class="o">=</span> <span class="nc">TemporaryDirectory</span><span class="p">()</span><span class="o">?</span>
 
 <span class="n">config</span> <span class="o">=</span> <span class="n">temp_dir</span><span class="o">.</span><span class="n">path</span><span class="p">()</span> <span class="o">/</span> <span class="s2">&quot;config.toml&quot;</span>
 <span class="n">config</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">default_config</span><span class="p">)</span><span class="o">?</span>
@@ -4381,7 +4390,7 @@
 <h3 id="keeping-a-result">Keeping a result<a class="headerlink" href="#keeping-a-result" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.tempfile</span><span class="w"> </span><span class="kn">import</span> <span class="nc">NamedTemporaryFile</span>
 
-<span class="n">temp</span> <span class="o">=</span> <span class="nc">NamedTemporaryFile</span><span class="o">.</span><span class="n">with_suffix</span><span class="p">(</span><span class="s2">&quot;.json&quot;</span><span class="p">)</span><span class="o">?</span>
+<span class="n">temp</span> <span class="o">=</span> <span class="nc">NamedTemporaryFile</span><span class="p">(</span><span class="n">suffix</span><span class="o">=</span><span class="s2">&quot;.json&quot;</span><span class="p">)</span><span class="o">?</span>
 <span class="n">temp</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="o">?</span>
 
 <span class="n">final_path</span> <span class="o">=</span> <span class="n">temp</span><span class="o">.</span><span class="n">persist</span><span class="p">()</span><span class="o">?</span>
@@ -4461,6 +4470,12 @@
 <li><strong>Lowering / runtime</strong>: must preserve cleanup and persistence behavior across success and error paths.</li>
 <li><strong>Testing / tooling</strong>: should make examples and diagnostics around temporary resources easy to discover.</li>
 </ul>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Construction follows ordinary direct Incan construction rather than <code>.new()</code>-style factory calls.</li>
+<li>Python-style type names such as <code>NamedTemporaryFile</code> and <code>TemporaryDirectory</code> are part of the intended public surface.</li>
+<li>Temporary resources remain path-usable filesystem entries while they exist; this RFC does not invent a separate non-<code>Path</code> interaction model for them.</li>
+</ol>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Is <code>TemporaryFile</code> without a durable path in scope for the initial version, or is path-addressable temporary storage the only guaranteed surface?</li>

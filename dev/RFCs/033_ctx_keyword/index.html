@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 033: ctx — Typed Configuration Context - Incan Documentation</title>
+        <title>RFC 033: ctx — typed configuration context - Incan Documentation</title>
       
     
     
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 033: ctx — Typed Configuration Context
+              RFC 033: ctx — typed configuration context
             
           </span>
         </div>
@@ -4261,9 +4261,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rust-lowering" class="md-nav__link">
+  <a href="#lowering-model" class="md-nav__link">
     <span class="md-ellipsis">
-      Rust lowering
+      Lowering model
     </span>
   </a>
   
@@ -4421,24 +4421,30 @@
   
 
 
-<h1 id="rfc-033-ctx-typed-configuration-context">RFC 033: <code>ctx</code> — Typed Configuration Context<a class="headerlink" href="#rfc-033-ctx-typed-configuration-context" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-033-ctx-typed-configuration-context">RFC 033: <code>ctx</code> — typed configuration context<a class="headerlink" href="#rfc-033-ctx-typed-configuration-context" title="Permanent link">&para;</a></h1>
 <ul>
 <li><strong>Status:</strong> Draft</li>
 <li><strong>Created:</strong> 2026-03-06</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong> RFC 032 (Value Enums)</li>
-<li><strong>Target version:</strong> TBD</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/318</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Introduce <code>ctx</code> as a core language keyword that declares a <strong>typed, globally accessible, environment-aware configuration context</strong>. A <code>ctx</code> declaration looks like a <code>model</code> but produces a set-once singleton whose fields are resolved from a layered priority chain: field defaults → match-block overrides → environment variables. This replaces the YAML/env-var/dataclass juggling common in Python applications with a single, compile-time validated construct.</p>
+<p>Introduce <code>ctx</code> as a core language keyword that declares a typed, globally accessible, environment-aware configuration context. A <code>ctx</code> declaration looks like a <code>model</code> but produces a set-once singleton whose fields are resolved from a layered priority chain: field defaults, then match-block overrides, then environment variables. This replaces the YAML/env-var/dataclass juggling common in Python applications with a single, compile-time validated construct.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Every non-trivial application needs configuration — database paths, batch sizes, API endpoints, feature flags. Today's patterns are painful:</p>
+<p>Every non-trivial application needs configuration: database paths, batch sizes, API endpoints, feature flags. Today's patterns are painful:</p>
 <ul>
-<li><strong>Python dataclass + env vars</strong>: Manual <code>os.environ.get("KEY", "default")</code> for every field. No compile-time validation. String-typed. Error-prone.</li>
-<li><strong>Pydantic BaseSettings</strong>: Typed, env-var-aware, but runtime-only validation. No multi-environment resolution. No language integration.</li>
+<li><strong>Python dataclass + env vars</strong>: manual <code>os.environ.get("KEY", "default")</code>
+for every field. No compile-time validation. String-typed. Error-prone.</li>
+<li><strong>Pydantic BaseSettings</strong>: typed and env-var-aware, but runtime-only
+validation. No multi-environment resolution. No language integration.</li>
 <li><strong>YAML + merge</strong>: <code>common.yaml</code> + <code>prod.yaml</code> merged at load time. Untyped, no IDE support, merge surprises.</li>
 <li><strong>Django settings</strong>: Python module importable globally. Untyped, single-environment, no structured overrides.</li>
-<li><strong>Koheesio Context</strong>: Dict-like, YAML-loaded, <code>.get("key")</code> returns <code>Any</code>. 490 lines of Python + 40 lines of env resolution.</li>
+<li><strong>Koheesio Context</strong>: dict-like, YAML-loaded, <code>.get("key")</code> returns <code>Any</code>.
+The surface stays dynamic where Incan should be typed.</li>
 </ul>
 <p>The common pain points:</p>
 <ol>
@@ -4477,7 +4483,7 @@
             <span class="n">debug</span> <span class="o">=</span> <span class="k">false</span>
             <span class="n">batch_size</span> <span class="o">=</span> <span class="mi">5000</span>
 </code></pre></div>
-<p>The declaration line — <code>ctx AppConfig(env_prefix="APP_"):</code> — controls <strong>how</strong> the context resolves (mechanics). The body declares <strong>what</strong> it contains (content). They never mix.</p>
+<p>The declaration line, <code>ctx AppConfig(env_prefix="APP_"):</code>, controls how the context resolves. The body declares what it contains. They do not mix.</p>
 <h3 id="reading-context-fields">Reading context fields<a class="headerlink" href="#reading-context-fields" title="Permanent link">&para;</a></h3>
 <p>Context fields are accessed by type name — no variable, no parameter passing:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">connect</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Connection</span><span class="p">:</span>
@@ -4488,9 +4494,11 @@
     <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">items</span><span class="o">.</span><span class="n">chunks</span><span class="p">(</span><span class="nc">AppConfig</span><span class="o">.</span><span class="n">batch_size</span><span class="p">):</span>
         <span class="o">...</span>
 </code></pre></div>
-<p><code>AppConfig.batch_size</code> is a global read. The compiler knows the type (<code>int</code>) at compile time. IDE completion works. Rename-refactoring works.</p>
+<p><code>AppConfig.batch_size</code> is a global read. The compiler knows the type (<code>int</code>) at
+compile time. IDE completion works. Rename-refactoring works.</p>
 <h3 id="how-env_prefix-works">How env_prefix works<a class="headerlink" href="#how-env_prefix-works" title="Permanent link">&para;</a></h3>
-<p><code>ctx AppConfig(env_prefix="APP_")</code> maps each field to an environment variable using <code>{env_prefix}{UPPER_SNAKE_CASE_FIELD_NAME}</code>:</p>
+<p><code>ctx AppConfig(env_prefix="APP_")</code> maps each field to an environment variable
+using <code>{env_prefix}{UPPER_SNAKE_CASE_FIELD_NAME}</code>:</p>
 <table>
 <thead>
 <tr>
@@ -4536,7 +4544,9 @@ Environment variables            ← highest (runtime override)
 </code></pre></div>
 <p>This matches what every ops engineer already expects: "set it in the environment and it overrides everything."</p>
 <h3 id="per-field-env-var-customization">Per-field env var customization<a class="headerlink" href="#per-field-env-var-customization" title="Permanent link">&para;</a></h3>
-<p>All fields read from env vars by default (via <code>env_prefix</code> + <code>UPPER_SNAKE_CASE</code>). For fields that need a custom env var name, use field metadata:</p>
+<p>All fields read from env vars by default via <code>env_prefix</code> plus
+<code>UPPER_SNAKE_CASE</code>. For fields that need a custom env var name, use field
+metadata:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">ctx</span> <span class="nc">AppConfig</span><span class="p">(</span><span class="n">env_prefix</span><span class="o">=</span><span class="s2">&quot;APP_&quot;</span><span class="p">):</span>
     <span class="n">database_url</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;sqlite:///dev.db&quot;</span>           <span class="c1"># reads from APP_DATABASE_URL</span>
     <span class="n">auth_token</span> <span class="p">[</span><span class="n">env</span><span class="o">=</span><span class="s2">&quot;API_TOKEN&quot;</span><span class="p">]:</span> <span class="nb">str</span>                <span class="c1"># reads from API_TOKEN (custom name)</span>
@@ -4580,7 +4590,9 @@ match_block  ::= &quot;match&quot; IDENT &quot;:&quot; NEWLINE INDENT case_arm+ 
 case_arm     ::= &quot;case&quot; IDENT &quot;:&quot; NEWLINE INDENT field_override+ DEDENT
 field_override ::= IDENT &quot;=&quot; expr NEWLINE
 </code></pre></div>
-<p><strong><code>ctx</code> is a core keyword</strong> — always reserved, not a soft keyword. It has unique semantics (singleton, env var integration, match blocks) that don't fit <code>model</code> or <code>class</code>.</p>
+<p><strong><code>ctx</code> is a core keyword</strong> and is always reserved, not a soft keyword. It has
+singleton, env-var, and match-block semantics that do not fit <code>model</code> or
+<code>class</code>.</p>
 <h3 id="declaration-rules">Declaration rules<a class="headerlink" href="#declaration-rules" title="Permanent link">&para;</a></h3>
 <ol>
 <li><code>ctx</code> name must be a valid identifier.</li>
@@ -4588,14 +4600,19 @@ field_override ::= IDENT &quot;=&quot; expr NEWLINE
 <li>The body contains <strong>field declarations</strong> (same syntax as <code>model</code> fields) and <strong>match blocks</strong>.</li>
 <li>Match blocks reference a user-defined <code>enum</code> type. The enum must be in scope.</li>
 <li>Match arms can only override fields declared in the same <code>ctx</code>. They cannot introduce new fields.</li>
-<li>Fields without defaults and without coverage in all match arms are a compile error — the context must be fully resolvable.</li>
+<li>Fields without defaults and without coverage in all match arms are a compile
+error. The context must be fully resolvable.</li>
 </ol>
 <h3 id="type-checking-rules">Type checking rules<a class="headerlink" href="#type-checking-rules" title="Permanent link">&para;</a></h3>
 <ol>
-<li><strong>Field types</strong> — same as <code>model</code> fields. Primitive types (<code>str</code>, <code>int</code>, <code>float</code>, <code>bool</code>), <code>Option[T]</code>, <code>list[T]</code>, and model types are all valid.</li>
-<li><strong>Match arm overrides</strong> — the assigned value must be type-compatible with the field's declared type. <code>batch_size: int = 100</code> can only be overridden with an <code>int</code>.</li>
-<li><strong>Global access</strong> — <code>AppConfig.field_name</code> is typed using the field's declared type. The typechecker resolves it as a static field access on a known singleton, not a regular instance access.</li>
-<li><strong>Immutability</strong> — context fields are read-only after initialization. Assigning to <code>AppConfig.field = x</code> outside of a match arm or <code>.init()</code> is a compile error.</li>
+<li><strong>Field types</strong>: same as <code>model</code> fields. Primitive types (<code>str</code>, <code>int</code>,
+   <code>float</code>, <code>bool</code>), <code>Option[T]</code>, <code>list[T]</code>, and model types are all valid.</li>
+<li><strong>Match arm overrides</strong>: the assigned value must be type-compatible with the
+field's declared type. <code>batch_size: int = 100</code> can only be overridden with an <code>int</code>.</li>
+<li><strong>Global access</strong>: <code>AppConfig.field_name</code> is typed using the field's
+declared type. The typechecker resolves it as a static field access on a known singleton, not a regular instance access.</li>
+<li><strong>Immutability</strong>: context fields are read-only after initialization.
+Assigning to <code>AppConfig.field = x</code> outside of a match arm or <code>.init()</code> is a compile error.</li>
 </ol>
 <h3 id="env-var-type-coercion">Env var type coercion<a class="headerlink" href="#env-var-type-coercion" title="Permanent link">&para;</a></h3>
 <p>Environment variables are strings. The runtime coerces them to the declared field type:</p>
@@ -4637,68 +4654,30 @@ field_override ::= IDENT &quot;=&quot; expr NEWLINE
 </table>
 <p>If coercion fails, the program exits at startup with a clear error message naming the env var, the expected type, and the actual value.</p>
 <h3 id="axis-resolution">Axis resolution<a class="headerlink" href="#axis-resolution" title="Permanent link">&para;</a></h3>
-<p>For each <code>match EnumType:</code> block in a <code>ctx</code>, the runtime reads <code>{env_prefix}{ENUM_TYPE_NAME}</code> from the environment — e.g., <code>APP_ENV</code> for <code>match Env:</code>. The value must match an enum variant name (case-insensitive). If the env var is absent, the match block is skipped entirely and field defaults are used.</p>
+<p>For each <code>match EnumType:</code> block in a <code>ctx</code>, the runtime reads
+<code>{env_prefix}{ENUM_TYPE_NAME}</code> from the environment, for example <code>APP_ENV</code> for
+<code>match Env:</code>. The value must match an enum variant name case-insensitively. If
+the env var is absent, the match block is skipped entirely and field defaults are used.</p>
 <h3 id="lifecycle">Lifecycle<a class="headerlink" href="#lifecycle" title="Permanent link">&para;</a></h3>
 <ol>
-<li><strong>Before init</strong> — accessing any <code>ctx</code> field panics with <code>"AppConfig not initialized"</code>. If the compiler can prove a field is accessed before <code>main()</code>, it emits a compile error.</li>
-<li><strong>Init</strong> — at program startup (or explicitly via <code>.init()</code> in tests): resolve axis env vars → evaluate matching match arms → apply env var field overrides → lock the singleton.</li>
+<li><strong>Before init</strong>: accessing any <code>ctx</code> field panics with
+   <code>"AppConfig not initialized"</code>. If the compiler can prove a field is
+accessed before <code>main()</code>, it emits a compile error.</li>
+<li><strong>Init</strong>: at program startup, or explicitly via <code>.init()</code> in tests, the
+runtime resolves axis env vars, evaluates matching arms, applies env var field overrides, and then locks the singleton.</li>
 <li><strong>After init</strong> — <code>AppConfig.field</code> is a zero-cost read. Immutable. Thread-safe.</li>
 <li><strong>In tests</strong> — <code>.init()</code> can be called again (resets the singleton) for per-test configuration.</li>
 </ol>
-<h3 id="rust-lowering">Rust lowering<a class="headerlink" href="#rust-lowering" title="Permanent link">&para;</a></h3>
-<p>The compiler generates:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="k">use</span><span class="w"> </span><span class="n">std</span><span class="p">::</span><span class="n">sync</span><span class="p">::</span><span class="n">OnceLock</span><span class="p">;</span>
-
-<span class="k">struct</span><span class="w"> </span><span class="nc">AppConfigData</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">database_url</span><span class="p">:</span><span class="w"> </span><span class="nb">String</span><span class="p">,</span>
-<span class="w">    </span><span class="n">batch_size</span><span class="p">:</span><span class="w"> </span><span class="kt">i64</span><span class="p">,</span>
-<span class="w">    </span><span class="n">debug</span><span class="p">:</span><span class="w"> </span><span class="kt">bool</span><span class="p">,</span>
-<span class="w">    </span><span class="n">output_dir</span><span class="p">:</span><span class="w"> </span><span class="nb">String</span><span class="p">,</span>
-<span class="p">}</span>
-
-<span class="k">static</span><span class="w"> </span><span class="n">APP_CONFIG</span><span class="p">:</span><span class="w"> </span><span class="nc">OnceLock</span><span class="o">&lt;</span><span class="n">AppConfigData</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">OnceLock</span><span class="p">::</span><span class="n">new</span><span class="p">();</span>
-
-<span class="k">fn</span><span class="w"> </span><span class="nf">init_app_config</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">env_variant</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">Env</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="p">::</span><span class="n">env</span><span class="p">::</span><span class="n">var</span><span class="p">(</span><span class="s">&quot;APP_ENV&quot;</span><span class="p">)</span>
-<span class="w">        </span><span class="p">.</span><span class="n">ok</span><span class="p">()</span>
-<span class="w">        </span><span class="p">.</span><span class="n">and_then</span><span class="p">(</span><span class="o">|</span><span class="n">s</span><span class="o">|</span><span class="w"> </span><span class="n">s</span><span class="p">.</span><span class="n">parse</span><span class="p">().</span><span class="n">ok</span><span class="p">());</span>
-
-<span class="w">    </span><span class="c1">// Start with defaults</span>
-<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">database_url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">String</span><span class="p">::</span><span class="n">from</span><span class="p">(</span><span class="s">&quot;sqlite:///dev.db&quot;</span><span class="p">);</span>
-<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">batch_size</span><span class="p">:</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">100</span><span class="p">;</span>
-<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">debug</span><span class="p">:</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="p">;</span>
-<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">output_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">String</span><span class="p">::</span><span class="n">from</span><span class="p">(</span><span class="s">&quot;output&quot;</span><span class="p">);</span>
-
-<span class="w">    </span><span class="c1">// Apply match arm overrides</span>
-<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="n">env</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">env_variant</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="k">match</span><span class="w"> </span><span class="n">env</span><span class="w"> </span><span class="p">{</span>
-<span class="w">            </span><span class="n">Env</span><span class="p">::</span><span class="n">Dev</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">                </span><span class="n">debug</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="p">;</span>
-<span class="w">                </span><span class="n">batch_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">10</span><span class="p">;</span>
-<span class="w">            </span><span class="p">}</span>
-<span class="w">            </span><span class="n">Env</span><span class="p">::</span><span class="n">Prod</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">                </span><span class="n">database_url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">String</span><span class="p">::</span><span class="n">from</span><span class="p">(</span><span class="s">&quot;postgres://prod-host/app&quot;</span><span class="p">);</span>
-<span class="w">                </span><span class="n">debug</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span>
-<span class="w">                </span><span class="n">batch_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5000</span><span class="p">;</span>
-<span class="w">            </span><span class="p">}</span>
-<span class="w">        </span><span class="p">}</span>
-<span class="w">    </span><span class="p">}</span>
-
-<span class="w">    </span><span class="c1">// Apply env var overrides (highest priority)</span>
-<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(</span><span class="n">val</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="p">::</span><span class="n">env</span><span class="p">::</span><span class="n">var</span><span class="p">(</span><span class="s">&quot;APP_DATABASE_URL&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="n">database_url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">val</span><span class="p">;</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(</span><span class="n">val</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="p">::</span><span class="n">env</span><span class="p">::</span><span class="n">var</span><span class="p">(</span><span class="s">&quot;APP_BATCH_SIZE&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="n">batch_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">val</span><span class="p">.</span><span class="n">parse</span><span class="p">().</span><span class="n">expect</span><span class="p">(</span><span class="s">&quot;APP_BATCH_SIZE must be a valid integer&quot;</span><span class="p">);</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="w">    </span><span class="c1">// ... etc for each field</span>
-
-<span class="w">    </span><span class="n">APP_CONFIG</span><span class="p">.</span><span class="n">set</span><span class="p">(</span><span class="n">AppConfigData</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">database_url</span><span class="p">,</span><span class="w"> </span><span class="n">batch_size</span><span class="p">,</span><span class="w"> </span><span class="n">debug</span><span class="p">,</span><span class="w"> </span><span class="n">output_dir</span><span class="w"> </span><span class="p">})</span>
-<span class="w">        </span><span class="p">.</span><span class="n">expect</span><span class="p">(</span><span class="s">&quot;AppConfig already initialized&quot;</span><span class="p">);</span>
-<span class="p">}</span>
-</code></pre></div>
-<p><code>AppConfig.batch_size</code> in Incan becomes <code>APP_CONFIG.get().unwrap().batch_size</code> in Rust — a pointer dereference after the <code>OnceLock</code> is set.</p>
-<p><strong>Note:</strong> The <code>.expect()</code> and <code>.unwrap()</code> calls here are in <em>generated user-program Rust code</em>, not in the compiler itself. The compiler's own <code>#[deny(clippy::unwrap_used)]</code> policy does not apply to code it emits into user projects. The panics are intentional: init-time failures (bad env var format) use <code>.expect()</code> for fail-fast startup errors; field accesses use <code>.unwrap()</code> because a missing <code>OnceLock</code> value is a programming error (accessing a context before it is initialized). Users who enable <code>unwrap_used</code> or <code>expect_used</code> in their own project's clippy configuration will see diagnostics on these generated calls — see unresolved question 6 for the trade-off discussion.</p>
+<h3 id="lowering-model">Lowering model<a class="headerlink" href="#lowering-model" title="Permanent link">&para;</a></h3>
+<p>The compiler lowers each <code>ctx</code> declaration to a singleton-backed runtime representation together with initialization logic that:</p>
+<ol>
+<li>starts from field defaults;</li>
+<li>resolves any active match-axis values;</li>
+<li>applies matching match-arm overrides;</li>
+<li>applies environment-variable overrides last;</li>
+<li>locks the context for ordinary read access after initialization.</li>
+</ol>
+<p>The backend implementation may use a once-only singleton primitive or an equivalent runtime mechanism. That representation detail is not the main contract; the important behavior is set-once initialization, typed field reads, and fail-fast startup behavior on invalid configuration.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="ctx-vs-model-how-they-relate"><code>ctx</code> vs <code>model</code> — how they relate<a class="headerlink" href="#ctx-vs-model-how-they-relate" title="Permanent link">&para;</a></h3>
 <p><code>ctx</code> and <code>model</code> share field declaration syntax but serve fundamentally different purposes:</p>
@@ -4771,15 +4750,21 @@ field_override ::= IDENT &quot;=&quot; expr NEWLINE
                 <span class="n">max_workers</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
             <span class="p">)</span>
 </code></pre></div>
-<p>Nested access works naturally: <code>InfraConfig.cluster.node_type</code>. The flow is one-directional — <strong>ctx contains models, models don't contain ctx</strong>. A <code>Transaction</code> model should never reference <code>AppConfig</code>.</p>
+<p>Nested access works naturally: <code>InfraConfig.cluster.node_type</code>. The flow is one-directional: <code>ctx</code> contains models, but models do not contain <code>ctx</code>. A
+<code>Transaction</code> model should never reference <code>AppConfig</code>.</p>
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <p><strong>Traits:</strong> <code>ctx</code> types do not implement traits. They are singletons, not polymorphic data types.</p>
-<p><strong>async/await:</strong> <code>ctx</code> fields are synchronously available (no <code>await</code> needed) — they're resolved at startup. Async functions can read ctx fields freely.</p>
-<p><strong>Imports/modules:</strong> <code>ctx</code> declarations follow normal module visibility. A <code>pub ctx</code> in a library can be imported by consumers. But: ctx initialization is the consumer's responsibility, not the library's.</p>
-<p><strong>Error handling:</strong> Env var parsing failures at init time produce a clear startup error (not a <code>Result</code> — fail fast). This is intentional: misconfigured environments should crash immediately, not silently propagate.</p>
-<p><strong>Field metadata:</strong> <code>ctx</code> fields support the same <code>[key=value]</code> metadata syntax as model fields. Currently defined metadata keys for ctx fields: <code>env</code> (custom env var name or <code>false</code> to disable).</p>
+<p><strong>async/await:</strong> <code>ctx</code> fields are synchronously available. No <code>await</code> is
+needed because they are resolved at startup. Async functions can read <code>ctx</code> fields freely.</p>
+<p><strong>Imports/modules:</strong> <code>ctx</code> declarations follow normal module visibility. A
+<code>pub ctx</code> in a library can be imported by consumers, but initialization is the
+consumer's responsibility, not the library's.</p>
+<p><strong>Error handling:</strong> env var parsing failures at init time produce a clear
+startup error, not a <code>Result</code>. This is intentional: misconfigured environments should crash immediately rather than propagate silently.</p>
+<p><strong>Field metadata:</strong> <code>ctx</code> fields support the same <code>[key=value]</code> metadata
+syntax as model fields. The currently defined key is <code>env</code>, which provides a custom env var name or disables env lookup with <code>false</code>.</p>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<p>This is a new feature — no migration needed. <code>ctx</code> becomes a reserved keyword, which is a breaking change for anyone using <code>ctx</code> as an identifier. Since Incan is pre-1.0, this is acceptable.</p>
+<p>This is a new feature, so there is no migration path to manage. <code>ctx</code> does become a reserved keyword, which is a breaking change for anyone already using it as an identifier. Pre-1.0, that is acceptable.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <h3 id="decorator-on-model-ctx">Decorator on model (<code>@ctx</code>)<a class="headerlink" href="#decorator-on-model-ctx" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@ctx</span><span class="p">(</span><span class="n">env_prefix</span><span class="o">=</span><span class="s2">&quot;APP_&quot;</span><span class="p">)</span>
@@ -4787,7 +4772,8 @@ field_override ::= IDENT &quot;=&quot; expr NEWLINE
     <span class="n">database_url</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;sqlite:///dev.db&quot;</span>
     <span class="o">...</span>
 </code></pre></div>
-<p><strong>Rejected.</strong> The <code>match Env:</code> blocks don't fit naturally inside a <code>model</code> body. The singleton semantics, env var integration, and match resolution are different enough from <code>model</code> to warrant a distinct keyword. A decorator would hide the fundamental semantic difference.</p>
+<p><strong>Rejected.</strong> The <code>match Env:</code> blocks do not fit naturally inside a <code>model</code>
+body. The singleton semantics, env var integration, and match resolution are different enough from <code>model</code> to warrant a distinct keyword. A decorator would hide that semantic difference.</p>
 <h3 id="runtime-only-config-like-pydantic-basesettings">Runtime-only config (like Pydantic BaseSettings)<a class="headerlink" href="#runtime-only-config-like-pydantic-basesettings" title="Permanent link">&para;</a></h3>
 <p>Use a regular model with runtime env var reading:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">AppConfig</span><span class="p">:</span>
@@ -4796,68 +4782,65 @@ field_override ::= IDENT &quot;=&quot; expr NEWLINE
 
 <span class="n">config</span> <span class="o">=</span> <span class="nc">AppConfig</span><span class="o">.</span><span class="n">from_env</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">&quot;APP_&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p><strong>Rejected.</strong> Loses compile-time validation of field references. Requires passing <code>config</code> around as a parameter. No match-block environment overrides. This is just a typed version of what Python already has.</p>
+<p><strong>Rejected.</strong> This loses compile-time validation of field references, requires
+passing configuration around as a parameter, and cannot express match-block environment overrides. It is just a typed version of what Python already has.</p>
 <h3 id="soft-keyword-via-library">Soft keyword via library<a class="headerlink" href="#soft-keyword-via-library" title="Permanent link">&para;</a></h3>
 <p>Ship <code>ctx</code> as a library-provided soft keyword instead of a core keyword.</p>
-<p><strong>Rejected.</strong> <code>ctx</code> is universally useful — not specific to data pipelines or any domain library. Every application needs configuration. Making it a library feature would mean the most basic use case (read a setting from an env var) requires a dependency. The env var integration and singleton semantics are also deeply wired into the compiler's code generation.</p>
+<p><strong>Rejected.</strong> <code>ctx</code> is universally useful rather than domain-specific. Every
+application needs configuration. Making it a library feature would mean the most basic use case, reading a setting from an env var, requires a dependency. The env var integration and singleton semantics also belong to the language contract, not an optional library add-on.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>New keyword</strong> — <code>ctx</code> becomes reserved, breaking any code using it as an identifier. Acceptable pre-1.0.</li>
-<li><strong>Global mutable state</strong> — technically a singleton, which some consider an anti-pattern. Mitigated by being immutable after init and resettable in tests.</li>
-<li><strong>Hidden dependency</strong> — functions that read <code>AppConfig.field</code> have an implicit dependency on the context being initialized. Not visible in the function signature. This is the intended trade-off: explicitness vs. boilerplate reduction.</li>
+<li><strong>Global mutable state</strong>: technically a singleton, which some consider an
+anti-pattern. This is mitigated by immutability after init and reset support in tests.</li>
+<li><strong>Hidden dependency</strong>: functions that read <code>AppConfig.field</code> have an
+implicit dependency on the context being initialized. That dependency is not visible in the function signature. This is the intended trade-off between explicitness and boilerplate reduction.</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Lexer</strong> (<code>crates/incan_syntax/</code>) — <code>ctx</code> must be added as a core (always-reserved) keyword.</li>
-<li><strong>Parser</strong> (<code>crates/incan_syntax/</code>) — parse <code>ctx Name(params):</code> declarations with field declarations and <code>match EnumType:</code> blocks; reuse field parsing from model declarations where possible.</li>
-<li><strong>AST</strong> (<code>crates/incan_syntax/</code>) — a new <code>CtxDecl</code> node is required. The following data model captures the normative shape of what the AST must represent:</li>
+<li><strong>Language surface</strong> — <code>ctx</code> becomes a core reserved keyword with first-class declaration syntax, field declarations, and match-axis override blocks.</li>
+<li><strong>Type system</strong> — implementations must validate field types, match-arm compatibility, axis enum resolution, and typed static field access through the singleton surface.</li>
+<li><strong>Initialization model</strong> — the runtime/bootstrap path must honor the chosen auto-init or explicit-init policy and preserve the declared resolution order for defaults, match arms, and env vars.</li>
+<li><strong>Formatter</strong> — <code>ctx</code> declarations and match blocks should format predictably.</li>
+<li><strong>LSP / tooling</strong> — completions and hover for <code>CtxName.field</code> access should show field types and mapped env var names.</li>
+<li><strong>Test support</strong> — test execution must support <code>.init()</code> calls that reset the singleton per test.</li>
 </ul>
-<p><div class="language-rust highlight"><pre><span></span><code><span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">CtxDecl</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">visibility</span><span class="p">:</span><span class="w"> </span><span class="nc">Visibility</span><span class="p">,</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="nc">Ident</span><span class="p">,</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">params</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="p">(</span><span class="n">Ident</span><span class="p">,</span><span class="w"> </span><span class="n">Spanned</span><span class="o">&lt;</span><span class="n">Expr</span><span class="o">&gt;</span><span class="p">)</span><span class="o">&gt;</span><span class="p">,</span><span class="w">    </span><span class="c1">// e.g., env_prefix=&quot;APP_&quot;</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">fields</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Spanned</span><span class="o">&lt;</span><span class="n">FieldDecl</span><span class="o">&gt;&gt;</span><span class="p">,</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">match_blocks</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Spanned</span><span class="o">&lt;</span><span class="n">CtxMatchBlock</span><span class="o">&gt;&gt;</span><span class="p">,</span>
-<span class="p">}</span>
-
-<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">CtxMatchBlock</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">axis</span><span class="p">:</span><span class="w"> </span><span class="nc">Spanned</span><span class="o">&lt;</span><span class="n">Ident</span><span class="o">&gt;</span><span class="p">,</span><span class="w">                    </span><span class="c1">// the enum type name</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">arms</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Spanned</span><span class="o">&lt;</span><span class="n">CtxMatchArm</span><span class="o">&gt;&gt;</span><span class="p">,</span>
-<span class="p">}</span>
-
-<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">CtxMatchArm</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">variant</span><span class="p">:</span><span class="w"> </span><span class="nc">Spanned</span><span class="o">&lt;</span><span class="n">Ident</span><span class="o">&gt;</span><span class="p">,</span><span class="w">                 </span><span class="c1">// e.g., Dev, Prod</span>
-<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">overrides</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="p">(</span><span class="n">Ident</span><span class="p">,</span><span class="w"> </span><span class="n">Spanned</span><span class="o">&lt;</span><span class="n">Expr</span><span class="o">&gt;</span><span class="p">)</span><span class="o">&gt;</span><span class="p">,</span><span class="w">  </span><span class="c1">// field = value assignments</span>
-<span class="p">}</span>
-</code></pre></div>
-- <strong>Typechecker</strong> (<code>src/frontend/typechecker/</code>) — validate field types; validate match arm override types are compatible with the declared field type; validate enum axes are in scope; enforce that every field has a default or exhaustive match arm coverage; register the ctx type in the symbol table so <code>AppConfig.field</code> resolves as a typed static field access.
-- <strong>IR Lowering</strong> (<code>src/backend/ir/lower/</code>) — lower <code>CtxDecl</code> to IR: struct definition, <code>OnceLock</code> static, and init function body.
-- <strong>IR Emission</strong> (<code>src/backend/ir/emit/</code>) — emit the Rust struct, <code>OnceLock</code> static, init function with match arms and env var reading logic, and field accesses as static reads through the lock.
-- <strong>CLI / main bootstrap</strong> (<code>src/cli/</code>) — auto-insert <code>init_&lt;ctx_name&gt;()</code> calls at the start of the generated <code>main()</code> when the resolution is set to auto-init.
-- <strong>Formatter</strong> (<code>src/format/</code>) — format <code>ctx</code> declarations (field alignment, match block indentation).
-- <strong>LSP</strong> — completions and hover for <code>CtxName.field</code> access, showing field types and mapped env var names.
-- <strong>Test runner</strong> — support <code>.init()</code> calls in test functions to reset the singleton per-test.</p>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ol>
 <li>
-<p><strong>Should fields without defaults require exhaustive match coverage?</strong> If <code>auth_token: str</code> has no default and <code>match Env</code> only covers <code>Prod</code>, what happens in <code>Dev</code>? Options: compile error (require all arms) or require a default value. Leaning toward: <strong>fields without defaults must be covered by all match arms or have a matching env var annotation</strong> — fail at init time if the env var is also absent.</p>
+<p><strong>Should fields without defaults require exhaustive match coverage?</strong> If
+   <code>auth_token: str</code> has no default and <code>match Env</code> only covers <code>Prod</code>, what
+happens in <code>Dev</code>? Options: compile error requiring all arms, or requiring a default value. Leaning toward: fields without defaults must be covered by all match arms or have a matching env var annotation, with init-time failure if the env var is also absent.</p>
 </li>
 <li>
-<p><strong>Should <code>env_prefix</code> be optional?</strong> Could default to <code>{UPPER_SNAKE_CASE_CTX_NAME}_</code>. Leaning toward: <strong>required</strong> — explicit is better than implicit for something that maps to external env vars.</p>
+<p><strong>Should <code>env_prefix</code> be optional?</strong> It could default to
+   <code>{UPPER_SNAKE_CASE_CTX_NAME}_</code>. Leaning toward: required, because explicit
+is better than implicit for something that maps to external env vars.</p>
 </li>
 <li>
-<p><strong>How should nested model fields map to env vars?</strong> <code>cluster: ClusterConfig</code> — should <code>INFRA_CLUSTER__NODE_TYPE</code> work (using a delimiter)? Or should nested models only be overridable as a whole? The research doc suggests <code>env_nested_delimiter</code> (Pydantic-style). Leaning toward: <strong>defer nested env var mapping</strong> — MVP covers flat fields only. Nested models are overridden in match arms.</p>
+<p><strong>How should nested model fields map to env vars?</strong> For
+   <code>cluster: ClusterConfig</code>, should <code>INFRA_CLUSTER__NODE_TYPE</code> work via a
+delimiter, or should nested models only be overridable as a whole? Leaning toward: defer nested env var mapping. The initial contract can stay flat, with nested models overridden through match arms.</p>
 </li>
 <li>
-<p><strong>Auto-init or explicit init?</strong> Should the compiler automatically insert <code>init_app_config()</code> at the start of <code>main()</code>? Or must the user call <code>AppConfig.init()</code>? Auto-init is more ergonomic; explicit init gives control over ordering when there are multiple ctx types. Leaning toward: <strong>auto-init in <code>main()</code></strong>, with <code>.init()</code> available for tests and explicit control.</p>
+<p><strong>Auto-init or explicit init?</strong> Should the compiler automatically insert the
+generated init call at the start of <code>main()</code>, or must the user call
+   <code>AppConfig.init()</code>? Auto-init is more ergonomic; explicit init gives control
+over ordering when there are multiple <code>ctx</code> declarations. Leaning toward: auto-init in <code>main()</code>, with <code>.init()</code> still available for tests and explicit control.</p>
 </li>
 <li>
-<p><strong>Multiple match axes scope.</strong> The research doc describes multi-axis matching (<code>match RunMode:</code>, compound <code>match (Env, RunMode):</code>). This RFC covers single-axis matching only. Should multi-axis be a follow-up RFC, or included here? Leaning toward: <strong>follow-up RFC</strong> — single-axis covers the common case and keeps the initial implementation focused.</p>
+<p><strong>Multiple match axes scope.</strong> This RFC covers single-axis matching only.
+Should multi-axis matching, such as <code>match RunMode:</code> plus
+   <code>match (Env, RunMode):</code>, be a follow-up RFC or part of this one? Leaning
+toward: a follow-up RFC. Single-axis matching covers the common case and keeps the initial implementation focused.</p>
 </li>
 <li>
-<p><strong>Generated panic compatibility with user clippy settings.</strong> The generated init function uses <code>.expect()</code> for env var parse failures and <code>.unwrap()</code> for field access through the <code>OnceLock</code>. Both are intentional (fail-fast startup errors and programming-error detection respectively), but users who enable <code>clippy::unwrap_used</code> or <code>clippy::expect_used</code> in their own project will see diagnostics on these generated calls. Should the generated init function return <code>Result&lt;(), CtxInitError&gt;</code> and propagate errors to <code>main</code> via <code>?</code> instead of panicking? This would remove the <code>expect</code> calls but require users to handle init errors explicitly. Leaning toward: <strong>keep panics for v1</strong> — the fail-fast semantics are the point, and adding a <code>Result</code> return type complicates auto-init in <code>main</code>. A <code>#[allow(clippy::unwrap_used)]</code> annotation on the generated init function may be the right mitigation.</p>
+<p><strong>Generated panic compatibility with strict lint settings.</strong> The generated init path may use fail-fast panics for
+env var parse failures and singleton access that occurs before initialization. Both are intentional startup/programming errors, but projects that enable strict lints against generated panic sites will still see diagnostics. Should the generated init function return <code>Result[None, CtxInitError]</code> and propagate errors to <code>main</code> instead of panicking? That would remove the panic sites but would also require users to handle init errors explicitly. Leaning toward: <strong>keep panics for v1</strong> — fail-fast startup is the point, and a <code>Result</code> return complicates auto-init.</p>
 </li>
 </ol>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+
 <h2 id="future-extensions-not-in-this-rfc">Future extensions (not in this RFC)<a class="headerlink" href="#future-extensions-not-in-this-rfc" title="Permanent link">&para;</a></h2>
 <p>The following capabilities are out of scope for this RFC and may be addressed in follow-up RFCs:</p>
 <ul>

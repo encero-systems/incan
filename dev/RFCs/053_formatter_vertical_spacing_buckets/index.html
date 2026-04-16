@@ -4287,9 +4287,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
-      Unresolved questions
+      Design Decisions
     </span>
   </a>
   
@@ -4319,7 +4319,7 @@
 <li><strong>Created:</strong> 2026-04-08</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong> RFC 027 (incan vocab crate)</li>
-<li><strong>Issue:</strong> —</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/336</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -4335,7 +4335,14 @@
 <li><strong>End of file</strong> — Every formatted <code>.incn</code> file <strong>must</strong> end with <strong>exactly one</strong> line terminator after the last logical line of source (conventional single trailing newline).</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Today, vertical gaps arise from several independent mechanisms (top-level declaration spacing, per-statement leading blank lines, match and block layout, docstring emission, comment reattachment, and EOF handling). That fragmentation makes it easy for <strong>extra</strong> consecutive blank lines to appear (for example after large <code>match</code> arms) and for <strong>EOF</strong> newline behavior to disagree with user expectations. Authors and reviewers need a <strong>single document</strong> that states what the formatter <strong>guarantees</strong>, similar to how Python ecosystems cite PEP 8 for style, without reading Rust implementation details.</p>
+<p>Vertical gaps currently arise from several independent mechanisms such as
+top-level declaration spacing, per-statement leading blank lines, match and
+block layout, docstring emission, comment reattachment, and EOF handling. That
+fragmentation makes it easy for extra consecutive blank lines to appear, for
+example after large <code>match</code> arms, and for EOF newline behavior to disagree with
+user expectations. Authors and reviewers need one document that states what the
+formatter guarantees, similar to how Python ecosystems cite PEP 8 for style,
+without reading formatter internals.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Define <strong>normative</strong> vertical spacing using the <strong>three buckets</strong> plus <strong>EOF</strong> and <strong>docstring-interior</strong> rules.</li>
@@ -4605,7 +4612,10 @@
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Implementation-only fixes without an RFC:</strong> Rejected for this work because spacing is <strong>user-visible</strong> and <strong>cross-repo</strong>; a written contract reduces debate and drift.</li>
-<li><strong>PEP 8 verbatim:</strong> Rejected; Incan has <strong>imports</strong>, <strong>models</strong>, <strong>Rust interop</strong>, and <strong>docstrings</strong> that do not map 1:1 to Python, so buckets are <strong>Incan-specific</strong> while keeping the same <strong>spirit</strong> for top-level breathing room and tight imports.</li>
+<li><strong>PEP 8 verbatim:</strong> Rejected; Incan has imports, models, interop surfaces,
+  and docstrings that do not map 1:1 to Python, so the bucket rules should be
+  Incan-specific while keeping the same spirit for top-level breathing room and
+  tight imports.</li>
 </ul>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
@@ -4639,7 +4649,13 @@
     OUT[Formatted `.incn`]
     EOFN --&gt; OUT
   end</code></pre>
-<p><strong>Intent:</strong> <strong>many</strong> call sites today each contribute <code>\n</code>; the <strong>foreseen</strong> shape concentrates <strong>policy</strong> in one <strong>vertical-spacing</strong> stage that runs on <strong>line-structured</strong> output after <strong>same-scope construct classification</strong> and <strong>comment placement</strong> while <strong>respecting string and char literal boundaries</strong>. That keeps bucket rules, docstring-interior normalization, and EOF normalization conceptually centralized while <strong>emitters</strong> focus on <strong>syntax-shaped</strong> text.</p>
+<p><strong>Intent:</strong> many call sites currently contribute newline decisions
+independently. The foreseen shape concentrates policy in one vertical-spacing
+stage that runs on line-structured output after same-scope construct
+classification and comment placement while respecting string and char literal
+boundaries. That keeps bucket rules, docstring-interior normalization, and EOF
+normalization conceptually centralized while emitters focus on syntax-shaped
+text.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Formatter:</strong> the reference formatter <strong>must</strong> enforce the bucket rules, docstring-interior cap, and EOF rule described in this RFC.</li>
@@ -4647,12 +4663,12 @@
 <li><strong>Parser / AST:</strong> implementations <strong>may</strong> require richer classification signals (for example single-line vs body-bearing declarations) if those are not already explicit in the formatting input.</li>
 <li><strong>Documentation:</strong> contributor-facing formatter docs <strong>should</strong> link to this RFC as the vertical-spacing contract.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
-<li>None at this time.</li>
+<li>The formatter contract is intentionally expressed through three blank-line buckets rather than ad hoc formatter heuristics.</li>
+<li>Stand-alone comments do not satisfy blank-line quotas by themselves; placement rules govern how they interact with spacing.</li>
+<li>The RFC is intended as the normative vertical-spacing contract for both <code>incan fmt</code> and editor-integrated formatting surfaces.</li>
 </ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

@@ -4328,7 +4328,7 @@
 <li>RFC 058 (<code>std.datetime</code> durations and time handling)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> —</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/341</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -4529,9 +4529,9 @@
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Stdlib / runtime</strong>: command spawn, stdio wiring, pipeline execution, timeout/termination semantics.</li>
-<li><strong>Typechecker / symbol resolution</strong>: module/type registration.</li>
-<li><strong>Lowering / emission</strong>: preserve process behavior without backend leakage.</li>
+<li><strong>Stdlib / runtime</strong>: command spawn, stdio wiring, pipeline execution, and timeout or termination semantics.</li>
+<li><strong>Language surface</strong>: the module types and methods must be available as specified.</li>
+<li><strong>Execution handoff</strong>: implementations must preserve process behavior without backend leakage.</li>
 <li><strong>Docs / examples</strong>: explicit shell boundary, checked execution, and pipeline usage.</li>
 </ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>

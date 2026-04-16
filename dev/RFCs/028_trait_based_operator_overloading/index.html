@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 028: Trait-Based Operator Overloading - Incan Documentation</title>
+        <title>RFC 028: trait-based operator overloading - Incan Documentation</title>
       
     
     
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 028: Trait-Based Operator Overloading
+              RFC 028: trait-based operator overloading
             
           </span>
         </div>
@@ -4306,9 +4306,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#compiler-pipeline-changes" class="md-nav__link">
+  <a href="#operator-resolution-model" class="md-nav__link">
     <span class="md-ellipsis">
-      Compiler pipeline changes
+      Operator resolution model
     </span>
   </a>
   
@@ -4379,6 +4379,24 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unresolved-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unresolved questions
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4397,20 +4415,23 @@
   
 
 
-<h1 id="rfc-028-trait-based-operator-overloading">RFC 028: Trait-Based Operator Overloading<a class="headerlink" href="#rfc-028-trait-based-operator-overloading" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-028-trait-based-operator-overloading">RFC 028: trait-based operator overloading<a class="headerlink" href="#rfc-028-trait-based-operator-overloading" title="Permanent link">&para;</a></h1>
 <ul>
 <li><strong>Status:</strong> Draft</li>
 <li><strong>Created:</strong> 2026-03-06</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong> RFC 027 (vocab crate — block/desugaring substrate), RFC 024 (extensible derive protocol), RFC 040 (scoped DSL glyph surfaces), RFC 054 (explicit call-site generics)</li>
-<li><strong>Target version:</strong> v0.2</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/314</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>This RFC introduces operator overloading for Incan, allowing user-defined types to participate in operator expressions (<code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>%</code>, <code>&gt;&gt;</code>, <code>&lt;&lt;</code>, <code>|&gt;</code>, <code>&lt;|</code>, <code>@</code>, <code>==</code>, <code>&lt;</code>, etc.) through dunder methods and operator traits. The user model is Python-inspired (<code>__add__</code>, <code>__mul__</code>, <code>__rshift__</code>, etc.), while the typechecker and backends enforce those semantics in an Incan-first way.</p>
 <p>Part of the surface already exists today as stdlib trait stubs:</p>
 <ul>
-<li><code>crates/incan_stdlib/stdlib/traits/ops.incn</code> defines arithmetic traits such as <code>Add</code>, <code>Sub</code>, <code>Mul</code>, <code>Div</code>, <code>Neg</code>, and <code>Mod</code></li>
-<li><code>crates/incan_stdlib/stdlib/derives/comparison.incn</code> defines comparison traits such as <code>Eq</code> and <code>Ord</code></li>
+<li>arithmetic traits such as <code>Add</code>, <code>Sub</code>, <code>Mul</code>, <code>Div</code>, <code>Neg</code>, and <code>Mod</code></li>
+<li>comparison traits such as <code>Eq</code> and <code>Ord</code></li>
 </ul>
 <p>This RFC turns that partial, documentation-oriented surface into a coherent language feature: it wires operator resolution into the typechecker, defines lowering rules in IR, and specifies how backends preserve those already-resolved Incan semantics. It also expands the trait surface for operators that do not yet have stdlib definitions.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
@@ -4473,8 +4494,8 @@
 <h3 id="the-current-stdlib-already-shows-the-shape-but-not-the-full-feature">The current stdlib already shows the shape, but not the full feature<a class="headerlink" href="#the-current-stdlib-already-shows-the-shape-but-not-the-full-feature" title="Permanent link">&para;</a></h3>
 <p>The stdlib already contains part of the intended protocol surface:</p>
 <ul>
-<li>arithmetic traits in <code>stdlib/traits/ops.incn</code></li>
-<li>comparison traits in <code>stdlib/derives/comparison.incn</code></li>
+<li>arithmetic traits for the common numeric operators</li>
+<li>comparison traits for equality and ordering</li>
 </ul>
 <p>But today those definitions are not the normative source of operator semantics. Builtin operators are still mostly hard-wired around primitive behavior, and user-defined types do not yet get full trait-dispatched operator resolution. Nothing in the compiler currently resolves <code>a + b</code> to <code>a.__add__(b)</code> for user-defined types or lowers that resolved protocol call as a first-class part of the operator pipeline.</p>
 <h3 id="incan-semantics-come-first">Incan semantics come first<a class="headerlink" href="#incan-semantics-come-first" title="Permanent link">&para;</a></h3>
@@ -4846,30 +4867,18 @@
 <li>Backends may lower these through helper traits or direct method calls if the target language has no native equivalent</li>
 </ul>
 <p>Like <code>@</code>, these are part of Incan if the Incan typechecker and standard traits define them, regardless of whether the target backend has matching built-in syntax.</p>
-<h3 id="compiler-pipeline-changes">Compiler pipeline changes<a class="headerlink" href="#compiler-pipeline-changes" title="Permanent link">&para;</a></h3>
-<p><strong>Typechecker:</strong></p>
-<p>When the typechecker sees <code>BinaryOp(lhs, op, rhs)</code>:</p>
+<h3 id="operator-resolution-model">Operator resolution model<a class="headerlink" href="#operator-resolution-model" title="Permanent link">&para;</a></h3>
+<p>When Incan sees an operator expression such as <code>lhs + rhs</code>, the language-level rule is:</p>
 <ol>
-<li>Look up the dunder method for <code>op</code> (e.g., <code>+</code> → <code>__add__</code>)</li>
-<li>Check whether <code>typeof(lhs)</code> exposes a compatible operator trait, a compatible dunder method, or both</li>
-<li>If yes → resolve the expression to the corresponding dunder method and record the resolved operator view for lowering and generic reasoning</li>
-<li>If no → produce a type error naming the missing dunder / trait surface</li>
+<li>Determine the dunder surface for the operator (for example <code>+</code> maps to <code>__add__</code>).</li>
+<li>Check whether the left-hand type exposes a compatible dunder method, a compatible operator trait view, or both.</li>
+<li>If a compatible surface exists, resolve the expression through that operator contract and preserve the resolved view for generic reasoning and diagnostics.</li>
+<li>If no compatible surface exists, produce a type error naming the missing operator capability.</li>
 </ol>
-<p><strong>IR Lowering:</strong></p>
-<ul>
-<li><code>BinaryOp(a, Add, b)</code> where <code>a</code> resolves through the <code>Add</code>/<code>__add__</code> surface → <code>IrExpr::MethodCall(a, "__add__", [b])</code></li>
-<li>The lowering already handles method calls. The new part is recognizing that <code>BinaryOp</code> on user-defined types should route through the resolved operator protocol rather than primitive operator emission.</li>
-</ul>
-<p><strong>IR Emission:</strong></p>
-<ul>
-<li>Backends are responsible for implementing the already-resolved Incan semantics.</li>
-<li>For the Rust backend, operators that map cleanly to <code>std::ops</code> may emit native Rust trait impls (<code>Add</code>, <code>Sub</code>, <code>Mul</code>, etc.).</li>
-<li>Operators without a clean host-language analogue (<code>@</code>, <code>SetItem</code>, future reflected operators) may emit helper traits or direct method-based lowering instead.</li>
-</ul>
+<p>The important point is that user-defined operator expressions resolve through Incan’s operator protocol, not through ambient backend operator behavior. Backends are responsible only for realizing that already-resolved meaning.</p>
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <p><strong><code>@derive(Eq, Ord)</code>:</strong> Models with <code>@derive(Eq)</code> get auto-generated <code>__eq__</code> (field-wise comparison). Manually
-implementing <code>__eq__</code> overrides the derived version. This RFC relies on that comparison-trait surface but does not
-redefine derive semantics; those remain governed by RFC 024.</p>
+implementing <code>__eq__</code> overrides the derived version. This RFC relies on that comparison-trait surface but does not redefine derive semantics; those remain governed by RFC 024.</p>
 <p><strong>Trait composition:</strong> A type can implement multiple operator traits: <code>model Vec3 with Add[Vec3, Vec3], Mul[float, Vec3], Neg[Vec3]</code>. Each trait impl is independent.</p>
 <p><strong>Pattern matching:</strong> Comparison operators (<code>==</code>, <code>&lt;</code>) are used in <code>match</code>/<code>case</code> guards. Custom <code>Eq</code>/<code>Ord</code> implementations must be respected in pattern matching comparisons.</p>
 <p><strong>Generics:</strong> Operator traits are generic (<code>Add[Rhs, Output]</code>). A type can implement <code>Add[int, MyType]</code> and <code>Add[float, MyType]</code> — different behavior for different right-hand types. Generic constraints still speak in trait language even when a concrete type chooses to declare its operator support through dunders alone; the compiler may infer the trait view from the matching dunder surface.</p>
@@ -4898,6 +4907,21 @@ redefine derive semantics; those remain governed by RFC 024.</p>
 <li><strong>Backend complexity</strong>: Some Incan operator semantics map neatly to host-language primitives, and some do not. Backends may need helper traits, shims, or direct method lowering to preserve the language semantics.</li>
 <li><strong>Open dispatch details</strong>: Reflected operators and in-place operator hooks are likely useful, but their exact dispatch rules still need sharper specification. Leaving those details under-specified for too long would create confusion.</li>
 </ul>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Language surface</strong>: operator spellings and dunder declarations must remain unambiguous.</li>
+<li><strong>Type system</strong>: operator usage must resolve against dunder methods and operator traits according to the RFC's dispatch rules.</li>
+<li><strong>Execution handoff</strong>: implementations must preserve the typechecked operator semantics across backends without leaking backend-specific operator rules into user-facing behavior.</li>
+<li><strong>Stdlib / runtime</strong>: the nominal operator trait surface used for generic capability expression and documentation must be available.</li>
+<li><strong>Docs / tooling</strong>: operator capability, trait vocabulary, and dispatch behavior must be explained clearly enough that overloaded operators remain understandable.</li>
+</ul>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>What is the exact fallback order between direct dunder methods, reflected operators, and trait-inferred operator capability?</li>
+<li>Which in-place operator hooks are part of the initial contract, and when should they fall back to ordinary binary operator lowering?</li>
+<li>How should diagnostics present operator ambiguity when multiple plausible trait-driven resolutions exist?</li>
+</ul>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

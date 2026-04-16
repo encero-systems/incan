@@ -4292,7 +4292,7 @@
         <li class="md-nav__item">
   <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
-      Design decisions
+      Design Decisions
     </span>
   </a>
   
@@ -4327,7 +4327,7 @@
 <li>RFC 051 (<code>JsonValue</code>)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> —</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/334</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -4421,7 +4421,7 @@
 <ul>
 <li>RFC 025 is the clean route for allowing one enum to adopt multiple instantiations of the same generic trait when needed.</li>
 <li>RFC 032 benefits directly because value enums become able to carry user-defined methods and trait implementations alongside generated ones.</li>
-<li>Rust interop remains relevant because Rust-backed enum methods should follow the same model/class conventions.</li>
+<li>Rust interop remains relevant because exported enum methods should follow the same conventions as model and class methods.</li>
 </ul>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
 <p>The feature is additive. Existing enums without methods or traits keep working unchanged.</p>
@@ -4444,17 +4444,17 @@
 </ol>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Enum methods and trait adoption expand the language surface and require careful implementation across parsing, typing, and emission.</li>
+<li>Enum methods and trait adoption expand the language surface and require careful end-to-end consistency.</li>
 <li>Some downstream library designs will become easier to propose once this lands, which means pressure for adjacent features may rise quickly.</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Parser / AST</strong>: must accept enum <code>with</code> clauses and enum method declarations.</li>
-<li><strong>Typechecker / symbol resolution</strong>: must validate enum methods and enum trait adoption under the same broad rules used for models and classes.</li>
-<li><strong>Lowering / emission</strong>: must lower enum methods and adopted traits in the same spirit as model/class methods and traits.</li>
-<li><strong>Docs / tooling</strong>: should surface enum methods and enum-adopted traits ergonomically in completion, hover text, and diagnostics.</li>
+<li><strong>Language surface</strong>: enums must accept <code>with</code> clauses and method declarations.</li>
+<li><strong>Type system</strong>: enum methods and enum trait adoption must follow the same broad validation rules used for models and classes.</li>
+<li><strong>Interop / code generation</strong>: emitted artifacts must preserve enum methods and adopted traits in the same spirit as model/class methods and traits.</li>
+<li><strong>Docs / tooling</strong>: completion, hover text, and diagnostics should surface enum methods and enum-adopted traits ergonomically.</li>
 </ul>
-<h2 id="design-decisions">Design decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>Enum methods and trait adoption are general-purpose language features.</strong> They are not justified only by one library use case.</li>
 <li><strong>Enums should reach parity with models and classes for attached behavior and trait participation.</strong> The language should not preserve an arbitrary capability gap here.</li>

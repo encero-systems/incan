@@ -4408,7 +4408,7 @@
 <li>RFC 044 (open-ended trait methods)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> #203</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/203</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -4431,7 +4431,7 @@
 <li>Add <strong><code>property &lt;identifier&gt; -&gt; &lt;Type&gt;:</code></strong> with an indented body; <strong>no parameter list</strong> (except as explicitly extended later for <code>self</code> on types that use it).</li>
 <li>At <strong>use sites</strong>, allow <strong><code>&lt;expr&gt;.&lt;name&gt;</code></strong> without <code>()</code> when <code>&lt;name&gt;</code> resolves to a property.</li>
 <li>Give properties <strong>the same type-checking story</strong> as a nullary instance operation returning <code>Type</code> (including generic inference where applicable).</li>
-<li>Specify how properties <strong>lower</strong> to Rust (typically a method or associated accessor) and how they interact with <strong>traits</strong> and <strong>Rust interop</strong> at a high level.</li>
+<li>Specify the high-level execution and interop model for properties, including how they interact with <strong>traits</strong> and <strong>Rust interop</strong>.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
@@ -4488,7 +4488,7 @@
 <h3 id="typing">Typing<a class="headerlink" href="#typing" title="Permanent link">&para;</a></h3>
 <ul>
 <li>The property’s return type is <strong>explicit</strong> after <code>-&gt;</code> (required in v1; inference from body alone is non-goal unless specified later).</li>
-<li><strong>Variance / borrowing</strong>: same rules as for methods returning <code>T</code> (owned vs references) as decided by the existing Incan–Rust lowering contract.</li>
+<li><strong>Variance / borrowing</strong>: same rules as for methods returning <code>T</code>, following the existing Incan-to-Rust interop contract.</li>
 </ul>
 <h3 id="runtime-and-side-effects">Runtime and side effects<a class="headerlink" href="#runtime-and-side-effects" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4507,8 +4507,8 @@
 <p>(Exact trait syntax for abstract properties should match whatever RFC 044 stabilizes for abstract methods.)</p>
 <h3 id="rust-interop">Rust interop<a class="headerlink" href="#rust-interop" title="Permanent link">&para;</a></h3>
 <ul>
-<li>A public Incan property on a type that exports to Rust should lower to a <strong>Rust method</strong> with a stable name (e.g. <code>schema_fields</code> or a documented mangling) taking <code>&amp;self</code> and returning the lowered return type.</li>
-<li><strong>Calling from Rust</strong>: use the generated method; there is no special Rust “field” unless the emitter documents one.</li>
+<li>A public Incan property on a type that exports to Rust should appear as a <strong>Rust method</strong> with a stable name (for example <code>schema_fields</code> or a documented mangling) returning the mapped result type.</li>
+<li><strong>Calling from Rust</strong>: use the generated method; there is no special Rust “field” unless the emitter explicitly documents one.</li>
 </ul>
 <h3 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4567,12 +4567,12 @@
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Parser / AST</strong>: new keyword, property declaration node, distinct from <code>FunctionDef</code>.</li>
-<li><strong>Typechecker</strong>: member kind for properties; rules for access without <code>()</code>; trait implementation matching for abstract properties.</li>
-<li><strong>Lowering / IR</strong>: map property reads to a dedicated IR operation or to a nullary method call with a stable symbol.</li>
-<li><strong>Emission</strong>: generate Rust <code>fn</code> with <code>&amp;self</code> (or appropriate receiver) for each property.</li>
-<li><strong>Formatter</strong>: format <code>property</code> blocks consistently; preserve <code>-&gt;</code> spacing.</li>
-<li><strong>LSP</strong>: completion treats properties like fields; hover shows return type; “no parens” snippet behavior.</li>
+<li><strong>Surface syntax</strong>: the language needs a distinct <code>property</code> declaration form, separate from <code>def</code>.</li>
+<li><strong>Type system</strong>: member lookup must distinguish properties from methods, enforce access without <code>()</code>, and match abstract property requirements in traits.</li>
+<li><strong>Execution handoff</strong>: property reads must preserve field-like use-site syntax while executing property bodies according to the declared contract.</li>
+<li><strong>Interop / emission</strong>: emitted artifacts must preserve the property-vs-method distinction in a predictable way, including the Rust-facing method form.</li>
+<li><strong>Formatter</strong>: <code>property</code> blocks should format consistently and preserve <code>-&gt;</code> spacing.</li>
+<li><strong>LSP</strong>: completion should treat properties like fields; hover should show the return type; snippets should avoid inserting <code>()</code>.</li>
 </ul>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ol>
@@ -4585,7 +4585,7 @@
 <li>Should we perhaps use <strong><code>prop</code></strong> instead of <strong><code>property</code></strong>?</li>
 <li>Should we add an @property decorator anyway and make <code>prop</code>/<code>property</code> just desugaring calls?</li>
 </ol>
-<!-- Rename this section to "Design decisions" once all questions are resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 036: User-Defined Decorators - Incan Documentation</title>
+        <title>RFC 036: user-defined decorators - Incan Documentation</title>
       
     
     
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 036: User-Defined Decorators
+              RFC 036: user-defined decorators
             
           </span>
         </div>
@@ -4343,7 +4343,7 @@
   
 
 
-<h1 id="rfc-036-user-defined-decorators">RFC 036: User-Defined Decorators<a class="headerlink" href="#rfc-036-user-defined-decorators" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-036-user-defined-decorators">RFC 036: user-defined decorators<a class="headerlink" href="#rfc-036-user-defined-decorators" title="Permanent link">&para;</a></h1>
 <ul>
 <li><strong>Status:</strong> Draft</li>
 <li><strong>Created:</strong> 2026-03-06</li>
@@ -4358,18 +4358,22 @@
 <li>RFC 031 (Library system — enables decorator libraries to ship as <code>pub::</code> packages)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> —</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/328</li>
 <li><strong>RFC PR:</strong> —</li>
-<li><strong>Target version</strong>: v0.2</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Incan's decorator system today consists entirely of compiler built-ins (<code>@derive</code>, <code>@staticmethod</code>, <code>@rust.extern</code>, <code>@route</code>, etc.) — annotation markers that the compiler recognises by name and transforms at compile time. Users cannot define their own decorators.</p>
-<p>This RFC introduces <strong>user-defined decorators</strong>: any callable (function or object) that accepts a function and returns a value. The compiler desugars <code>@my_decorator def f(): ...</code> into <code>f = my_decorator(f)</code>, exactly as Python does. This unblocks <code>@cache</code>, <code>@retry</code>, <code>@validate</code>, <code>@app.get</code> and every other cross-cutting concern that is natural in Python but currently impossible in Incan.</p>
+<p>Incan's decorator system currently consists entirely of compiler built-ins such as <code>@derive</code>, <code>@staticmethod</code>, <code>@rust.extern</code>, and <code>@route</code>. Those forms are compiler-recognized annotations rather than ordinary user-extensible language abstractions. Users cannot define their own decorators.</p>
+<p>This RFC introduces user-defined decorators: any callable, whether a function or an object, that accepts a function and returns a value. The compiler desugars <code>@my_decorator def f(): ...</code> into <code>f = my_decorator(f)</code>, exactly as Python does. This unblocks <code>@cache</code>, <code>@retry</code>, <code>@validate</code>, <code>@app.get</code>, and other cross-cutting patterns that are natural in Python but still impossible in Incan.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <h3 id="decorators-as-markers-vs-decorators-as-wrappers">Decorators as markers vs decorators as wrappers<a class="headerlink" href="#decorators-as-markers-vs-decorators-as-wrappers" title="Permanent link">&para;</a></h3>
-<p>Today's <code>@route("/users")</code> is a <strong>compile-time marker</strong>: the compiler sees it, generates an <code>inventory::submit!</code> call, and moves on. The handler function is unchanged. Users have no mechanism to attach runtime behaviour to a function through a decorator.</p>
-<p>In Python, decorators are <strong>wrappers</strong>. <code>@app.get("/users")</code> calls <code>app.get("/users")(get_users)</code> at module load time. The result replaces <code>get_users</code>. The framework intercepts the return value and serialises it. The user just annotates functions and returns plain values.</p>
-<p>The consequence in Incan today is that the framework leaks into the handler:</p>
+<p>Today's <code>@route("/users")</code> is a compile-time marker. The compiler treats it as route-registration metadata and moves on. The handler function is otherwise unchanged. Users have no mechanism to attach runtime behavior to a function through an ordinary decorator surface.</p>
+<p>In Python, decorators are wrappers. <code>@app.get("/users")</code> calls
+<code>app.get("/users")(get_users)</code> at module load time. The result replaces
+<code>get_users</code>. The framework intercepts the return value and serializes it. The
+user just annotates functions and returns plain values.</p>
+<p>The consequence in Incan is that the framework currently leaks into the handler:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Today: user does the framework&#39;s job</span>
 <span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/users/</span><span class="si">{id}</span><span class="s2">&quot;</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_user</span><span class="p">(</span><span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Json</span><span class="p">[</span><span class="nc">User</span><span class="p">]:</span>
@@ -4397,7 +4401,7 @@
 </code></pre></div>
 <p>None of these can be written today.</p>
 <h3 id="the-connection-to-the-rfc-tree">The connection to the RFC tree<a class="headerlink" href="#the-connection-to-the-rfc-tree" title="Permanent link">&para;</a></h3>
-<p>Once user-defined decorators land, the web framework's <code>@app.get</code> pattern becomes implementable in pure Incan. Combined with RFC 027 (vocab registration) and RFC 031 (library system), a web library could further offer a declarative DSL form that desugars to the same decorator calls — with <strong>no compiler changes required</strong>:</p>
+<p>Once user-defined decorators land, the web framework's <code>@app.get</code> pattern becomes implementable in pure Incan. Combined with RFC 027 (vocab registration) and RFC 031 (library system), a web library could further offer a declarative DSL form that desugars to the same decorator calls, with no additional compiler feature needed:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Declarative DSL (library-defined via RFC 027 VocabDesugarer)</span>
 <span class="n">app</span> <span class="n">my_app</span><span class="p">:</span>
     <span class="n">route</span> <span class="nc">GET</span> <span class="s2">&quot;/users/</span><span class="si">{id}</span><span class="s2">&quot;</span> <span class="o">=</span> <span class="n">get_user</span>
@@ -4408,7 +4412,7 @@
 <p>This desugars to the <code>@app.get</code>/<code>@app.post</code> decorator form, which itself desugars via this RFC. The compiler provides the primitive; libraries provide the ergonomics.</p>
 <h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
 <h3 id="using-decorators">Using decorators<a class="headerlink" href="#using-decorators" title="Permanent link">&para;</a></h3>
-<p>Applying a decorator is a single-line annotation above a <code>def</code>. The decorator can be a plain name or a call expression — the compiler handles both forms:</p>
+<p>Applying a decorator is a single-line annotation above a <code>def</code>. The decorator can be a plain name or a call expression. The compiler handles both forms:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@logged</span>                      <span class="c1"># plain: decorator is a callable</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">greet</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="s2">&quot;Hello &quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
@@ -4417,15 +4421,18 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">greet</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="s2">&quot;Hello &quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
 </code></pre></div>
-<p>The name <code>greet</code> is rebound to whatever the decorator returns. From the call site nothing changes — <code>greet</code> is still called as <code>greet(42)</code>.</p>
-<p><strong>Stacking</strong> — multiple decorators on the same function apply bottom-up. The decorator written closest to <code>def</code> is applied first, and its result is passed up to the next:</p>
+<p>The name <code>greet</code> is rebound to whatever the decorator returns. From the call site, nothing changes. <code>greet</code> is still called as <code>greet(42)</code>.</p>
+<p><strong>Stacking</strong>: multiple decorators on the same function apply bottom-up. The
+decorator written closest to <code>def</code> is applied first, and its result is passed up to the next:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@app</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;/users/</span><span class="si">{id}</span><span class="s2">&quot;</span><span class="p">)</span>
 <span class="nd">@cache</span><span class="p">(</span><span class="n">ttl</span><span class="o">=</span><span class="mi">60</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_user</span><span class="p">(</span><span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
     <span class="o">...</span>
 </code></pre></div>
 <p><code>@cache</code> wraps <code>get_user</code> first; <code>@app.get</code> then wraps the cached version.</p>
-<p><strong>Compiler built-ins</strong> — <code>@derive</code>, <code>@staticmethod</code>, <code>@rust.extern</code>, <code>@rust.delegate</code> and other built-in decorators are resolved before desugaring and work exactly as today. A decorator name that matches a built-in is handled by the compiler; everything else is a user-defined decorator.</p>
+<p><strong>Compiler built-ins</strong>: compiler-owned decorators such as <code>@derive</code>,
+<code>@staticmethod</code>, and <code>@rust.extern</code> are resolved before desugaring and keep
+their existing meaning. A decorator name that matches a built-in is handled by the compiler; everything else is treated as user-defined.</p>
 <p><strong>Web routing</strong> — with user-defined decorators, <code>App</code> can be implemented entirely in Incan:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.web</span><span class="w"> </span><span class="kn">import</span> <span class="kt">App</span>
 
@@ -4445,9 +4452,12 @@
 
 <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">port</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span>
 </code></pre></div>
-<p><code>app.get("/path")</code> is a method that returns a decorator. The decorator registers the route and returns the original function (or a response-serialising wrapper). No <code>Json(...)</code> wrapping needed — the decorator owns serialisation. No global <code>@route</code> — routes are owned by the <code>app</code> they're registered with.</p>
+<p><code>app.get("/path")</code> is a method that returns a decorator. That decorator
+registers the route and returns the original function, or a response-serializing wrapper. No <code>Json(...)</code> wrapping is needed because the decorator owns serialization. No global <code>@route</code> is needed because routes are owned by the <code>app</code> they are registered with.</p>
 <h3 id="writing-decorators">Writing decorators<a class="headerlink" href="#writing-decorators" title="Permanent link">&para;</a></h3>
-<p>A decorator is any function that accepts a function and returns a value. The <code>Callable[Params, R]</code> sugar from RFC 035 makes the type signature readable without the verbosity of the arrow form:</p>
+<p>A decorator is any function that accepts a function and returns a value. The
+<code>Callable[Params, R]</code> sugar from RFC 035 makes the type signature readable
+without the verbosity of the arrow form:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">logged</span><span class="p">(</span><span class="n">func</span><span class="p">:</span> <span class="nc">Callable</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">Callable</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">wrapper</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
         <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;calling with &quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
@@ -4457,8 +4467,8 @@
     <span class="k">return</span> <span class="n">wrapper</span>
 </code></pre></div>
 <p><code>logged</code> takes a function of type <code>(int) -&gt; str</code> and returns a new function of the same type that adds logging around the original call.</p>
-<p>A <strong>decorator factory</strong> is a function that takes configuration arguments and returns a decorator. The outer function captures the arguments in a closure; the inner <code>decorator</code> does the actual wrapping.</p>
-<p>The three-level nesting is required because <code>@D(args)</code> evaluates <code>D(args)</code> <em>before</em> the decorated function exists — the <code>def</code> body is not yet available at that point. This means the function cannot be passed alongside the arguments in the same call; a factory that returns a callable is the only way to defer application until the function is ready. Without <code>@</code> syntax you can write the flatter two-argument form directly (<code>greet = prefix_log(greet, label="greet")</code>), but that forgoes the decorator syntax entirely.</p>
+<p>A decorator factory is a function that takes configuration arguments and returns a decorator. The outer function captures the arguments in a closure; the inner <code>decorator</code> does the actual wrapping.</p>
+<p>The three-level nesting is required because <code>@D(args)</code> evaluates <code>D(args)</code> before the decorated function exists. The <code>def</code> body is not yet available at that point. This means the function cannot be passed alongside the arguments in the same call; a factory that returns a callable is the only way to defer application until the function is ready. Without <code>@</code> syntax, you can write the flatter two-argument form directly, <code>greet = prefix_log(greet, label="greet")</code>, but that gives up decorator syntax entirely.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">prefix_log</span><span class="p">(</span><span class="n">label</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">decorator</span><span class="p">(</span><span class="n">func</span><span class="p">:</span> <span class="nc">Callable</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">Callable</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
         <span class="k">def</span><span class="w"> </span><span class="nf">wrapper</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
@@ -4563,7 +4573,8 @@
 <p>If <code>module_a</code> decorates with <code>module_b</code>'s <code>app</code> object, <code>module_b</code>'s startup sequence must complete before <code>module_a</code>'s. The compiler resolves this statically from the import graph — the same topological sort used for module compilation order. Circular decoration (module A decorates with module B's object, module B decorates with module A's object) is a compile error.</p>
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <p><strong><code>@derive</code>, <code>@staticmethod</code>, <code>@rust.extern</code></strong>: Compiler built-ins, unchanged. Recognised by name before desugaring runs.</p>
-<p><strong>Closures</strong>: Unaffected. <code>IrExprKind::Closure</code> is the IR node for <code>(x) =&gt; expr</code>. Named function references (RFC 035) are <code>IrExprKind::Ident</code> with a function type. Both are valid decorator arguments.</p>
+<p><strong>Closures</strong>: Unaffected. Ordinary closures and named function references from
+RFC 035 are both valid decorator arguments as long as they type-check as callables.</p>
 <p><strong><code>@route</code></strong>: Continues to work. A follow-up RFC (web routing redesign) can deprecate it in favour of <code>@app.get</code> / <code>@app.post</code>.</p>
 <p><strong>RFC 027 (vocab) + RFC 031 (library)</strong>: After those land, a library can register a DSL keyword that desugars into decorator calls. This RFC provides the decorator primitive; the vocab desugarer generates the <code>@app.get</code>-style calls; the library packages it all. The three compose cleanly.</p>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
@@ -4602,6 +4613,7 @@
 <p><strong><code>@decorator</code> stdlib utility</strong>: Decorator factories require three levels of <code>def</code> nesting, which is verbose. A stdlib utility <code>@decorator</code> could reduce this to two levels by automatically currying the <code>func</code> argument — a factory written as <code>def D(func, ...args)</code> would be transformed such that <code>D(args)</code> returns a partial application waiting for <code>func</code>, and <code>@D(args) def f()</code> completes it as <code>D(f, args)</code>. This is implementable as a stdlib decorator (meta: a decorator that makes decorators) but requires partial application semantics not yet defined in Incan. Deferred to a follow-up RFC, possibly in conjunction with RFC 038.</p>
 </li>
 </ol>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

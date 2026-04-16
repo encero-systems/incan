@@ -4317,7 +4317,7 @@
 <li>RFC 061 (<code>std.compression</code> codec-based compression and decompression)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> —</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/340</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -4479,9 +4479,9 @@
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Stdlib / runtime</strong>: format handling, entry metadata model, extraction safety, deterministic creation.</li>
-<li><strong>Typechecker / symbol resolution</strong>: module and type registration.</li>
-<li><strong>Lowering / emission</strong>: preserve archive behavior without backend leakage.</li>
+<li><strong>Stdlib / runtime</strong>: format handling, entry metadata model, extraction safety, and deterministic creation.</li>
+<li><strong>Language surface</strong>: the module and types must be available as specified.</li>
+<li><strong>Execution handoff</strong>: implementations must preserve archive behavior without backend leakage.</li>
 <li><strong>Docs / examples</strong>: safe extraction and deterministic archive patterns.</li>
 </ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>

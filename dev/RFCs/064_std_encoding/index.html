@@ -4317,7 +4317,7 @@
 <li>RFC 065 (<code>std.hash</code> stable hashing primitives)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> —</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/342</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -4476,8 +4476,8 @@
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Stdlib / runtime</strong>: encoding implementations, stream adapters, and error surfaces.</li>
-<li><strong>Typechecker / symbol resolution</strong>: module and submodule registration.</li>
-<li><strong>Lowering / emission</strong>: preserve deterministic transformation behavior.</li>
+<li><strong>Language surface</strong>: the module and submodule families must be available as specified.</li>
+<li><strong>Execution handoff</strong>: implementations must preserve deterministic transformation behavior.</li>
 <li><strong>Docs / examples</strong>: strict/lenient guidance, variant choice guidance, and streaming patterns.</li>
 </ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>

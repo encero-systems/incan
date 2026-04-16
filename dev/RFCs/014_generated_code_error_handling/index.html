@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 014: Error Handling in Generated Rust Code - Incan Documentation</title>
+        <title>RFC 014: user-facing runtime error behavior for generated code - Incan Documentation</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-014-error-handling-in-generated-rust-code" class="md-skip">
+        <a href="#rfc-014-user-facing-runtime-error-behavior-for-generated-code" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 014: Error Handling in Generated Rust Code
+              RFC 014: user-facing runtime error behavior for generated code
             
           </span>
         </div>
@@ -4095,122 +4095,29 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#problem" class="md-nav__link">
+  <a href="#motivation" class="md-nav__link">
     <span class="md-ellipsis">
-      Problem
+      Motivation
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#goals" class="md-nav__link">
+  <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
     <span class="md-ellipsis">
-      Goals
+      Guide-level explanation (how users think about it)
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#non-goals" class="md-nav__link">
+  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
     <span class="md-ellipsis">
-      Non-Goals
+      Reference-level explanation (precise rules)
     </span>
   </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#proposed-solution" class="md-nav__link">
-    <span class="md-ellipsis">
-      Proposed Solution
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Proposed Solution">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#phase-1-better-panic-messages-immediate" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 1: Better Panic Messages (Immediate)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-2-runtime-error-type" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 2: Runtime Error Type
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-3-optional-error-recovery" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 3: Optional Error Recovery
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-4-incan-level-error-handling-no-tryexcept" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 4: Incan-Level Error Handling (no try/except)
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#specific-improvements" class="md-nav__link">
-    <span class="md-ellipsis">
-      Specific Improvements
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Specific Improvements">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#dict-access" class="md-nav__link">
-    <span class="md-ellipsis">
-      Dict Access
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#string-parsing" class="md-nav__link">
-    <span class="md-ellipsis">
-      String Parsing
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#list-operations" class="md-nav__link">
-    <span class="md-ellipsis">
-      List Operations
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -4225,18 +4132,18 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#always-return-result-for-fallible-operations" class="md-nav__link">
+  <a href="#keep-rfc-014-active" class="md-nav__link">
     <span class="md-ellipsis">
-      Always return Result for fallible operations
+      Keep RFC 014 active
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#silent-defaults" class="md-nav__link">
+  <a href="#supersede-rfc-014-with-another-rfc" class="md-nav__link">
     <span class="md-ellipsis">
-      Silent defaults
+      Supersede RFC 014 with another RFC
     </span>
   </a>
   
@@ -4265,15 +4172,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Unresolved questions
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -4292,263 +4190,47 @@
   
 
 
-<h1 id="rfc-014-error-handling-in-generated-rust-code">RFC 014: Error Handling in Generated Rust Code<a class="headerlink" href="#rfc-014-error-handling-in-generated-rust-code" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> Draft<br />
-<strong>Created:</strong> 2025-12-01<br />
-<strong>Author(s):</strong> Danny Meijer (@danny-meijer)<br />
-<strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/81">#81</a><br />
-<strong>RFC PR:</strong> —<br />
-<strong>Related:</strong> RFC 013 (Rust crate dependencies)<br />
-<strong>Written against:</strong> v0.1<br />
-<strong>Shipped in:</strong> —  </p>
+<h1 id="rfc-014-user-facing-runtime-error-behavior-for-generated-code">RFC 014: user-facing runtime error behavior for generated code<a class="headerlink" href="#rfc-014-user-facing-runtime-error-behavior-for-generated-code" title="Permanent link">&para;</a></h1>
+<ul>
+<li><strong>Status:</strong> Rejected</li>
+<li><strong>Created:</strong> 2025-12-01</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong> RFC 013 (Rust crate dependencies)</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/81</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.1</li>
+<li><strong>Shipped in:</strong> —</li>
+</ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>The Incan compiler currently emits <code>.unwrap()</code> calls in generated Rust code for operations that can fail at runtime. This causes cryptic Rust panics when users encounter edge cases. This RFC proposes a phased approach to improve error handling in generated code.</p>
-<h2 id="problem">Problem<a class="headerlink" href="#problem" title="Permanent link">&para;</a></h2>
-<p>Generated Rust code contains several <code>.unwrap()</code> patterns that can panic:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="c1">// Dict access - panics if key doesn&#39;t exist</span>
-<span class="n">map</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="o">&amp;</span><span class="n">key</span><span class="p">).</span><span class="n">unwrap</span><span class="p">().</span><span class="n">clone</span><span class="p">()</span>
-
-<span class="c1">// String parsing - panics if string isn&#39;t a valid number</span>
-<span class="n">input</span><span class="p">.</span><span class="n">parse</span><span class="p">::</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="p">().</span><span class="n">unwrap</span><span class="p">()</span>
-
-<span class="c1">// List indexing - panics if index out of bounds</span>
-<span class="n">vec</span><span class="p">[</span><span class="n">index</span><span class="p">]</span><span class="w">  </span><span class="c1">// or explicit .get(i).unwrap()</span>
-
-<span class="c1">// List.index() - panics if value not found</span>
-<span class="n">__incan_list_find_index</span><span class="p">(</span><span class="o">&amp;</span><span class="n">vec</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">value</span><span class="p">).</span><span class="n">unwrap</span><span class="p">()</span>
-</code></pre></div>
-<p>When these panic, users see Rust stack traces instead of helpful Incan error messages:</p>
-<div class="language-bash highlight"><pre><span></span><code>thread<span class="w"> </span><span class="s1">&#39;main&#39;</span><span class="w"> </span>panicked<span class="w"> </span>at<span class="w"> </span><span class="s1">&#39;called `Option::unwrap()` on a `None` value&#39;</span>
-</code></pre></div>
-<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Clear error messages</strong>: Users should see Incan-level errors, not Rust panics</li>
-<li><strong>Source locations</strong>: Errors should reference Incan source lines when possible</li>
-<li><strong>Graceful degradation</strong>: Some operations should return <code>None</code>/default instead of panicking</li>
-<li><strong>Future-proof</strong>: Design should support Incan-level error handling via <code>Result</code>/<code>Option</code>, <code>match</code>, and <code>?</code></li>
-</ol>
-<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<p>This document is no longer tracked as an active RFC. The underlying problem is real, but it does not belong in the RFC track: it is primarily compiler/runtime implementation work about how generated programs surface errors, not a standalone language or stdlib governance proposal.</p>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>The repo's RFC process is for user-facing language, tooling, runtime-surface, and documentation commitments. RFC 014 drifted into a compiler-maintenance and code-generation design note. Keeping it active as an RFC would weaken the boundary between governance documents and implementation work.</p>
+<p>The actual work remains important:</p>
 <ul>
-<li>Python-style <code>try/except</code> blocks — Incan handles errors via <code>match</code> on <code>Result</code> and <code>Option</code>, not exception catching.</li>
-<li>Changing the Incan language surface for operations that currently have implicit semantics (e.g., <code>d[key]</code> still raises a <code>KeyError</code>-equivalent, not returns <code>None</code>).</li>
-<li>Full source-map infrastructure — source location in runtime messages is best-effort for this RFC.</li>
+<li>compiled Incan programs should not surface raw backend panic text for ordinary user-facing failures;</li>
+<li>strict operations should continue to have strict semantics;</li>
+<li>intentionally fallible companion APIs should remain explicit and typed.</li>
 </ul>
-<h2 id="proposed-solution">Proposed Solution<a class="headerlink" href="#proposed-solution" title="Permanent link">&para;</a></h2>
-<h3 id="phase-1-better-panic-messages-immediate">Phase 1: Better Panic Messages (Immediate)<a class="headerlink" href="#phase-1-better-panic-messages-immediate" title="Permanent link">&para;</a></h3>
-<p>Replace bare <code>.unwrap()</code> with <code>.unwrap_or_else()</code> that provides context:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="c1">// Before</span>
-<span class="n">map</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="o">&amp;</span><span class="n">key</span><span class="p">).</span><span class="n">unwrap</span><span class="p">().</span><span class="n">clone</span><span class="p">()</span>
-
-<span class="c1">// After</span>
-<span class="n">map</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="o">&amp;</span><span class="n">key</span><span class="p">)</span>
-<span class="w">    </span><span class="p">.</span><span class="n">unwrap_or_else</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="fm">panic!</span><span class="p">(</span><span class="s">&quot;KeyError: &#39;{}&#39; not found in dict&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">key</span><span class="p">))</span>
-<span class="w">    </span><span class="p">.</span><span class="n">clone</span><span class="p">()</span>
-</code></pre></div>
-<p>For string parsing:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="c1">// Before</span>
-<span class="n">input</span><span class="p">.</span><span class="n">parse</span><span class="p">::</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="p">().</span><span class="n">unwrap</span><span class="p">()</span>
-
-<span class="c1">// After</span>
-<span class="n">input</span><span class="p">.</span><span class="n">parse</span><span class="p">::</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="p">()</span>
-<span class="w">    </span><span class="p">.</span><span class="n">unwrap_or_else</span><span class="p">(</span><span class="o">|</span><span class="n">_</span><span class="o">|</span><span class="w"> </span><span class="fm">panic!</span><span class="p">(</span><span class="s">&quot;ValueError: cannot convert &#39;{}&#39; to int&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">input</span><span class="p">))</span>
-</code></pre></div>
-<h3 id="phase-2-runtime-error-type">Phase 2: Runtime Error Type<a class="headerlink" href="#phase-2-runtime-error-type" title="Permanent link">&para;</a></h3>
-<p>Introduce an Incan runtime error type that captures context:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="c1">// In generated prelude</span>
-<span class="cp">#[derive(Debug)]</span>
-<span class="k">pub</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="nc">IncanError</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">KeyError</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">key</span><span class="p">:</span><span class="w"> </span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="n">context</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">&#39;</span><span class="nb">static</span><span class="w"> </span><span class="kt">str</span><span class="w"> </span><span class="p">},</span>
-<span class="w">    </span><span class="n">ValueError</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">value</span><span class="p">:</span><span class="w"> </span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="n">expected</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">&#39;</span><span class="nb">static</span><span class="w"> </span><span class="kt">str</span><span class="w"> </span><span class="p">},</span>
-<span class="w">    </span><span class="n">IndexError</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">index</span><span class="p">:</span><span class="w"> </span><span class="kt">usize</span><span class="p">,</span><span class="w"> </span><span class="n">len</span><span class="p">:</span><span class="w"> </span><span class="kt">usize</span><span class="w"> </span><span class="p">},</span>
-<span class="w">    </span><span class="n">TypeError</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">found</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">&#39;</span><span class="nb">static</span><span class="w"> </span><span class="kt">str</span><span class="p">,</span><span class="w"> </span><span class="n">expected</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">&#39;</span><span class="nb">static</span><span class="w"> </span><span class="kt">str</span><span class="w"> </span><span class="p">},</span>
-<span class="p">}</span>
-
-<span class="k">impl</span><span class="w"> </span><span class="n">std</span><span class="p">::</span><span class="n">fmt</span><span class="p">::</span><span class="n">Display</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">IncanError</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">fmt</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">f</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">mut</span><span class="w"> </span><span class="n">std</span><span class="p">::</span><span class="n">fmt</span><span class="p">::</span><span class="n">Formatter</span><span class="o">&lt;&#39;</span><span class="nb">_</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">std</span><span class="p">::</span><span class="n">fmt</span><span class="p">::</span><span class="nb">Result</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="k">match</span><span class="w"> </span><span class="bp">self</span><span class="w"> </span><span class="p">{</span>
-<span class="w">            </span><span class="n">IncanError</span><span class="p">::</span><span class="n">KeyError</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">key</span><span class="p">,</span><span class="w"> </span><span class="n">context</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="o">=&gt;</span>
-<span class="w">                </span><span class="fm">write!</span><span class="p">(</span><span class="n">f</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;KeyError: &#39;{}&#39; not found{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">key</span><span class="p">,</span><span class="w"> </span><span class="n">context</span><span class="p">),</span>
-<span class="w">            </span><span class="c1">// ... etc</span>
-<span class="w">        </span><span class="p">}</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="p">}</span>
-</code></pre></div>
-<h3 id="phase-3-optional-error-recovery">Phase 3: Optional Error Recovery<a class="headerlink" href="#phase-3-optional-error-recovery" title="Permanent link">&para;</a></h3>
-<p>For operations where returning <code>None</code>/default makes sense:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Dict.get() returns Option</span>
-<span class="n">value</span> <span class="o">=</span> <span class="n">my_dict</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;key&quot;</span><span class="p">)</span>  <span class="c1"># Returns Option[T]</span>
-
-<span class="c1"># With default</span>
-<span class="n">value</span> <span class="o">=</span> <span class="n">my_dict</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;key&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s2">&quot;fallback&quot;</span><span class="p">)</span>
-</code></pre></div>
-<p>Generated as:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="kd">let</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">my_dict</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;key&quot;</span><span class="p">).</span><span class="n">cloned</span><span class="p">();</span><span class="w">  </span><span class="c1">// Option&lt;T&gt;</span>
-<span class="kd">let</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">my_dict</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;key&quot;</span><span class="p">).</span><span class="n">cloned</span><span class="p">().</span><span class="n">unwrap_or</span><span class="p">(</span><span class="s">&quot;fallback&quot;</span><span class="p">.</span><span class="n">to_string</span><span class="p">());</span>
-</code></pre></div>
-<h3 id="phase-4-incan-level-error-handling-no-tryexcept">Phase 4: Incan-Level Error Handling (no <code>try/except</code>)<a class="headerlink" href="#phase-4-incan-level-error-handling-no-tryexcept" title="Permanent link">&para;</a></h3>
-<p>Incan should <strong>not</strong> adopt Python-style <code>try/except</code> blocks. Instead, error handling stays explicit and type-driven:</p>
-<ul>
-<li>Fallible operations return <code>Result[T, IncanError]</code> (or <code>Option[T]</code> where absence is expected)</li>
-<li>Callers handle errors via <code>match</code> (or propagate with <code>?</code>)</li>
-</ul>
-<p>Example (handle a parse failure by falling back to a default):</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Incan uses a match expression to handle errors, instead of a try-except block (like Python)</span>
-<span class="k">match</span> <span class="nb">int</span><span class="p">(</span><span class="n">user_input</span><span class="p">):</span>
-    <span class="nb">Ok</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">value</span> <span class="o">=</span> <span class="n">v</span>
-    <span class="nb">Err</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">value</span> <span class="o">=</span> <span class="mi">0</span>
-</code></pre></div>
-<p>Generated as:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="kd">let</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">match</span><span class="w"> </span><span class="n">user_input</span><span class="p">.</span><span class="n">parse</span><span class="p">::</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nb">Ok</span><span class="p">(</span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">v</span><span class="p">,</span>
-<span class="w">    </span><span class="nb">Err</span><span class="p">(</span><span class="n">_</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
-<span class="p">};</span>
-</code></pre></div>
-<blockquote>
-<p>Note: this is where Incan is deliberately more rust-like than Python.</p>
-</blockquote>
-<h2 id="specific-improvements">Specific Improvements<a class="headerlink" href="#specific-improvements" title="Permanent link">&para;</a></h2>
-<h3 id="dict-access">Dict Access<a class="headerlink" href="#dict-access" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong><code>d[key]</code></strong><ul>
-<li><strong>Current</strong>:</li>
-</ul>
-</li>
-</ul>
-<div class="language-rust highlight"><pre><span></span><code><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="o">..</span><span class="p">.).</span><span class="n">expect</span><span class="p">(</span><span class="s">&quot;KeyError: key not found in dict&quot;</span><span class="p">).</span><span class="n">clone</span><span class="p">()</span>
-</code></pre></div>
-<div class="language-text highlight"><pre><span></span><code>- **Proposed**:
-</code></pre></div>
-<div class="language-rust highlight"><pre><span></span><code><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="o">..</span><span class="p">.).</span><span class="n">unwrap_or_else</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="fm">panic!</span><span class="p">(</span><span class="s">&quot;KeyError: key not found in dict&quot;</span><span class="p">)).</span><span class="n">clone</span><span class="p">()</span>
-</code></pre></div>
-<div class="language-text highlight"><pre><span></span><code>- **Note**: string-literal keys include the key in the message today.
-</code></pre></div>
-<ul>
-<li><strong><code>d.get(key)</code></strong><ul>
-<li><strong>Proposed</strong>:</li>
-</ul>
-</li>
-</ul>
-<div class="language-rust highlight"><pre><span></span><code><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="o">&amp;</span><span class="n">k</span><span class="p">).</span><span class="n">cloned</span><span class="p">()</span><span class="w"> </span><span class="c1">// -&gt; Option&lt;V&gt;</span>
-</code></pre></div>
-<ul>
-<li><strong><code>d.get(key, default)</code></strong><ul>
-<li><strong>Proposed</strong>:</li>
-</ul>
-</li>
-</ul>
-<div class="language-rust highlight"><pre><span></span><code><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="o">&amp;</span><span class="n">k</span><span class="p">).</span><span class="n">cloned</span><span class="p">().</span><span class="n">unwrap_or</span><span class="p">(</span><span class="n">default</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="string-parsing">String Parsing<a class="headerlink" href="#string-parsing" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong><code>int(s)</code></strong><ul>
-<li><strong>Current</strong>: depends on input form<ul>
-<li>string literal:</li>
-</ul>
-</li>
-</ul>
-</li>
-</ul>
-<div class="language-rust highlight"><pre><span></span><code><span class="p">.</span><span class="n">parse</span><span class="p">::</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="p">().</span><span class="n">expect</span><span class="p">(</span><span class="s">&quot;ValueError: ...&quot;</span><span class="p">)</span>
-</code></pre></div>
-<div class="language-text highlight"><pre><span></span><code>    - known `String` variable:
-</code></pre></div>
-<div class="language-rust highlight"><pre><span></span><code><span class="p">.</span><span class="n">parse</span><span class="p">::</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="p">().</span><span class="n">unwrap_or_else</span><span class="p">(</span><span class="o">|</span><span class="n">_</span><span class="o">|</span><span class="w"> </span><span class="fm">panic!</span><span class="p">(</span><span class="s">&quot;ValueError: ...&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">s</span><span class="p">))</span>
-</code></pre></div>
-<div class="language-text highlight"><pre><span></span><code>    - non-string:
-</code></pre></div>
-<div class="language-rust highlight"><pre><span></span><code><span class="p">(</span><span class="n">x</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">i64</span><span class="p">)</span>
-</code></pre></div>
-<div class="language-text highlight"><pre><span></span><code>- **Proposed**: parse strings with a `ValueError` message; cast non-strings for performance.
-</code></pre></div>
-<ul>
-<li><strong><code>float(s)</code></strong><ul>
-<li><strong>Current</strong>: depends on input form<ul>
-<li>string literal:</li>
-</ul>
-</li>
-</ul>
-</li>
-</ul>
-<div class="language-rust highlight"><pre><span></span><code><span class="p">.</span><span class="n">parse</span><span class="p">::</span><span class="o">&lt;</span><span class="kt">f64</span><span class="o">&gt;</span><span class="p">().</span><span class="n">expect</span><span class="p">(</span><span class="s">&quot;ValueError: ...&quot;</span><span class="p">)</span>
-</code></pre></div>
-<div class="language-text highlight"><pre><span></span><code>    - known `String` variable:
-</code></pre></div>
-<div class="language-rust highlight"><pre><span></span><code><span class="p">.</span><span class="n">parse</span><span class="p">::</span><span class="o">&lt;</span><span class="kt">f64</span><span class="o">&gt;</span><span class="p">().</span><span class="n">unwrap_or_else</span><span class="p">(</span><span class="o">|</span><span class="n">_</span><span class="o">|</span><span class="w"> </span><span class="fm">panic!</span><span class="p">(</span><span class="s">&quot;ValueError: ...&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">s</span><span class="p">))</span>
-</code></pre></div>
-<div class="language-text highlight"><pre><span></span><code>    - non-string:
-</code></pre></div>
-<div class="language-rust highlight"><pre><span></span><code><span class="p">(</span><span class="n">x</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">f64</span><span class="p">)</span>
-</code></pre></div>
-<div class="language-text highlight"><pre><span></span><code>- **Proposed**: parse strings with a `ValueError` message; cast non-strings for performance.
-</code></pre></div>
-<h3 id="list-operations">List Operations<a class="headerlink" href="#list-operations" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong><code>list[i]</code></strong><ul>
-<li><strong>Current</strong> (panics with Rust bounds message today):</li>
-</ul>
-</li>
-</ul>
-<div class="language-rust highlight"><pre><span></span><code><span class="n">vec</span><span class="p">[(</span><span class="n">i</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">usize</span><span class="p">)].</span><span class="n">clone</span><span class="p">()</span>
-</code></pre></div>
-<div class="language-text highlight"><pre><span></span><code>- **Proposed**:
-</code></pre></div>
-<div class="language-rust highlight"><pre><span></span><code><span class="n">vec</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">usize</span><span class="p">)</span>
-<span class="w">    </span><span class="p">.</span><span class="n">cloned</span><span class="p">()</span>
-<span class="w">    </span><span class="p">.</span><span class="n">unwrap_or_else</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="fm">panic!</span><span class="p">(</span><span class="s">&quot;IndexError: index {} out of range for list of length {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">vec</span><span class="p">.</span><span class="n">len</span><span class="p">()))</span>
-</code></pre></div>
-<ul>
-<li><strong><code>list.index(v)</code></strong><ul>
-<li><strong>Current</strong>:</li>
-</ul>
-</li>
-</ul>
-<div class="language-rust highlight"><pre><span></span><code><span class="n">__incan_list_find_index</span><span class="p">(</span><span class="o">&amp;</span><span class="n">vec</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">v</span><span class="p">).</span><span class="n">expect</span><span class="p">(</span><span class="s">&quot;ValueError: value not found in list&quot;</span><span class="p">)</span>
-</code></pre></div>
-<div class="language-text highlight"><pre><span></span><code>- **Proposed**:
-</code></pre></div>
-<div class="language-rust highlight"><pre><span></span><code><span class="n">__incan_list_find_index</span><span class="p">(</span><span class="o">&amp;</span><span class="n">vec</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">v</span><span class="p">).</span><span class="n">unwrap_or_else</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="fm">panic!</span><span class="p">(</span><span class="s">&quot;ValueError: value not found in list&quot;</span><span class="p">))</span>
-</code></pre></div>
+<p>That work is now tracked directly in issue <code>#81</code>.</p>
+<h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
+<p>There is no longer an active RFC-level language proposal here. If future work on runtime error behavior grows into a distinct user-facing contract that genuinely needs governance, it should return as a new RFC with a narrower and more clearly user-facing scope.</p>
+<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
+<p>RFC 014 is rejected as an RFC artifact. The implementation and design work for this topic lives in issue <code>#81</code>.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<h3 id="always-return-result-for-fallible-operations">Always return <code>Result</code> for fallible operations<a class="headerlink" href="#always-return-result-for-fallible-operations" title="Permanent link">&para;</a></h3>
-<p>Make every fallible operation return <code>Result&lt;T, IncanError&gt;</code>. Rejected because:</p>
-<ul>
-<li>Requires pervasive <code>?</code> or <code>.unwrap()</code> in generated code</li>
-<li>Doesn't match Python/Incan semantics where these operations "just work"</li>
-<li>Would require pervasive <code>Result</code> handling (via <code>match</code>/<code>?</code>) to be usable</li>
-</ul>
-<h3 id="silent-defaults">Silent defaults<a class="headerlink" href="#silent-defaults" title="Permanent link">&para;</a></h3>
-<p>Return default values instead of panicking (e.g., <code>0</code> for missing int parse). Rejected because:</p>
-<ul>
-<li>Hides bugs</li>
-<li>Doesn't match Python semantics (Python raises exceptions)</li>
-<li>Makes debugging harder</li>
-</ul>
+<h3 id="keep-rfc-014-active">Keep RFC 014 active<a class="headerlink" href="#keep-rfc-014-active" title="Permanent link">&para;</a></h3>
+<p>Rejected. The topic matters, but the document is mostly about generated-code behavior, backend error surfacing, and compiler/runtime cleanup rather than a durable user-facing standards commitment.</p>
+<h3 id="supersede-rfc-014-with-another-rfc">Supersede RFC 014 with another RFC<a class="headerlink" href="#supersede-rfc-014-with-another-rfc" title="Permanent link">&para;</a></h3>
+<p>Rejected for now. There is not yet a separate replacement RFC because the work is better tracked as a normal implementation issue.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Phase 1 adds verbosity to generated Rust for every affected operation. This is noise in the generated output but has no runtime cost.</li>
-<li>Phase 2 introduces a shared prelude type (<code>IncanError</code>) that must be kept backward compatible as the language evolves.</li>
-<li>Phase 4 requires language-level changes (return-type inference for built-ins) that interact with the typechecker and lowering pipeline.</li>
+<li>Some historical design discussion moved out of the RFC corpus and into issue tracking.</li>
+<li>If a future user-facing runtime error model needs a real standards decision, a new RFC will need to be written from scratch rather than reviving this one.</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Lowering / IR emission</strong> — must replace bare unwrap patterns with named-message equivalents for all operations listed in "Specific Improvements"; must lower <code>dict.get(key)</code> and <code>dict.get(key, default)</code> to <code>Option</code>-returning and <code>unwrap_or</code>-based patterns respectively.</li>
-<li><strong>Generated prelude</strong> — must introduce the <code>IncanError</code> enum (Phase 2) so all generated error messages share a common format.</li>
-<li><strong>Typechecker</strong> — must track the return type of <code>dict.get(key)</code> as <code>Option[V]</code> (Phase 3); must eventually support <code>Result</code>-returning built-in variants (Phase 4).</li>
-<li><strong>Stdlib</strong> — <code>dict.get</code>, <code>list.get</code>, and any <code>Result</code>-returning variants of <code>int()</code>/<code>float()</code> must be declared in <code>std</code> and wired to the appropriate Rust implementations.</li>
+<li><strong>RFC process / docs</strong> — RFC 014 remains as a historical record but is no longer part of the active RFC set.</li>
+<li><strong>Issue tracking</strong> — issue <code>#81</code> is the authoritative home for the remaining work and design notes.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
-<ol>
-<li>
-<p><strong>Source location in runtime messages.</strong> Should generated error messages include the Incan file and line number? If so, what mechanism threads that information into the generated Rust without significant overhead?</p>
-</li>
-<li>
-<p><strong><code>int()</code> / <code>float()</code> Result variants.</strong> Should Phase 4 introduce <code>int.try_parse(s) -&gt; Result[int, ValueError]</code> as a separate function, or should <code>int(s)</code> itself change return type when used in a <code>match</code>-position context?</p>
-</li>
-<li>
-<p><strong><code>IncanError</code> stability.</strong> Once introduced in Phase 2, the <code>IncanError</code> enum is part of the implicit generated API. What versioning guarantees apply to it across compiler versions?</p>
-</li>
-</ol>
-<!-- Rename the "Unresolved questions" section above to "Design Decisions" once all open questions have been resolved and the RFC moves to Planned status. -->
 
 
 

@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 025: Multi-Instantiation Trait Dispatch - Incan Documentation</title>
+        <title>RFC 025: multi-instantiation trait dispatch - Incan Documentation</title>
       
     
     
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 025: Multi-Instantiation Trait Dispatch
+              RFC 025: multi-instantiation trait dispatch
             
           </span>
         </div>
@@ -4452,9 +4452,18 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-plan" class="md-nav__link">
+  <a href="#implementation-architecture" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation plan
+      Implementation architecture
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
     </span>
   </a>
   
@@ -4463,16 +4472,16 @@
         <li class="md-nav__item">
   <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
-      Design decisions
+      Design Decisions
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#deferred-questions" class="md-nav__link">
+  <a href="#unresolved-questions" class="md-nav__link">
     <span class="md-ellipsis">
-      Deferred questions
+      Unresolved questions
     </span>
   </a>
   
@@ -4505,60 +4514,41 @@
   
 
 
-<h1 id="rfc-025-multi-instantiation-trait-dispatch">RFC 025: Multi-Instantiation Trait Dispatch<a class="headerlink" href="#rfc-025-multi-instantiation-trait-dispatch" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-025-multi-instantiation-trait-dispatch">RFC 025: multi-instantiation trait dispatch<a class="headerlink" href="#rfc-025-multi-instantiation-trait-dispatch" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status</strong>: Draft</li>
-<li><strong>Author(s)</strong>: Danny Meijer (@dannymeijer)</li>
-<li><strong>Issue</strong>: #150</li>
-<li><strong>RFC PR</strong>: —</li>
-<li><strong>Created</strong>: 2026-02-17</li>
-<li><strong>Related</strong>:<ul>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2026-02-17</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong><ul>
 <li>RFC 050 (enum methods &amp; trait adoption)</li>
 <li>RFC 051 (<code>JsonValue</code>)</li>
-<li><a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a> (compilable stdlib &amp; rust.module binding)</li>
-<li><a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a> (extensible derive protocol)</li>
+<li>RFC 023 (compilable stdlib and rust.module binding)</li>
+<li>RFC 024 (extensible derive protocol)</li>
 </ul>
 </li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/150</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.1</li>
+<li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC proposes allowing a type to adopt multiple instantiations of the same generic trait with different type
-parameters. When this results in multiple methods with the same name but different parameter types, the compiler
-resolves which implementation to call based on the argument type at the call site. This is compile-time dispatch, not
-runtime overloading.</p>
+<p>This RFC proposes allowing a type to adopt multiple instantiations of the same generic trait with different type parameters. When this results in multiple methods with the same name but different parameter types, the compiler resolves which implementation to call based on the argument type at the call site. This is compile-time dispatch, not runtime overloading.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <h3 id="one-trait-multiple-key-types">One trait, multiple key types<a class="headerlink" href="#one-trait-multiple-key-types" title="Permanent link">&para;</a></h3>
-<p>Incan's <code>Index[K, V]</code> trait (from <code>std.traits.indexing</code>) defines <code>__getitem__(self, key: K) -&gt; V</code> for subscript
-access. Some types naturally need indexing by more than one key type:</p>
+<p>Incan's <code>Index[K, V]</code> trait (from <code>std.traits.indexing</code>) defines <code>__getitem__(self, key: K) -&gt; V</code> for subscript access. Some types naturally need indexing by more than one key type:</p>
 <ul>
 <li><code>JsonValue</code> needs <code>value["key"]</code> (str) and <code>value[0]</code> (int)</li>
 <li>A <code>DataFrame</code> might need <code>df["column"]</code> (str) and <code>df[0]</code> (int for row access)</li>
 <li>A <code>Matrix</code> might need <code>m[(0, 1)]</code> (tuple) and <code>m[0]</code> (int for row slice)</li>
 </ul>
-<p>Today, a type can only adopt <code>Index</code> once — <code>with Index[str, V]</code> or <code>with Index[int, V]</code>, but not both — because the
-method table stores one entry per method name and two <code>__getitem__</code> definitions would collide.</p>
+<p>Today, a type can only adopt <code>Index</code> once — <code>with Index[str, V]</code> or <code>with Index[int, V]</code>, but not both — because same-name trait methods still collide in the current language model.</p>
 <h3 id="rust-handles-this-naturally">Rust handles this naturally<a class="headerlink" href="#rust-handles-this-naturally" title="Permanent link">&para;</a></h3>
-<p>In Rust, a type can implement the same trait for different type parameters without conflict:</p>
-<div class="language-rust highlight"><pre><span></span><code><span class="k">impl</span><span class="w"> </span><span class="n">Index</span><span class="o">&lt;&amp;</span><span class="kt">str</span><span class="o">&gt;</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">JsonValue</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">JsonValue</span><span class="p">;</span>
-<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">index</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">key</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="kt">str</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">JsonValue</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">..</span><span class="p">.</span><span class="w"> </span><span class="p">}</span>
-<span class="p">}</span>
-
-<span class="k">impl</span><span class="w"> </span><span class="n">Index</span><span class="o">&lt;&amp;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">JsonValue</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">JsonValue</span><span class="p">;</span>
-<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">index</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">key</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="kt">i64</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">JsonValue</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">..</span><span class="p">.</span><span class="w"> </span><span class="p">}</span>
-<span class="p">}</span>
-</code></pre></div>
-<p>The compiler resolves which <code>index()</code> to call based on the argument type. This is not overloading — it's the trait
-system working as designed. Incan should support the same pattern.</p>
+<p>Rust already demonstrates that this pattern is coherent: one type may implement the same generic trait multiple times with different type parameters, and the compiler selects the matching implementation from type context. Incan should support the same underlying capability instead of forcing users into wrapper traits or artificial API splits.</p>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>General method overloading.</strong> This RFC does not add the ability to define two freestanding <code>def foo(x: int)</code> and
-  <code>def foo(x: str)</code> at module level. Same-name methods are permitted <strong>only</strong> when they arise from different trait
-  instantiations.</li>
-<li><strong>Runtime dispatch.</strong> Resolution happens at compile time based on argument types. There is no dynamic dispatch or
-  <code>isinstance</code>-style checks.</li>
-<li><strong>Union types.</strong> <code>str | int</code> as a first-class type is a separate concern. This RFC solves the multi-key problem
-  through the trait system, not through type unions.</li>
+<li><strong>General method overloading.</strong> This RFC does not add the ability to define two freestanding <code>def foo(x: int)</code> and <code>def foo(x: str)</code> at module level. Same-name methods are permitted only when they arise from different trait instantiations.</li>
+<li><strong>Runtime dispatch.</strong> Resolution happens at compile time based on argument types. There is no dynamic dispatch or <code>isinstance</code>-style checking.</li>
+<li><strong>Union types.</strong> <code>str | int</code> as a first-class type is a separate concern. This RFC solves the multi-key problem through the trait system, not through type unions.</li>
 </ul>
 <h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
 <h3 id="adopting-a-trait-multiple-times">Adopting a trait multiple times<a class="headerlink" href="#adopting-a-trait-multiple-times" title="Permanent link">&para;</a></h3>
@@ -4577,8 +4567,7 @@ system working as designed. Incan should support the same pattern.</p>
     <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
     <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span> <span class="o">...</span>
 </code></pre></div>
-<p>The two <code>__getitem__</code> methods are not overloads — they are implementations of two different trait instantiations. The
-compiler matches each definition to its trait by comparing parameter types.</p>
+<p>The two <code>__getitem__</code> methods are not overloads. They are implementations of two different trait instantiations, and the compiler matches each definition to its trait by comparing parameter types.</p>
 <h3 id="call-site-resolution">Call-site resolution<a class="headerlink" href="#call-site-resolution" title="Permanent link">&para;</a></h3>
 <p>The compiler resolves which implementation to use based on the argument type at the call site:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">value</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]</span>    <span class="c1"># str argument → Index[str, JsonValue].__getitem__</span>
@@ -4610,12 +4599,9 @@ compiler matches each definition to its trait by comparing parameter types.</p>
 <span class="k">let</span> <span class="n">precise</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">reading</span><span class="o">.</span><span class="n">into</span><span class="p">()</span>   <span class="c1"># Into[float]</span>
 <span class="k">let</span> <span class="n">rounded</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">reading</span><span class="o">.</span><span class="n">into</span><span class="p">()</span>     <span class="c1"># Into[int]</span>
 </code></pre></div>
-<p>The compiler resolves <code>reading.into()</code> based on the expected return type from context (the binding's type annotation).
-If the context doesn't disambiguate, the compiler reports an ambiguity error.</p>
+<p>The compiler resolves <code>reading.into()</code> based on the expected return type from context (the binding's type annotation). If the context doesn't disambiguate, the compiler reports an ambiguity error.</p>
 <h3 id="multi-format-serialization-the-foundational-use-case">Multi-format serialization (the foundational use case)<a class="headerlink" href="#multi-format-serialization-the-foundational-use-case" title="Permanent link">&para;</a></h3>
-<p>Beyond <code>Index</code> and <code>Into</code>, the primary real-world motivation for multi-instantiation is <strong>multi-format serialization</strong>.
-Many applications require a single model to serve multiple wire formats — JSON, YAML, Protobuf, Avro — each via a
-derivable trait. A generic <code>Serializable[F]</code> trait makes this composable:</p>
+<p>Beyond <code>Index</code> and <code>Into</code>, the primary real-world motivation for multi-instantiation is <strong>multi-format serialization</strong>. Many applications require a single model to serve multiple wire formats — JSON, YAML, Protobuf, Avro — each via a derivable trait. A generic <code>Serializable[F]</code> trait makes this composable:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Serializable</span><span class="p">[</span><span class="nc">F</span><span class="p">]:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">serialize</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span> <span class="o">...</span>
 
@@ -4632,62 +4618,44 @@ derivable trait. A generic <code>Serializable[F]</code> trait makes this composa
 <span class="k">let</span> <span class="n">json_bytes</span> <span class="o">=</span> <span class="n">publish</span><span class="p">[</span><span class="kt">Json</span><span class="p">](</span><span class="n">my_event</span><span class="p">)</span>   <span class="c1"># T inferred as CustomerEvent; Serializable[Json]::serialize</span>
 <span class="k">let</span> <span class="n">yaml_bytes</span> <span class="o">=</span> <span class="n">publish</span><span class="p">[</span><span class="nc">Yaml</span><span class="p">](</span><span class="n">my_event</span><span class="p">)</span>  <span class="c1"># Serializable[Yaml]::serialize</span>
 </code></pre></div>
-<p>The type parameter <code>F</code> determines which <code>Serializable</code> instantiation the compiler selects. The bound
-<code>T with Serializable[F]</code> links the model type to the format — standard Incan <code>with</code> syntax in the type
-parameter list. This pattern is the foundation of the <code>@derive(format)</code> protocol described in <a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a>.</p>
+<p>The type parameter <code>F</code> determines which <code>Serializable</code> instantiation the compiler selects. The bound <code>T with Serializable[F]</code> links the model type to the format using ordinary Incan <code>with</code> syntax in the type-parameter list. This pattern is the foundation of the <code>@derive(format)</code> protocol described in RFC 024.</p>
 <h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
 <h3 id="trait-adoption">Trait adoption<a class="headerlink" href="#trait-adoption" title="Permanent link">&para;</a></h3>
-<p>A type may list the same trait name multiple times in its <code>with</code> clause, provided each instantiation has different type
-arguments:</p>
+<p>A type may list the same trait name multiple times in its <code>with</code> clause, provided each instantiation has different type arguments:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Foo</span> <span class="k">with</span> <span class="nc">Trait</span><span class="p">[</span><span class="nc">A</span><span class="p">],</span> <span class="nc">Trait</span><span class="p">[</span><span class="nc">B</span><span class="p">]:</span>  <span class="c1"># OK — different type args</span>
 <span class="k">model</span> <span class="nc">Bar</span> <span class="k">with</span> <span class="nc">Trait</span><span class="p">[</span><span class="nc">A</span><span class="p">],</span> <span class="nc">Trait</span><span class="p">[</span><span class="nc">A</span><span class="p">]:</span>  <span class="c1"># ERROR — duplicate instantiation</span>
 </code></pre></div>
 <h3 id="method-disambiguation">Method disambiguation<a class="headerlink" href="#method-disambiguation" title="Permanent link">&para;</a></h3>
 <p>When multiple trait instantiations produce methods with the same name, the compiler resolves which to call using:</p>
 <ol>
-<li><strong>Argument types</strong> — the most common case. <code>value["key"]</code> vs <code>value[0]</code> is unambiguous because <code>str</code> and <code>int</code> are
-   distinct types.</li>
-<li><strong>Expected return type</strong> (provisional) — when argument types are identical but return types differ (e.g.,
-   <code>Into[float]</code> vs <code>Into[int]</code>), the compiler may use the expected type from surrounding context (type annotation,
-   function argument, etc.). See <a href="#deferred-questions">deferred question #2</a> for open design considerations.</li>
-<li><strong>Explicit qualification</strong> — if neither argument nor return type disambiguates, the call is an error. The user must
-   qualify which trait they mean (syntax TBD — could be <code>value.Index[str].__getitem__("key")</code> or similar, but this is
-   expected to be rare).</li>
+<li><strong>Argument types</strong> — the most common case. <code>value["key"]</code> vs <code>value[0]</code> is unambiguous because <code>str</code> and <code>int</code> are distinct types.</li>
+<li><strong>Expected return type</strong> (provisional) — when argument types are identical but return types differ (for example <code>Into[float]</code> vs <code>Into[int]</code>), the compiler may use the expected type from surrounding context such as a binding annotation or function argument. See the unresolved questions section for the remaining design work here.</li>
+<li><strong>Explicit qualification</strong> — if neither argument nor return type disambiguates, the call is an error. The user must qualify which trait they mean. The exact qualification syntax is still open, but this should be the fallback rather than the common path.</li>
 </ol>
 <h3 id="symbol-table-representation">Symbol table representation<a class="headerlink" href="#symbol-table-representation" title="Permanent link">&para;</a></h3>
-<p>The current <code>HashMap&lt;String, MethodInfo&gt;</code> representation is insufficient for multi-instantiation methods. The
-implementation must support multiple entries for the same method name, keyed or grouped by their trait origin. The
-specifics of this data structure change are left to the implementer.</p>
+<p>The language and compiler model must support more than one same-name method entry when those methods arise from distinct trait instantiations. The exact internal representation is implementation detail, but the public rule is that trait-origin information must be preserved well enough for type-directed dispatch and diagnostics to stay coherent.</p>
 <h3 id="rust-emission">Rust emission<a class="headerlink" href="#rust-emission" title="Permanent link">&para;</a></h3>
-<p>Each trait instantiation emits a separate <code>impl Trait&lt;TypeArg&gt; for Type { ... }</code> block in Rust. This maps directly
-to how Rust handles multiple trait implementations.</p>
+<p>Each trait instantiation lowers to a separate Rust trait implementation. That backend mapping is straightforward and is one reason this RFC is a good semantic fit for the language rather than a forced abstraction.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
-<p>No new syntax is proposed. The existing <code>with Trait[A], Trait[B]</code> clause already parses a comma-separated list of trait
-adoptions. If the parser currently rejects duplicate trait names in the <code>with</code> clause, that restriction must be lifted.
-Same-name <code>def</code> declarations are permitted inside the body when they correspond to different trait instantiations.</p>
+<p>No new syntax is proposed. The existing <code>with Trait[A], Trait[B]</code> clause already parses a comma-separated list of trait adoptions. If the parser currently rejects duplicate trait names in the <code>with</code> clause, that restriction must be lifted. Same-name <code>def</code> declarations are permitted inside the body when they correspond to different trait instantiations.</p>
 <h3 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h3>
-<p>The rule is simple: <strong>same-name methods are permitted if and only if they satisfy different <code>with</code> trait adoptions.</strong>
-This is not general overloading — it's the trait system resolving dispatch.</p>
+<p>The rule is simple: <strong>same-name methods are permitted if and only if they satisfy different <code>with</code> trait adoptions.</strong> This is not general overloading — it's the trait system resolving dispatch.</p>
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <h4 id="enum-model-and-class-types">Enum, model, and class types<a class="headerlink" href="#enum-model-and-class-types" title="Permanent link">&para;</a></h4>
 <p>Multi-instantiation works on all three declaration types that support <code>with</code>.</p>
 <h4 id="built-in-types-list-dict">Built-in types (<code>List</code>, <code>Dict</code>)<a class="headerlink" href="#built-in-types-list-dict" title="Permanent link">&para;</a></h4>
-<p>Built-in collection types currently have compiler-level indexing support. This RFC does not change that, but provides
-the mechanism for user-defined types to achieve the same capability through traits.</p>
+<p>Built-in collection types currently have compiler-level indexing support. This RFC does not change that, but it provides the mechanism for user-defined types to achieve the same capability through traits.</p>
 <h4 id="rustextern-methods"><code>@rust.extern</code> methods<a class="headerlink" href="#rustextern-methods" title="Permanent link">&para;</a></h4>
-<p><code>@rust.extern</code> methods in multi-instantiation traits work normally — each <code>__getitem__</code> can independently be
-<code>@rust.extern</code> or pure Incan.</p>
+<p><code>@rust.extern</code> methods in multi-instantiation traits work normally. Each <code>__getitem__</code> can independently be <code>@rust.extern</code> or pure Incan.</p>
 <h4 id="generic-function-bounds">Generic function bounds<a class="headerlink" href="#generic-function-bounds" title="Permanent link">&para;</a></h4>
 <p>A generic function can require multiple instantiations of the same trait in its bounds:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">lookup</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="nc">Index</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">V</span><span class="p">],</span> <span class="nc">Index</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">V</span><span class="p">]](</span><span class="n">data</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">V</span><span class="p">:</span>
     <span class="o">...</span>
 </code></pre></div>
-<p>This falls out naturally from the trait system — each <code>with</code> bound is an independent constraint. The function body can
-call <code>data[key]</code> and <code>data[idx]</code>, and the compiler resolves each to the matching <code>Index</code> instantiation.</p>
+<p>This falls out naturally from the trait system. Each <code>with</code> bound is an independent constraint, and the function body can call <code>data[key]</code> and <code>data[idx]</code> with each use resolving to the matching <code>Index</code> instantiation.</p>
 <h4 id="cross-trait-method-name-collisions">Cross-trait method name collisions<a class="headerlink" href="#cross-trait-method-name-collisions" title="Permanent link">&para;</a></h4>
-<p>Multi-instantiation of the <em>same</em> generic trait is the primary use case, but the same-name rule applies to <em>any</em>
-combination of adopted traits. Consider:</p>
+<p>Multi-instantiation of the <em>same</em> generic trait is the primary use case, but the same-name rule applies to <em>any</em> combination of adopted traits. Consider:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Readable</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
 
@@ -4698,10 +4666,7 @@ combination of adopted traits. Consider:</p>
     <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>        <span class="c1"># satisfies Readable</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">SomeResult</span><span class="p">:</span> <span class="o">...</span> <span class="c1"># satisfies Parseable</span>
 </code></pre></div>
-<p>This is permitted — the two <code>read</code> methods come from different trait adoptions and have different parameter types, so
-the compiler can disambiguate at the call site. However, if two different traits produce methods with <strong>identical
-signatures</strong>, no disambiguation is possible and the type declaration is an error (see <a href="#diagnostics">Diagnostics</a>
-below).</p>
+<p>This is permitted — the two <code>read</code> methods come from different trait adoptions and have different parameter types, so the compiler can disambiguate at the call site. However, if two different traits produce methods with <strong>identical signatures</strong>, no disambiguation is possible and the type declaration is an error (see <a href="#diagnostics">Diagnostics</a> below).</p>
 <blockquote>
 <p>Note: permitted does not mean that this is encouraged. Avoid ambiguous method signatures whenever possible.</p>
 </blockquote>
@@ -4749,42 +4714,35 @@ below).</p>
     <span class="c1">#   these traits</span>
 </code></pre></div>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<p>Fully additive. Existing code that adopts a trait once is unaffected. The only new capability is adopting the same
-trait with different type arguments.</p>
+<p>Fully additive. Existing code that adopts a trait once is unaffected. The only new capability is adopting the same trait with different type arguments.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <h3 id="1-union-types-str-int">1. Union types (<code>str | int</code>)<a class="headerlink" href="#1-union-types-str-int" title="Permanent link">&para;</a></h3>
-<p>A single <code>Index[str | int, JsonValue]</code> adoption with one <code>__getitem__</code>. Rejected as a dependency — union types are a
-larger language feature. Multi-instantiation dispatch solves the immediate problem through the existing trait system.</p>
+<p>A single <code>Index[str | int, JsonValue]</code> adoption with one <code>__getitem__</code>. Rejected as a dependency — union types are a larger language feature. Multi-instantiation dispatch solves the immediate problem through the existing trait system.</p>
 <h3 id="2-overload-decorator-python-style">2. <code>@overload</code> decorator (Python-style)<a class="headerlink" href="#2-overload-decorator-python-style" title="Permanent link">&para;</a></h3>
-<p>Declare multiple signatures, implement once with runtime dispatch. Rejected because it's a runtime mechanism in a
-compile-time language. Multi-instantiation dispatch is resolved entirely at compile time.</p>
+<p>Declare multiple signatures, implement once with runtime dispatch. Rejected because it's a runtime mechanism in a compile-time language. Multi-instantiation dispatch is resolved entirely at compile time.</p>
 <h3 id="3-separate-method-names">3. Separate method names<a class="headerlink" href="#3-separate-method-names" title="Permanent link">&para;</a></h3>
 <p><code>get_by_key(str)</code> and <code>get_by_index(int)</code> instead of two <code>__getitem__</code>. Works but breaks the <code>[]</code> subscript syntax
 and feels un-Pythonic.</p>
 <h3 id="4-compiler-special-casing-per-type">4. Compiler special-casing per type<a class="headerlink" href="#4-compiler-special-casing-per-type" title="Permanent link">&para;</a></h3>
-<p>Give <code>JsonValue</code> special compiler support for multi-key indexing without a general mechanism. Rejected because it
-doesn't scale — every type with the same need would require its own compiler special-case.</p>
+<p>Give <code>JsonValue</code> special compiler support for multi-key indexing without a general mechanism. Rejected because it doesn't scale — every type with the same need would require its own compiler special-case.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Ambiguity errors</strong>: when the compiler can't determine which instantiation to use from context, it must report an
-  error. The error messages need to be clear about <em>why</em> the call is ambiguous and <em>how</em> to resolve it.</li>
+error. The error messages need to be clear about <em>why</em> the call is ambiguous and <em>how</em> to resolve it.</li>
 <li><strong>Symbol table complexity</strong>: the method table representation needs to support multiple entries per method name. This
-  is an internal complexity increase, though the user-facing model is simple.</li>
+is an internal complexity increase, though the user-facing model is simple.</li>
 <li><strong>Compile-time cost</strong>: resolving multi-instantiation dispatch requires checking argument types against all candidates.
-  For typical usage (2-3 instantiations), this is negligible.</li>
+For typical usage (2-3 instantiations), this is negligible.</li>
 <li><strong>Teachability</strong>: "two methods with the same name" is a new concept for Python-background users, who are accustomed to
-  one-name-one-definition. The key teaching point is that these are <em>trait implementations</em>, not overloads — the trait
-  system makes the distinction principled rather than ad-hoc. This puts a high bar on tooling: the LSP must surface
-  which trait instantiation a call resolves to (e.g., hover info showing <code>Index[str, JsonValue].__getitem__</code>), and
-  diagnostics for ambiguous calls must clearly explain the competing candidates and how to disambiguate.</li>
+one-name-one-definition. The key teaching point is that these are <em>trait implementations</em>, not overloads — the trait system makes the distinction principled rather than ad-hoc. This puts a high bar on tooling: the LSP must surface which trait instantiation a call resolves to (e.g., hover info showing <code>Index[str, JsonValue].__getitem__</code>), and diagnostics for ambiguous calls must clearly explain the competing candidates and how to disambiguate.</li>
 </ul>
-<h2 id="implementation-plan">Implementation plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
 <ul>
 <li>[ ] Verify parser allows duplicate trait names in <code>with</code> clauses; lift restriction if needed</li>
 <li>[ ] Update the symbol table to support multiple method entries per name (grouped by trait origin)</li>
 <li>[ ] Update the typechecker to allow same-name methods when they correspond to different trait instantiations</li>
 <li>[ ] Update call resolution to disambiguate based on argument types (and optionally return type context, see
-  <a href="#deferred-questions">deferred question #2</a>)</li>
+<a href="#deferred-questions">deferred question #2</a>)</li>
 <li>[ ] Update lowering to emit separate <code>impl Trait&lt;T&gt; for Type</code> blocks per instantiation</li>
 <li>[ ] Add diagnostics:<ul>
 <li>Duplicate trait instantiation (<code>with Trait[A], Trait[A]</code>)</li>
@@ -4795,23 +4753,29 @@ doesn't scale — every type with the same need would require its own compiler s
 <li>[ ] Add codegen snapshot tests for multi-instantiation dispatch</li>
 <li>[ ] Add integration tests for <code>Index</code> with multiple key types</li>
 </ul>
-<h2 id="design-decisions">Design decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Typechecker / symbol resolution</strong>: must allow multiple instantiations of the same generic trait on one type and resolve call sites against the correct instantiation.</li>
+<li><strong>Method resolution</strong>: same-name methods arising from different trait instantiations must remain distinguishable without turning into general-purpose overloading.</li>
+<li><strong>Lowering / emission</strong>: must preserve the resolved instantiation choice into generated backend code without introducing runtime dispatch.</li>
+<li><strong>Docs / tooling</strong>: must explain ambiguity diagnostics and qualification escape hatches clearly when the compiler cannot pick one instantiation unambiguously.</li>
+</ul>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ol>
 <li>
 <p><strong>Trait-driven, not general overloading</strong>: same-name methods are only allowed when they arise from different trait
-   instantiations. This keeps the language simple and the dispatch rule principled.</p>
+instantiations. This keeps the language simple and the dispatch rule principled.</p>
 </li>
 <li>
 <p><strong>Compile-time resolution</strong>: no runtime dispatch. The compiler knows which implementation to call from the argument
-   types at the call site.</p>
+types at the call site.</p>
 </li>
 </ol>
-<h2 id="deferred-questions">Deferred questions<a class="headerlink" href="#deferred-questions" title="Permanent link">&para;</a></h2>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ol>
 <li>
 <p><strong>Explicit qualification syntax</strong>: when disambiguation fails, how does the user specify which trait instantiation
-   they mean? Options include <code>value.Index[str].__getitem__("key")</code>, turbofish-style <code>value.__getitem__::&lt;str&gt;("key")</code>,
-   or something else. This is expected to be rare in practice.</p>
+they mean? Options include <code>value.Index[str].__getitem__("key")</code>, turbofish-style <code>value.__getitem__::&lt;str&gt;("key")</code>, or something else. This is expected to be rare in practice.</p>
 </li>
 <li>
 <p><strong>Return-type-only disambiguation</strong>: is it sufficient to resolve based on expected return type alone (e.g.,
@@ -4819,26 +4783,23 @@ doesn't scale — every type with the same need would require its own compiler s
 </li>
 <li>
 <p><strong>Type-parameter-level dispatch</strong>: in the multi-format serialization pattern, disambiguation comes from a generic
-   type parameter resolved at monomorphization, not from argument or return types at the call site:</p>
+type parameter resolved at monomorphization, not from argument or return types at the call site:</p>
 </li>
 </ol>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">publish</span><span class="p">[</span><span class="nc">F</span><span class="p">,</span> <span class="nc">T</span> <span class="k">with</span> <span class="nc">Serializable</span><span class="p">[</span><span class="nc">F</span><span class="p">]](</span><span class="n">event</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">event</span><span class="o">.</span><span class="n">serialize</span><span class="p">()</span>
 </code></pre></div>
-<p>When the caller writes <code>publish[Json](my_event)</code>, <code>F = Json</code> and <code>T</code> is inferred from the argument. The compiler
-   picks <code>Serializable[Json]::serialize</code>. This uses standard Incan <code>with</code> syntax in the type parameter list — no
+<p>When the caller writes <code>publish[Json](my_event)</code>, <code>F = Json</code> and <code>T</code> is inferred from the argument. The compiler picks <code>Serializable[Json]::serialize</code>. This uses standard Incan <code>with</code> syntax in the type parameter list — no
    <code>where</code> clause. Incan will need this mechanism once generic functions with trait bounds are implemented.</p>
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
 <ul>
 <li>RFC 050 — Enum Methods and Enum Trait Adoption</li>
 <li>RFC 051 — <code>JsonValue</code> for <code>std.json</code></li>
-<li><a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a> — Compilable Stdlib &amp; Rust Module Binding</li>
-<li><a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a> — Extensible Derive Protocol</li>
+<li>RFC 023 — Compilable Stdlib &amp; Rust Module Binding</li>
+<li>RFC 024 — Extensible Derive Protocol</li>
 <li>Rust trait system — multiple <code>impl Trait&lt;T&gt; for Type</code> blocks</li>
 </ul>
-<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
-
-<!-- RFC reference links for reuse: '[RFC 018]' or '[RFC 018: Title][RFC 018]' -->
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

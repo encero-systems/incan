@@ -4531,7 +4531,7 @@
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Stdlib / runtime (<code>incan_stdlib</code>)</strong>: new <code>std.io</code> module and the <code>BytesIO</code> type.</li>
-<li><strong>Typechecker / symbol resolution</strong>: registration of the new module, constructor, and methods.</li>
+<li><strong>Language surface</strong>: the module, constructor, and methods must be available as specified.</li>
 <li><strong>Builtin numeric surface</strong>: numeric helper signatures depend on RFC 009's sized numeric types and aliases.</li>
 <li><strong>LSP / tooling</strong>: completions and hovers for <code>std.io</code>.</li>
 <li><strong>Docs / examples</strong>: binary parsing examples should use <code>std.io.BytesIO</code> instead of <code>rust::</code> recipes for the common in-memory path.</li>

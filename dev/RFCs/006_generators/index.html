@@ -4343,22 +4343,24 @@
 <li><strong>Created:</strong> 2024-12-10</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong> RFC 016 (loop and break value), RFC 019 (runner testing)</li>
-<li><strong>Issue:</strong> —</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/324</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.1</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC introduces Python-style generators to Incan in two connected forms: generator functions that use <code>yield</code> inside <code>def</code>, and generator expressions that produce lazy generator values inline. Both forms describe the same underlying language model: a resumable producer of <code>T</code> exposed as <code>Generator[T]</code>.</p>
+<p>This RFC introduces Python-style generators to Incan in two connected forms: generator functions that use <code>yield</code> inside <code>def</code>, and generator expressions that produce lazy generator values inline. Both forms describe the same underlying language model: a resumable producer of <code>T</code> exposed as
+<code>Generator[T]</code>.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>Incan currently has eager collections and iterator-shaped loops, but it does not have a first-class way to express lazy, stateful iteration in the language surface itself. That hurts several common cases:</p>
 <ul>
 <li>large or unbounded sequences that should not be materialized eagerly;</li>
 <li>streaming transformations that would otherwise allocate intermediate lists;</li>
 <li>recursive traversals where the natural shape is "produce one value, suspend, resume";</li>
-<li>portability for authors coming from Python, where <code>yield</code> and generator expressions are familiar ways to express lazy iteration.</li>
+<li>portability for authors coming from Python, where <code>yield</code> and generator
+expressions are familiar ways to express lazy iteration.</li>
 </ul>
-<p>The feature also fits Incan's backend well. Rust already has generator machinery, so Incan does not need to invent a bespoke runtime model just to support this control-flow shape.</p>
+<p>The feature also fits Incan's backend well. Incan does not need a separate user-facing coroutine model just to support this control-flow shape; the compiler can lower generators to ordinary backend state-machine machinery.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Add a first-class generator model based on <code>yield</code> and <code>Generator[T]</code>.</li>
@@ -4418,26 +4420,32 @@
 <ul>
 <li>A function is a generator function when its body contains <code>yield</code> and its declared return type is <code>Generator[T]</code>.</li>
 <li><code>yield expr</code> produces one element of type <code>T</code> for the surrounding generator.</li>
-<li><code>yield</code> must not appear in ordinary functions, except where another RFC explicitly gives <code>yield</code> special meaning for a distinct construct such as fixtures.</li>
+<li><code>yield</code> must not appear in ordinary functions, except where another RFC
+explicitly gives <code>yield</code> special meaning for a distinct construct such as fixtures.</li>
 <li>A generator function may use <code>return</code> to terminate iteration early, but <code>return value</code> is not part of this RFC.</li>
 </ul>
 <h3 id="generator-expressions-reference">Generator expressions reference<a class="headerlink" href="#generator-expressions-reference" title="Permanent link">&para;</a></h3>
 <ul>
-<li>A generator expression has the form <code>(expr for binding in iterable)</code> and yields a <code>Generator[T]</code>, where <code>T</code> is the type of <code>expr</code>.</li>
+<li>A generator expression has the form <code>(expr for binding in iterable)</code> and
+yields a <code>Generator[T]</code>, where <code>T</code> is the type of <code>expr</code>.</li>
 <li>The iterable source is consumed lazily as the resulting generator is advanced.</li>
-<li>A generator expression is semantically equivalent to an anonymous generator that iterates the source and yields <code>expr</code> for each bound element.</li>
+<li>A generator expression is semantically equivalent to an anonymous generator
+that iterates the source and yields <code>expr</code> for each bound element.</li>
 <li>Generator expressions are lazy; the list-comprehension surface remains the eager collection form.</li>
 </ul>
 <h3 id="typing">Typing<a class="headerlink" href="#typing" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Every yielded expression must type-check against the element type <code>T</code> in <code>Generator[T]</code>.</li>
 <li>Declaring <code>Generator[T]</code> without any reachable <code>yield</code> is a compile-time error.</li>
-<li>Using <code>yield</code> without a <code>Generator[T]</code> return type is a compile-time error unless another construct has already claimed <code>yield</code> semantics for that context.</li>
+<li>Using <code>yield</code> without a <code>Generator[T]</code> return type is a compile-time error
+unless another construct has already claimed <code>yield</code> semantics for that context.</li>
 </ul>
 <h3 id="consumption">Consumption<a class="headerlink" href="#consumption" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>for</code> loops must accept generator values anywhere they accept iterable values.</li>
-<li>Generator values may expose chainable helper methods such as <code>.map()</code>, <code>.filter()</code>, <code>.take()</code>, and <code>.collect()</code>, but this RFC does not yet freeze the full helper surface.</li>
+<li>Generator values may expose chainable helper methods such as <code>.map()</code>,
+  <code>.filter()</code>, <code>.take()</code>, and <code>.collect()</code>, but this RFC does not yet freeze
+the full helper surface.</li>
 <li>Exhausting a generator ends iteration normally.</li>
 </ul>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
@@ -4456,12 +4464,13 @@
 </ul>
 <p>This RFC therefore treats the declaration context, not the token alone, as the source of truth for <code>yield</code> meaning.</p>
 <h3 id="lowering-model">Lowering model<a class="headerlink" href="#lowering-model" title="Permanent link">&para;</a></h3>
-<p>The intended implementation strategy is to lower generator functions and generator expressions through Rust generator machinery such as <code>gen</code> blocks or an equivalent compiler-owned state-machine transformation. That lowering choice is not the language definition; the language contract is only that generators behave as lazy, resumable producers of <code>T</code>.</p>
+<p>The intended implementation strategy is to lower generator functions and generator expressions through a compiler-owned state-machine transformation or equivalent backend support. That lowering choice is not the language definition; the language contract is only that generators behave as lazy, resumable producers of <code>T</code>.</p>
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>for</code> loops consume generators the same way they consume other iterable sources.</li>
 <li>Recursive generators are valid as long as the yielded element type remains consistent.</li>
-<li>Generator expressions are the lazy counterpart to eager list-comprehension syntax rather than a separate collection feature.</li>
+<li>Generator expressions are the lazy counterpart to eager list-comprehension
+syntax rather than a separate collection feature.</li>
 </ul>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
 <p>The feature is additive. Existing functions, loops, and comprehensions keep their meaning.</p>
@@ -4469,39 +4478,45 @@
 <ol>
 <li><strong>Explicit <code>gen</code> keyword</strong></li>
 <li>
-<p>Clear, but more Rust-shaped than Incan needs. Requiring <code>Generator[T]</code> plus <code>yield</code> already communicates intent.</p>
+<p>Clear, but more backend-shaped than Incan needs. Requiring <code>Generator[T]</code>
+     plus <code>yield</code> already communicates intent.</p>
 </li>
 <li>
 <p><strong>Dedicated <code>generator</code> declaration form</strong></p>
 </li>
 <li>
-<p>Avoids overloading ordinary <code>def</code>, but splits the function surface for a feature that is still "a function producing values over time."</p>
+<p>Avoids overloading ordinary <code>def</code>, but splits the function surface for a
+     feature that is still "a function producing values over time."</p>
 </li>
 <li>
 <p><strong>Functions only, expressions later</strong></p>
 </li>
-<li>Not actually more principled. It would make the RFC weaker while still aiming at the same north-star generator model.</li>
+<li>Not actually more principled. It would make the RFC weaker while still
+     aiming at the same north-star generator model.</li>
 </ol>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>yield</code> now carries two meanings in the language, so diagnostics must be explicit.</li>
 <li>Generators introduce suspension semantics that users must learn alongside ordinary function control flow.</li>
-<li>Generator expressions add grammar and precedence surface that the parser and formatter must handle carefully.</li>
+<li>Generator expressions add grammar and precedence surface that the language and tooling must handle carefully.</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Parser</strong>: must accept <code>yield</code> in generator function bodies and parse generator-expression syntax.</li>
-<li><strong>Typechecker</strong>: must enforce that yielded expressions match <code>Generator[T]</code> and that generator declarations are internally consistent.</li>
-<li><strong>Lowering / IR emission</strong>: must preserve suspension points and lazy iteration semantics for both named and anonymous generator forms.</li>
-<li><strong>Stdlib / surface vocabulary</strong>: must define the <code>Generator</code> type and any stable helper methods promised by the language.</li>
-<li><strong>Formatter / tooling</strong>: should format multi-line generators predictably and explain generator-specific diagnostics clearly.</li>
+<li><strong>Language surface</strong>: <code>yield</code> must be valid in generator function bodies, and generator-expression syntax must be recognized.</li>
+<li><strong>Type system</strong>: yielded expressions must match <code>Generator[T]</code>, and generator declarations must remain internally consistent.</li>
+<li><strong>Execution model</strong>: implementations must preserve suspension points and lazy iteration semantics for both named and anonymous generator forms.</li>
+<li><strong>Stdlib / surface vocabulary</strong>: the language must define the <code>Generator</code> type and any stable helper methods it promises publicly.</li>
+<li><strong>Formatter / tooling</strong>: multi-line generators should format predictably, and diagnostics should explain generator-specific behavior clearly.</li>
 </ul>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Should generator expressions support the full comprehension clause surface immediately, including multiple <code>for</code> clauses and trailing <code>if</code> filters, or should this RFC only normatively require the single-<code>for</code> core form?</li>
-<li>What is the minimum <code>Generator</code> helper surface that Incan wants to standardize rather than inheriting opportunistically from backend details?</li>
+<li>Should generator expressions support the full comprehension clause surface
+immediately, including multiple <code>for</code> clauses and trailing <code>if</code> filters, or should this RFC only normatively require the single-<code>for</code> core form?</li>
+<li>What is the minimum <code>Generator</code> helper surface that Incan wants to
+standardize rather than inheriting opportunistically from backend details?</li>
 <li>Should <code>return value</code> inside a generator be rejected outright, or reserved for a future coroutine-oriented extension?</li>
-<li>How much of the fixture/generator <code>yield</code> distinction should be surfaced in linting or style guidance so that mixed mental models do not leak into user code?</li>
+<li>How much of the fixture/generator <code>yield</code> distinction should be surfaced in
+linting or style guidance so that mixed mental models do not leak into user code?</li>
 </ol>
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 

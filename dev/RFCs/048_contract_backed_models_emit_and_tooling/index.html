@@ -4204,9 +4204,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rust-interop" class="md-nav__link">
+  <a href="#interop" class="md-nav__link">
     <span class="md-ellipsis">
-      Rust interop
+      Interop
     </span>
   </a>
   
@@ -4370,153 +4370,219 @@
 <li>RFC 034 (<code>incan.pub</code> registry)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> #205</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/205</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC specifies how Incan treats <strong>canonical, machine-readable descriptions of row-shaped types</strong> as first-class <strong>structural contract metadata</strong> that can survive into <strong>built artifacts</strong> as well as feed compilation. Incan <code>model</code> is the language’s human-facing universal data-shape surface, so the toolchain must be able to take that canonical structural description, <strong>materialize</strong> an equivalent <strong>nominal</strong> type during compilation, guarantee <strong>the same interrogation and reflection story</strong> as handwritten models for the covered subset, and <strong>emit formatted Incan source</strong> as the readable view of that contract. The same metadata therefore supports both authoring-time workflows and <strong>artifact-time inspection</strong> in places such as registries, marketplaces, or package browsers, without requiring original source files to be present. This RFC does <strong>not</strong> standardize mutable governance or SLA policy; those remain a separate runtime concern.</p>
+<p>This RFC specifies how Incan treats canonical, machine-readable descriptions of row-shaped types as first-class structural contract metadata that can survive into built artifacts as well as feed compilation. Incan <code>model</code> is the language's human-facing universal data-shape surface, so the toolchain must be able to take that canonical structural description, materialize an equivalent nominal type during compilation, guarantee the same interrogation and reflection story as handwritten models for the covered subset, and emit formatted Incan source as the readable view of that contract. The same metadata therefore supports both authoring-time workflows and artifact-time inspection in places such as registries, marketplaces, or package browsers, without requiring original source files to be present. This RFC does not standardize mutable governance or SLA policy; those remain separate runtime concerns.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <ol>
-<li><strong>Canonical model description</strong> — A <strong>versioned</strong>, <strong>machine-readable</strong> bundle names one row type and provides a <strong>complete</strong>, <strong>ordered</strong> field list with <strong>Incan field types</strong>, nullability, and optional <strong>field-level metadata</strong> aligned with RFC 021 where applicable.</li>
-<li><strong>Artifact contract</strong> — Supported build and packaging flows <strong>may</strong> persist that canonical bundle into a built artifact so downstream tooling can inspect the contract <strong>without</strong> requiring the original <code>.incn</code> source checkout.</li>
-<li><strong>Materialization</strong> — At compile time, the implementation <strong>registers</strong> a nominal type derived from that bundle so that uses of the type behave like a handwritten <code>model</code> of the same shape for typing, lowering, and reflection within the guarantees of this RFC.</li>
-<li><strong>Emit (round-trip to source)</strong> — Given the <strong>same</strong> canonical bundle, the implementation <strong>must</strong> be able to produce <strong>valid, formatted Incan</strong> declaring a <code>model</code> whose source <strong>re-parses</strong> and <strong>typechecks</strong> to the same logical shape for the covered subset.</li>
-<li><strong>Tooling</strong> — The <strong>same emit pipeline</strong> used for standalone output <strong>must</strong> be available to <strong>CLI</strong>, <strong>artifact-inspection tooling</strong>, and <strong>LSP</strong> (or equivalent editor integration) through documented commands so users can preview or insert emitted source without a separate ad hoc formatter.</li>
-<li><strong>V1 scope boundary</strong> — This RFC defines the canonical bundle contract plus how Incan <strong>consumes</strong>, <strong>embeds</strong>, <strong>interrogates</strong>, and <strong>emits</strong> it once available; it does <strong>not</strong> introduce a new <code>.incn</code> syntax for declaring bundles inline, and producer-specific ways to obtain bundles remain companion-spec territory.</li>
+<li><strong>Canonical model description</strong>: a versioned, machine-readable bundle names
+one row type and provides a complete, ordered field list with Incan field types, nullability, and optional field-level metadata aligned with RFC 021 where applicable.</li>
+<li><strong>Artifact contract</strong>: supported build and packaging flows may persist that
+canonical bundle into a built artifact so downstream tooling can inspect the contract without requiring the original <code>.incn</code> source checkout.</li>
+<li><strong>Materialization</strong>: at compile time, the implementation registers a
+nominal type derived from that bundle so uses of the type behave like a handwritten <code>model</code> of the same shape for typing, lowering, and reflection within the guarantees of this RFC.</li>
+<li><strong>Emit (round-trip to source)</strong>: given the same canonical bundle, the
+implementation must be able to produce valid, formatted Incan declaring a
+   <code>model</code> whose source re-parses and typechecks to the same logical shape for
+the covered subset.</li>
+<li><strong>Tooling</strong>: the same emit pipeline used for standalone output must be
+available to CLI, artifact-inspection tooling, and LSP, or equivalent editor integration, through documented commands so users can preview or insert emitted source without a separate ad hoc formatter.</li>
+<li><strong>V1 scope boundary</strong>: this RFC defines the canonical bundle contract plus
+how Incan consumes, embeds, interrogates, and emits it once available. It does not introduce a new <code>.incn</code> syntax for declaring bundles inline, and producer-specific ways to obtain bundles remain companion-spec territory.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Hand-written <code>model</code> types are the most <strong>readable</strong> contract Incan offers, but many systems already carry row shape in <strong>serialized</strong> or <strong>generated</strong> form (schemas, plan outputs, registry artifacts). Today, making that shape a <strong>real Incan type</strong> often means <strong>duplicate maintenance</strong> or <strong>external codegen</strong> that drifts from the canonical bundle.</p>
+<p>Handwritten <code>model</code> types are the most readable contract Incan offers, but many systems already carry row shape in serialized or generated form, such as schemas, plan outputs, and registry artifacts. Turning that shape into a real Incan type often means duplicate maintenance or external codegen that drifts from the canonical bundle.</p>
 <p>That readability point matters because <code>model</code> is not merely a storage-schema helper. It is Incan’s universal structural data shape across pipelines, APIs, events, and other typed boundaries. If the canonical contract exists only as machine metadata, then the language loses its best human-facing representation exactly where people need to review and trust it.</p>
-<p>That problem becomes sharper once source code is no longer the thing being distributed. In a marketplace or registry flow, users may browse or download <strong>built artifacts</strong> rather than a source repository. If the contract only exists in handwritten source or ad hoc sidecar files, then the most important review surface disappears exactly where discovery and trust matter most.</p>
-<p>Authors, reviewers, and consumers therefore need a <strong>human-readable</strong> view of the structural contract <strong>inside the language</strong>, not only in YAML or binary interchange, so diffs, code review, marketplace inspection, and governance workflows stay <strong>idiomatic Incan</strong>.</p>
-<p>Finally, when a user is iterating on a <strong>pipeline-shaped</strong> or <strong>dataset-shaped</strong> surface, they should be able to <strong>materialize the output row type as Incan</strong> with <strong>minimal friction</strong>—including from the editor—to validate shape, attach tests, or align with policy, while that same canonical metadata remains suitable for later <strong>post-build interrogation</strong>.</p>
-<p>The RFC also needs a clear lifecycle boundary. Structural schema changes require rebuilds because they affect typing and code generation. Governance and contract policy changes such as PII tags, retention windows, or SLAs often do <strong>not</strong>; those are expected to evolve independently and should not be frozen into the artifact-level structural contract defined here.</p>
+<p>That problem becomes sharper once source code is no longer the thing being distributed. In a marketplace or registry flow, users may browse or download built artifacts rather than a source repository. If the contract only exists in handwritten source or ad hoc sidecar files, then the most important review surface disappears exactly where discovery and trust matter most.</p>
+<p>Authors, reviewers, and consumers therefore need a human-readable view of the structural contract inside the language, not only in YAML or binary interchange, so diffs, code review, marketplace inspection, and governance workflows stay idiomatic Incan.</p>
+<p>Finally, when a user is iterating on a pipeline-shaped or dataset-shaped surface, they should be able to materialize the output row type as Incan with minimal friction, including from the editor, to validate shape, attach tests, or align with policy, while that same canonical metadata remains suitable for later post-build interrogation.</p>
+<p>The RFC also needs a clear lifecycle boundary. Structural schema changes require rebuilds because they affect typing and code generation. Governance and contract policy changes such as PII tags, retention windows, or SLAs often do not. Those are expected to evolve independently and should not be frozen into the artifact-level structural contract defined here.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Make canonical model metadata durable enough to be embedded in or shipped alongside supported <strong>built artifacts</strong>, so downstream tools can inspect model contracts without original source.</li>
-<li>Define <strong>normative guarantees</strong> for <strong>contract-backed</strong> nominal types: <strong>typing</strong>, <strong>lowering</strong>, and <strong>interrogation</strong> (reflection, field metadata access where present) <strong>must</strong> match equivalent handwritten models for the <strong>field subset</strong> described by the contract.</li>
-<li>Require <strong>deterministic emit</strong>: same canonical input and emitter version <strong>must</strong> yield the <strong>same</strong> formatted Incan output (within the rules this RFC fixes for naming and field order).</li>
-<li>Require <strong>tooling parity</strong>: <strong>CLI</strong>, <strong>artifact-inspection tools</strong>, and <strong>LSP</strong> (or documented editor protocol) <strong>must</strong> expose actions to <strong>emit</strong> or <strong>preview</strong> Incan model source from the same canonical bundle contract.</li>
-<li>Align <strong>field-level metadata</strong> in the canonical bundle with <strong>RFC 021</strong> semantics where both apply, so governance and aliases do not fork between “source” and “contract” paths.</li>
-<li>Keep the <strong>structural</strong> contract layer narrow and stable enough that mutable runtime governance or SLA systems can enrich it later without redefining the artifact format.</li>
+<li>Make canonical model metadata durable enough to be embedded in, or shipped
+alongside, supported built artifacts so downstream tools can inspect model contracts without original source.</li>
+<li>Define normative guarantees for contract-backed nominal types: typing,
+lowering, and interrogation must match equivalent handwritten models for the covered field subset.</li>
+<li>Require deterministic emit: the same canonical input and emitter version must
+yield the same formatted Incan output within the rules this RFC fixes for naming and field order.</li>
+<li>Require tooling parity: CLI, artifact-inspection tools, and LSP, or a
+documented editor protocol, must expose actions to emit or preview Incan model source from the same canonical bundle contract.</li>
+<li>Align field-level metadata in the canonical bundle with RFC 021 semantics
+where both apply, so governance and aliases do not fork between “source” and “contract” paths.</li>
+<li>Keep the structural contract layer narrow and stable enough that mutable
+runtime governance or SLA systems can enrich it later without redefining the artifact format.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Specifying the <strong>full</strong> type inference algorithm for arbitrary relational pipelines in host libraries; <strong>companion specifications</strong> may define how a host <strong>produces</strong> a canonical bundle for a given pipeline. This RFC defines what Incan <strong>does</strong> once a bundle is available and how tooling <strong>surfaces</strong> emit.</li>
-<li>Reconstructing model source from arbitrary machine code, Rust types, or stripped binaries that do <strong>not</strong> carry this RFC’s canonical contract metadata.</li>
-<li>Standardizing <strong>runtime</strong> governance, classification, retention, ownership, or SLA refresh semantics. Those are related but distinct concerns and may be supplied by external systems or future RFCs.</li>
-<li><strong>Perfect</strong> round-trip of <strong>comments</strong>, <strong>import organization</strong>, or <strong>author-only</strong> formatting that is <strong>not</strong> represented in the canonical bundle.</li>
+<li>Specifying the full type inference algorithm for arbitrary relational
+pipelines in host libraries. Companion specifications may define how a host produces a canonical bundle for a given pipeline. This RFC defines what Incan does once a bundle is available and how tooling surfaces emit.</li>
+<li>Reconstructing model source from arbitrary machine code, backend types, or
+stripped binaries that do not carry this RFC’s canonical contract metadata.</li>
+<li>Standardizing runtime governance, classification, retention, ownership, or
+SLA refresh semantics. Those are related but distinct concerns and may be supplied by external systems or future RFCs.</li>
+<li>Perfect round-trip of comments, import organization, or author-only
+formatting that is not represented in the canonical bundle.</li>
 <li><strong>Runtime-only</strong> row types with <strong>no</strong> compile-time registration: this RFC targets <strong>compiled</strong> nominal types.</li>
-<li>Replacing handwritten <code>model</code> as the <strong>primary</strong> authoring style; contract-backed materialization is an <strong>additional</strong> path.</li>
+<li>Replacing handwritten <code>model</code> as the primary authoring style.
+Contract-backed materialization is an additional path.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<p>Authors and platform integrators treat a <strong>canonical row description</strong> as the <strong>source of truth</strong> for identity and interchange. The Incan toolchain can use that description in two main places: during compilation to <strong>materialize</strong> a real nominal type, and after packaging to <strong>inspect</strong> the contract carried by a built artifact.</p>
-<p>When someone needs to <strong>read</strong> or <strong>review</strong> the shape, they run <strong>emit</strong> (CLI, artifact browser, or editor command): the tool prints or inserts <strong>formatted Incan</strong>—the same <code>model</code> surface they already use for pipeline, application, and contract authoring—instead of a parallel YAML dialect.</p>
-<p>That means a registry or marketplace can show a user the contract for a published binary by reading embedded canonical metadata and rendering it as Incan <code>model</code> source. This is <strong>not</strong> reverse-engineering arbitrary binaries; it is a stable metadata contract that the build pipeline chose to ship.</p>
-<p>This view is intentionally the <strong>structural</strong> contract view. A registry or governance portal may choose to enrich that rendered model with live policy data such as PII classification, retention, freshness SLAs, or ownership, but those are <strong>adjacent runtime layers</strong>, not the embedded structural bundle itself.</p>
-<p>In v1, the guaranteed editor workflow starts from a <strong>materialized model symbol already known to the compiler</strong>. A companion producer such as InQL may later define richer contexts, such as “generate output model from selected pipeline,” but those host-specific entry points are <strong>extensions on top of</strong> this RFC’s core contract, not prerequisites for it.</p>
+<p>Authors and platform integrators treat a canonical row description as the source of truth for identity and interchange. The Incan toolchain can use that description in two main places: during compilation, to materialize a real nominal type, and after packaging, to inspect the contract carried by a built artifact.</p>
+<p>When someone needs to read or review the shape, they run emit through the CLI, an artifact browser, or an editor command. The tool prints or inserts formatted Incan, the same <code>model</code> surface they already use for pipeline, application, and contract authoring, instead of a parallel YAML dialect.</p>
+<p>That means a registry or marketplace can show a user the contract for a published binary by reading embedded canonical metadata and rendering it as Incan <code>model</code> source. This is not reverse-engineering arbitrary binaries. It is a stable metadata contract that the build pipeline chose to ship.</p>
+<p>This view is intentionally the structural contract view. A registry or governance portal may choose to enrich that rendered model with live policy data such as PII classification, retention, freshness SLAs, or ownership, but those are adjacent runtime layers, not the embedded structural bundle itself.</p>
+<p>In v1, the guaranteed editor workflow starts from a materialized model symbol already known to the compiler. A companion producer such as InQL may later define richer contexts, such as “generate output model from selected pipeline,” but those host-specific entry points are extensions on top of this RFC’s core contract, not prerequisites for it.</p>
 <h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
 <h3 id="canonical-model-description">Canonical model description<a class="headerlink" href="#canonical-model-description" title="Permanent link">&para;</a></h3>
 <ul>
-<li>A canonical description <strong>must</strong> include: a <strong>logical type name</strong>, a <strong>format or schema version</strong>, and an <strong>ordered</strong> list of fields.</li>
-<li>Each field <strong>must</strong> carry: a <strong>field name</strong>, an <strong>Incan type</strong> (or a documented mapping from an interchange type into an Incan type before registration), and <strong>nullability</strong> consistent with Incan’s model rules.</li>
-<li>Field entries <strong>may</strong> carry <strong>metadata</strong> keys and values compatible with RFC 021; if present, materialized types <strong>must</strong> expose the same metadata through the same reflection APIs as handwritten models.</li>
-<li>A canonical description <strong>must be complete</strong> for the fields it claims to describe. Bundles with <strong>unknown</strong>, <strong>opaque</strong>, or <strong>host-only</strong> field types are <strong>not supported</strong> by this RFC’s materialization path and <strong>must</strong> be rejected with a diagnostic rather than partially registered.</li>
-<li>The bundle format <strong>may</strong> include optional provenance or lineage metadata, but such metadata is <strong>non-semantic</strong> for type identity unless a companion specification explicitly states otherwise.</li>
-<li>The canonical description defined by this RFC is a <strong>structural</strong> contract only. It describes schema shape and stable field metadata, not mutable runtime governance or operational SLA state.</li>
+<li>A canonical description must include a logical type name, a format or schema
+version, and an ordered list of fields.</li>
+<li>Each field must carry a field name, an Incan type, or a documented mapping
+into an Incan type before registration, and nullability consistent with Incan’s model rules.</li>
+<li>Field entries may carry metadata keys and values compatible with RFC 021. If
+present, materialized types must expose the same metadata through the same reflection APIs as handwritten models.</li>
+<li>A canonical description must be complete for the fields it claims to
+describe. Bundles with unknown, opaque, or host-only field types are not supported by this RFC’s materialization path and must be rejected with a diagnostic rather than partially registered.</li>
+<li>The bundle format may include optional provenance or lineage metadata, but
+such metadata is non-semantic for type identity unless a companion specification explicitly says otherwise.</li>
+<li>The canonical description defined by this RFC is a structural contract only.
+It describes schema shape and stable field metadata, not mutable runtime governance or operational SLA state.</li>
 </ul>
 <h3 id="artifact-introspection-contract">Artifact introspection contract<a class="headerlink" href="#artifact-introspection-contract" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Supported build or packaging flows <strong>may</strong> embed the canonical bundle into a produced artifact or package payload in a documented location and encoding.</li>
-<li>Any artifact that claims support for RFC 048 introspection <strong>must</strong> carry the canonical bundle <strong>verbatim</strong> or in a losslessly recoverable container form.</li>
-<li>Artifact-level inspection <strong>must</strong> operate on embedded bundle metadata, <strong>not</strong> on reverse-engineering emitted machine code or inferred Rust layout.</li>
-<li>If an artifact does <strong>not</strong> carry RFC 048 model metadata, tooling <strong>must</strong> report that the artifact is <strong>not introspectable under this contract</strong> rather than fabricating a best-effort reconstruction.</li>
-<li>Artifact introspection under this RFC <strong>must not</strong> be interpreted as a promise that live governance, ownership, or SLA policy can be recovered from the artifact unless another specification explicitly embeds such runtime layers.</li>
+<li>Supported build or packaging flows may embed the canonical bundle into a
+produced artifact or package payload in a documented location and encoding.</li>
+<li>Any artifact that claims support for RFC 048 introspection must carry the
+canonical bundle verbatim, or in a losslessly recoverable container form.</li>
+<li>Artifact-level inspection must operate on embedded bundle metadata, not on
+reverse-engineering emitted machine code or inferred backend layout.</li>
+<li>If an artifact does not carry RFC 048 model metadata, tooling must report
+that the artifact is not introspectable under this contract rather than fabricating a best-effort reconstruction.</li>
+<li>Artifact introspection under this RFC must not be interpreted as a promise
+that live governance, ownership, or SLA policy can be recovered from the artifact unless another specification explicitly embeds such runtime layers.</li>
 </ul>
 <h3 id="materialization">Materialization<a class="headerlink" href="#materialization" title="Permanent link">&para;</a></h3>
 <ul>
-<li>For every supported canonical bundle in scope of a compilation, the implementation <strong>must</strong> introduce a <strong>nominal</strong> type that:<ul>
-<li>participates in <strong>name resolution</strong> and <strong>generic instantiation</strong> like a declared <code>model</code> of the same field layout;</li>
-<li><strong>lowers</strong> to Rust with the <strong>same structural guarantees</strong> as an equivalent handwritten model for those fields;</li>
-<li>supports <strong>the same interrogation APIs</strong> (e.g. field lists, schema-oriented accessors) as documented for handwritten models, for the covered subset.</li>
-</ul>
-</li>
-<li>If a bundle is <strong>ill-typed</strong> or <strong>incompatible</strong> with the containing program, the implementation <strong>must</strong> emit <strong>diagnostics</strong> at compile time; it <strong>must not</strong> silently drop fields.</li>
-<li>If a bundle’s logical type name <strong>collides</strong> with a user-declared type or another materialized type visible in the same compilation scope, the implementation <strong>must</strong> raise a <strong>hard compile-time error</strong>. V1 does <strong>not</strong> define automatic mangling, shadowing, or hidden aliases.</li>
+<li>For every supported canonical bundle in scope of a compilation, the
+implementation must introduce a nominal type that:</li>
+<li>participates in name resolution and generic instantiation like a declared
+    <code>model</code> of the same field layout;</li>
+<li>lowers with the same structural guarantees as an equivalent handwritten
+    model for those fields;</li>
+<li>supports the same interrogation APIs, such as field lists and
+    schema-oriented accessors, as documented for handwritten models for the
+    covered subset.</li>
+<li>If a bundle is ill-typed or incompatible with the containing program, the
+implementation must emit diagnostics at compile time and must not silently drop fields.</li>
+<li>If a bundle’s logical type name collides with a user-declared type or
+another materialized type visible in the same compilation scope, the implementation must raise a hard compile-time error. V1 does not define automatic mangling, shadowing, or hidden aliases.</li>
 </ul>
 <h3 id="emit-decompile-to-incan">Emit (decompile to Incan)<a class="headerlink" href="#emit-decompile-to-incan" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Emit <strong>must</strong> produce <strong>syntactically valid</strong> Incan that declares a <code>model</code> whose <strong>field set</strong> and <strong>types</strong> correspond to the bundle.</li>
-<li>Emit <strong>must</strong> use the <strong>project formatter</strong> conventions so output matches <strong><code>make fmt</code></strong> (or documented formatter behavior) for the same Incan version.</li>
-<li><strong>Field order</strong> in emitted source <strong>must</strong> follow the <strong>canonical order</strong> in the bundle.</li>
-<li>Emit <strong>must not</strong> invent or rewrite semantic metadata not present in the canonical bundle.</li>
-<li>Emit <strong>need not</strong> preserve <strong>comments</strong> or <strong>non-contract</strong> attributes; documentation <strong>should</strong> list what is <strong>lossy</strong>.</li>
+<li>Emit must produce syntactically valid Incan declaring a <code>model</code> whose field
+set and types correspond to the bundle.</li>
+<li>Emit must use the project formatter conventions so output matches <code>make fmt</code>,
+or documented formatter behavior, for the same Incan version.</li>
+<li>Field order in emitted source must follow the canonical order in the bundle.</li>
+<li>Emit must not invent or rewrite semantic metadata that is not present in the
+canonical bundle.</li>
+<li>Emit need not preserve comments or non-contract attributes. Documentation
+should list what is lossy.</li>
 </ul>
 <h3 id="determinism">Determinism<a class="headerlink" href="#determinism" title="Permanent link">&para;</a></h3>
 <ul>
-<li>For a fixed <strong>canonical bundle</strong>, <strong>emitter version</strong>, and <strong>formatter version</strong>, repeated emit <strong>must</strong> yield <strong>identical</strong> output (stable naming, stable spacing, stable field order per the chosen rule).</li>
+<li>For a fixed canonical bundle, emitter version, and formatter version,
+repeated emit must yield identical output, including stable naming, spacing, and field order under the chosen rule.</li>
 </ul>
 <h3 id="tooling-lsp">Tooling (LSP)<a class="headerlink" href="#tooling-lsp" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Implementations <strong>must</strong> provide:<ul>
-<li>at least one <strong>CLI</strong> command that emits Incan source for a named contract-backed model available to the build;</li>
-<li>at least one <strong>CLI</strong> or equivalent documented tooling path that emits Incan source from a supported built artifact carrying RFC 048 metadata; and</li>
-<li>at least one <strong>editor-accessible</strong> command that invokes the <strong>same emit pipeline</strong> for a selected or resolved <strong>materialized model symbol</strong>.</li>
+<li>Implementations must provide:</li>
+<li>at least one CLI command that emits Incan source for a named
+    contract-backed model available to the build;</li>
+<li>at least one CLI, or equivalently documented tooling path, that emits
+    Incan source from a supported built artifact carrying RFC 048 metadata;</li>
+<li>at least one editor-accessible command that invokes the same emit pipeline
+    for a selected or resolved materialized model symbol.</li>
+<li>Companion specifications may define additional editor contexts that first
+compute a canonical bundle from a host surface and then feed that bundle through the same emit pipeline. Such extensions must not weaken this RFC’s determinism or diagnostics rules.</li>
+<li>When emit is not available for the current context, whether because of an
+unsupported construct, an ambiguous symbol, an unavailable bundle, or an artifact without embedded metadata, the implementation must surface a clear diagnostic rather than fail silently.</li>
+<li>Commands that accept external bytes must document trust boundaries. Default
+behavior should prefer in-memory bundles that are already validated by the compiler or by a trusted host.</li>
 </ul>
-</li>
-<li>Companion specifications <strong>may</strong> define additional editor contexts that first compute a canonical bundle from a host surface and then feed that bundle through the same emit pipeline. Such extensions <strong>must not</strong> weaken this RFC’s determinism or diagnostics rules.</li>
-<li>When emit is <strong>not</strong> available for the current context (unsupported construct, ambiguous symbol, unavailable bundle, or artifact without embedded metadata), the implementation <strong>must</strong> surface a <strong>clear diagnostic</strong> rather than silent failure.</li>
-<li><strong>Security and reproducibility</strong>: commands that accept external bytes <strong>must</strong> document trust boundaries; default behavior <strong>should</strong> prefer <strong>in-memory</strong> bundles already validated by the compiler or a trusted host.</li>
-</ul>
-<h3 id="rust-interop">Rust interop<a class="headerlink" href="#rust-interop" title="Permanent link">&para;</a></h3>
+<h3 id="interop">Interop<a class="headerlink" href="#interop" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Materialized types <strong>must</strong> follow the same <strong>Rust export and import</strong> rules as equivalent handwritten models (RFC 005), within the limits of the represented field set.</li>
+<li>Materialized types must follow the same interop rules as equivalent
+handwritten models, within the limits of the represented field set.</li>
 </ul>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="relationship-to-handwritten-model">Relationship to handwritten <code>model</code><a class="headerlink" href="#relationship-to-handwritten-model" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Handwritten <code>model</code> remains the <strong>authoring</strong> default. Contract-backed types are <strong>additional</strong> symbols that <strong>must not</strong> change the meaning of existing declarations.</li>
-<li>If a <strong>name collision</strong> occurs between a materialized type and a user-declared type, the language <strong>must</strong> issue a <strong>hard error</strong>.</li>
+<li>Handwritten <code>model</code> remains the authoring default. Contract-backed types are
+additional symbols that must not change the meaning of existing declarations.</li>
+<li>If a name collision occurs between a materialized type and a user-declared
+type, the language must issue a hard error.</li>
 </ul>
 <h3 id="authoring-surface">Authoring surface<a class="headerlink" href="#authoring-surface" title="Permanent link">&para;</a></h3>
 <ul>
-<li>This RFC introduces <strong>no new Incan source syntax</strong> for inline bundle declarations, external bundle includes, or contract-backed <code>model</code> stubs.</li>
-<li>V1 bundle ingress is an implementation and tooling concern: a build, host integration, compiler-facing API, or artifact metadata reader makes canonical bundles available to the compilation or inspection tool, and this RFC specifies the behavior <strong>after that point</strong>.</li>
-<li>Future RFCs may add explicit source-level declaration syntax, but such syntax is <strong>not required</strong> to implement materialization, emit, or tooling parity under this RFC.</li>
+<li>This RFC introduces no new Incan source syntax for inline bundle
+declarations, external bundle includes, or contract-backed <code>model</code> stubs.</li>
+<li>V1 bundle ingress is an implementation and tooling concern. A build, host
+integration, compiler-facing API, or artifact metadata reader makes canonical bundles available to the compilation or inspection tool, and this RFC specifies the behavior after that point.</li>
+<li>Future RFCs may add explicit source-level declaration syntax, but such syntax
+is not required to implement materialization, emit, or tooling parity under this RFC.</li>
 </ul>
 <h3 id="identity-and-versioning">Identity and versioning<a class="headerlink" href="#identity-and-versioning" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Canonical bundles <strong>should</strong> carry a <strong>logical identity</strong> (e.g. hash or versioned id) for platform use. This RFC <strong>does not</strong> mandate a particular identity scheme but <strong>requires</strong> that <strong>emitter</strong> and <strong>materialization</strong> <strong>do not</strong> silently ignore <strong>version</strong> fields when they affect field layout.</li>
+<li>Canonical bundles should carry a logical identity, such as a hash or
+versioned id, for platform use. This RFC does not mandate a particular identity scheme, but it does require that emitter and materialization do not silently ignore version fields when they affect field layout.</li>
 </ul>
 <h3 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Type identity for contract-backed models in v1 is determined by the compilation-visible <strong>logical type name</strong> plus the accepted bundle contents under the active bundle format version.</li>
-<li>Optional provenance metadata may help tooling explain where a bundle came from, but it <strong>must not</strong> change emitted field order, emitted field spelling, or reflection results for represented fields.</li>
-<li>Emitted Incan source is a <strong>readable projection</strong> of canonical bundle metadata. It is not the source of truth and need not imply that the original authored source file existed or is available.</li>
-<li>Structural contract metadata is expected to be <strong>build-stable</strong>. Runtime governance or SLA metadata is expected to evolve on a different lifecycle and is therefore outside the type identity and emit guarantees of this RFC.</li>
+<li>Type identity for contract-backed models in v1 is determined by the
+compilation-visible logical type name plus the accepted bundle contents under the active bundle format version.</li>
+<li>Optional provenance metadata may help tooling explain where a bundle came
+from, but it must not change emitted field order, emitted field spelling, or reflection results for represented fields.</li>
+<li>Emitted Incan source is a readable projection of canonical bundle metadata.
+It is not the source of truth and does not imply that the original authored source file existed or is available.</li>
+<li>Structural contract metadata is expected to be build-stable. Runtime
+governance or SLA metadata is expected to evolve on a different lifecycle and is therefore outside the type identity and emit guarantees of this RFC.</li>
 </ul>
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>RFC 021</strong>: field metadata present in a bundle must surface through the same reflection APIs and emitted syntax used for handwritten models.</li>
-<li><strong>RFC 005</strong>: Rust interop behavior for materialized models must match equivalent handwritten models for the represented field set.</li>
-<li><strong>RFC 015</strong>: any CLI exposure for emit should fit the existing project lifecycle/tooling conventions rather than inventing a disconnected formatter path.</li>
-<li><strong>RFC 034</strong>: registry or marketplace workflows may expose emitted Incan as the human-readable contract view for published artifacts that carry RFC 048 metadata.</li>
-<li><strong>Governance / policy layers</strong>: runtime classifications, retention rules, ownership, and SLAs may enrich the structural model view in higher-level products, but they are not part of this RFC’s embedded structural contract unless a future RFC says otherwise.</li>
-<li><strong>Companion producer specs</strong>: systems such as InQL may define how canonical bundles are derived, named, and validated before they reach Incan. Those specs are upstream of this RFC and must produce bundles that satisfy this RFC's completeness and determinism requirements.</li>
+<li><strong>RFC 021</strong>: field metadata present in a bundle must surface through the same
+reflection APIs and emitted syntax used for handwritten models.</li>
+<li><strong>RFC 005</strong>: interop behavior for materialized models must match equivalent
+handwritten models for the represented field set.</li>
+<li><strong>RFC 015</strong>: any CLI exposure for emit should fit existing project
+lifecycle and tooling conventions rather than inventing a disconnected formatter path.</li>
+<li><strong>RFC 034</strong>: registry or marketplace workflows may expose emitted Incan as
+the human-readable contract view for published artifacts that carry RFC 048 metadata.</li>
+<li><strong>Governance / policy layers</strong>: runtime classifications, retention rules,
+ownership, and SLAs may enrich the structural model view in higher-level products, but they are not part of this RFC’s embedded structural contract unless a future RFC says otherwise.</li>
+<li><strong>Companion producer specs</strong>: systems such as InQL may define how canonical
+bundles are derived, named, and validated before they reach Incan. Those specs are upstream of this RFC and must produce bundles that satisfy this RFC’s completeness and determinism requirements.</li>
 </ul>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
 <ul>
 <li>The feature is additive for existing handwritten Incan source.</li>
-<li>Projects adopting contract-backed models should treat emitted Incan as a reviewable artifact, not as a second source of truth; the canonical bundle remains authoritative for the materialized path.</li>
-<li>Projects that want artifact-time inspection must ensure their packaging flow preserves RFC 048 metadata in supported build outputs.</li>
-<li>Because V1 rejects partial or opaque bundles, existing producer integrations may need to tighten their schema export before they can participate in materialization.</li>
-<li>Teams that already maintain separate runtime governance systems do <strong>not</strong> need to freeze those systems into RFC 048 bundles; they can continue treating artifact introspection and live policy enrichment as separate layers.</li>
+<li>Projects adopting contract-backed models should treat emitted Incan as a
+reviewable artifact, not as a second source of truth. The canonical bundle remains authoritative for the materialized path.</li>
+<li>Projects that want artifact-time inspection must ensure their packaging flow
+preserves RFC 048 metadata in supported build outputs.</li>
+<li>Because V1 rejects partial or opaque bundles, existing producer integrations
+may need to tighten their schema export before they can participate in materialization.</li>
+<li>Teams that already maintain separate runtime governance systems do not need
+to freeze those systems into RFC 048 bundles. They can continue treating artifact introspection and live policy enrichment as separate layers.</li>
 </ul>
 <h3 id="companion-specifications">Companion specifications<a class="headerlink" href="#companion-specifications" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Host libraries or pipeline surfaces that <strong>produce</strong> canonical bundles <strong>should</strong> reference this RFC for <strong>Incan-side</strong> behavior and <strong>may</strong> define <strong>producer</strong> rules separately.</li>
+<li>Host libraries or pipeline surfaces that produce canonical bundles should
+reference this RFC for Incan-side behavior and may define producer rules separately.</li>
 </ul>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
@@ -4528,46 +4594,57 @@
 <p><strong>External codegen only</strong></p>
 </li>
 <li>
-<p>Works without language changes but <strong>forks</strong> formatting rules, <strong>drifts</strong> from compiler upgrades, and <strong>weakens</strong> editor integration.</p>
+<p>Works without language changes but forks formatting rules, drifts from
+     compiler upgrades, and weakens editor integration.</p>
 </li>
 <li>
 <p><strong>Reflection-only “anonymous” row types without nominal materialization</strong></p>
 </li>
-<li>Insufficient for <strong>generic</strong> APIs, <strong>Rust interop</strong>, and <strong>stable</strong> naming in large codebases.</li>
+<li>Insufficient for generic APIs, interop, and stable naming in large
+     codebases.</li>
 </ol>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Two paths</strong> to the “same” shape (handwritten vs contract-backed) require <strong>discipline</strong> and <strong>clear</strong> diagnostics to avoid drift.</li>
-<li><strong>Artifact metadata retention</strong> increases packaging responsibility: published outputs must carry canonical bundles if they want marketplace-grade introspection.</li>
-<li><strong>Layer separation</strong> means users may encounter both an embedded structural contract and separate live governance overlays; products need to present that distinction clearly.</li>
-<li><strong>Deterministic emit</strong> can <strong>surprise</strong> authors who expect <strong>pretty</strong> custom ordering unless the rules are <strong>explicit</strong>.</li>
+<li><strong>Two paths</strong> to the “same” shape, handwritten versus contract-backed,
+require discipline and clear diagnostics to avoid drift.</li>
+<li><strong>Artifact metadata retention</strong> increases packaging responsibility. Published
+outputs must carry canonical bundles if they want marketplace-grade introspection.</li>
+<li><strong>Layer separation</strong> means users may encounter both an embedded structural
+contract and separate live governance overlays. Products need to present that distinction clearly.</li>
+<li><strong>Deterministic emit</strong> can surprise authors who expect pretty custom ordering
+unless the rules are explicit.</li>
 <li><strong>Tooling surface area</strong> grows (commands, context detection, error messages).</li>
 </ul>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p><em>(Non-normative.)</em> A single <strong>shared</strong> “bundle → AST → formatter” pipeline feeding <strong>compiler materialization</strong>, <strong>CLI</strong>, <strong>artifact inspection</strong>, and <strong>LSP</strong> reduces divergence. <strong>Materialization</strong> likely shares <strong>lowering</strong> with declared models once field lists are <strong>normalized</strong> to the same internal representation. Artifact inspection should reuse the exact same post-bundle pipeline after extracting canonical metadata from the packaged output.</p>
+<p><em>(Non-normative.)</em> A single shared “bundle -&gt; normalized model -&gt; formatter”
+pipeline feeding materialization, CLI, artifact inspection, and LSP reduces divergence. Materialization should reuse the same normalized model shape used for declared models wherever practical. Artifact inspection should reuse that same post-bundle path after extracting canonical metadata from packaged output.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Parser / AST</strong>: parser and frontend data structures <strong>must not</strong> require new user-facing syntax for v1; they <strong>may</strong> need internal representations for compiler-synthesized materialized model declarations.</li>
-<li><strong>Build / packaging</strong>: supported artifact formats that claim RFC 048 introspection <strong>must</strong> preserve canonical bundle metadata in a documented, versioned form so downstream tools can recover it losslessly.</li>
-<li><strong>Typechecker / Symbol resolution</strong>: registration of <strong>contract-backed</strong> nominal types <strong>must</strong> enforce completeness, collision errors, and parity with handwritten model interrogation for represented fields.</li>
-<li><strong>IR Lowering / Emission</strong>: lowering and source emission <strong>should</strong> share the same normalized internal model shape used for handwritten <code>model</code> declarations wherever possible.</li>
+<li><strong>Language surface</strong>: v1 should not require new user-facing syntax; contract-backed models remain a tooling and artifact capability built around ordinary <code>model</code> semantics.</li>
+<li><strong>Build / packaging</strong>: supported artifact formats that claim RFC 048 introspection must preserve canonical bundle metadata in a documented, versioned form so downstream tools can recover it losslessly.</li>
+<li><strong>Type system</strong>: registration of contract-backed nominal types must enforce completeness, collision errors, and parity with handwritten model interrogation for represented fields.</li>
+<li><strong>Shared model pipeline</strong>: materialization and emitted source should reuse the same normalized model shape used for handwritten <code>model</code> declarations wherever practical.</li>
 <li><strong>Formatter</strong>: emitted <code>model</code> text <strong>must</strong> be idempotent under the project formatter.</li>
-<li><strong>CLI / tooling</strong>: tooling <strong>must</strong> expose deterministic emit for named materialized model symbols and for supported artifacts carrying embedded bundle metadata, and it <strong>must</strong> document trust boundaries for any external bundle ingress.</li>
-<li><strong>LSP / Tooling</strong>: editor commands <strong>must</strong> call the shared emit pipeline and <strong>must</strong> produce clear diagnostics when the current symbol or context cannot provide a valid bundle.</li>
-<li><strong>Registry / marketplace consumers</strong>: downstream viewers <strong>should</strong> treat emitted Incan as a rendered projection of embedded metadata and <strong>must not</strong> assume it was reconstructed from full source.</li>
-<li><strong>Governance / runtime policy consumers</strong>: any higher-level system that overlays live classifications or SLAs onto an RFC 048 model view <strong>should</strong> identify those overlays as runtime data distinct from the embedded structural contract.</li>
+<li><strong>CLI / tooling</strong>: tooling must expose deterministic emit for named materialized model symbols and for supported artifacts carrying embedded bundle metadata, and it must document trust boundaries for any external bundle ingress.</li>
+<li><strong>LSP / tooling</strong>: editor commands must call the shared emit path and must produce clear diagnostics when the current symbol or context cannot provide a valid bundle.</li>
+<li><strong>Registry / marketplace consumers</strong>: downstream viewers should treat emitted Incan as a rendered projection of embedded metadata and must not assume it was reconstructed from full source.</li>
+<li><strong>Governance / runtime policy consumers</strong>: any higher-level system that overlays live classifications or SLAs onto an RFC 048 model view should identify those overlays as runtime data distinct from the embedded structural contract.</li>
 <li><strong>Stdlib / Runtime</strong>: reflection and metadata surfaces <strong>must</strong> stay consistent with RFC 021 for represented fields.</li>
 </ul>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ol>
-<li><strong>Artifact classes</strong>: Which shipped artifact classes <strong>must</strong> carry RFC 048 metadata in v1? Is introspection guaranteed for packaged Incan artifacts only, for compiled binaries directly, or for both?</li>
-<li><strong>Model selection for embedding</strong>: Which models belong in the artifact contract surface? All materialized models, only public/exported models, or only models explicitly marked for publication?</li>
-<li><strong>Artifact discovery contract</strong>: What is the v1 documented location and encoding for embedded bundles so CLI, registry, and third-party tooling can interoperate without implementation-specific conventions?</li>
-<li><strong>Logical identity</strong>: Is the logical type name alone sufficient for artifact-facing identity, or should v1 require an additional stable model identifier to support registry diffing and compatibility views?</li>
-<li><strong>Companion producer boundary</strong>: What is the minimum producer-side contract a host such as InQL must satisfy before its derived bundles are considered publishable artifact metadata rather than editor-only transient output?</li>
+<li><strong>Artifact classes</strong>: which shipped artifact classes must carry RFC 048
+metadata in v1? Is introspection guaranteed for packaged Incan artifacts only, for compiled binaries directly, or for both?</li>
+<li><strong>Model selection for embedding</strong>: which models belong in the artifact
+contract surface? All materialized models, only public or exported models, or only models explicitly marked for publication?</li>
+<li><strong>Artifact discovery contract</strong>: what is the v1 documented location and
+encoding for embedded bundles so CLI, registry, and third-party tooling can interoperate without implementation-specific conventions?</li>
+<li><strong>Logical identity</strong>: is the logical type name alone sufficient for
+artifact-facing identity, or should v1 require an additional stable model identifier to support registry diffing and compatibility views?</li>
+<li><strong>Companion producer boundary</strong>: what is the minimum producer-side contract
+a host such as InQL must satisfy before its derived bundles are considered publishable artifact metadata rather than editor-only transient output?</li>
 </ol>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
