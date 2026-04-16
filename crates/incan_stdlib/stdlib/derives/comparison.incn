@@ -1,5 +1,3 @@
-rust.module("incan_stdlib::derives::comparison")
-
 """
 Comparison and hashing traits: Eq, Ord, Hash
 See docs/derives/comparison.md for detailed documentation.
@@ -41,7 +39,6 @@ trait Eq:
             return self.id == other.id  # Only compare by id
     ```
     """
-    @rust.extern
     def __eq__(self, other: Self) -> bool: ...
     
     def __ne__(self, other: Self) -> bool:
@@ -82,7 +79,6 @@ trait Ord with Eq:
             return self.score < other.score  # Only compare by score
     ```
     """
-    @rust.extern
     def __lt__(self, other: Self) -> bool: ...
     
     def __le__(self, other: Self) -> bool:
@@ -129,5 +125,4 @@ trait Hash:
     ⚠️ Important: If you override `__eq__`, you must also override `__hash__`
     to ensure equal objects have equal hashes. Otherwise Set/Dict lookups break.
     """
-    @rust.extern
     def __hash__(self) -> int: ...

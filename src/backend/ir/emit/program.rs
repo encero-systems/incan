@@ -309,10 +309,6 @@ impl<'a> IrEmitter<'a> {
             (false, false) => {}
         }
 
-        if *self.needs_serde.borrow() {
-            items.push(quote! { use serde::{Serialize, Deserialize}; });
-        }
-
         // RFC 052: force declaration-order static initialization once per module before any static access helper call.
         if !static_names.is_empty() {
             let force_calls: Vec<TokenStream> = static_names

@@ -1,0 +1,30 @@
+"""RFC 023: Runtime parity check for migrated stdlib surfaces."""
+
+from std.serde.json import Serialize
+
+
+@derive(Clone, Eq, Ord, Default)
+model Score with Serialize:
+    value: int = 0
+    player: str = ""
+
+
+def clone_matches[T with (Clone, Eq)](value: T, expected: T) -> bool:
+    cloned = value.clone()
+    return cloned == expected
+
+
+def main() -> None:
+    base = Score(value=1, player="Ada")
+    same = Score(value=1, player="Ada")
+    later = Score(value=2, player="Bob")
+    empty = Score.default()
+
+    println(base.to_json())
+    println(base.__class_name__())
+    println(clone_matches(base, same))
+    println(base < later)
+    println(empty.to_json())
+
+    for info in base.__fields__():
+        println(f"field:{info.name}|wire:{info.wire_name}|type:{info.type_name}|default:{info.has_default}")

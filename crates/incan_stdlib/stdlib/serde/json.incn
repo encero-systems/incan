@@ -30,8 +30,9 @@ trait Serialize:
     """
     Enables serialization of a type to a JSON string.
 
-    When derived, all fields are serialized in declaration order. Use `@derive(Serialize)` or adopt via `with Serialize`
-    and implement `to_json` for custom behavior.
+    When derived, all fields are serialized in declaration order. Importing `Serialize` and adopting it with
+    `with Serialize` also provides this default method body, which uses the compiler's direct serde interop path.
+    Override `to_json` only when you need custom serialization behavior.
 
     Example:
 
@@ -46,8 +47,8 @@ trait Serialize:
     println(entry.to_json())
     ```
     """
-    @rust.extern
-    def to_json(self) -> str: ...
+    def to_json(self) -> str:
+        return json_stringify(self)
 
 
 trait Deserialize:

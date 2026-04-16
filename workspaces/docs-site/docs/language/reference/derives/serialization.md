@@ -13,6 +13,7 @@ See also:
 
 - **Derive**: `@derive(Serialize)`
 - **API**: `json_stringify(value) -> str`
+- **Trait import**: `from std.serde.json import Serialize` + `with Serialize` gives a default `.to_json()` implementation
 
 ```incan
 @derive(Serialize)
@@ -25,12 +26,24 @@ def main() -> None:
     println(json_stringify(u))
 ```
 
+```incan
+from std.serde.json import Serialize
+
+model User with Serialize:
+    name: str
+    age: int
+
+def main() -> None:
+    println(User(name="Alice", age=30).to_json())
+```
+
 ---
 
 ## Deserialize
 
 - **Derive**: `@derive(Deserialize)`
 - **API**: `T.from_json(input: str) -> Result[T, str]`
+- **Trait import**: `with Deserialize` still requires either `@derive(Deserialize)` or an explicit `from_json()` implementation
 
 ```incan
 @derive(Deserialize)

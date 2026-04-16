@@ -1,5 +1,3 @@
-rust.module("incan_stdlib::derives::string")
-
 """
 String representation traits: Debug and Display
 See docs/derives/string_representation.md for detailed documentation.
@@ -25,7 +23,6 @@ trait Debug:
     println(f"{user:?}")  # User { name: "Alice", age: 30 }
     ```
     """
-    @rust.extern
     def __repr__(self) -> str: ...
 
 

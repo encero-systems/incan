@@ -515,6 +515,7 @@ def main() -> None:
 **API**:
 
 - `json_stringify(value)` → `str`
+- `value.to_json()` → `str` when the type imports and adopts `std.serde.json.Serialize`
 
 ```incan
 @derive(Serialize)
@@ -527,6 +528,17 @@ def main() -> None:
     println(json_stringify(u))
 ```
 
+```incan
+from std.serde.json import Serialize
+
+model User with Serialize:
+    name: str
+    age: int
+
+def main() -> None:
+    println(User(name="Alice", age=30).to_json())
+```
+
 ---
 
 ## Deserialize
@@ -536,6 +548,8 @@ def main() -> None:
 **API**:
 
 - `T.from_json(input: str)` → `Result[T, str]`
+
+Note: explicit `with Deserialize` adoption still needs either `@derive(Deserialize)` or a user-defined `from_json(input)` implementation.
 
 ```incan
 @derive(Deserialize)
@@ -622,6 +636,7 @@ Note:
 
 - Field metadata like `[alias="..."]` and `[description="..."]` is **model-only**. For `class`, `FieldInfo.alias`
   and `FieldInfo.description` are always `None` and `FieldInfo.wire_name == FieldInfo.name`.
+- `u.__fields__()` is typed as `FrozenList[FieldInfo]` directly by the compiler. Import `FieldInfo` only when you need to spell that type in an annotation.
 
 See [Reflection (Reference)](reflection.md) for `FieldInfo` structure details.
 
@@ -634,3 +649,13 @@ def main() -> None:
     println(u.__class_name__())
     println([f.name for f in u.__fields__()])
 ```
+
+## Stdlib derive boundaries
+
+Traits under `std.derives.*` are source-defined capability contracts.
+
+- `Clone`, `Default`, `Debug`, `Eq`, `Ord`, and `Hash` are declared in `.incn` source.
+- Implementations for adopting types come from ordinary Rust `#[derive(...)]` expansion during codegen.
+- These traits are not modeled as runtime helper calls through `incan_stdlib::derives::*`.
+
+For the curated stdlib-family view, see [Standard library reference: `std.derives.*`](stdlib/derives.md).

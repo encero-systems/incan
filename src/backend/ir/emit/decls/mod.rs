@@ -197,8 +197,10 @@ impl<'a> IrEmitter<'a> {
         alias: &Option<String>,
         items: &[super::super::decl::IrImportItem],
     ) -> Result<TokenStream, EmitError> {
-        // Skip serde imports if we're already importing them automatically.
-        // Covers both `from serde import ...` and `from std.serde.json import Serialize, Deserialize`.
+        // Skip redundant external serde imports when derive emission already uses fully qualified `serde::...` paths.
+        //
+        // Do not skip `std.serde.json` imports here: explicit trait adoption (`with Serialize`) needs the Incan stdlib
+        // trait in scope as a distinct item from Rust's `serde::Serialize`.
         if *self.needs_serde.borrow() {
             let is_serde_trait = items.iter().any(|item| {
                 matches!(
@@ -206,8 +208,7 @@ impl<'a> IrEmitter<'a> {
                     Some(DeriveId::Serialize | DeriveId::Deserialize)
                 )
             });
-            let is_serde_import_path = (path.len() == 1 && path[0] == "serde")
-                || (path.len() >= 2 && path[0] == stdlib::STDLIB_ROOT && path[1] == "serde");
+            let is_serde_import_path = path.len() == 1 && path[0] == "serde";
             if is_serde_trait && is_serde_import_path {
                 return Ok(quote! {});
             }

@@ -579,6 +579,11 @@ impl AstLowering {
                                 for (trait_name, trait_type_args) in
                                     self.trait_impl_targets_for_adopted_trait(trait_ref.node.as_str(), &m.type_params)
                                 {
+                                    if !self.trait_decls.contains_key(&trait_name)
+                                        && Self::is_stdlib_serde_trait_name(&trait_name)
+                                    {
+                                        continue;
+                                    }
                                     match self.lower_trait_impl(
                                         &struct_ir.name,
                                         &m.type_params,
@@ -632,6 +637,11 @@ impl AstLowering {
                                 for (trait_name, trait_type_args) in
                                     self.trait_impl_targets_for_adopted_trait(trait_ref.node.as_str(), &c.type_params)
                                 {
+                                    if !self.trait_decls.contains_key(&trait_name)
+                                        && Self::is_stdlib_serde_trait_name(&trait_name)
+                                    {
+                                        continue;
+                                    }
                                     match self.lower_trait_impl(
                                         &struct_ir.name,
                                         &c.type_params,

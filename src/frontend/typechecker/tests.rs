@@ -20,6 +20,7 @@ use incan_core::interop::{
 };
 use incan_core::lang::surface::constructors::{self as surface_constructors, ConstructorId};
 use incan_core::lang::traits::{self as builtin_traits, TraitId};
+use incan_core::lang::types::collections::CollectionTypeId;
 use std::collections::HashMap;
 #[cfg(feature = "rust_inspect")]
 use std::fs;
@@ -2041,6 +2042,113 @@ def foo(fields: List[FieldInfo]) -> None:
   pass
 "#;
     assert_check_ok(source);
+}
+
+#[test]
+fn test_reflection_magic_methods_record_surface_types() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model User:
+  name: str
+
+def describe(u: User) -> None:
+  class_name = u.__class_name__()
+  fields = u.__fields__()
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+    assert!(
+        info.expr_types.values().any(|t| matches!(t, ResolvedType::Str)),
+        "expected __class_name__() to resolve to str, got {:?}",
+        info.expr_types
+    );
+    assert!(
+        info.expr_types.values().any(|t| {
+            matches!(
+                t,
+                ResolvedType::FrozenList(inner)
+                    if matches!(inner.as_ref(), ResolvedType::Named(name) if name == "FieldInfo")
+            )
+        }),
+        "expected __fields__() to resolve to FrozenList[FieldInfo], got {:?}",
+        info.expr_types
+    );
+    Ok(())
+}
+
+#[test]
+fn test_reflection_fieldinfo_members_typecheck_without_explicit_import() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model User:
+  name [alias="display_name"]: str = "Alice"
+
+def describe(u: User) -> None:
+  for info in u.__fields__():
+    type_name = info.type_name
+    alias = info.alias
+    extra = info.extra
+    has_default = info.has_default
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+    assert!(
+        info.expr_types.values().any(|t| matches!(t, ResolvedType::FrozenStr)),
+        "expected FieldInfo.name/type_name access to resolve to FrozenStr, got {:?}",
+        info.expr_types
+    );
+    assert!(
+        info.expr_types.values().any(|t| {
+            matches!(
+                t,
+                ResolvedType::Generic(name, args)
+                    if crate::frontend::typechecker::helpers::collection_type_id(name.as_str())
+                        == Some(CollectionTypeId::Option)
+                        && args.len() == 1
+                        && matches!(args.first(), Some(ResolvedType::FrozenStr))
+            )
+        }),
+        "expected FieldInfo.alias access to resolve to Option[FrozenStr], got {:?}",
+        info.expr_types
+    );
+    assert!(
+        info.expr_types.values().any(|t| {
+            matches!(
+                t,
+                ResolvedType::FrozenDict(key, value)
+                    if matches!(key.as_ref(), ResolvedType::FrozenStr)
+                        && matches!(value.as_ref(), ResolvedType::FrozenStr)
+            )
+        }),
+        "expected FieldInfo.extra access to resolve to FrozenDict[FrozenStr, FrozenStr], got {:?}",
+        info.expr_types
+    );
+    assert!(
+        info.expr_types.values().any(|t| matches!(t, ResolvedType::Bool)),
+        "expected FieldInfo.has_default access to resolve to bool, got {:?}",
+        info.expr_types
+    );
+    Ok(())
+}
+
+#[test]
+fn test_newtype_class_name_magic_method_is_not_assumed() {
+    let source = r#"
+type UserId = newtype int
+
+def describe(user_id: UserId) -> str:
+  return user_id.__class_name__()
+"#;
+    let result = check_str(source);
+    assert!(result.is_err());
 }
 
 // ============================================================================
@@ -5571,6 +5679,20 @@ def dup_bar(e: Issue193Bar) -> Issue193Bar:
 
 def main() -> None:
   pass
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_explicit_serialize_trait_adoption_allows_default_to_json() {
+    let source = r#"
+from std.serde.json import Serialize
+
+model Payload with Serialize:
+  value: int
+
+def encode(payload: Payload) -> str:
+  return payload.to_json()
 "#;
     assert_check_ok(source);
 }

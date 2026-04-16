@@ -13,6 +13,33 @@ use super::super::{EmitError, IrEmitter};
 use super::{ZEN_TEXT, join_path_tokens};
 
 impl<'a> IrEmitter<'a> {
+    /// Rust trait methods that return `Self` from an associated function position need `where Self: Sized`.
+    ///
+    /// Walk the emitted return type recursively so wrappers like `Result<Self, E>` or function types preserve the same
+    /// constraint.
+    fn trait_method_return_mentions_self(ty: &IrType) -> bool {
+        match ty {
+            IrType::SelfType => true,
+            IrType::List(inner)
+            | IrType::Set(inner)
+            | IrType::Option(inner)
+            | IrType::Ref(inner)
+            | IrType::RefMut(inner) => Self::trait_method_return_mentions_self(inner),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                Self::trait_method_return_mentions_self(key) || Self::trait_method_return_mentions_self(value)
+            }
+            IrType::Tuple(items) | IrType::NamedGeneric(_, items) => {
+                items.iter().any(Self::trait_method_return_mentions_self)
+            }
+            IrType::Function { params, ret } => {
+                params.iter().any(Self::trait_method_return_mentions_self)
+                    || Self::trait_method_return_mentions_self(ret)
+            }
+            IrType::ImplTrait(bound) => bound.type_args.iter().any(Self::trait_method_return_mentions_self),
+            _ => false,
+        }
+    }
+
     pub(in crate::backend::ir::emit) fn emit_function(
         &self,
         func: &super::super::super::decl::IrFunction,
@@ -498,10 +525,16 @@ impl<'a> IrEmitter<'a> {
 
         // RFC 023: emit generic type parameters with trait bounds.
         let generics = self.emit_type_params(&func.type_params);
+        let has_self_receiver = func.params.iter().any(|param| param.is_self);
+        let sized_where = if !has_self_receiver && Self::trait_method_return_mentions_self(&func.return_type) {
+            quote! { where Self: Sized }
+        } else {
+            quote! {}
+        };
 
         if func.body.is_empty() {
             Ok(quote! {
-                fn #name #generics (#(#params),*) #ret;
+                fn #name #generics (#(#params),*) #ret #sized_where;
             })
         } else {
             *self.current_function_return_type.borrow_mut() = Some(func.return_type.clone());
@@ -509,7 +542,7 @@ impl<'a> IrEmitter<'a> {
             *self.current_function_return_type.borrow_mut() = None;
 
             Ok(quote! {
-                fn #name #generics (#(#params),*) #ret {
+                fn #name #generics (#(#params),*) #ret #sized_where {
                     #(#body_stmts)*
                 }
             })

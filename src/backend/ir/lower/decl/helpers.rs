@@ -253,6 +253,38 @@ impl AstLowering {
         (derives, derive_rust_modules)
     }
 
+    /// Forward explicit `with Serialize` / `with Deserialize` adoption into Rust derive emission.
+    ///
+    /// This keeps direct-interop serde trait defaults honest: a type that adopts the stdlib serde trait surface must
+    /// also satisfy the matching Rust-side serde capability when codegen expands those methods.
+    pub(in crate::backend::ir::lower) fn extend_derives_with_adopted_serde_traits(
+        &self,
+        derives: &mut Vec<String>,
+        trait_bounds: &[Spanned<String>],
+    ) {
+        fn has(derives: &[String], name: &str) -> bool {
+            derives.iter().any(|d| d == name)
+        }
+
+        let serialize = derives::as_str(DeriveId::Serialize);
+        let deserialize = derives::as_str(DeriveId::Deserialize);
+
+        for bound in trait_bounds {
+            match bound.node.as_str() {
+                name if name == serialize && !has(derives, serialize) => derives.push(serialize.to_string()),
+                name if name == deserialize && !has(derives, deserialize) => derives.push(deserialize.to_string()),
+                _ => {}
+            }
+        }
+    }
+
+    /// Returns whether a trait name refers to one of the stdlib serde traits that RFC 023 lowers via Rust derives.
+    pub(in crate::backend::ir::lower) fn is_stdlib_serde_trait_name(name: &str) -> bool {
+        let serialize = derives::as_str(DeriveId::Serialize);
+        let deserialize = derives::as_str(DeriveId::Deserialize);
+        name == serialize || name == deserialize
+    }
+
     /// Extract passthrough Rust attributes from decorators.
     pub(in crate::backend::ir::lower) fn extract_passthrough_attributes(
         &mut self,

@@ -11,11 +11,17 @@ expression: rust_code
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
-pub trait Serialize {
-    fn to_json(&self) -> String;
+pub trait Index<K, V> {
+    fn __getitem__(&self, key: K) -> V;
 }
-pub trait Deserialize {
-    fn from_json(json_str: String) -> Result<Self, String>
-    where
-        Self: Sized;
+pub trait IndexMut<K, V> {
+    fn __setitem__(&self, key: K, value: V);
+}
+pub trait Sliceable<T> {
+    fn __getslice__(
+        &self,
+        start: Option<i64>,
+        end: Option<i64>,
+        step: Option<i64>,
+    ) -> Vec<T>;
 }

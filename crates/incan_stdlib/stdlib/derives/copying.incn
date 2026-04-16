@@ -1,5 +1,3 @@
-rust.module("incan_stdlib::derives::copying")
-
 """
 Copying and default value traits: Clone, Copy, Default
 See docs/derives/copying_default.md for detailed documentation.
@@ -27,7 +25,6 @@ trait Clone:
     println(user1.name)  # Still "Alice"
     ```
     """
-    @rust.extern
     def clone(self) -> Self: ...
 
 
@@ -93,5 +90,4 @@ trait Default:
     Note: Default cannot be derived for types with fields that have no sensible default
     (e.g., custom types without their own Default).
     """
-    @rust.extern
     def default() -> Self: ...

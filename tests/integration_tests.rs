@@ -1332,6 +1332,57 @@ async def main() -> None:
         );
     }
 
+    /// RFC 023: Runtime parity check for source-defined stdlib surfaces migrated off helper stubs.
+    #[test]
+    fn test_run_rfc023_stdlib_behavior_parity() {
+        let Ok(output) = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/rfc023_stdlib_behavior_parity.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+        else {
+            panic!("failed to run incan");
+        };
+
+        assert!(
+            output.status.success(),
+            "incan run rfc023_stdlib_behavior_parity failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("{\"value\":1,\"player\":\"Ada\"}"),
+            "expected explicit Serialize adoption to preserve JSON output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("Score"),
+            "expected reflection class name output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("true\ntrue"),
+            "expected clone/equality and ordering behavior from derive-backed traits; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("{\"value\":0,\"player\":\"\"}"),
+            "expected Default derive to preserve zero-value JSON output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("field:value|wire:value|type:int|default:true"),
+            "expected reflection metadata for value field; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("field:player|wire:player|type:str|default:true"),
+            "expected reflection metadata for player field; got:\n{}",
+            stdout
+        );
+    }
+
     #[test]
     fn test_check_cyclic_explicit_call_site_generics_cross_module_succeeds() -> Result<(), Box<dyn std::error::Error>> {
         let project_dir = make_temp_dir("incan_cycle_explicit_call_site_check");
@@ -2714,6 +2765,37 @@ mod rfc031_pub_import_integration_tests {
             .current_dir(project_root)
             .env("CARGO_NET_OFFLINE", "true")
             .output()?)
+    }
+
+    #[test]
+    fn explicit_serialize_trait_adoption_runs_with_default_to_json() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"serialize_trait_default\"\n",
+            "from std.serde.json import Serialize\n\nmodel Payload with Serialize:\n  value: int\n\ndef main() -> None:\n  println(Payload(value=1).to_json())\n",
+        )?;
+
+        let output = Command::new(incan_bin_path())
+            .arg("run")
+            .arg(&main_path)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "expected explicit Serialize adoption to run successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("{\"value\":1}"),
+            "expected JSON output from default Serialize trait implementation, got:\n{}",
+            stdout
+        );
+        Ok(())
     }
 
     fn write_pub_boundary_type_fidelity_library(root: &Path) -> Result<(), Box<dyn std::error::Error>> {

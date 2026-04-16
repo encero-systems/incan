@@ -1239,8 +1239,8 @@ fn test_std_async_select_compiled_codegen() {
 
 /// compile `std.derives.comparison` (Eq, Ord, Hash) from `.incn` source.
 ///
-/// Verifies that trait declarations with `@rust.extern` abstract methods and pure-Incan default methods
-/// (`__ne__`, `__le__`, `__gt__`, `__ge__`) compile through the full pipeline.
+/// Verifies that source-defined abstract methods and pure-Incan default methods (`__ne__`, `__le__`, `__gt__`,
+/// `__ge__`) compile through the full pipeline without a fake `rust.module()` boundary.
 #[test]
 fn test_std_derives_comparison_compiled_codegen() {
     let path = "crates/incan_stdlib/stdlib/derives/comparison.incn";
@@ -1295,6 +1295,69 @@ fn test_std_serde_json_import_codegen() {
     let source = load_test_file("std_serde_json_import");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("std_serde_json_import", rust_code);
+}
+
+/// RFC 023 (#303): explicit `with Serialize` adoption should expand the stdlib default `to_json` body into the
+/// generated impl while also forwarding the Rust serde derive.
+#[test]
+fn test_std_serde_with_serialize_trait_codegen() {
+    let source = load_test_file("std_serde_with_serialize_trait");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_serde_with_serialize_trait", rust_code);
+}
+
+// ============================================================================
+// RFC 023: Compile std.traits.* trait definitions from Incan source
+// ============================================================================
+
+#[test]
+fn test_std_traits_ops_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/traits/ops.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_traits_ops_compiled", rust_code);
+}
+
+#[test]
+fn test_std_traits_error_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/traits/error.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_traits_error_compiled", rust_code);
+}
+
+#[test]
+fn test_std_traits_indexing_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/traits/indexing.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_traits_indexing_compiled", rust_code);
+}
+
+#[test]
+fn test_std_traits_callable_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/traits/callable.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_traits_callable_compiled", rust_code);
+}
+
+#[test]
+fn test_std_traits_prelude_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/traits/prelude.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_traits_prelude_compiled", rust_code);
 }
 
 // ============================================================================

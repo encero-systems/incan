@@ -638,6 +638,8 @@ impl TypeChecker {
 
     pub(crate) fn infer_iterator_element_type(&self, iter_ty: &ResolvedType) -> ResolvedType {
         match iter_ty {
+            ResolvedType::FrozenList(elem) | ResolvedType::FrozenSet(elem) => elem.as_ref().clone(),
+            ResolvedType::FrozenDict(key, _) => key.as_ref().clone(),
             ResolvedType::Generic(name, args) => {
                 match collection_type_id(name.as_str()) {
                     Some(CollectionTypeId::List) | Some(CollectionTypeId::Set) if !args.is_empty() => args[0].clone(),

@@ -31,6 +31,66 @@ fn rust_receiver_display(path: &str) -> String {
 }
 
 impl TypeChecker {
+    /// Resolve known fields on compiler-provided surface record types.
+    ///
+    /// This currently covers `std.reflection.FieldInfo` so callers can typecheck member access on values returned by
+    /// `__fields__()` without requiring an explicit `FieldInfo` import at the use site.
+    fn resolve_surface_type_field_type(&self, type_name: &str, field: &str) -> Option<ResolvedType> {
+        match surface_types::from_str(type_name) {
+            Some(SurfaceTypeId::FieldInfo) => match field {
+                "name" | "wire_name" | "type_name" => Some(ResolvedType::FrozenStr),
+                "alias" | "description" => Some(option_ty(ResolvedType::FrozenStr)),
+                "has_default" => Some(ResolvedType::Bool),
+                "extra" => Some(ResolvedType::FrozenDict(
+                    Box::new(ResolvedType::FrozenStr),
+                    Box::new(ResolvedType::FrozenStr),
+                )),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Return the surface-level result type for built-in reflection magic methods.
+    ///
+    /// These methods are compiler-provided rather than declared in user-visible source, so the typechecker must model
+    /// their return types directly.
+    fn reflection_magic_method_return_type(&self, method: &str) -> Option<ResolvedType> {
+        match magic_methods::from_str(method) {
+            Some(magic_methods::MagicMethodId::ClassName) => Some(ResolvedType::Str),
+            Some(magic_methods::MagicMethodId::Fields) => Some(ResolvedType::FrozenList(Box::new(
+                ResolvedType::Named(surface_types::as_str(SurfaceTypeId::FieldInfo).to_string()),
+            ))),
+            _ => None,
+        }
+    }
+
+    /// Report whether a nominal type is allowed to use a given reflection magic method.
+    ///
+    /// Support is intentionally method-specific: `__class_name__()` is limited to models and classes, while
+    /// `__fields__()` also applies to newtypes.
+    fn nominal_type_supports_reflection_magic(&self, ty: &ResolvedType, method: &str) -> bool {
+        let type_name = match ty {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name.as_str(),
+            _ => return false,
+        };
+        match magic_methods::from_str(method) {
+            Some(magic_methods::MagicMethodId::ClassName) => {
+                matches!(
+                    self.lookup_semantic_type_info(type_name),
+                    Some(TypeInfo::Model(_) | TypeInfo::Class(_))
+                )
+            }
+            Some(magic_methods::MagicMethodId::Fields) => {
+                matches!(
+                    self.lookup_semantic_type_info(type_name),
+                    Some(TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Newtype(_))
+                )
+            }
+            _ => false,
+        }
+    }
+
     fn rust_canonical_path_for_receiver_type(&self, ty: &ResolvedType) -> Option<String> {
         match ty {
             ResolvedType::RustPath(path) => Some(path.clone()),
@@ -60,6 +120,9 @@ impl TypeChecker {
         field: &str,
         span: Span,
     ) -> Option<ResolvedType> {
+        if let Some(surface_ty) = self.resolve_surface_type_field_type(type_name, field) {
+            return Some(surface_ty);
+        }
         let type_info = self.lookup_semantic_type_info(type_name)?;
 
         let field_info = match type_info {
@@ -818,6 +881,12 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
 
+        if self.nominal_type_supports_reflection_magic(&base_ty, method)
+            && let Some(ret) = self.reflection_magic_method_return_type(method)
+        {
+            return ret;
+        }
+
         // Treat Enum.Variant(...) method-style calls as variant constructors
         if let ResolvedType::Named(enum_name) = &base_ty
             && let Some(TypeInfo::Enum(enum_info)) = self.lookup_semantic_type_info(enum_name)
@@ -1206,9 +1275,14 @@ impl TypeChecker {
             }
         }
 
-        // For magic helpers that codegen injects (e.g., __class_name__, __fields__), be permissive at typecheck time
-        // since they are backend-provided.
-        if magic_methods::from_str(method).is_some() {
+        // Reflection magic helpers are modeled explicitly above and should error on unsupported receivers rather than
+        // silently degrading to Unknown. Keep the older permissive fallback only for the remaining backend-only magic.
+        if let Some(id) = magic_methods::from_str(method)
+            && !matches!(
+                id,
+                magic_methods::MagicMethodId::ClassName | magic_methods::MagicMethodId::Fields
+            )
+        {
             return ResolvedType::Unknown;
         }
 

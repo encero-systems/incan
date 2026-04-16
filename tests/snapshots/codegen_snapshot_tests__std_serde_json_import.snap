@@ -11,7 +11,8 @@ expression: rust_code
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
-use serde::{Serialize, Deserialize};
+pub use crate::__incan_std::serde::json::Serialize;
+pub use crate::__incan_std::serde::json::Deserialize;
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, FieldInfo, IncanClass)]
 struct Config {
     host: String,
