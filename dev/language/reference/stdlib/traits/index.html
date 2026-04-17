@@ -4397,15 +4397,8 @@
 
 
 <h1 id="stdtraits-reference">std.traits.* (reference)<a class="headerlink" href="#stdtraits-reference" title="Permanent link">&para;</a></h1>
-<p>This page documents the curated <code>std.traits.*</code> standard-library surface.
-The implementation source of truth lives in:</p>
-<ul>
-<li><code>crates/incan_stdlib/stdlib/traits/ops.incn</code></li>
-<li><code>crates/incan_stdlib/stdlib/traits/error.incn</code></li>
-<li><code>crates/incan_stdlib/stdlib/traits/indexing.incn</code></li>
-<li><code>crates/incan_stdlib/stdlib/traits/callable.incn</code></li>
-<li><code>crates/incan_stdlib/stdlib/traits/prelude.incn</code></li>
-</ul>
+<p>This page documents the standard trait families available under <code>std.traits.*</code>.
+Use these modules when you want trait names explicitly in source, type annotations, or trait adoption.</p>
 <div class="admonition info">
 <p class="admonition-title">Related pages</p>
 <ul>
@@ -4423,34 +4416,30 @@ The implementation source of truth lives in:</p>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.callable</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Callable0</span><span class="p">,</span> <span class="nc">Callable1</span><span class="p">,</span> <span class="nc">Callable2</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.prelude</span><span class="w"> </span><span class="kn">import</span> <span class="o">*</span>
 </code></pre></div>
-<p>Note:</p>
-<ul>
-<li>The <code>std.traits.convert</code> imports above document the intended surface, but that submodule remains blocked from compilable-stdlib closeout today. See below.</li>
-</ul>
 <h2 id="surface-model">Surface model<a class="headerlink" href="#surface-model" title="Permanent link">&para;</a></h2>
-<p><code>std.traits.*</code> is already source-defined.</p>
+<p>The <code>std.traits.*</code> modules define the standard trait contracts used by Incan.</p>
 <ul>
-<li><code>std.traits.{ops,error,indexing,callable,prelude}</code> compile directly from <code>.incn</code> trait declarations.</li>
-<li>They do not rely on <code>rust.module()</code> or <code>@rust.extern</code> helper shims.</li>
-<li>Syntax like operators, indexing, slicing, and callable invocation is still compiler-mediated, but the trait contracts themselves live in stdlib source.</li>
-<li><code>std.traits.convert</code> is the current blocked closeout item: its <code>from</code> / <code>try_from</code> hooks collide with the hard <code>from</code> keyword in today's surface, so RFC 023 closeout for that submodule remains documentation-only pending follow-up trait-impl/keyword work.</li>
+<li>Import them directly when you want to write <code>with TraitName</code>, annotate against a trait, or refer to the trait family explicitly.</li>
+<li>Some language features map onto these traits at the surface level. For example, operator syntax corresponds to <code>std.traits.ops</code>, indexing syntax corresponds to <code>std.traits.indexing</code>, and callable-style invocation corresponds to <code>std.traits.callable</code>.</li>
+<li><code>std.traits.prelude</code> re-exports the most common trait families for convenience.</li>
 </ul>
 <h2 id="submodules">Submodules<a class="headerlink" href="#submodules" title="Permanent link">&para;</a></h2>
 <h3 id="stdtraitsconvert"><code>std.traits.convert</code><a class="headerlink" href="#stdtraitsconvert" title="Permanent link">&para;</a></h3>
-<p>Provides conversion traits:</p>
+<p>Provides explicit conversion traits:</p>
 <ul>
 <li><code>From[T]</code></li>
 <li><code>Into[T]</code></li>
 <li><code>TryFrom[T]</code></li>
 <li><code>TryInto[T]</code></li>
 </ul>
-<p>Blocked today:</p>
+<p><code>From[T]</code> and <code>TryFrom[T]</code> are constructor-style conversion traits. Their primary hooks are:</p>
 <ul>
-<li><code>std.traits.convert</code> is documented, but its source file is not yet compilable through the normal stdlib pipeline because <code>from</code> is still a hard keyword in declaration position.</li>
-<li>Follow-up is tracked in <a href="../../../../RFCs/043_rust_trait_impl_from_incan/">RFC 043</a>.</li>
+<li><code>@classmethod def from(cls, value: T) -&gt; Self</code></li>
+<li><code>@classmethod def try_from(cls, value: T) -&gt; Result[Self, str]</code></li>
 </ul>
+<p>Use <code>From[T]</code> when conversion should always succeed, and <code>TryFrom[T]</code> when conversion can fail.</p>
 <h3 id="stdtraitsops"><code>std.traits.ops</code><a class="headerlink" href="#stdtraitsops" title="Permanent link">&para;</a></h3>
-<p>Provides operator traits:</p>
+<p>Provides traits behind operator-style behavior:</p>
 <ul>
 <li><code>Add[Rhs, Output]</code></li>
 <li><code>Sub[Rhs, Output]</code></li>
@@ -4465,21 +4454,21 @@ The implementation source of truth lives in:</p>
 <li><code>Error</code></li>
 </ul>
 <h3 id="stdtraitsindexing"><code>std.traits.indexing</code><a class="headerlink" href="#stdtraitsindexing" title="Permanent link">&para;</a></h3>
-<p>Provides:</p>
+<p>Provides traits for indexed access and slicing:</p>
 <ul>
 <li><code>Index[K, V]</code></li>
 <li><code>IndexMut[K, V]</code></li>
 <li><code>Sliceable[T]</code></li>
 </ul>
 <h3 id="stdtraitscallable"><code>std.traits.callable</code><a class="headerlink" href="#stdtraitscallable" title="Permanent link">&para;</a></h3>
-<p>Provides:</p>
+<p>Provides traits for callable objects with fixed arity:</p>
 <ul>
 <li><code>Callable0[R]</code></li>
 <li><code>Callable1[A, R]</code></li>
 <li><code>Callable2[A, B, R]</code></li>
 </ul>
 <h3 id="stdtraitsprelude"><code>std.traits.prelude</code><a class="headerlink" href="#stdtraitsprelude" title="Permanent link">&para;</a></h3>
-<p>Re-exports the common <code>std.traits.*</code> families for convenience.</p>
+<p>Re-exports the common <code>std.traits.*</code> families so you can import one module instead of each trait family separately.</p>
 
 
 

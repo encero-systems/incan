@@ -4290,12 +4290,11 @@
 
 <h1 id="stdreflection-reference">std.reflection (reference)<a class="headerlink" href="#stdreflection-reference" title="Permanent link">&para;</a></h1>
 <p>This page documents the <code>std.reflection</code> surface exposed by the standard library.
-The implementation source of truth lives in <code>crates/incan_stdlib/stdlib/reflection.incn</code>.</p>
+Use it when you want to inspect field metadata produced by models and classes.</p>
 <div class="admonition info">
 <p class="admonition-title">Related pages</p>
 <ul>
-<li>If you want the language-facing explanation of automatic reflection on models and classes, see:
-  <a href="../../reflection/">Language → Reference → Reflection</a>.</li>
+<li>If you want the language-facing explanation of automatic reflection on models and classes, see: <a href="../../reflection/">Language → Reference → Reflection</a>.</li>
 </ul>
 </div>
 <!-- References -->
@@ -4307,7 +4306,7 @@ The implementation source of truth lives in <code>crates/incan_stdlib/stdlib/ref
 Calling <code>obj.__fields__()</code> and inspecting the returned records does not require an explicit import.</p>
 <h2 id="types">Types<a class="headerlink" href="#types" title="Permanent link">&para;</a></h2>
 <h3 id="fieldinfo"><code>FieldInfo</code><a class="headerlink" href="#fieldinfo" title="Permanent link">&para;</a></h3>
-<p>Compiler-provided field metadata returned by <code>__fields__()</code>.</p>
+<p>Field metadata returned by <code>__fields__()</code>.</p>
 <table>
 <thead>
 <tr>

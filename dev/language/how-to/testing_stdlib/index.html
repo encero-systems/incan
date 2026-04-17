@@ -4539,11 +4539,11 @@ If you want the API reference only, see <a href="../../reference/stdlib/testing/
 </table>
 <p>All <code>msg</code> parameters are optional. When omitted, a sensible default message is used.</p>
 <h2 id="assert_raises"><code>assert_raises</code><a class="headerlink" href="#assert_raises" title="Permanent link">&para;</a></h2>
-<p><code>std.testing.assert_raises</code> is intentionally kept as a blocker for now:</p>
+<p><code>std.testing.assert_raises</code> is not available for ordinary use yet.</p>
 <ul>
-<li>its public API remains present for compatibility.</li>
-<li>it currently fails with a clear "not implemented yet" diagnostic at runtime.</li>
-<li>real support is blocked until the parser and assertion lowering fully support structured <code>assert ... raises ...</code> semantics.</li>
+<li>The name remains part of the public testing surface.</li>
+<li>Calling it currently fails with a clear "not implemented yet" diagnostic.</li>
+<li>For now, prefer the available helpers such as <code>assert_is_err(...)</code> or test the <code>Result</code> value directly.</li>
 </ul>
 <h2 id="assert-statement-syntax-planned">Assert statement syntax (planned)<a class="headerlink" href="#assert-statement-syntax-planned" title="Permanent link">&para;</a></h2>
 <p>Incan will support <code>assert</code> as a statement keyword. When available, the mapping will be:</p>

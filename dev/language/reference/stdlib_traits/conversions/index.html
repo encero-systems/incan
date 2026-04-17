@@ -4260,15 +4260,16 @@
 
 <h1 id="conversion-traits-reference">Conversion traits (Reference)<a class="headerlink" href="#conversion-traits-reference" title="Permanent link">&para;</a></h1>
 <p>This page documents stdlib traits for explicit conversions.</p>
-<p>Current status:</p>
+<p>Use these traits when a type should define an explicit conversion from or into another type.</p>
+<p>The two main patterns are:</p>
 <ul>
-<li><code>std.traits.convert</code> remains a documented trait family, but RFC 023 closeout for its <code>.incn</code> source is blocked for now because <code>from</code> is still a hard keyword in declaration position.</li>
-<li>Follow-up is tracked in <a href="../../../../RFCs/043_rust_trait_impl_from_incan/">RFC 043</a>.</li>
+<li><code>From[T]</code> / <code>Into[T]</code> for conversions that should always succeed</li>
+<li><code>TryFrom[T]</code> / <code>TryInto[T]</code> for conversions that may fail</li>
 </ul>
 <h2 id="from-into">From / Into<a class="headerlink" href="#from-into" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>From[T]</code></strong><ul>
-<li>Intended hook: <code>@classmethod def from(cls, value: T) -&gt; Self</code></li>
+<li>Hook: <code>@classmethod def from(cls, value: T) -&gt; Self</code></li>
 </ul>
 </li>
 <li><strong><code>Into[T]</code></strong><ul>
@@ -4276,10 +4277,24 @@
 </ul>
 </li>
 </ul>
+<p>Example:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.convert</span><span class="w"> </span><span class="kn">import</span> <span class="nc">From</span>
+
+<span class="k">model</span> <span class="nc">UserId</span> <span class="k">with</span> <span class="nc">From</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nb">int</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="p">:</span>
+        <span class="c1"># accepts a str and converts it to int</span>
+        <span class="k">return</span> <span class="nc">UserId</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">value</span><span class="p">))</span>
+
+
+<span class="n">user_id</span> <span class="o">=</span> <span class="nc">UserId</span><span class="o">.</span><span class="k">from</span><span class="p">(</span><span class="s2">&quot;42&quot;</span><span class="p">)</span>
+</code></pre></div>
 <h2 id="tryfrom-tryinto">TryFrom / TryInto<a class="headerlink" href="#tryfrom-tryinto" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>TryFrom[T]</code></strong><ul>
-<li>Intended hook: <code>@classmethod def try_from(cls, value: T) -&gt; Result[Self, str]</code></li>
+<li>Hook: <code>@classmethod def try_from(cls, value: T) -&gt; Result[Self, str]</code></li>
 </ul>
 </li>
 <li><strong><code>TryInto[T]</code></strong><ul>
@@ -4287,6 +4302,7 @@
 </ul>
 </li>
 </ul>
+<p>Use <code>TryFrom[T]</code> when the conversion needs validation or parsing and may return an error instead of a value.</p>
 
 
 

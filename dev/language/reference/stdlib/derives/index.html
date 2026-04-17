@@ -4361,14 +4361,8 @@
 
 
 <h1 id="stdderives-reference">std.derives.* (reference)<a class="headerlink" href="#stdderives-reference" title="Permanent link">&para;</a></h1>
-<p>This page documents the curated <code>std.derives.*</code> standard-library surface.
-The implementation source of truth lives in:</p>
-<ul>
-<li><code>crates/incan_stdlib/stdlib/derives/comparison.incn</code></li>
-<li><code>crates/incan_stdlib/stdlib/derives/copying.incn</code></li>
-<li><code>crates/incan_stdlib/stdlib/derives/string.incn</code></li>
-<li><code>crates/incan_stdlib/stdlib/derives/collection.incn</code></li>
-</ul>
+<p>This page documents the derive-related trait families available under <code>std.derives.*</code>.
+Import these traits when you want to adopt them explicitly or refer to them in annotations and bounds.</p>
 <div class="admonition info">
 <p class="admonition-title">Related pages</p>
 <ul>
@@ -4386,12 +4380,11 @@ The implementation source of truth lives in:</p>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.derives.string</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Debug</span><span class="p">,</span> <span class="kt">Display</span>
 </code></pre></div>
 <h2 id="surface-model">Surface model<a class="headerlink" href="#surface-model" title="Permanent link">&para;</a></h2>
-<p>Traits under <code>std.derives.*</code> are source-defined capability contracts.</p>
+<p>Traits under <code>std.derives.*</code> describe capabilities such as equality, ordering, copying, and display formatting.</p>
 <ul>
-<li>The trait signatures are declared in <code>.incn</code> source.</li>
-<li>The compiler typechecks against those source signatures.</li>
-<li>When a type uses <code>@derive(...)</code>, codegen realizes the implementation through ordinary Rust <code>#[derive(...)]</code> expansion on the adopting type.</li>
-<li>These traits are not modeled as runtime helper calls through <code>incan_stdlib::derives::*</code>.</li>
+<li>Many of these traits are also the ones used by <code>@derive(...)</code>.</li>
+<li>You can import the trait names directly when you want to refer to them in type-level positions.</li>
+<li>The collection traits in <code>std.derives.collection</code> are ordinary trait families for collection-like behavior, not derive markers.</li>
 </ul>
 <h2 id="submodules">Submodules<a class="headerlink" href="#submodules" title="Permanent link">&para;</a></h2>
 <h3 id="stdderivescomparison"><code>std.derives.comparison</code><a class="headerlink" href="#stdderivescomparison" title="Permanent link">&para;</a></h3>
@@ -4426,7 +4419,7 @@ The implementation source of truth lives in:</p>
 <li><code>Iterable[T]</code></li>
 <li><code>Iterator[T]</code></li>
 </ul>
-<p>These are source-defined stdlib traits, but unlike the derive families above they are not realized via Rust <code>#[derive(...)]</code>.</p>
+<p>Use these when you want a custom type to participate in collection-style APIs through explicit trait adoption.</p>
 
 
 
