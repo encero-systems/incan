@@ -220,13 +220,25 @@ pub fn category(id: PunctuationId) -> PunctuationCategory {
 
 /// Return the full metadata entry for a punctuation token.
 ///
-/// ## Panics
-/// - If the registry is missing an entry for `id` (this indicates a programming error).
-pub fn info_for(id: PunctuationId) -> &'static PunctuationInfo {
-    PUNCTUATION
-        .iter()
-        .find(|p| p.id == id)
-        .expect("INVARIANT: punctuation info missing")
+/// The lookup is exhaustive over the closed enum, so adding punctuation requires updating this match at compile time.
+pub fn info_for(id: PunctuationId) -> PunctuationInfo {
+    match id {
+        PunctuationId::Comma => PUNCTUATION[0],
+        PunctuationId::Colon => PUNCTUATION[1],
+        PunctuationId::Question => PUNCTUATION[2],
+        PunctuationId::At => PUNCTUATION[3],
+        PunctuationId::Dot => PUNCTUATION[4],
+        PunctuationId::ColonColon => PUNCTUATION[5],
+        PunctuationId::Arrow => PUNCTUATION[6],
+        PunctuationId::FatArrow => PUNCTUATION[7],
+        PunctuationId::Ellipsis => PUNCTUATION[8],
+        PunctuationId::LParen => PUNCTUATION[9],
+        PunctuationId::RParen => PUNCTUATION[10],
+        PunctuationId::LBracket => PUNCTUATION[11],
+        PunctuationId::RBracket => PUNCTUATION[12],
+        PunctuationId::LBrace => PUNCTUATION[13],
+        PunctuationId::RBrace => PUNCTUATION[14],
+    }
 }
 
 /// Resolve a punctuation spelling to its identifier.

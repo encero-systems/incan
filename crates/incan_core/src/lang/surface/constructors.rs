@@ -70,11 +70,16 @@ pub fn as_str(id: ConstructorId) -> &'static str {
     info_for(id).canonical
 }
 
-pub fn info_for(id: ConstructorId) -> &'static ConstructorInfo {
-    CONSTRUCTORS
-        .iter()
-        .find(|c| c.id == id)
-        .expect("INVARIANT: constructor info missing")
+/// Return the metadata entry for a surface constructor.
+///
+/// The lookup is exhaustive over the closed enum, so adding a constructor requires updating this match at compile time.
+pub fn info_for(id: ConstructorId) -> ConstructorInfo {
+    match id {
+        ConstructorId::Ok => CONSTRUCTORS[0],
+        ConstructorId::Err => CONSTRUCTORS[1],
+        ConstructorId::Some => CONSTRUCTORS[2],
+        ConstructorId::None => CONSTRUCTORS[3],
+    }
 }
 
 const fn info(

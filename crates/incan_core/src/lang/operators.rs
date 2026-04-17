@@ -381,15 +381,39 @@ pub const OPERATORS: &[OperatorInfo] = &[
 /// - `id`: Operator identifier.
 ///
 /// ## Returns
-/// - The associated [`OperatorInfo`] from [`OPERATORS`].
+/// - The associated [`OperatorInfo`] copied from [`OPERATORS`].
 ///
-/// ## Panics
-/// - If the registry is missing an entry for `id` (this indicates a programming error).
-pub fn info_for(id: OperatorId) -> &'static OperatorInfo {
-    OPERATORS
-        .iter()
-        .find(|o| o.id == id)
-        .expect("INVARIANT: operator info missing")
+/// The lookup is exhaustive over the closed enum, so adding an operator requires updating this match at compile time.
+pub fn info_for(id: OperatorId) -> OperatorInfo {
+    match id {
+        OperatorId::Plus => OPERATORS[0],
+        OperatorId::Minus => OPERATORS[1],
+        OperatorId::Star => OPERATORS[2],
+        OperatorId::StarStar => OPERATORS[3],
+        OperatorId::Slash => OPERATORS[4],
+        OperatorId::SlashSlash => OPERATORS[5],
+        OperatorId::Percent => OPERATORS[6],
+        OperatorId::EqEq => OPERATORS[7],
+        OperatorId::NotEq => OPERATORS[8],
+        OperatorId::Lt => OPERATORS[9],
+        OperatorId::LtEq => OPERATORS[10],
+        OperatorId::Gt => OPERATORS[11],
+        OperatorId::GtEq => OPERATORS[12],
+        OperatorId::Eq => OPERATORS[13],
+        OperatorId::PlusEq => OPERATORS[14],
+        OperatorId::MinusEq => OPERATORS[15],
+        OperatorId::StarEq => OPERATORS[16],
+        OperatorId::SlashEq => OPERATORS[17],
+        OperatorId::SlashSlashEq => OPERATORS[18],
+        OperatorId::PercentEq => OPERATORS[19],
+        OperatorId::DotDot => OPERATORS[20],
+        OperatorId::DotDotEq => OPERATORS[21],
+        OperatorId::And => OPERATORS[22],
+        OperatorId::Or => OPERATORS[23],
+        OperatorId::Not => OPERATORS[24],
+        OperatorId::In => OPERATORS[25],
+        OperatorId::Is => OPERATORS[26],
+    }
 }
 
 /// Resolve an operator spelling to its identifier.

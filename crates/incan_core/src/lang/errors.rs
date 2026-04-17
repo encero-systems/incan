@@ -171,13 +171,17 @@ pub fn from_str(name: &str) -> Option<ErrorKind> {
 
 /// Return full metadata for an exception kind.
 ///
-/// ## Panics
-/// - If the registry is missing an entry for `kind` (programming error).
-pub fn info_for(kind: ErrorKind) -> &'static ExceptionInfo {
-    EXCEPTIONS
-        .iter()
-        .find(|e| e.id == kind)
-        .expect("INVARIANT: exception info missing")
+/// The lookup is exhaustive over the closed enum, so adding an exception kind requires updating this match at compile
+/// time.
+pub fn info_for(kind: ErrorKind) -> ExceptionInfo {
+    match kind {
+        ErrorKind::ValueError => EXCEPTIONS[0],
+        ErrorKind::TypeError => EXCEPTIONS[1],
+        ErrorKind::ZeroDivisionError => EXCEPTIONS[2],
+        ErrorKind::IndexError => EXCEPTIONS[3],
+        ErrorKind::KeyError => EXCEPTIONS[4],
+        ErrorKind::JsonDecodeError => EXCEPTIONS[5],
+    }
 }
 
 const fn info(
