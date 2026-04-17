@@ -1,5 +1,7 @@
 // Mergesort Benchmark
 // Sort 1,000,000 random integers (with allocation)
+// NOTE: This uses a simple recursive mergesort with per-split allocations.
+// It is a reasonable reference implementation, but not the most allocation-efficient Rust mergesort.
 
 fn mergesort(arr: Vec<i64>) -> Vec<i64> {
     let n = arr.len();

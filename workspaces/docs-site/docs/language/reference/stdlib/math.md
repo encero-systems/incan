@@ -25,6 +25,8 @@ Access values through the `math` namespace, for example `math.PI` or `math.sqrt(
 
 | Function                         | Returns |
 | -------------------------------- | ------- |
+| `math.gcd(a: int, b: int)`       | `int`   |
+| `math.lcm(a: int, b: int)`       | `int`   |
 | `math.sqrt(x: float)`            | `float` |
 | `math.abs(x: float)`             | `float` |
 | `math.floor(x: float)`           | `float` |
@@ -46,3 +48,9 @@ Access values through the `math` namespace, for example `math.PI` or `math.sqrt(
 | `math.cosh(x: float)`            | `float` |
 | `math.tanh(x: float)`            | `float` |
 | `math.hypot(x: float, y: float)` | `float` |
+
+## Notes
+
+- `math.gcd` returns the greatest common divisor of two integers.
+- `math.lcm` returns the lowest common multiple of two integers.
+- The floating-point helpers remain thin wrappers over Rust math facilities.

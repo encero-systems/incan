@@ -17,6 +17,10 @@ math.NAN          - Not a Number
 Functions
 =========
 
+Integer:
+  math.gcd(a, b)  - Greatest common divisor
+  math.lcm(a, b)  - Lowest common multiple
+
 Basic:
   math.sqrt(x)    - Square root
   math.abs(x)     - Absolute value
@@ -50,6 +54,7 @@ Geometry:
 
 from rust::std::f64::consts import PI as RUST_PI, E as RUST_E, TAU as RUST_TAU
 from rust::std::f64 import INFINITY as RUST_INFINITY, NAN as RUST_NAN
+from rust::num_integer import gcd as rust_gcd, lcm as rust_lcm
 from rust::libm import (
     sqrt as rust_sqrt,
     fabs as rust_abs,
@@ -79,6 +84,17 @@ pub const E: float = RUST_E
 pub const TAU: float = RUST_TAU
 pub const INFINITY: float = RUST_INFINITY
 pub const NAN: float = RUST_NAN
+
+
+# ============================================================================
+# Integer functions
+# ============================================================================
+pub def gcd(a: int, b: int) -> int:
+    return rust_gcd(a, b)
+
+
+pub def lcm(a: int, b: int) -> int:
+    return rust_lcm(a, b)
 
 
 # ============================================================================

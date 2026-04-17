@@ -5249,8 +5249,9 @@ fn test_std_math_module_extended_functions_ok() {
     let source = r#"
 import std.math
 
-def value(x: float, y: float) -> float:
-  return math.round(x) + math.log2(x) + math.atan2(y, x) + math.hypot(x, y)
+def value(x: float, y: float, a: int, b: int) -> float:
+  ints = math.gcd(a, b) + math.lcm(a, b)
+  return math.round(x) + math.log2(x) + math.atan2(y, x) + math.hypot(x, y) + float(ints)
 "#;
     assert_check_ok(source);
 }

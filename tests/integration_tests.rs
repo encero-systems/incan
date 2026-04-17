@@ -2005,6 +2005,8 @@ def main() -> None:
     println(math.log2(8.0))
     println(math.atan2(1.0, 1.0))
     println(math.hypot(3.0, 4.0))
+    println(math.gcd(54, 24))
+    println(math.lcm(6, 8))
 "#,
             ])
             .env("CARGO_NET_OFFLINE", "true")
@@ -2024,8 +2026,8 @@ def main() -> None:
         let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
         assert_eq!(
             lines.len(),
-            5,
-            "expected 5 output lines (PI/round/log2/atan2/hypot); got: {stdout}"
+            7,
+            "expected 7 output lines (PI/round/log2/atan2/hypot/gcd/lcm); got: {stdout}"
         );
 
         let Ok(pi) = lines[0].parse::<f64>() else {
@@ -2043,6 +2045,12 @@ def main() -> None:
         let Ok(hypot) = lines[4].parse::<f64>() else {
             panic!("hypot output was not a float: `{}`", lines[4]);
         };
+        let Ok(gcd) = lines[5].parse::<i64>() else {
+            panic!("gcd output was not an int: `{}`", lines[5]);
+        };
+        let Ok(lcm) = lines[6].parse::<i64>() else {
+            panic!("lcm output was not an int: `{}`", lines[6]);
+        };
 
         assert!((pi - std::f64::consts::PI).abs() < 1e-12, "unexpected PI value: {pi}");
         assert!((round - 2.0).abs() < 1e-12, "unexpected round value: {round}");
@@ -2052,6 +2060,8 @@ def main() -> None:
             "unexpected atan2 value: {atan2}"
         );
         assert!((hypot - 5.0).abs() < 1e-12, "unexpected hypot value: {hypot}");
+        assert_eq!(gcd, 6, "unexpected gcd value: {gcd}");
+        assert_eq!(lcm, 24, "unexpected lcm value: {lcm}");
     }
 }
 

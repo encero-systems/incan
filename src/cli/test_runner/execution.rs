@@ -144,6 +144,32 @@ fn merge_rust_inspect_stdlib_features<'a>(
     merged.into_iter().collect()
 }
 
+/// Promote project dev dependencies into ordinary dependencies for generated test-runner crates.
+///
+/// `incan test` generates a library crate and runs `cargo test` against that crate. Because the generated user/test
+/// code lives under `src/`, anything it imports must be available as a normal dependency, not only under
+/// `[dev-dependencies]`.
+fn merge_test_runner_dependencies(
+    dependencies: &[crate::manifest::DependencySpec],
+    dev_dependencies: &[crate::manifest::DependencySpec],
+) -> Result<Vec<crate::manifest::DependencySpec>, String> {
+    let mut merged = dependencies.to_vec();
+    for candidate in dev_dependencies {
+        if let Some(existing) = merged.iter().find(|dep| dep.crate_name == candidate.crate_name) {
+            if existing != candidate {
+                return Err(format!(
+                    "test runner dependency `{}` conflicts between dependencies and dev-dependencies",
+                    candidate.crate_name
+                ));
+            }
+            continue;
+        }
+        merged.push(candidate.clone());
+    }
+    merged.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    Ok(merged)
+}
+
 fn file_batch_dir_suffix(file_path: &Path) -> String {
     let p = fs::canonicalize(file_path).unwrap_or_else(|_| file_path.to_path_buf());
     let mut hasher = Sha256::new();
@@ -666,9 +692,6 @@ pub(super) fn run_file_tests_batch(
 
     let mut generator = ProjectGenerator::new(&temp_dir, &runner_crate_name, false);
     generator.set_stdlib_features(prepared.project_requirements.stdlib_features.clone());
-    generator.set_include_dev_dependencies(true);
-    generator.set_dependencies(prepared.resolved.dependencies.clone());
-    generator.set_dev_dependencies(prepared.resolved.dev_dependencies.clone());
     generator.set_cargo_lock_payload(prepared.lock_payload.clone());
     generator.set_cargo_policy_flags(common::cargo_command_flags(locked, frozen, &cargo_feature_selection));
 
@@ -678,6 +701,15 @@ pub(super) fn run_file_tests_batch(
             .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), msg.clone())))
             .collect::<Vec<_>>()
     };
+
+    let runner_dependencies =
+        match merge_test_runner_dependencies(&prepared.resolved.dependencies, &prepared.resolved.dev_dependencies) {
+            Ok(deps) => deps,
+            Err(message) => return gen_err(message),
+        };
+    generator.set_include_dev_dependencies(false);
+    generator.set_dependencies(runner_dependencies);
+    generator.set_dev_dependencies(Vec::new());
 
     if prepared.source_modules.is_empty() {
         let rust_code = match codegen.try_generate(&prepared.ast) {
@@ -956,6 +988,69 @@ mod tests {
                 "web".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn merge_test_runner_dependencies_promotes_dev_deps_into_dependencies() {
+        use crate::manifest::{DependencySource, DependencySpec};
+
+        let deps = vec![DependencySpec {
+            crate_name: "serde".to_string(),
+            version: Some("1.0".to_string()),
+            features: vec![],
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: None,
+        }];
+        let dev_deps = vec![DependencySpec {
+            crate_name: "tokio".to_string(),
+            version: Some("1".to_string()),
+            features: vec!["macros".to_string(), "rt-multi-thread".to_string()],
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: None,
+        }];
+
+        let merged = match merge_test_runner_dependencies(&deps, &dev_deps) {
+            Ok(merged) => merged,
+            Err(err) => panic!("expected merge to succeed: {err}"),
+        };
+        assert_eq!(merged.len(), 2);
+        assert!(merged.iter().any(|dep| dep.crate_name == "serde"));
+        assert!(merged.iter().any(|dep| dep.crate_name == "tokio"));
+    }
+
+    #[test]
+    fn merge_test_runner_dependencies_rejects_conflicting_duplicates() {
+        use crate::manifest::{DependencySource, DependencySpec};
+
+        let deps = vec![DependencySpec {
+            crate_name: "tokio".to_string(),
+            version: Some("1".to_string()),
+            features: vec!["time".to_string()],
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: None,
+        }];
+        let dev_deps = vec![DependencySpec {
+            crate_name: "tokio".to_string(),
+            version: Some("1".to_string()),
+            features: vec!["macros".to_string()],
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: None,
+        }];
+
+        let error = match merge_test_runner_dependencies(&deps, &dev_deps) {
+            Ok(merged) => panic!("expected conflict, got merged dependencies: {merged:?}"),
+            Err(err) => err,
+        };
+        assert!(error.contains("tokio"));
+        assert!(error.contains("conflicts"));
     }
 
     #[test]

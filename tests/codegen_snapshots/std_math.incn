@@ -3,4 +3,5 @@ import std.math
 def main() -> None:
   constants = math.PI + math.E + math.TAU + math.INFINITY + math.NAN
   funcs = math.round(1.4) + math.log2(8.0) + math.atan2(1.0, 1.0) + math.hypot(3.0, 4.0)
-  println(constants + funcs)
+  ints = math.gcd(54, 24) + math.lcm(6, 8)
+  println(constants + funcs + float(ints))

@@ -1557,6 +1557,47 @@ def forward(value: Thing) -> None:
         Ok(())
     }
 
+    #[test]
+    fn test_codegen_keeps_nested_rust_associated_calls_type_like_when_outer_receiver_is_unknown()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+
+        let source = r#"
+from rust::datafusion::execution::context import SessionContext
+from rust::datafusion::dataframe import DataFrameWriteOptions
+
+def f(uri: str) -> None:
+  ctx = SessionContext.new()
+  _ = ctx.write_csv(uri, DataFrameWriteOptions.new(), None)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let mut tc = TypeChecker::new();
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("ctx.write_csv(&uri, DataFrameWriteOptions::new(), None::<_>);"),
+            "expected nested rust associated call to keep :: syntax; got:\n{code}"
+        );
+        Ok(())
+    }
+
     #[cfg(feature = "rust_inspect")]
     #[test]
     fn test_codegen_borrows_async_rust_backed_free_function_args_from_metadata()

@@ -150,10 +150,16 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     StdlibNamespace {
         name: "math",
         feature: None,
-        extra_crate_deps: &[StdlibExtraCrateDep {
-            crate_name: "libm",
-            source: StdlibExtraCrateSource::Version("0.2"),
-        }],
+        extra_crate_deps: &[
+            StdlibExtraCrateDep {
+                crate_name: "libm",
+                source: StdlibExtraCrateSource::Version("0.2"),
+            },
+            StdlibExtraCrateDep {
+                crate_name: "num-integer",
+                source: StdlibExtraCrateSource::Version("0.1"),
+            },
+        ],
         submodules: &[],
         typechecker_only: false,
     },

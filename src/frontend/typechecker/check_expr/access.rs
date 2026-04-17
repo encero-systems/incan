@@ -848,6 +848,7 @@ impl TypeChecker {
 
         // If the receiver type is Unknown, be permissive and do not error on methods.
         if matches!(base_ty, ResolvedType::Unknown) {
+            self.check_call_args(args);
             return ResolvedType::Unknown;
         }
 
