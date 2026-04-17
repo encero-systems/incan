@@ -2,7 +2,7 @@
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
-use crate::frontend::resolved_type_subst::{substitute_method_info, type_param_subst_map};
+use crate::frontend::resolved_type_subst::{substitute_method_info, substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::*;
 
 use super::TypeChecker;
@@ -414,10 +414,10 @@ impl TypeChecker {
     ///
     /// Used when validating field `@alias` metadata so aliases cannot collide with callable members surfaced through
     /// trait adoption.
-    fn collect_trait_method_names(&self, traits: &[Spanned<Ident>]) -> HashSet<String> {
+    fn collect_trait_method_names(&self, traits: &[Spanned<TraitBound>]) -> HashSet<String> {
         let mut names = HashSet::new();
         for trait_ref in traits {
-            let trait_name = trait_ref.node.as_str();
+            let trait_name = trait_ref.node.name.as_str();
             if let Some(trait_info) = self.lookup_semantic_trait_info(trait_name) {
                 names.extend(trait_info.methods.keys().cloned());
             }
@@ -538,8 +538,125 @@ impl TypeChecker {
             .collect()
     }
 
+    /// Apply resolved type arguments to one trait definition so conformance uses the instantiated contract.
+    fn instantiate_trait_info(&self, trait_info: &TraitInfo, args: &[ResolvedType]) -> TraitInfo {
+        let subst = type_param_subst_map(&trait_info.type_params, args);
+        TraitInfo {
+            type_params: trait_info.type_params.clone(),
+            supertraits: trait_info
+                .supertraits
+                .iter()
+                .map(|(name, super_args)| {
+                    (
+                        name.clone(),
+                        super_args
+                            .iter()
+                            .map(|arg| substitute_resolved_type(arg, &subst))
+                            .collect(),
+                    )
+                })
+                .collect(),
+            methods: trait_info
+                .methods
+                .iter()
+                .map(|(name, info)| (name.clone(), substitute_method_info(info, &subst)))
+                .collect(),
+            requires: trait_info
+                .requires
+                .iter()
+                .map(|(field, ty)| (field.clone(), substitute_resolved_type(ty, &subst)))
+                .collect(),
+        }
+    }
+
+    /// Resolve one model/class trait adoption and instantiate generic trait parameters from explicit `with Trait[T]`.
+    fn resolve_adopted_trait_info(
+        &mut self,
+        bound: &TraitBound,
+        adoption_span: Span,
+    ) -> Option<(TraitInfo, Vec<ResolvedType>)> {
+        let trait_name = bound.name.as_str();
+        let trait_info = self.lookup_trait_info(trait_name)?.clone();
+        if bound.type_args.is_empty() {
+            return Some((trait_info, Vec::new()));
+        }
+
+        let resolved_args: Vec<ResolvedType> = bound
+            .type_args
+            .iter()
+            .map(|arg| self.resolve_type_checked(arg))
+            .collect();
+        if resolved_args.len() != trait_info.type_params.len() {
+            self.errors.push(errors::trait_adoption_bound_arity_mismatch(
+                trait_name,
+                trait_info.type_params.len(),
+                resolved_args.len(),
+                adoption_span,
+            ));
+            return None;
+        }
+
+        let instantiated = self.instantiate_trait_info(&trait_info, &resolved_args);
+        Some((instantiated, resolved_args))
+    }
+
+    /// Recursively collect abstract trait methods after applying any explicit adoption-time type arguments.
+    fn collect_instantiated_trait_abstract_method_entries(
+        &self,
+        trait_name: &str,
+        trait_info: &TraitInfo,
+        trait_args: &[ResolvedType],
+        seen: &mut HashSet<String>,
+        out: &mut Vec<(String, String, MethodInfo)>,
+    ) {
+        let key = format!(
+            "{trait_name}<{}>",
+            trait_args
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        if !seen.insert(key) {
+            return;
+        }
+
+        for (method_name, method_info) in &trait_info.methods {
+            if !method_info.has_body {
+                out.push((method_name.clone(), trait_name.to_string(), method_info.clone()));
+            }
+        }
+
+        for (supertrait_name, supertrait_args) in &trait_info.supertraits {
+            let Some(supertrait_info) = self.lookup_semantic_trait_info(supertrait_name.as_str()) else {
+                continue;
+            };
+            let instantiated = self.instantiate_trait_info(supertrait_info, supertrait_args);
+            self.collect_instantiated_trait_abstract_method_entries(
+                supertrait_name,
+                &instantiated,
+                supertrait_args,
+                seen,
+                out,
+            );
+        }
+    }
+
     /// Collect abstract (`...`) methods from a trait and its transitive supertraits with supertrait type args applied.
-    fn raw_trait_abstract_method_entries(&self, trait_name: &str) -> Vec<(String, String, MethodInfo)> {
+    fn raw_trait_abstract_method_entries(
+        &self,
+        trait_name: &str,
+        explicit_root: Option<(&TraitInfo, &[ResolvedType])>,
+    ) -> Vec<(String, String, MethodInfo)> {
+        if let Some((trait_info, trait_args)) = explicit_root {
+            let mut out = Vec::new();
+            let mut seen = HashSet::new();
+            self.collect_instantiated_trait_abstract_method_entries(
+                trait_name, trait_info, trait_args, &mut seen, &mut out,
+            );
+            return out;
+        }
+
         let mut out = Vec::new();
         if let Some(root) = self.lookup_semantic_trait_info(trait_name) {
             for (m, info) in &root.methods {
@@ -625,8 +742,9 @@ impl TypeChecker {
     fn grouped_trait_abstract_method_obligations(
         &self,
         trait_name: &str,
+        explicit_root: Option<(&TraitInfo, &[ResolvedType])>,
     ) -> HashMap<String, Vec<(String, MethodInfo)>> {
-        let raw = self.raw_trait_abstract_method_entries(trait_name);
+        let raw = self.raw_trait_abstract_method_entries(trait_name, explicit_root);
         let mut map: HashMap<String, Vec<(String, MethodInfo)>> = HashMap::new();
         for (method, origin, info) in raw {
             map.entry(method).or_default().push((origin, info));
@@ -684,10 +802,12 @@ impl TypeChecker {
         type_name: &str,
         trait_name: &str,
         trait_info: &TraitInfo,
+        trait_args: Option<&[ResolvedType]>,
         adoption_span: Span,
         methods: &HashMap<String, MethodInfo>,
     ) {
-        let grouped = self.grouped_trait_abstract_method_obligations(trait_name);
+        let grouped =
+            self.grouped_trait_abstract_method_obligations(trait_name, trait_args.map(|args| (trait_info, args)));
         let mut method_names: Vec<String> = grouped.keys().cloned().collect();
         method_names.sort();
         for method_name in method_names {
@@ -837,9 +957,23 @@ impl TypeChecker {
         // Check traits exist and are satisfied (models can adopt storage-free traits, RFC 000).
         // Note: do this after defining type params so `@requires(field: T)` can resolve `T`.
         for trait_ref in &model.traits {
-            let trait_name = trait_ref.node.as_str();
-            if let Some(trait_info) = self.lookup_trait_info(trait_name) {
-                self.check_trait_conformance_model(model, trait_info.clone(), trait_name, trait_ref.span);
+            let trait_name = trait_ref.node.name.as_str();
+            if self.lookup_trait_info(trait_name).is_some() {
+                let Some((trait_info, trait_args)) = self.resolve_adopted_trait_info(&trait_ref.node, trait_ref.span)
+                else {
+                    continue;
+                };
+                self.check_trait_conformance_model(
+                    model,
+                    trait_info,
+                    trait_name,
+                    if trait_args.is_empty() {
+                        None
+                    } else {
+                        Some(trait_args.as_slice())
+                    },
+                    trait_ref.span,
+                );
             } else if self.lookup_symbol(trait_name).is_none() {
                 self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
             }
@@ -956,6 +1090,7 @@ impl TypeChecker {
         model: &ModelDecl,
         trait_info: TraitInfo,
         trait_name: &str,
+        trait_args: Option<&[ResolvedType]>,
         adoption_span: Span,
     ) {
         // Check required fields (including types)
@@ -990,7 +1125,14 @@ impl TypeChecker {
             });
 
         if let Some(mi) = model_info {
-            self.enforce_trait_abstract_methods(&model.name, trait_name, &trait_info, adoption_span, &mi.methods);
+            self.enforce_trait_abstract_methods(
+                &model.name,
+                trait_name,
+                &trait_info,
+                trait_args,
+                adoption_span,
+                &mi.methods,
+            );
         } else {
             for (method_name, method_info) in &trait_info.methods {
                 if !method_info.has_body {
@@ -1020,9 +1162,23 @@ impl TypeChecker {
 
         // Check traits exist and are satisfied
         for trait_ref in &class.traits {
-            let trait_name = trait_ref.node.as_str();
-            if let Some(trait_info) = self.lookup_trait_info(trait_name) {
-                self.check_trait_conformance(class, trait_info.clone(), trait_name, trait_ref.span);
+            let trait_name = trait_ref.node.name.as_str();
+            if self.lookup_trait_info(trait_name).is_some() {
+                let Some((trait_info, trait_args)) = self.resolve_adopted_trait_info(&trait_ref.node, trait_ref.span)
+                else {
+                    continue;
+                };
+                self.check_trait_conformance(
+                    class,
+                    trait_info,
+                    trait_name,
+                    if trait_args.is_empty() {
+                        None
+                    } else {
+                        Some(trait_args.as_slice())
+                    },
+                    trait_ref.span,
+                );
             } else if self.lookup_symbol(trait_name).is_none() {
                 self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
             }
@@ -1088,6 +1244,7 @@ impl TypeChecker {
         class: &ClassDecl,
         trait_info: TraitInfo,
         trait_name: &str,
+        trait_args: Option<&[ResolvedType]>,
         adoption_span: Span,
     ) {
         // Use the effective members view (own + inherited) from the symbol table.
@@ -1123,7 +1280,14 @@ impl TypeChecker {
         }
 
         if let Some(ci) = class_info.as_ref() {
-            self.enforce_trait_abstract_methods(&class.name, trait_name, &trait_info, adoption_span, &ci.methods);
+            self.enforce_trait_abstract_methods(
+                &class.name,
+                trait_name,
+                &trait_info,
+                trait_args,
+                adoption_span,
+                &ci.methods,
+            );
         } else {
             for (method_name, method_info) in &trait_info.methods {
                 if !method_info.has_body {

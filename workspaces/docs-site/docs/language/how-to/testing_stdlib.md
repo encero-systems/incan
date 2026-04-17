@@ -29,11 +29,11 @@ All `msg` parameters are optional. When omitted, a sensible default message is u
 
 ## `assert_raises`
 
-`std.testing.assert_raises` is intentionally kept as a blocker for now:
+`std.testing.assert_raises` is not available for ordinary use yet.
 
-- its public API remains present for compatibility.
-- it currently fails with a clear "not implemented yet" diagnostic at runtime.
-- real support is blocked until the parser and assertion lowering fully support structured `assert ... raises ...` semantics.
+- The name remains part of the public testing surface.
+- Calling it currently fails with a clear "not implemented yet" diagnostic.
+- For now, prefer the available helpers such as `assert_is_err(...)` or test the `Result` value directly.
 
 ## Assert statement syntax (planned)
 

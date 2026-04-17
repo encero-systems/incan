@@ -82,7 +82,7 @@ impl<'a> Parser<'a> {
 
     /// Parse a single trait bound: `Eq` or `From[U]`.
     fn trait_bound(&mut self) -> Result<TraitBound, CompileError> {
-        let name = self.identifier()?;
+        let name = self.identifier_or_from_keyword()?;
         let type_args = if self.match_token(&TokenKind::Punctuation(PunctuationId::LBracket)) {
             let args = self.type_list()?;
             self.expect(

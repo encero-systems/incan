@@ -1,11 +1,10 @@
 # std.reflection (reference)
 
 This page documents the `std.reflection` surface exposed by the standard library.
-The implementation source of truth lives in `crates/incan_stdlib/stdlib/reflection.incn`.
+Use it when you want to inspect field metadata produced by models and classes.
 
 !!! info "Related pages"
-    - If you want the language-facing explanation of automatic reflection on models and classes, see:
-      [Language → Reference → Reflection].
+    - If you want the language-facing explanation of automatic reflection on models and classes, see: [Language → Reference → Reflection].
 
 <!-- References -->
 [Language → Reference → Reflection]:../reflection.md
@@ -25,7 +24,7 @@ Calling `obj.__fields__()` and inspecting the returned records does not require 
 
 ### `FieldInfo`
 
-Compiler-provided field metadata returned by `__fields__()`.
+Field metadata returned by `__fields__()`.
 
 | Field         | Type                               | Description                                                   |
 | ------------- | ---------------------------------- | ------------------------------------------------------------- |

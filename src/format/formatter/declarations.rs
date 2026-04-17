@@ -279,7 +279,17 @@ impl Formatter {
                 if i > 0 {
                     self.writer.write(", ");
                 }
-                self.writer.write(&trait_name.node);
+                self.writer.write(&trait_name.node.name);
+                if !trait_name.node.type_args.is_empty() {
+                    self.writer.write("[");
+                    for (j, arg) in trait_name.node.type_args.iter().enumerate() {
+                        if j > 0 {
+                            self.writer.write(", ");
+                        }
+                        self.format_type(&arg.node);
+                    }
+                    self.writer.write("]");
+                }
             }
         }
         self.writer.writeln(":");
@@ -337,7 +347,17 @@ impl Formatter {
                 if i > 0 {
                     self.writer.write(", ");
                 }
-                self.writer.write(&trait_name.node);
+                self.writer.write(&trait_name.node.name);
+                if !trait_name.node.type_args.is_empty() {
+                    self.writer.write("[");
+                    for (j, arg) in trait_name.node.type_args.iter().enumerate() {
+                        if j > 0 {
+                            self.writer.write(", ");
+                        }
+                        self.format_type(&arg.node);
+                    }
+                    self.writer.write("]");
+                }
             }
         }
 

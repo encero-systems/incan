@@ -1,12 +1,7 @@
 # std.derives.* (reference)
 
-This page documents the curated `std.derives.*` standard-library surface.
-The implementation source of truth lives in:
-
-- `crates/incan_stdlib/stdlib/derives/comparison.incn`
-- `crates/incan_stdlib/stdlib/derives/copying.incn`
-- `crates/incan_stdlib/stdlib/derives/string.incn`
-- `crates/incan_stdlib/stdlib/derives/collection.incn`
+This page documents the derive-related trait families available under `std.derives.*`.
+Import these traits when you want to adopt them explicitly or refer to them in annotations and bounds.
 
 !!! info "Related pages"
     - If you want the language-facing explanation of derives, trait authoring, and conflict rules, see:
@@ -32,12 +27,11 @@ from std.derives.string import Debug, Display
 
 ## Surface model
 
-Traits under `std.derives.*` are source-defined capability contracts.
+Traits under `std.derives.*` describe capabilities such as equality, ordering, copying, and display formatting.
 
-- The trait signatures are declared in `.incn` source.
-- The compiler typechecks against those source signatures.
-- When a type uses `@derive(...)`, codegen realizes the implementation through ordinary Rust `#[derive(...)]` expansion on the adopting type.
-- These traits are not modeled as runtime helper calls through `incan_stdlib::derives::*`.
+- Many of these traits are also the ones used by `@derive(...)`.
+- You can import the trait names directly when you want to refer to them in type-level positions.
+- The collection traits in `std.derives.collection` are ordinary trait families for collection-like behavior, not derive markers.
 
 ## Submodules
 
@@ -80,4 +74,4 @@ Provides collection-protocol traits for custom types, including:
 - `Iterable[T]`
 - `Iterator[T]`
 
-These are source-defined stdlib traits, but unlike the derive families above they are not realized via Rust `#[derive(...)]`.
+Use these when you want a custom type to participate in collection-style APIs through explicit trait adoption.

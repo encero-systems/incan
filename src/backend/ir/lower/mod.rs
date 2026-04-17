@@ -577,7 +577,7 @@ impl AstLowering {
                             // Generate trait impls for each trait this model implements
                             for trait_ref in &m.traits {
                                 for (trait_name, trait_type_args) in
-                                    self.trait_impl_targets_for_adopted_trait(trait_ref.node.as_str(), &m.type_params)
+                                    self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, &m.type_params)
                                 {
                                     if !self.trait_decls.contains_key(&trait_name)
                                         && Self::is_stdlib_serde_trait_name(&trait_name)
@@ -635,7 +635,7 @@ impl AstLowering {
                             // Generate trait impls for each trait this class implements
                             for trait_ref in &c.traits {
                                 for (trait_name, trait_type_args) in
-                                    self.trait_impl_targets_for_adopted_trait(trait_ref.node.as_str(), &c.type_params)
+                                    self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, &c.type_params)
                                 {
                                     if !self.trait_decls.contains_key(&trait_name)
                                         && Self::is_stdlib_serde_trait_name(&trait_name)

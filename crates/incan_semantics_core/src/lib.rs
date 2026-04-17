@@ -37,6 +37,7 @@ pub enum DecoratorFeature {
     Route,
     Derive,
     StaticMethod,
+    ClassMethod,
     Requires,
     StdlibDecoratorFunction,
 }
@@ -311,6 +312,7 @@ pub fn decorator_feature_from_id(id: DecoratorId) -> DecoratorFeature {
         DecoratorId::RustExtern => DecoratorFeature::RustExtern,
         DecoratorId::Derive => DecoratorFeature::Derive,
         DecoratorId::StaticMethod => DecoratorFeature::StaticMethod,
+        DecoratorId::ClassMethod => DecoratorFeature::ClassMethod,
         DecoratorId::Requires => DecoratorFeature::Requires,
     }
 }

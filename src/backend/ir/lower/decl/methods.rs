@@ -92,6 +92,26 @@ impl AstLowering {
         out
     }
 
+    /// Lower an adopted trait bound into the direct Rust impl target(s) required for codegen.
+    ///
+    /// Explicit type arguments on adopter bounds (for example `with From[int]`) are preserved directly from the AST.
+    /// Recursive instantiated supertrait expansion is only available on the older positional-adoption path, which is
+    /// sufficient for the current stdlib conversion hooks.
+    pub(in crate::backend::ir::lower) fn trait_impl_targets_for_adopted_trait_bound(
+        &self,
+        bound: &ast::TraitBound,
+        type_params: &[ast::TypeParam],
+    ) -> Vec<(String, Vec<IrType>)> {
+        if bound.type_args.is_empty() {
+            return self.trait_impl_targets_for_adopted_trait(&bound.name, type_params);
+        }
+
+        vec![(
+            bound.name.clone(),
+            bound.type_args.iter().map(|arg| self.lower_type(&arg.node)).collect(),
+        )]
+    }
+
     /// Lower model methods into an impl block.
     pub(in crate::backend::ir::lower) fn lower_model_methods(
         &mut self,

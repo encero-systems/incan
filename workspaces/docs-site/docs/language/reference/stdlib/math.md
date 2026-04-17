@@ -1,13 +1,15 @@
 # std.math reference
 
-This page documents the stable `std.math` surface.
-The implementation source of truth lives in `crates/incan_stdlib/stdlib/math.incn`.
+This page documents the numeric helpers available under `std.math`.
+Use this module for standard mathematical constants and functions.
 
 Import with:
 
 ```incan
 import std.math
 ```
+
+Access values through the `math` namespace, for example `math.PI` or `math.sqrt(9.0)`.
 
 ## Constants
 

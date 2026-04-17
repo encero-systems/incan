@@ -326,6 +326,18 @@ pub fn supertrait_bound_arity_mismatch(name: &str, expected: usize, found: usize
     .with_hint("Match the supertrait generic arity in the `with` clause")
 }
 
+/// Emitted when a model/class trait adoption bound supplies the wrong number of generic arguments.
+pub fn trait_adoption_bound_arity_mismatch(name: &str, expected: usize, found: usize, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Trait adoption '{}' expects {} type argument(s), found {}",
+            name, expected, found
+        ),
+        span,
+    )
+    .with_hint("Match the trait generic arity in the model or class `with` clause")
+}
+
 /// Emitted when a supertrait bound is not a simple trait name or generic trait instantiation.
 pub fn supertrait_bound_invalid(span: Span) -> CompileError {
     CompileError::type_error(

@@ -152,18 +152,36 @@ Expected: “cannot derive a model/class” with a hint to use `with TraitName` 
 
 ---
 
-## Decorators (`@staticmethod`, `@requires`)
+## Decorators (`@staticmethod`, `@classmethod`, `@requires`) {#decorators-staticmethod-requires}
 
-Incan has four built-in decorators. `@derive(...)` is covered [above](#derive-catalog-quick-index); `@rust.extern` is a
-Rust interop decorator (see [RFC 023]). This section covers the two method/trait decorators.
+Incan has several built-in decorators with different roles.
 
---8<-- "_snippets/rfcs_refs.md"
+- `@derive(...)` is covered [above](#derive-catalog-quick-index).
+- `@rust.extern` belongs to Rust interop and is documented in the Rust interop reference.
+- This section covers the method and trait decorators you will use when authoring ordinary Incan types and traits.
 
 ### `@staticmethod`
 
 --8<-- "_snippets/language/decorators/staticmethod.md"
 
 See also: [Classes: Static methods](../explanation/models_and_classes/classes.md#static-methods-staticmethod)
+
+### `@classmethod`
+
+Use `@classmethod` for methods that are called on the type rather than on an instance, but still conceptually belong to that type.
+
+This is commonly used for constructor-style APIs:
+
+```incan
+model UserId:
+    value: int
+
+    @classmethod
+    def from(cls, value: str) -> Self:
+        return UserId(value=int(value))
+```
+
+Unlike an instance method, a class method does not take `self`. Unlike a static method, it is written as a type-associated constructor-style hook and returns `Self` naturally.
 
 ### `@requires(...)`
 

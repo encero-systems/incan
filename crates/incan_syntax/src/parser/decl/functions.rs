@@ -53,12 +53,16 @@ impl<'a> Parser<'a> {
             });
         }
         self.expect_keyword(KeywordId::Def, "Expected 'def'")?;
-        let name = self.identifier()?;
+        let name = self.identifier_or_from_keyword()?;
         let type_params = self.type_params()?;
         self.expect_punct(PunctuationId::LParen, "Expected '(' after method name")?;
 
         // Parse receiver and params
-        let (receiver, params) = self.receiver_and_params()?;
+        let is_classmethod = decorators.iter().any(|decorator| {
+            incan_core::lang::decorators::from_segments(&decorator.node.path.segments)
+                == Some(incan_core::lang::decorators::DecoratorId::ClassMethod)
+        });
+        let (receiver, params) = self.receiver_and_params(is_classmethod)?;
 
         self.expect_punct(PunctuationId::RParen, "Expected ')' after parameters")?;
         self.expect_punct(PunctuationId::Arrow, "Expected '->' before return type")?;
@@ -100,7 +104,10 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a receiver and parameters.
-    fn receiver_and_params(&mut self) -> Result<(Option<Receiver>, Vec<Spanned<Param>>), CompileError> {
+    fn receiver_and_params(
+        &mut self,
+        is_classmethod: bool,
+    ) -> Result<(Option<Receiver>, Vec<Spanned<Param>>), CompileError> {
         // Check for receiver
         let receiver = if self.check_keyword(KeywordId::Mut) {
             self.advance();
@@ -115,6 +122,12 @@ impl<'a> Parser<'a> {
                 self.advance();
             }
             Some(Receiver::Immutable)
+        } else if is_classmethod && self.peek_ident_text("cls") {
+            self.advance();
+            if self.check(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                self.advance();
+            }
+            None
         } else {
             None
         };

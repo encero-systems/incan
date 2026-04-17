@@ -20,8 +20,8 @@ Together, these changes push the Incan stdlib toward being written in **mostly p
 
 ## Implemented Closeout Notes
 
-- `.incn` source is now the source of truth for the stdlib surfaces closed out under RFC 023, including `std.async`, `std.math`, `std.reflection`, and `std.traits.{ops,error,indexing,callable,prelude}`.
-- `std.traits.convert` remains part of the documented standard-library surface, but its `.incn` source is still blocked on follow-up compiler-surface work for `from` / `try_from` (tracked separately under RFC 043 / issue #344).
+- `.incn` source is now the source of truth for the stdlib surfaces closed out under RFC 023, including `std.async`, `std.math`, `std.reflection`, and `std.traits.{convert,ops,error,indexing,callable,prelude}`.
+- `std.traits.convert` now compiles through the normal stdlib pipeline via `@classmethod` conversion hooks for `from` / `try_from`. Broader Rust trait-impl authoring on wrappers remains follow-up work under RFC 043.
 - Build, test, and lock flows derive stdlib-driven feature/extra-dependency activation from shared namespace metadata (for example `std.async` enabling Tokio and `std.math` pulling `libm`).
 - Explicit generic `with` bounds are enforced in the frontend against concrete argument types; backend trait-bound inference remains additive rather than the first place bound violations show up.
 - `@rust.extern` declaration-shape errors are caught in the frontend, and downstream Cargo/`rustc` failures are wrapped back onto the `.incn` declaration site in the CLI build surface.

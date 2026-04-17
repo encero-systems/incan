@@ -260,7 +260,7 @@ impl AstLowering {
     pub(in crate::backend::ir::lower) fn extend_derives_with_adopted_serde_traits(
         &self,
         derives: &mut Vec<String>,
-        trait_bounds: &[Spanned<String>],
+        trait_bounds: &[Spanned<ast::TraitBound>],
     ) {
         fn has(derives: &[String], name: &str) -> bool {
             derives.iter().any(|d| d == name)
@@ -270,7 +270,7 @@ impl AstLowering {
         let deserialize = derives::as_str(DeriveId::Deserialize);
 
         for bound in trait_bounds {
-            match bound.node.as_str() {
+            match bound.node.name.as_str() {
                 name if name == serialize && !has(derives, serialize) => derives.push(serialize.to_string()),
                 name if name == deserialize && !has(derives, deserialize) => derives.push(deserialize.to_string()),
                 _ => {}

@@ -78,6 +78,28 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse an identifier, allowing the hard `from` keyword in declaration-name position.
+    ///
+    /// This keeps `def from(...)` available for stdlib conversion hooks without widening every declaration-name site to
+    /// arbitrary keywords.
+    fn identifier_or_from_keyword(&mut self) -> Result<Ident, CompileError> {
+        match &self.peek().kind {
+            TokenKind::Ident(name) => {
+                let name = name.clone();
+                self.advance();
+                Ok(name)
+            }
+            TokenKind::Keyword(KeywordId::From) => {
+                self.advance();
+                Ok("from".to_string())
+            }
+            _ => Err(errors::expected_identifier(
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            )),
+        }
+    }
+
     /// Parse an identifier in import/decorator paths, allowing specific keyword segments (e.g. `std.async`, `rust.extern`).
     fn identifier_or_import_keyword(&mut self) -> Result<Ident, CompileError> {
         match &self.peek().kind {
@@ -110,15 +132,6 @@ impl<'a> Parser<'a> {
         } else {
             false
         }
-    }
-
-    /// Parse a list of identifiers and return them as spanned tokens.
-    fn identifier_list_spanned(&mut self) -> Result<Vec<Spanned<Ident>>, CompileError> {
-        let mut idents = vec![self.identifier_spanned()?];
-        while self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
-            idents.push(self.identifier_spanned()?);
-        }
-        Ok(idents)
     }
 
     /// Parse a string literal and return it as a spanned token.

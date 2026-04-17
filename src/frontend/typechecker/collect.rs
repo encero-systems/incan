@@ -146,7 +146,7 @@ impl TypeChecker {
             name: model.name.clone(),
             kind: SymbolKind::Type(TypeInfo::Model(ModelInfo {
                 type_params: model.type_params.iter().map(|tp| tp.name.clone()).collect(),
-                traits: model.traits.iter().map(|t| t.node.clone()).collect(),
+                traits: model.traits.iter().map(|t| t.node.name.clone()).collect(),
                 derives,
                 fields,
                 methods,
@@ -180,7 +180,7 @@ impl TypeChecker {
             kind: SymbolKind::Type(TypeInfo::Class(ClassInfo {
                 type_params: class.type_params.iter().map(|tp| tp.name.clone()).collect(),
                 extends: class.extends.clone(),
-                traits: class.traits.iter().map(|t| t.node.clone()).collect(),
+                traits: class.traits.iter().map(|t| t.node.name.clone()).collect(),
                 derives,
                 fields,
                 methods,

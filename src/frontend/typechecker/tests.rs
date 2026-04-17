@@ -5422,6 +5422,54 @@ model Cell[T] with ExternBox:
 }
 
 #[test]
+fn test_model_trait_adoption_rejects_wrong_explicit_type_argument_arity() {
+    let source = r#"
+from std.traits.convert import From
+
+model UserId with From[int, str]:
+  value: int
+
+  @classmethod
+  def from(cls, value: int) -> Self:
+    return UserId(value=value)
+"#;
+
+    let Err(errs) = check_str(source) else {
+        panic!("expected trait adoption arity error");
+    };
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("Trait adoption 'From' expects 1 type argument(s), found 2")),
+        "expected trait adoption arity diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_model_trait_adoption_instantiates_explicit_type_arguments_for_method_checks() {
+    let source = r#"
+from std.traits.convert import From
+
+model UserId with From[str]:
+  value: int
+
+  @classmethod
+  def from(cls, value: int) -> Self:
+    return UserId(value=value)
+"#;
+
+    let Err(errs) = check_str(source) else {
+        panic!("expected trait method signature mismatch");
+    };
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("Trait 'From' requires 'UserId'::from to match its signature")),
+        "expected trait conformance diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
 fn test_pub_import_transitive_method_return_type_supports_follow_up_method_lookup() {
     let source = r#"
 from pub::pubdemo import Session, SessionError

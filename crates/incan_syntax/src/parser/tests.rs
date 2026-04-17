@@ -90,6 +90,21 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_trait_method_named_from() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+trait From[T]:
+  @classmethod
+  def from(cls, value: T) -> Self: ...
+"#;
+        let program = parse_str(source)?;
+        let trait_decl = require_trait_decl(&program.declarations[0])?;
+        assert_eq!(trait_decl.name, "From");
+        assert_eq!(trait_decl.methods.len(), 1);
+        assert_eq!(trait_decl.methods[0].node.name, "from");
+        Ok(())
+    }
+
+    #[test]
     fn test_unexpected_indent_at_toplevel_is_single_clear_error() {
         // We intentionally allow the lexer to emit INDENT/DEDENT tokens at the top-level.
         // The parser should produce a single clear error and avoid cascading failures.
@@ -949,7 +964,7 @@ model User with Describable:
             Declaration::Model(m) => {
                 assert_eq!(m.name, "User");
                 assert_eq!(m.traits.len(), 1);
-                assert_eq!(m.traits[0].node, "Describable");
+                assert_eq!(m.traits[0].node.name, "Describable");
             }
             _ => panic!("Expected model"),
         }
@@ -974,8 +989,31 @@ model User with A, B:
             Declaration::Model(m) => {
                 assert_eq!(m.name, "User");
                 assert_eq!(m.traits.len(), 2);
-                assert_eq!(m.traits[0].node, "A");
-                assert_eq!(m.traits[1].node, "B");
+                assert_eq!(m.traits[0].node.name, "A");
+                assert_eq!(m.traits[1].node.name, "B");
+            }
+            _ => panic!("Expected model"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_model_with_generic_trait_adoption_named_from() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+trait From[T]:
+  @classmethod
+  def from(cls, value: T) -> Self: ...
+
+model UserId with From[int]:
+  value: int
+"#;
+        let program = parse_str(source)?;
+        match &program.declarations[1].node {
+            Declaration::Model(m) => {
+                assert_eq!(m.name, "UserId");
+                assert_eq!(m.traits.len(), 1);
+                assert_eq!(m.traits[0].node.name, "From");
+                assert_eq!(m.traits[0].node.type_args.len(), 1);
             }
             _ => panic!("Expected model"),
         }

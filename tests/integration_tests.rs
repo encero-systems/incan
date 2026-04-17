@@ -2550,8 +2550,8 @@ class Service with Loggable, Serializable:
         match &program.declarations[0].node {
             Declaration::Class(c) => {
                 assert_eq!(c.traits.len(), 2);
-                assert_eq!(c.traits[0].node, "Loggable");
-                assert_eq!(c.traits[1].node, "Serializable");
+                assert_eq!(c.traits[0].node.name, "Loggable");
+                assert_eq!(c.traits[1].node.name, "Serializable");
             }
             _ => panic!("Expected class"),
         }

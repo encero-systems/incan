@@ -1360,6 +1360,23 @@ fn test_std_traits_prelude_compiled_codegen() {
     insta::assert_snapshot!("std_traits_prelude_compiled", rust_code);
 }
 
+#[test]
+fn test_std_traits_convert_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/traits/convert.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_traits_convert_compiled", rust_code);
+}
+
+#[test]
+fn test_std_traits_convert_usage_codegen() {
+    let source = load_test_file("std_traits_convert_usage");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_traits_convert_usage", rust_code);
+}
+
 // ============================================================================
 /// Issue #145: Full surface-semantics path for `assert` statements.
 // ============================================================================

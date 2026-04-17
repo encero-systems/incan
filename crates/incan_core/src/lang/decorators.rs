@@ -21,6 +21,7 @@ pub enum DecoratorId {
     Derive,
     RustExtern,
     StaticMethod,
+    ClassMethod,
     Requires,
 }
 
@@ -87,6 +88,14 @@ pub const DECORATORS: &[DecoratorInfo] = &[
         "Mark a method as static (no self receiver).",
         RFC::_000,
         Since(0, 1),
+    ),
+    info(
+        DecoratorId::ClassMethod,
+        "classmethod",
+        &[],
+        "Mark a method as a class method (no implicit self receiver).",
+        RFC::_000,
+        Since(0, 2),
     ),
     info(
         DecoratorId::Requires,

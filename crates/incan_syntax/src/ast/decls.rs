@@ -17,8 +17,8 @@ pub struct ModelDecl {
     pub decorators: Vec<Spanned<Decorator>>,
     pub name: Ident,
     pub type_params: Vec<TypeParam>,
-    // Traits adopted by this model via `with TraitA, TraitB`.
-    pub traits: Vec<Spanned<Ident>>,
+    // Traits adopted by this model via `with TraitA, TraitB[T]`.
+    pub traits: Vec<Spanned<TraitBound>>,
     /// Docstring at the start of the model body (surface `"""..."""`), when present.
     pub docstring: Option<String>,
     pub fields: Vec<Spanned<FieldDecl>>,
@@ -54,7 +54,7 @@ pub struct ClassDecl {
     pub name: Ident,
     pub type_params: Vec<TypeParam>,
     pub extends: Option<Ident>,
-    pub traits: Vec<Spanned<Ident>>,
+    pub traits: Vec<Spanned<TraitBound>>,
     /// Docstring at the start of the class body (surface `"""..."""`), when present.
     pub docstring: Option<String>,
     pub fields: Vec<Spanned<FieldDecl>>,

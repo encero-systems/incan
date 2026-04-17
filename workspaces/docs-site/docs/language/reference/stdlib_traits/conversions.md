@@ -2,21 +2,42 @@
 
 This page documents stdlib traits for explicit conversions.
 
-Current status:
+Use these traits when a type should define an explicit conversion from or into another type.
 
-- `std.traits.convert` remains a documented trait family, but RFC 023 closeout for its `.incn` source is blocked for now because `from` is still a hard keyword in declaration position.
-- Follow-up is tracked in [RFC 043](../../../RFCs/043_rust_trait_impl_from_incan.md).
+The two main patterns are:
+
+- `From[T]` / `Into[T]` for conversions that should always succeed
+- `TryFrom[T]` / `TryInto[T]` for conversions that may fail
 
 ## From / Into
 
 - **`From[T]`**
-    - Intended hook: `@classmethod def from(cls, value: T) -> Self`
+    - Hook: `@classmethod def from(cls, value: T) -> Self`
 - **`Into[T]`**
     - Hook: `def into(self) -> T`
+
+Example:
+
+```incan
+from std.traits.convert import From
+
+model UserId with From[str]:
+    value: int
+
+    @classmethod
+    def from(cls, value: str) -> Self:
+        # accepts a str and converts it to int
+        return UserId(value=int(value))
+
+
+user_id = UserId.from("42")
+```
 
 ## TryFrom / TryInto
 
 - **`TryFrom[T]`**
-    - Intended hook: `@classmethod def try_from(cls, value: T) -> Result[Self, str]`
+    - Hook: `@classmethod def try_from(cls, value: T) -> Result[Self, str]`
 - **`TryInto[T]`**
     - Hook: `def try_into(self) -> Result[T, str]`
+
+Use `TryFrom[T]` when the conversion needs validation or parsing and may return an error instead of a value.
