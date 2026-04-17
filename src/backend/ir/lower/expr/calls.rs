@@ -3,13 +3,17 @@
 
 use super::super::super::TypedExpr;
 use super::super::super::expr::{
-    BuiltinFn, IrCallArg, IrExprKind, IrInteropCoercionKind, MethodCallArgPolicy, VarAccess, VarRefKind,
+    BuiltinFn, IrCallArg, IrExprKind, IrInteropCoercionKind, MatchArm, MethodCallArgPolicy, Pattern, VarAccess,
+    VarRefKind,
 };
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast;
 use crate::frontend::typechecker::RustArgCoercionKind;
+use incan_core::lang::surface::constructors::{self, ConstructorId};
+
+pub(crate) const INTERNAL_PANIC_FN: &str = "__incan_internal_panic";
 
 impl AstLowering {
     /// Prefer monomorphized call-site type args from the typechecker (RFC 054); otherwise lower AST types.
@@ -274,21 +278,62 @@ impl AstLowering {
                 },
                 IrType::Result(Box::new(struct_ty.clone()), Box::new(IrType::Unknown)),
             );
-            // Prefer `expect` over `unwrap` so panics carry context. Note: for `Result`,
-            // Rust's `expect` includes the `Err(...)` payload via Debug formatting.
-            let msg = TypedExpr::new(
+            let value_name = "__incan_newtype_value".to_string();
+            // Keep the failure path local to generated code: the Err branch still panics, but we no longer emit an
+            // `.expect()` extraction in the generated Rust.
+            let ok_arm = MatchArm {
+                pattern: Pattern::Enum {
+                    name: "Result".to_string(),
+                    variant: constructors::as_str(ConstructorId::Ok).to_string(),
+                    fields: vec![Pattern::Var(value_name.clone())],
+                },
+                guard: None,
+                body: TypedExpr::new(
+                    IrExprKind::Var {
+                        name: value_name,
+                        access: VarAccess::Move,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    struct_ty.clone(),
+                ),
+            };
+            let panic_message = TypedExpr::new(
                 IrExprKind::Literal(super::super::super::expr::Literal::StaticStr(format!(
                     "validated newtype construction failed: {name}::{ctor}"
                 ))),
                 IrType::StaticStr,
             );
+            let err_arm = MatchArm {
+                pattern: Pattern::Enum {
+                    name: "Result".to_string(),
+                    variant: constructors::as_str(ConstructorId::Err).to_string(),
+                    fields: vec![Pattern::Wildcard],
+                },
+                guard: None,
+                body: TypedExpr::new(
+                    IrExprKind::Call {
+                        func: Box::new(TypedExpr::new(
+                            IrExprKind::Var {
+                                name: INTERNAL_PANIC_FN.to_string(),
+                                access: VarAccess::Read,
+                                ref_kind: VarRefKind::Value,
+                            },
+                            IrType::Unknown,
+                        )),
+                        type_args: Vec::new(),
+                        args: vec![IrCallArg {
+                            name: None,
+                            expr: panic_message,
+                        }],
+                        canonical_path: None,
+                    },
+                    struct_ty.clone(),
+                ),
+            };
             return Ok((
-                IrExprKind::MethodCall {
-                    receiver: Box::new(from_underlying_call),
-                    method: "expect".to_string(),
-                    type_args: Vec::new(),
-                    args: vec![IrCallArg { name: None, expr: msg }],
-                    arg_policy: MethodCallArgPolicy::Default,
+                IrExprKind::Match {
+                    scrutinee: Box::new(from_underlying_call),
+                    arms: vec![ok_arm, err_arm],
                 },
                 struct_ty,
             ));

@@ -15,6 +15,8 @@ use super::super::{EmitError, IrEmitter};
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 
+const INTERNAL_PANIC_FN: &str = "__incan_internal_panic";
+
 impl<'a> IrEmitter<'a> {
     /// Heuristic: detect whether a type still has unresolved generic parts.
     ///
@@ -265,6 +267,22 @@ impl<'a> IrEmitter<'a> {
             None
         };
         let callee_name = local_name.or(canonical_name);
+
+        // The checked-newtype lowering path emits a compiler-internal panic marker call. Render that as the Rust
+        // `panic!` macro so generated code stays valid without colliding with user-defined functions that may also be
+        // named `panic`.
+        if matches!(callee_name, Some(name) if name == INTERNAL_PANIC_FN)
+            && canonical_path.is_none()
+            && args.len() == 1
+            && matches!(
+                &args[0].expr.kind,
+                super::super::super::expr::IrExprKind::Literal(super::super::super::expr::Literal::StaticStr(_))
+            )
+        {
+            let panic_args: Vec<TokenStream> =
+                args.iter().map(|a| self.emit_expr(&a.expr)).collect::<Result<_, _>>()?;
+            return Ok(quote! { panic!(#(#panic_args),*) });
+        }
 
         // Handle builtin functions specially (legacy string-based path)
         if let Some(name) = callee_name {

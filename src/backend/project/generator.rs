@@ -174,6 +174,19 @@ impl ProjectGenerator {
         }
     }
 
+    /// Render a Rust module declaration for a generated module file or directory.
+    ///
+    /// Keyword-named modules use raw identifiers in Rust (`r#type`) while keeping the on-disk layout clean
+    /// (`type.rs`, `type/mod.rs`). The explicit `#[path = "..."]` keeps that mapping obvious in emitted code and
+    /// matches the RFC 023 closeout contract for keyword-named module paths.
+    fn render_module_decl(name: &str, relative_path: &str, visibility: &str) -> String {
+        let escaped_name = rust_keywords::escape_keyword(name);
+        if rust_keywords::is_keyword(name) {
+            return format!("#[path = \"{relative_path}\"]\n{visibility}mod {escaped_name};");
+        }
+        format!("{visibility}mod {escaped_name};")
+    }
+
     /// Generate the project structure (single-file mode).
     pub fn generate(&self, rust_code: &str) -> io::Result<bool> {
         let src_dir = self.ensure_generated_src_dir()?;
@@ -231,8 +244,10 @@ impl ProjectGenerator {
             module_names.sort();
             let mods: String = module_names
                 .iter()
-                .map(|m| format!("mod {};\n", rust_keywords::escape_keyword(m)))
-                .collect();
+                .map(|m| Self::render_module_decl(m, &format!("{m}.rs"), ""))
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n";
 
             // Insert right after the crate-level allow attribute line (if present),
             // otherwise prepend (best-effort).
@@ -351,7 +366,16 @@ impl ProjectGenerator {
             // Add submodule declarations
             let submod_declarations: String = submodules
                 .iter()
-                .map(|s| format!("pub mod {};", rust_keywords::escape_keyword(s)))
+                .map(|s| {
+                    let mut child_path = dir_path.clone();
+                    child_path.push(s.clone());
+                    let relative_path = if modules_with_submodules.contains(&child_path) {
+                        format!("{s}/mod.rs")
+                    } else {
+                        format!("{s}.rs")
+                    };
+                    Self::render_module_decl(s, &relative_path, "pub ")
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
 
@@ -406,8 +430,18 @@ impl ProjectGenerator {
         if !sorted_top.is_empty() {
             let mods: String = sorted_top
                 .iter()
-                .map(|m| format!("mod {};\n", rust_keywords::escape_keyword(m)))
-                .collect();
+                .map(|m| {
+                    let top_level_path = vec![(*m).clone()];
+                    let relative_path = if modules_with_submodules.contains(&top_level_path) {
+                        format!("{m}/mod.rs")
+                    } else {
+                        format!("{m}.rs")
+                    };
+                    Self::render_module_decl(m, &relative_path, "")
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n";
 
             if let Some(attr_pos) = full_main.find("#![allow(") {
                 let line_end = full_main[attr_pos..]
@@ -519,6 +553,35 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_multi_escapes_keyword_module_names() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("incan_test_keyword_modules");
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        let generator = ProjectGenerator::new(&temp_dir, "test_keyword_modules", true);
+
+        let mut modules = HashMap::new();
+        modules.insert("async".to_string(), "pub fn launch() {}".to_string());
+        modules.insert("type".to_string(), "pub fn marker() {}".to_string());
+
+        generator.generate_multi("fn main() {}", &modules)?;
+
+        let main_content = fs::read_to_string(temp_dir.join("src/main.rs"))?;
+        assert!(main_content.contains("#[path = \"async.rs\"]\nmod r#async;"));
+        assert!(main_content.contains("#[path = \"type.rs\"]\nmod r#type;"));
+        assert!(temp_dir.join("src/async.rs").exists());
+        assert!(temp_dir.join("src/type.rs").exists());
+
+        let async_content = fs::read_to_string(temp_dir.join("src/async.rs"))?;
+        assert!(async_content.contains("pub fn launch"));
+
+        let type_content = fs::read_to_string(temp_dir.join("src/type.rs"))?;
+        assert!(type_content.contains("pub fn marker"));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
     fn test_generate_nested_transforms_stdlib_to_incan_std() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join("incan_test_stdlib_transform");
         let _ = fs::remove_dir_all(&temp_dir);
@@ -578,6 +641,48 @@ mod tests {
         // Check regular user module is unchanged
         assert!(temp_dir.join("src/db").exists());
         assert!(temp_dir.join("src/db/models.rs").exists());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_nested_escapes_keyword_submodule_names() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("incan_test_nested_keyword_modules");
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        let generator = ProjectGenerator::new(&temp_dir, "test_nested_keyword_modules", false);
+
+        let mut modules = HashMap::new();
+        modules.insert(
+            vec!["api".to_string(), "async".to_string()],
+            "pub fn launch() {}".to_string(),
+        );
+        modules.insert(
+            vec!["type".to_string(), "helpers".to_string()],
+            "pub fn marker() {}".to_string(),
+        );
+
+        generator.generate_nested("pub fn root() {}", &modules)?;
+
+        assert!(temp_dir.join("src/api").exists());
+        assert!(temp_dir.join("src/api/mod.rs").exists());
+        assert!(temp_dir.join("src/api/async.rs").exists());
+        assert!(temp_dir.join("src/type").exists());
+        assert!(temp_dir.join("src/type/mod.rs").exists());
+        assert!(temp_dir.join("src/type/helpers.rs").exists());
+
+        let main_content = fs::read_to_string(temp_dir.join("src/lib.rs"))?;
+        assert!(main_content.contains("#[path = \"type/mod.rs\"]\nmod r#type;"));
+
+        let mod_rs_content = fs::read_to_string(temp_dir.join("src/api/mod.rs"))?;
+        assert!(mod_rs_content.contains("#[path = \"async.rs\"]\npub mod r#async;"));
+
+        let async_content = fs::read_to_string(temp_dir.join("src/api/async.rs"))?;
+        assert!(async_content.contains("pub fn launch"));
+
+        let type_mod_rs_content = fs::read_to_string(temp_dir.join("src/type/mod.rs"))?;
+        assert!(type_mod_rs_content.contains("pub mod helpers;"));
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())

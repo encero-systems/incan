@@ -1124,7 +1124,22 @@ fn test_constructor_field_defaults_codegen() {
 fn test_newtype_checked_construction_codegen() {
     let source = load_test_file("newtype_checked_construction");
     let rust_code = generate_rust(&source);
+    assert!(
+        !rust_code.contains(".expect(\"validated newtype construction failed"),
+        "checked newtype construction should not emit .expect():\n{rust_code}"
+    );
     insta::assert_snapshot!("newtype_checked_construction", rust_code);
+}
+
+#[test]
+fn test_user_defined_panic_function_codegen() {
+    let source = load_test_file("panic_function_name");
+    let rust_code = generate_rust(&source);
+    assert!(
+        !rust_code.contains("println!(\"{}\", panic!(\"not the macro\"));"),
+        "user-defined panic function must not emit panic! macro:\n{rust_code}"
+    );
+    insta::assert_snapshot!("panic_function_name", rust_code);
 }
 
 #[test]

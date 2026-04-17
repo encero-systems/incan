@@ -84,10 +84,16 @@ fn main() {
     );
     let uid = UserId(42);
     let ratio = Ratio(0.5f64);
-    let attempts = Attempts::from_underlying(5)
-        .expect("validated newtype construction failed: Attempts::from_underlying");
-    let email = Email::from_str("alice@example.com".to_string())
-        .expect("validated newtype construction failed: Email::from_str");
+    let attempts = match Attempts::from_underlying(5) {
+        Ok(__incan_newtype_value) => __incan_newtype_value,
+        Err(_) => {
+            panic!("validated newtype construction failed: Attempts::from_underlying")
+        }
+    };
+    let email = match Email::from_str("alice@example.com".to_string()) {
+        Ok(__incan_newtype_value) => __incan_newtype_value,
+        Err(_) => panic!("validated newtype construction failed: Email::from_str"),
+    };
     println!(
         "{}", { let __parts : [& str; 5usize] = ["", " ", " ", " ", ""]; let __args : Vec
         < String > = vec![format!("{}", uid.0), format!("{}", ratio.0), format!("{}",

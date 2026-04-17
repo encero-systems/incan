@@ -1260,6 +1260,104 @@ async def main() -> Result[None, str]:
     }
 
     #[test]
+    fn test_build_and_run_keyword_named_modules_escape_consistently() -> Result<(), Box<dyn std::error::Error>> {
+        let project_dir = make_temp_dir("incan_keyword_module_paths");
+        let src_dir = project_dir.join("src");
+        std::fs::create_dir_all(src_dir.join("api"))?;
+        std::fs::write(
+            project_dir.join("incan.toml"),
+            "[project]\nname = \"keyword_module_paths\"\nversion = \"0.1.0\"\n",
+        )?;
+
+        let main_path = src_dir.join("main.incn");
+        // Use a Rust keyword that remains a legal Incan module spelling. `type` is a separate Incan keyword, so
+        // parser work to allow `from type import ...` would be a different issue than Rust-side module escaping.
+        std::fs::write(
+            &main_path,
+            r#"from extern import root_value
+from api.extern import nested_value
+
+def main() -> None:
+  println(root_value())
+  println(nested_value())
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("extern.incn"),
+            r#"pub def root_value() -> str:
+  return "root-keyword"
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("api").join("extern.incn"),
+            r#"pub def nested_value() -> str:
+  return "nested-keyword"
+"#,
+        )?;
+
+        let out_dir = project_dir.join("out");
+        let build_output = Command::new(incan_debug_binary())
+            .args([
+                "build",
+                main_path.to_string_lossy().as_ref(),
+                out_dir.to_string_lossy().as_ref(),
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            build_output.status.success(),
+            "incan build keyword-module project failed: status={:?} stderr={}",
+            build_output.status,
+            String::from_utf8_lossy(&build_output.stderr)
+        );
+
+        let main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        let api_mod_rs = std::fs::read_to_string(out_dir.join("src/api/mod.rs"))?;
+        let normalized_main: String = main_rs.chars().filter(|c| !c.is_whitespace()).collect();
+        let normalized_api_mod: String = api_mod_rs.chars().filter(|c| !c.is_whitespace()).collect();
+
+        assert!(
+            normalized_main.contains("#[path=\"extern.rs\"]modr#extern;"),
+            "expected top-level keyword module path attr in generated main.rs, got:\n{main_rs}"
+        );
+        assert!(
+            normalized_main.contains("crate::r#extern::root_value"),
+            "expected generated use path to escape top-level keyword module, got:\n{main_rs}"
+        );
+        assert!(
+            normalized_main.contains("crate::api::r#extern::nested_value"),
+            "expected generated use path to escape nested keyword module, got:\n{main_rs}"
+        );
+        assert!(
+            normalized_api_mod.contains("#[path=\"extern.rs\"]pubmodr#extern;"),
+            "expected nested keyword module path attr in api/mod.rs, got:\n{api_mod_rs}"
+        );
+
+        let run_output = Command::new(incan_debug_binary())
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            run_output.status.success(),
+            "incan run keyword-module project failed: status={:?} stderr={}",
+            run_output.status,
+            String::from_utf8_lossy(&run_output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&run_output.stdout);
+        assert!(
+            stdout.contains("root-keyword"),
+            "expected top-level keyword module output, got:\n{stdout}"
+        );
+        assert!(
+            stdout.contains("nested-keyword"),
+            "expected nested keyword module output, got:\n{stdout}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn test_run_async_task_and_time_facade() {
         let project_dir = make_temp_dir("incan_async_task_time_facade_test");
         let source_path = project_dir.join("async_task_time.incn");
