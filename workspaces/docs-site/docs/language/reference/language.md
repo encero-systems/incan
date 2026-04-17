@@ -563,4 +563,3 @@ def main() -> None:
 |---|---|---|---|---|---|---|
 | Len | `len` |  | Return the number of bytes. | RFC 009 | 0.1 | Stable |
 | IsEmpty | `is_empty` |  | Return true if the byte string is empty. | RFC 009 | 0.1 | Stable |
-

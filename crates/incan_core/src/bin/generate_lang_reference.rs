@@ -44,6 +44,12 @@ fn trim_trailing_newlines_to_at_most_two(out: &mut String) {
     }
 }
 
+fn trim_trailing_newlines(out: &mut String) {
+    while out.ends_with('\n') {
+        out.pop();
+    }
+}
+
 fn ensure_single_blank_line(out: &mut String) {
     trim_trailing_newlines_to_at_most_two(out);
     if out.is_empty() {
@@ -124,7 +130,7 @@ fn write_language_reference(path: &Path) {
     render_surface_types_section(&mut out);
     render_surface_methods_section(&mut out);
 
-    trim_trailing_newlines_to_at_most_two(&mut out);
+    trim_trailing_newlines(&mut out);
     out.push('\n');
     if let Err(err) = fs::write(path, out) {
         panic!("write language.md: {err}");
