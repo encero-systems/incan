@@ -843,6 +843,102 @@ mod tests {
     }
 
     #[test]
+    fn known_list_methods_emit_checked_runtime_helpers() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+
+        let receiver = || {
+            Box::new(TypedExpr::new(
+                IrExprKind::Var {
+                    name: "items".to_string(),
+                    access: VarAccess::Read,
+                    ref_kind: VarRefKind::Value,
+                },
+                IrType::List(Box::new(IrType::Int)),
+            ))
+        };
+
+        let render = |expr: TypedExpr| -> Result<String, String> {
+            emitter
+                .emit_expr(&expr)
+                .map(|tokens| tokens.to_string())
+                .map_err(|err| format!("expected successful expression emission, got {err:?}"))
+        };
+
+        let index_rendered = render(TypedExpr::new(
+            IrExprKind::KnownMethodCall {
+                receiver: receiver(),
+                kind: MethodKind::Collection(CollectionMethodKind::Index),
+                args: vec![IrCallArg {
+                    name: None,
+                    expr: TypedExpr::new(IrExprKind::Int(9), IrType::Int),
+                }],
+            },
+            IrType::Int,
+        ))?;
+        assert!(
+            index_rendered.contains("incan_stdlib :: collections :: list_index (& items , & 9)"),
+            "expected list.index to route through checked runtime helper, got `{index_rendered}`"
+        );
+
+        let count_rendered = render(TypedExpr::new(
+            IrExprKind::KnownMethodCall {
+                receiver: receiver(),
+                kind: MethodKind::Collection(CollectionMethodKind::Count),
+                args: vec![IrCallArg {
+                    name: None,
+                    expr: TypedExpr::new(IrExprKind::Int(9), IrType::Int),
+                }],
+            },
+            IrType::Int,
+        ))?;
+        assert!(
+            count_rendered.contains("incan_stdlib :: collections :: list_count (& items , & 9)"),
+            "expected list.count to route through checked runtime helper, got `{count_rendered}`"
+        );
+
+        let remove_rendered = render(TypedExpr::new(
+            IrExprKind::KnownMethodCall {
+                receiver: receiver(),
+                kind: MethodKind::Collection(CollectionMethodKind::Remove),
+                args: vec![IrCallArg {
+                    name: None,
+                    expr: TypedExpr::new(IrExprKind::Int(9), IrType::Int),
+                }],
+            },
+            IrType::Unit,
+        ))?;
+        assert!(
+            remove_rendered.contains("incan_stdlib :: collections :: list_remove"),
+            "expected list.remove to route through checked runtime helper, got `{remove_rendered}`"
+        );
+
+        let swap_rendered = render(TypedExpr::new(
+            IrExprKind::KnownMethodCall {
+                receiver: receiver(),
+                kind: MethodKind::Collection(CollectionMethodKind::Swap),
+                args: vec![
+                    IrCallArg {
+                        name: None,
+                        expr: TypedExpr::new(IrExprKind::Int(0), IrType::Int),
+                    },
+                    IrCallArg {
+                        name: None,
+                        expr: TypedExpr::new(IrExprKind::Int(9), IrType::Int),
+                    },
+                ],
+            },
+            IrType::Unit,
+        ))?;
+        assert!(
+            swap_rendered.contains("incan_stdlib :: collections :: list_swap"),
+            "expected list.swap to route through checked runtime helper, got `{swap_rendered}`"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn external_nominal_method_call_keeps_external_string_conversion() -> Result<(), String> {
         let registry = FunctionRegistry::new();
         let emitter = IrEmitter::new(&registry);

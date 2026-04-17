@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use incan::frontend::module::{ExportedTypeLikeDoc, ExportedTypeLikeKind, exported_type_like_docs};
@@ -43,6 +44,84 @@ fn strip_ansi_escapes(text: &str) -> String {
         out.push(ch);
     }
     out
+}
+
+static RUNTIME_ERROR_PROJECT_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Create a minimal throwaway Incan project for end-to-end runtime error assertions.
+///
+/// The generated project name includes both the current process id and a local counter so parallel nextest workers do
+/// not trample each other's `target/incan/<name>` outputs.
+fn write_runtime_error_project(source: &str) -> Result<(tempfile::TempDir, PathBuf), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let unique = RUNTIME_ERROR_PROJECT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let project_name = format!("runtime_error_contract_{}_{}", std::process::id(), unique);
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
+    )?;
+    let main_path = src_dir.join("main.incn");
+    fs::write(&main_path, source)?;
+    Ok((tmp, main_path))
+}
+
+/// Assert that a program compiles successfully but fails at runtime with a canonical Incan diagnostic.
+///
+/// This helper intentionally checks the CLI surface rather than internal helper text so regressions in generated-main
+/// panic formatting or subprocess execution still fail the contract.
+fn assert_runtime_error_cli(
+    source: &str,
+    kind: &str,
+    detail_markers: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, main_path) = write_runtime_error_project(source)?;
+
+    let check_output = Command::new(incan_debug_binary())
+        .arg("--check")
+        .arg(&main_path)
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+    assert!(
+        check_output.status.success(),
+        "expected --check to succeed so the failure is runtime.\nstderr:\n{}",
+        String::from_utf8_lossy(&check_output.stderr)
+    );
+
+    let run_output = Command::new(incan_debug_binary())
+        .arg("run")
+        .arg(&main_path)
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+    assert!(
+        !run_output.status.success(),
+        "expected runtime failure, stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run_output.stdout),
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+
+    let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&run_output.stdout));
+    let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&run_output.stderr));
+    let combined = format!("{stdout}\n{stderr}");
+    assert!(
+        combined.contains(kind),
+        "expected `{kind}` in runtime diagnostic, got:\n{combined}"
+    );
+    for marker in detail_markers {
+        assert!(
+            combined.contains(marker),
+            "expected runtime diagnostic to contain `{marker}`, got:\n{combined}"
+        );
+    }
+    for forbidden in ["panicked at", "thread 'main'", ".rs:"] {
+        assert!(
+            !combined.contains(forbidden),
+            "expected runtime diagnostic to avoid raw Rust leakage `{forbidden}`, got:\n{combined}"
+        );
+    }
+
+    Ok(())
 }
 
 /// Locate the `incan` binary for subprocess tests.
@@ -410,6 +489,69 @@ fn test_fstring_unknown_symbol_cli_caret_points_to_interpolation() {
         "expected caret width to match interpolation span; stderr:\n{}",
         stderr
     );
+}
+
+#[test]
+fn runtime_error_missing_dict_key_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
+    assert_runtime_error_cli(
+        "def main() -> None:\n  let values = {\"a\": 1}\n  println(values[\"b\"])\n",
+        "KeyError",
+        &["not found in dict"],
+    )
+}
+
+#[test]
+fn runtime_error_list_index_out_of_range_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
+    assert_runtime_error_cli(
+        "def main() -> None:\n  let values = [1, 2, 3]\n  println(values[99])\n",
+        "IndexError",
+        &["out of range for list"],
+    )
+}
+
+#[test]
+fn runtime_error_list_index_method_not_found_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
+    assert_runtime_error_cli(
+        "def main() -> None:\n  let values = [1, 2, 3]\n  println(values.index(99))\n",
+        "ValueError",
+        &["value not found in list"],
+    )
+}
+
+#[test]
+fn runtime_error_int_conversion_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
+    assert_runtime_error_cli(
+        "def main() -> None:\n  println(int(\"abc\"))\n",
+        "ValueError",
+        &["cannot convert 'abc' to int"],
+    )
+}
+
+#[test]
+fn runtime_error_float_conversion_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
+    assert_runtime_error_cli(
+        "def main() -> None:\n  println(float(\"abc\"))\n",
+        "ValueError",
+        &["cannot convert 'abc' to float"],
+    )
+}
+
+#[test]
+fn runtime_error_list_remove_out_of_range_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
+    assert_runtime_error_cli(
+        "def main() -> None:\n  mut values = [1, 2, 3]\n  values.remove(99)\n",
+        "IndexError",
+        &["out of range for list"],
+    )
+}
+
+#[test]
+fn runtime_error_list_swap_out_of_range_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
+    assert_runtime_error_cli(
+        "def main() -> None:\n  mut values = [1, 2, 3]\n  values.swap(0, 99)\n",
+        "IndexError",
+        &["out of range for list"],
+    )
 }
 
 #[test]

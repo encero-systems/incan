@@ -100,6 +100,23 @@ impl<'a> IrEmitter<'a> {
         } else {
             quote! {}
         };
+        // Generated entrypoints install a minimal panic hook so runtime helper panics surface only the canonical
+        // payload, not Rust's default `thread 'main' panicked at ...` wrapper.
+        let panic_hook_stmt = if is_main {
+            quote! {
+                std::panic::set_hook(std::boxed::Box::new(|panic_info| {
+                    if let Some(message) = panic_info.payload().downcast_ref::<&str>() {
+                        eprintln!("{message}");
+                    } else if let Some(message) = panic_info.payload().downcast_ref::<String>() {
+                        eprintln!("{message}");
+                    } else {
+                        eprintln!("generated program panicked");
+                    }
+                }));
+            }
+        } else {
+            quote! {}
+        };
 
         let rust_attrs = self.emit_rust_attributes(&func.rust_attributes);
 
@@ -111,6 +128,7 @@ impl<'a> IrEmitter<'a> {
                 #(#rust_attrs)*
                 #vis fn #name #generics (#(#params),*) {
                     #static_init_stmt
+                    #panic_hook_stmt
                     #zen_stmt
                     if let Err(error) = incan_stdlib::r#async::runtime::block_on(async move {
                         #(#body_stmts)*
@@ -128,6 +146,7 @@ impl<'a> IrEmitter<'a> {
                 #(#rust_attrs)*
                 #vis #async_kw fn #name #generics (#(#params),*) {
                     #static_init_stmt
+                    #panic_hook_stmt
                     #zen_stmt
                     #(#body_stmts)*
                 }

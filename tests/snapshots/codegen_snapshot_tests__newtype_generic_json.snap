@@ -82,5 +82,16 @@ impl User {
     }
 }
 fn main() {
+    std::panic::set_hook(
+        std::boxed::Box::new(|panic_info| {
+            if let Some(message) = panic_info.payload().downcast_ref::<&str>() {
+                eprintln!("{message}");
+            } else if let Some(message) = panic_info.payload().downcast_ref::<String>() {
+                eprintln!("{message}");
+            } else {
+                eprintln!("generated program panicked");
+            }
+        }),
+    );
     println!("{}", "Generic newtype codegen test");
 }

@@ -60,6 +60,13 @@ pub fn raise_list_pop_empty() -> ! {
     raise(IncanError::list_pop_empty())
 }
 
+/// Raise `ValueError: value not found in list`.
+#[cold]
+#[track_caller]
+pub fn raise_list_value_not_found() -> ! {
+    raise(IncanError::list_value_not_found())
+}
+
 /// Raise a `KeyError` with a canonical `KeyError: ...` prefix.
 #[cold]
 #[track_caller]

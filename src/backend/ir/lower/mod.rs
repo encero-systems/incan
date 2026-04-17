@@ -1133,6 +1133,14 @@ type UserId = newtype int
             MethodKind::for_receiver(&IrType::RefMut(Box::new(IrType::List(Box::new(IrType::Int)))), "swap"),
             Some(MethodKind::Collection(CollectionMethodKind::Swap))
         );
+        assert_eq!(
+            MethodKind::for_receiver(&IrType::List(Box::new(IrType::Int)), "count"),
+            Some(MethodKind::Collection(CollectionMethodKind::Count))
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&IrType::List(Box::new(IrType::Int)), "index"),
+            Some(MethodKind::Collection(CollectionMethodKind::Index))
+        );
     }
 
     #[test]

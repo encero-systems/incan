@@ -116,6 +116,12 @@ impl<'a> IncanError<'a> {
         )
     }
 
+    /// `ValueError: value not found in list`
+    #[inline]
+    pub const fn list_value_not_found() -> Self {
+        Self::new(ErrorKind::ValueError, ErrorArgs::Static("value not found in list"))
+    }
+
     /// `IndexError: index {index} out of range for {container} of length {len}`
     #[inline]
     pub const fn index_out_of_range_for(container: &'static str, index: i64, len: usize) -> Self {
@@ -243,6 +249,10 @@ mod tests {
         assert_eq!(
             IncanError::zero_division().to_string(),
             "ZeroDivisionError: float division by zero"
+        );
+        assert_eq!(
+            IncanError::list_value_not_found().to_string(),
+            "ValueError: value not found in list"
         );
     }
 

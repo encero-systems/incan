@@ -80,9 +80,8 @@ impl<'a> IrEmitter<'a> {
             }
             // Fallback for unknown/unsupported index targets.
             //
-            // We keep this path total so codegen can continue even when the IR type is not a known container.
-            // This may panic with Rust-native messages for invalid indices; we will tighten this as more container
-            // types are routed through typed stdlib helpers.
+            // Keep this path total for external/unknown receivers that do not yet have a safe helper-backed route.
+            // Known typed list/dict/string surfaces must use the canonical stdlib helpers above.
             _ => {
                 let index_expr = self.emit_index_with_negative_handling(object, index, &o)?;
                 match obj_ty {

@@ -11,13 +11,8 @@ use crate::errors::raise;
 use incan_core::errors::{IncanError, key_not_found_in_dict};
 use incan_core::indexing::normalize_slice_bounds;
 
-/// Get a list element by Python-style index (supports negative indices).
-///
-/// ## Panics
-/// - `IndexError: index {index} out of range for list of length {len}` if out of range.
 #[inline]
-pub fn list_get<T>(list: &[T], index: i64) -> &T {
-    let len = list.len();
+fn normalize_list_index(len: usize, index: i64) -> usize {
     let len_i = len as i64;
     let mut i = index;
     if i < 0 {
@@ -26,8 +21,16 @@ pub fn list_get<T>(list: &[T], index: i64) -> &T {
     if i < 0 || i >= len_i {
         raise(IncanError::index_out_of_range_for("list", index, len));
     }
-    // Safe after bounds check.
-    &list[i as usize]
+    i as usize
+}
+
+/// Get a list element by Python-style index (supports negative indices).
+///
+/// ## Panics
+/// - `IndexError: index {index} out of range for list of length {len}` if out of range.
+#[inline]
+pub fn list_get<T>(list: &[T], index: i64) -> &T {
+    &list[normalize_list_index(list.len(), index)]
 }
 
 /// Get a mutable list element by Python-style index (supports negative indices).
@@ -36,17 +39,57 @@ pub fn list_get<T>(list: &[T], index: i64) -> &T {
 /// - `IndexError: index {index} out of range for list of length {len}` if out of range.
 #[inline]
 pub fn list_get_mut<T>(list: &mut [T], index: i64) -> &mut T {
-    let len = list.len();
-    let len_i = len as i64;
-    let mut i = index;
-    if i < 0 {
-        i += len_i;
+    let idx = normalize_list_index(list.len(), index);
+    &mut list[idx]
+}
+
+/// Remove a list element by Python-style index (supports negative indices).
+///
+/// This preserves Incan's current `list.remove(index)` semantics while avoiding Rust-native `Vec::remove` panics.
+///
+/// ## Panics
+/// - `IndexError: index {index} out of range for list of length {len}` if out of range.
+#[inline]
+pub fn list_remove<T>(list: &mut Vec<T>, index: i64) {
+    let idx = normalize_list_index(list.len(), index);
+    let _ = list.remove(idx);
+}
+
+/// Swap two list elements by Python-style indices (supports negative indices).
+///
+/// ## Panics
+/// - `IndexError: index {index} out of range for list of length {len}` if either index is out of range.
+#[inline]
+pub fn list_swap<T>(list: &mut [T], left: i64, right: i64) {
+    let left_idx = normalize_list_index(list.len(), left);
+    let right_idx = normalize_list_index(list.len(), right);
+    list.swap(left_idx, right_idx);
+}
+
+/// Count occurrences of a value in a list.
+#[inline]
+#[must_use]
+pub fn list_count<T>(list: &[T], value: &T) -> i64
+where
+    T: PartialEq,
+{
+    list.iter().filter(|item| *item == value).count() as i64
+}
+
+/// Return the first index of a value in a list.
+///
+/// ## Panics
+/// - `ValueError: value not found in list` if missing.
+#[inline]
+#[must_use]
+pub fn list_index<T>(list: &[T], value: &T) -> i64
+where
+    T: PartialEq,
+{
+    match list.iter().position(|item| item == value) {
+        Some(index) => index as i64,
+        None => raise(IncanError::list_value_not_found()),
     }
-    if i < 0 || i >= len_i {
-        raise(IncanError::index_out_of_range_for("list", index, len));
-    }
-    // Safe after bounds check.
-    &mut list[i as usize]
 }
 
 /// Slice a list using Python-like semantics.
@@ -124,6 +167,34 @@ mod tests {
     }
 
     #[test]
+    fn list_remove_supports_negative_indices() {
+        let mut v = vec![10, 20, 30];
+        list_remove(&mut v, -1);
+        assert_eq!(v, vec![10, 20]);
+    }
+
+    #[test]
+    #[should_panic(expected = "IndexError: index 3 out of range for list of length 3")]
+    fn list_remove_oob_panics_with_index_error() {
+        let mut v = vec![10, 20, 30];
+        list_remove(&mut v, 3);
+    }
+
+    #[test]
+    fn list_swap_supports_negative_indices() {
+        let mut v = vec![10, 20, 30];
+        list_swap(&mut v, 0, -1);
+        assert_eq!(v, vec![30, 20, 10]);
+    }
+
+    #[test]
+    #[should_panic(expected = "IndexError: index 3 out of range for list of length 3")]
+    fn list_swap_oob_panics_with_index_error() {
+        let mut v = vec![10, 20, 30];
+        list_swap(&mut v, 0, 3);
+    }
+
+    #[test]
     fn list_slice_clamps_and_steps() {
         let v = vec![1, 2, 3, 4, 5];
         assert_eq!(list_slice(&v, Some(1), Some(10), None), vec![2, 3, 4, 5]);
@@ -151,5 +222,26 @@ mod tests {
         let mut m: HashMap<String, i64> = HashMap::new();
         m.insert("a".to_string(), 1);
         let _ = dict_get(&m, &"b".to_string());
+    }
+
+    #[test]
+    fn list_count_returns_occurrence_count() {
+        let v = vec![1, 2, 1, 3, 1];
+        assert_eq!(list_count(&v, &1), 3);
+        assert_eq!(list_count(&v, &9), 0);
+    }
+
+    #[test]
+    fn list_index_returns_first_match() {
+        let v = vec![4, 7, 4, 9];
+        assert_eq!(list_index(&v, &4), 0);
+        assert_eq!(list_index(&v, &9), 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "ValueError: value not found in list")]
+    fn list_index_missing_panics_with_value_error() {
+        let v = vec![1, 2, 3];
+        let _ = list_index(&v, &9);
     }
 }

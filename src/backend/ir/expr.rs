@@ -571,8 +571,12 @@ pub enum CollectionMethodKind {
     /// `list.pop()` lowers via `Vec::pop()` without requiring `T: Default`. An empty list raises
     /// `IndexError: pop from empty list` through `incan_stdlib::errors::raise_list_pop_empty` (#194).
     Pop,
-    /// `list.swap(i, j)` → `list.swap(i as usize, j as usize)`
+    /// `list.swap(i, j)` → `incan_stdlib::collections::list_swap(...)`
     Swap,
+    /// `list.count(value)` → `incan_stdlib::collections::list_count(...)`
+    Count,
+    /// `list.index(value)` → `incan_stdlib::collections::list_index(...)`
+    Index,
     /// `list.reserve(n)` → `list.reserve(n as usize)`
     Reserve,
     /// `list.reserve_exact(n)` → `list.reserve_exact(n as usize)`
@@ -632,8 +636,8 @@ impl MethodKind {
                     L::ReserveExact => CollectionMethodKind::ReserveExact,
                     L::Contains => CollectionMethodKind::Contains,
                     L::Remove => CollectionMethodKind::Remove,
-                    // Not modeled as known IR methods yet:
-                    L::Count | L::Index => return None,
+                    L::Count => CollectionMethodKind::Count,
+                    L::Index => CollectionMethodKind::Index,
                 }))
             }
             IrType::Dict(_, _) => {

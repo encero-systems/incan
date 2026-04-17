@@ -6,6 +6,28 @@ use crate::backend::ir::emit::{EmitError, IrEmitter};
 use crate::backend::ir::expr::{CollectionMethodKind, TypedExpr};
 use crate::backend::ir::types::IrType;
 
+/// Borrow a list-like receiver immutably unless emission is already operating on a reference-typed value.
+///
+/// Known collection helpers such as `list_count` and `list_index` take shared borrows; this keeps emitted Rust
+/// aligned with the receiver's existing reference shape instead of manufacturing `&&T`.
+fn emit_list_shared_receiver(receiver: &TypedExpr, r: &TokenStream) -> TokenStream {
+    match &receiver.ty {
+        IrType::Ref(_) | IrType::RefMut(_) => quote! { #r },
+        _ => quote! { &#r },
+    }
+}
+
+/// Borrow a list-like receiver mutably unless emission is already operating on a mutable reference.
+///
+/// This is used for strict mutating helpers such as `list_remove` and `list_swap` so known-method emission can route
+/// through stdlib helpers without double-borrowing the receiver.
+fn emit_list_mut_receiver(receiver: &TypedExpr, r: &TokenStream) -> TokenStream {
+    match &receiver.ty {
+        IrType::RefMut(_) => quote! { #r },
+        _ => quote! { &mut #r },
+    }
+}
+
 /// Emit a dictionary key argument with the borrow shape expected by Rust map APIs.
 ///
 /// Borrowed/string-slice-like probes are passed through unchanged; owned probes are borrowed once so lookup-style
@@ -74,9 +96,10 @@ pub(super) fn emit_collection_method(
         CollectionMethodKind::Remove => {
             if let Some(arg) = args.first() {
                 let a = emitter.emit_expr(arg)?;
-                return Ok(quote! { #r.remove(#a) });
+                let list_mut = emit_list_mut_receiver(receiver, r);
+                return Ok(quote! { incan_stdlib::collections::list_remove(#list_mut, (#a) as i64) });
             }
-            Ok(quote! { None })
+            Ok(quote! { () })
         }
         CollectionMethodKind::Append => {
             if let Some(arg) = args.first() {
@@ -100,9 +123,26 @@ pub(super) fn emit_collection_method(
             if args.len() >= 2 {
                 let a1 = emitter.emit_expr(&args[0])?;
                 let a2 = emitter.emit_expr(&args[1])?;
-                return Ok(quote! { #r.swap((#a1) as usize, (#a2) as usize) });
+                let list_mut = emit_list_mut_receiver(receiver, r);
+                return Ok(quote! { incan_stdlib::collections::list_swap(#list_mut, (#a1) as i64, (#a2) as i64) });
             }
             Ok(quote! { () })
+        }
+        CollectionMethodKind::Count => {
+            if let Some(arg) = args.first() {
+                let a = emitter.emit_expr(arg)?;
+                let list = emit_list_shared_receiver(receiver, r);
+                return Ok(quote! { incan_stdlib::collections::list_count(#list, &#a) });
+            }
+            Ok(quote! { 0i64 })
+        }
+        CollectionMethodKind::Index => {
+            if let Some(arg) = args.first() {
+                let a = emitter.emit_expr(arg)?;
+                let list = emit_list_shared_receiver(receiver, r);
+                return Ok(quote! { incan_stdlib::collections::list_index(#list, &#a) });
+            }
+            Ok(quote! { incan_stdlib::errors::raise_list_value_not_found() })
         }
         CollectionMethodKind::Reserve => {
             if let Some(arg) = args.first() {
