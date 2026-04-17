@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use toml_edit::{Document, Item};
 
 /// The canonical manifest filename that the compiler searches for.
 pub const MANIFEST_FILENAME: &str = "incan.toml";
@@ -25,12 +26,51 @@ pub enum ManifestError {
     Read { path: PathBuf, source: std::io::Error },
 
     /// The file was read but contains invalid TOML or an unexpected structure.
-    #[error("failed to parse {path}: {source}")]
-    Parse { path: PathBuf, source: toml::de::Error },
+    #[error("failed to parse {path}{location}: {message}")]
+    Parse {
+        path: PathBuf,
+        location: ManifestLocationDisplay,
+        message: String,
+    },
 
     /// The file was parsed but contains invalid configuration.
-    #[error("invalid manifest {path}: {message}")]
-    Invalid { path: PathBuf, message: String },
+    #[error("invalid manifest {path}{location}: {message}")]
+    Invalid {
+        path: PathBuf,
+        location: ManifestLocationDisplay,
+        message: String,
+    },
+}
+
+/// 1-based line/column location within a manifest file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ManifestLocation {
+    line: usize,
+    column: usize,
+}
+
+/// Optional display wrapper for manifest locations in diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ManifestLocationDisplay(Option<ManifestLocation>);
+
+impl ManifestLocationDisplay {
+    fn none() -> Self {
+        Self(None)
+    }
+
+    fn some(location: ManifestLocation) -> Self {
+        Self(Some(location))
+    }
+}
+
+impl std::fmt::Display for ManifestLocationDisplay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(location) = self.0 {
+            write!(f, ":{}:{}", location.line, location.column)
+        } else {
+            Ok(())
+        }
+    }
 }
 
 // ============================================================================
@@ -81,6 +121,7 @@ pub struct LibraryDependencySpec {
 // ============================================================================
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProjectSection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -103,6 +144,7 @@ pub struct ProjectSection {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BuildSection {
     #[serde(rename = "rust-edition", skip_serializing_if = "Option::is_none")]
     pub rust_edition: Option<String>,
@@ -119,6 +161,7 @@ pub struct BuildSection {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VocabSection {
     #[serde(rename = "crate")]
     pub crate_path: Option<String>,
@@ -258,6 +301,7 @@ fn crate_name_alias_set<'a>(names: impl Iterator<Item = &'a String>) -> HashSet<
 // ============================================================================
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawManifest {
     #[serde(default)]
     project: Option<ProjectSection>,
@@ -278,6 +322,7 @@ struct RawManifest {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RustTables {
     #[serde(default)]
     dependencies: Option<DependencyTable>,
@@ -301,6 +346,7 @@ enum DependencyEntry {
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DependencyEntryTable {
     version: Option<String>,
     features: Option<Vec<String>>,
@@ -315,26 +361,160 @@ struct DependencyEntryTable {
     default_features: Option<bool>,
 }
 
-fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest, ManifestError> {
-    let raw: RawManifest = toml::from_str(content).map_err(|e| ManifestError::Parse {
+struct ManifestSpans<'a> {
+    content: &'a str,
+    document: &'a Document<String>,
+}
+
+trait TomlSpanError {
+    fn message(&self) -> &str;
+    fn span(&self) -> Option<std::ops::Range<usize>>;
+}
+
+impl TomlSpanError for toml_edit::TomlError {
+    fn message(&self) -> &str {
+        self.message()
+    }
+
+    fn span(&self) -> Option<std::ops::Range<usize>> {
+        self.span()
+    }
+}
+
+impl TomlSpanError for toml_edit::de::Error {
+    fn message(&self) -> &str {
+        self.message()
+    }
+
+    fn span(&self) -> Option<std::ops::Range<usize>> {
+        self.span()
+    }
+}
+
+impl<'a> ManifestSpans<'a> {
+    fn new(content: &'a str, document: &'a Document<String>) -> Self {
+        Self { content, document }
+    }
+
+    fn table_location(&self, table_path: &[&str]) -> Option<ManifestLocation> {
+        self.item_at_path(table_path)
+            .and_then(|item| item.span())
+            .and_then(|span| manifest_location_from_span(self.content, span))
+    }
+
+    fn entry_location(&self, table_path: &[&str], entry: &str) -> Option<ManifestLocation> {
+        self.item_at_path(table_path)
+            .and_then(|item| item.get(entry))
+            .and_then(|item| item.span())
+            .and_then(|span| manifest_location_from_span(self.content, span))
+    }
+
+    fn item_at_path(&self, path: &[&str]) -> Option<&Item> {
+        let mut item = self.document.as_item();
+        for segment in path {
+            item = item.get(segment)?;
+        }
+        Some(item)
+    }
+
+    fn item_location(&self, item: &Item) -> Option<ManifestLocation> {
+        item.span()
+            .and_then(|span| manifest_location_from_span(self.content, span))
+    }
+}
+
+fn manifest_parse_error<E: TomlSpanError>(path: &Path, content: &str, error: E) -> ManifestError {
+    ManifestError::Parse {
         path: path.to_path_buf(),
-        source: e,
-    })?;
+        location: ManifestLocationDisplay::from_span(content, error.span()),
+        message: error.message().to_string(),
+    }
+}
+
+fn manifest_invalid(path: &Path, location: Option<ManifestLocation>, message: impl Into<String>) -> ManifestError {
+    ManifestError::Invalid {
+        path: path.to_path_buf(),
+        location: match location {
+            Some(location) => ManifestLocationDisplay::some(location),
+            None => ManifestLocationDisplay::none(),
+        },
+        message: message.into(),
+    }
+}
+
+impl ManifestLocationDisplay {
+    fn from_span(content: &str, span: Option<std::ops::Range<usize>>) -> Self {
+        span.and_then(|span| manifest_location_from_span(content, span))
+            .map_or_else(Self::none, Self::some)
+    }
+}
+
+fn manifest_location_from_span(content: &str, span: std::ops::Range<usize>) -> Option<ManifestLocation> {
+    let (line, column) = byte_offset_to_line_col(content, span.start);
+    Some(ManifestLocation {
+        line: line + 1,
+        column: column + 1,
+    })
+}
+
+fn byte_offset_to_line_col(content: &str, index: usize) -> (usize, usize) {
+    if content.is_empty() {
+        return (0, index);
+    }
+
+    let bytes = content.as_bytes();
+    let safe_index = index.min(bytes.len().saturating_sub(1));
+    let column_offset = index.saturating_sub(safe_index);
+
+    let nl = bytes[0..safe_index]
+        .iter()
+        .rev()
+        .enumerate()
+        .find(|(_, byte)| **byte == b'\n')
+        .map(|(offset, _)| safe_index - offset - 1);
+    let line_start = match nl {
+        Some(line_start) => line_start + 1,
+        None => 0,
+    };
+    let line = bytes[0..line_start].iter().filter(|byte| **byte == b'\n').count();
+
+    let column = core::str::from_utf8(&bytes[line_start..=safe_index])
+        .map(|s| s.chars().count().saturating_sub(1))
+        .unwrap_or_else(|_| safe_index - line_start);
+    (line, column + column_offset)
+}
+
+fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest, ManifestError> {
+    let document: Document<String> = content
+        .parse()
+        .map_err(|error| manifest_parse_error(path, content, error))?;
+    let spans = ManifestSpans::new(content, &document);
+    validate_dependency_entry_shapes(&spans, path)?;
+    let raw: RawManifest =
+        toml_edit::de::from_document(document.clone()).map_err(|error| manifest_parse_error(path, content, error))?;
 
     let library_dependencies = raw
         .dependencies
         .as_ref()
-        .map(|table| parse_library_dependency_table(table, path))
+        .map(|table| parse_library_dependency_table(table, &spans, path))
         .transpose()?
         .unwrap_or_default();
 
-    let (rust_deps_table, rust_dev_deps_table) = resolve_rust_dependency_tables(&raw, path)?;
+    let (rust_deps_table, rust_dev_deps_table) = resolve_rust_dependency_tables(&raw, &spans, path)?;
     let rust_dependencies = rust_deps_table
-        .map(|table| parse_dependency_table(&table, path, "[rust-dependencies]"))
+        .map(|table| parse_dependency_table(&table, &spans, path, "[rust-dependencies]", &["rust-dependencies"]))
         .transpose()?
         .unwrap_or_default();
     let rust_dev_dependencies = rust_dev_deps_table
-        .map(|table| parse_dependency_table(&table, path, "[rust-dev-dependencies]"))
+        .map(|table| {
+            parse_dependency_table(
+                &table,
+                &spans,
+                path,
+                "[rust-dev-dependencies]",
+                &["rust-dev-dependencies"],
+            )
+        })
         .transpose()?
         .unwrap_or_default();
 
@@ -343,16 +523,18 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
     if let Some(vocab) = &raw.vocab {
         if let Some(crate_path) = &vocab.crate_path {
             if crate_path.trim().is_empty() {
-                return Err(ManifestError::Invalid {
-                    path: path.to_path_buf(),
-                    message: "[vocab].crate cannot be empty".to_string(),
-                });
+                return Err(manifest_invalid(
+                    path,
+                    spans.entry_location(&["vocab"], "crate"),
+                    "[vocab].crate cannot be empty",
+                ));
             }
         } else {
-            return Err(ManifestError::Invalid {
-                path: path.to_path_buf(),
-                message: "[vocab] section requires a `crate` field".to_string(),
-            });
+            return Err(manifest_invalid(
+                path,
+                spans.table_location(&["vocab"]),
+                "[vocab] section requires a `crate` field",
+            ));
         }
     }
 
@@ -362,13 +544,139 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         build: raw.build,
         vocab: raw.vocab,
         library_dependencies,
-        rust_dependencies,
-        rust_dev_dependencies,
+        rust_dependencies: rust_dependencies.specs,
+        rust_dev_dependencies: rust_dev_dependencies.specs,
     })
+}
+
+const DEPENDENCY_ENTRY_KEYS: &[&str] = &[
+    "version",
+    "features",
+    "git",
+    "branch",
+    "tag",
+    "rev",
+    "path",
+    "optional",
+    "package",
+    "default-features",
+];
+
+fn validate_dependency_entry_shapes(spans: &ManifestSpans<'_>, path: &Path) -> Result<(), ManifestError> {
+    for table_path in [
+        &["dependencies"][..],
+        &["rust-dependencies"][..],
+        &["rust-dev-dependencies"][..],
+        &["rust", "dependencies"][..],
+        &["rust", "dev-dependencies"][..],
+    ] {
+        validate_dependency_table_items(spans, path, table_path)?;
+    }
+    Ok(())
+}
+
+fn validate_dependency_table_items(
+    spans: &ManifestSpans<'_>,
+    path: &Path,
+    table_path: &[&str],
+) -> Result<(), ManifestError> {
+    let Some(table_item) = spans.item_at_path(table_path) else {
+        return Ok(());
+    };
+    let Some(table) = table_item.as_table_like() else {
+        return Ok(());
+    };
+
+    for (entry_name, entry_item) in table.iter() {
+        if entry_name == "optional" {
+            if let Some(optional_table) = entry_item.as_table_like() {
+                for (optional_name, optional_item) in optional_table.iter() {
+                    validate_dependency_entry_item(spans, path, table_path, optional_name, optional_item)?;
+                }
+            }
+            continue;
+        }
+        validate_dependency_entry_item(spans, path, table_path, entry_name, entry_item)?;
+    }
+
+    Ok(())
+}
+
+fn validate_dependency_entry_item(
+    spans: &ManifestSpans<'_>,
+    path: &Path,
+    table_path: &[&str],
+    entry_name: &str,
+    entry_item: &Item,
+) -> Result<(), ManifestError> {
+    if entry_item.is_str() {
+        return Ok(());
+    }
+
+    let Some(entry_table) = entry_item.as_table_like() else {
+        return Err(manifest_invalid(
+            path,
+            spans
+                .item_location(entry_item)
+                .or_else(|| spans.entry_location(table_path, entry_name)),
+            format!("dependency `{entry_name}` must be a version string or a table with known dependency keys"),
+        ));
+    };
+
+    for (key, value) in entry_table.iter() {
+        if !DEPENDENCY_ENTRY_KEYS.contains(&key) {
+            return Err(manifest_invalid(
+                path,
+                spans.item_location(value).or_else(|| spans.item_location(entry_item)),
+                format!(
+                    "unknown field `{key}` in dependency `{entry_name}`; expected one of {}",
+                    DEPENDENCY_ENTRY_KEYS.join(", ")
+                ),
+            ));
+        }
+
+        let location = spans.item_location(value).or_else(|| spans.item_location(entry_item));
+        match key {
+            "version" | "git" | "branch" | "tag" | "rev" | "path" | "package" if !value.is_str() => {
+                return Err(manifest_invalid(
+                    path,
+                    location,
+                    format!("dependency `{entry_name}` field `{key}` must be a string"),
+                ));
+            }
+            "optional" | "default-features" if !value.is_bool() => {
+                return Err(manifest_invalid(
+                    path,
+                    location,
+                    format!("dependency `{entry_name}` field `{key}` must be a boolean"),
+                ));
+            }
+            "features" => {
+                let Some(array) = value.as_array() else {
+                    return Err(manifest_invalid(
+                        path,
+                        location,
+                        format!("dependency `{entry_name}` field `features` must be an array of strings"),
+                    ));
+                };
+                if array.iter().any(|item| !item.is_str()) {
+                    return Err(manifest_invalid(
+                        path,
+                        location,
+                        format!("dependency `{entry_name}` field `features` must be an array of strings"),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
 }
 
 fn resolve_rust_dependency_tables(
     raw: &RawManifest,
+    spans: &ManifestSpans<'_>,
     path: &Path,
 ) -> Result<(Option<DependencyTable>, Option<DependencyTable>), ManifestError> {
     let rust_tables = raw.rust.as_ref();
@@ -379,24 +687,31 @@ fn resolve_rust_dependency_tables(
     let legacy_rust_dev_deps = rust_tables.and_then(|r| r.dev_dependencies.clone());
 
     if rust_deps.is_some() && legacy_rust_deps.is_some() {
-        return Err(ManifestError::Invalid {
-            path: path.to_path_buf(),
-            message: "cannot specify both [rust-dependencies] and [rust.dependencies]".to_string(),
-        });
+        return Err(manifest_invalid(
+            path,
+            spans
+                .table_location(&["rust", "dependencies"])
+                .or_else(|| spans.table_location(&["rust-dependencies"])),
+            "cannot specify both [rust-dependencies] and [rust.dependencies]",
+        ));
     }
 
     if legacy_dev_deps.is_some() {
-        return Err(ManifestError::Invalid {
-            path: path.to_path_buf(),
-            message: "table [dev-dependencies] has been renamed to [rust-dev-dependencies]".to_string(),
-        });
+        return Err(manifest_invalid(
+            path,
+            spans.table_location(&["dev-dependencies"]),
+            "table [dev-dependencies] has been renamed to [rust-dev-dependencies]",
+        ));
     }
 
     if explicit_rust_dev_deps.is_some() && legacy_rust_dev_deps.is_some() {
-        return Err(ManifestError::Invalid {
-            path: path.to_path_buf(),
-            message: "cannot specify both [rust-dev-dependencies] and [rust.dev-dependencies]".to_string(),
-        });
+        return Err(manifest_invalid(
+            path,
+            spans
+                .table_location(&["rust", "dev-dependencies"])
+                .or_else(|| spans.table_location(&["rust-dev-dependencies"])),
+            "cannot specify both [rust-dev-dependencies] and [rust.dev-dependencies]",
+        ));
     }
 
     Ok((
@@ -407,20 +722,21 @@ fn resolve_rust_dependency_tables(
 
 fn parse_library_dependency_table(
     table: &DependencyTable,
+    spans: &ManifestSpans<'_>,
     path: &Path,
 ) -> Result<HashMap<String, LibraryDependencySpec>, ManifestError> {
     if !table.optional.is_empty() {
-        return Err(ManifestError::Invalid {
-            path: path.to_path_buf(),
-            message:
-                "table [dependencies.optional] is no longer valid; move Rust optional crates to [rust-dependencies]"
-                    .to_string(),
-        });
+        return Err(manifest_invalid(
+            path,
+            spans.table_location(&["dependencies", "optional"]),
+            "table [dependencies.optional] is no longer valid; move Rust optional crates to [rust-dependencies]",
+        ));
     }
 
     let mut result = HashMap::new();
     for (name, entry) in &table.entries {
-        let spec = library_dependency_from_entry(name, entry, path)?;
+        let location = spans.entry_location(&["dependencies"], name);
+        let spec = library_dependency_from_entry(name, entry, path, location)?;
         result.insert(name.clone(), spec);
     }
     Ok(result)
@@ -430,43 +746,46 @@ fn library_dependency_from_entry(
     name: &str,
     entry: &DependencyEntry,
     path: &Path,
+    location: Option<ManifestLocation>,
 ) -> Result<LibraryDependencySpec, ManifestError> {
     let table = match entry {
         DependencyEntry::Version(_) => {
-            return Err(ManifestError::Invalid {
-                path: path.to_path_buf(),
-                message: format!(
+            return Err(manifest_invalid(
+                path,
+                location,
+                format!(
                     "dependency `{name}` in [dependencies] uses legacy Rust crate syntax. Move Rust crates to [rust-dependencies]."
                 ),
-            });
+            ));
         }
         DependencyEntry::Table(table) => table,
     };
 
     if looks_like_legacy_rust_dependency(entry) {
-        return Err(ManifestError::Invalid {
-            path: path.to_path_buf(),
-            message: format!(
+        return Err(manifest_invalid(
+            path,
+            location,
+            format!(
                 "dependency `{name}` in [dependencies] looks like a Rust crate dependency. Move it to [rust-dependencies]."
             ),
-        });
+        ));
     }
 
     if table.path.is_none() {
-        return Err(ManifestError::Invalid {
-            path: path.to_path_buf(),
-            message: format!(
-                "library dependency `{name}` is missing `path`. Use `{name} = {{ path = \"../{name}\" }}`."
-            ),
-        });
+        return Err(manifest_invalid(
+            path,
+            location,
+            format!("library dependency `{name}` is missing `path`. Use `{name} = {{ path = \"../{name}\" }}`."),
+        ));
     }
 
     let raw_path = table.path.clone().unwrap_or_default();
     if raw_path.trim().is_empty() {
-        return Err(ManifestError::Invalid {
-            path: path.to_path_buf(),
-            message: format!("library dependency `{name}` has an empty `path`"),
-        });
+        return Err(manifest_invalid(
+            path,
+            location,
+            format!("library dependency `{name}` has an empty `path`"),
+        ));
     }
     let manifest_dir = path.parent().unwrap_or_else(|| Path::new("."));
     let raw_path_buf = PathBuf::from(raw_path);
@@ -501,25 +820,36 @@ fn looks_like_legacy_rust_dependency(entry: &DependencyEntry) -> bool {
 
 fn parse_dependency_table(
     table: &DependencyTable,
+    spans: &ManifestSpans<'_>,
     path: &Path,
     table_name: &str,
-) -> Result<HashMap<String, DependencySpec>, ManifestError> {
-    let mut result = HashMap::new();
+    table_path: &[&str],
+) -> Result<ParsedDependencyTable, ManifestError> {
+    let mut result = ParsedDependencyTable::default();
 
     for (name, entry) in &table.entries {
         if table.optional.contains_key(name) {
-            return Err(ManifestError::Invalid {
-                path: path.to_path_buf(),
-                message: format!("dependency `{name}` appears in both {table_name} and {table_name}.optional"),
-            });
+            return Err(manifest_invalid(
+                path,
+                spans.entry_location(table_path, name),
+                format!("dependency `{name}` appears in both {table_name} and {table_name}.optional"),
+            ));
         }
-        let spec = dependency_from_entry(name, entry, false, path)?;
-        result.insert(name.clone(), spec);
+        let location = spans.entry_location(table_path, name);
+        let spec = dependency_from_entry(name, entry, false, path, location)?;
+        result.specs.insert(name.clone(), spec);
+        if let Some(location) = location {
+            result.locations.insert(name.clone(), location);
+        }
     }
 
     for (name, entry) in &table.optional {
-        let spec = dependency_from_entry(name, entry, true, path)?;
-        result.insert(name.clone(), spec);
+        let location = spans.entry_location(table_path, name);
+        let spec = dependency_from_entry(name, entry, true, path, location)?;
+        result.specs.insert(name.clone(), spec);
+        if let Some(location) = location {
+            result.locations.insert(name.clone(), location);
+        }
     }
 
     Ok(result)
@@ -530,6 +860,7 @@ fn dependency_from_entry(
     entry: &DependencyEntry,
     optional_override: bool,
     path: &Path,
+    location: Option<ManifestLocation>,
 ) -> Result<DependencySpec, ManifestError> {
     let (version, features, default_features, source, optional, package) = match entry {
         DependencyEntry::Version(version) => (
@@ -541,7 +872,7 @@ fn dependency_from_entry(
             None,
         ),
         DependencyEntry::Table(table) => {
-            let (source, version) = parse_dependency_source(table, path)?;
+            let (source, version) = parse_dependency_source(table, path, location)?;
             let mut optional = table.optional.unwrap_or(false);
             if optional_override {
                 optional = true;
@@ -551,10 +882,11 @@ fn dependency_from_entry(
 
             let package = table.package.clone().filter(|p| !p.trim().is_empty());
             if table.package.as_ref().is_some_and(|p| p.trim().is_empty()) {
-                return Err(ManifestError::Invalid {
-                    path: path.to_path_buf(),
-                    message: format!("dependency `{}` has an empty package rename", name),
-                });
+                return Err(manifest_invalid(
+                    path,
+                    location,
+                    format!("dependency `{}` has an empty package rename", name),
+                ));
             }
 
             (version, features, default_features, source, optional, package)
@@ -562,25 +894,24 @@ fn dependency_from_entry(
     };
 
     if matches!(source, DependencySource::Registry) && version.is_none() {
-        return Err(ManifestError::Invalid {
-            path: path.to_path_buf(),
-            message: format!("dependency `{}` is missing a version requirement", name),
-        });
+        return Err(manifest_invalid(
+            path,
+            location,
+            format!("dependency `{}` is missing a version requirement", name),
+        ));
     }
 
     if let Some(version) = &version {
         if version.trim().is_empty() {
-            return Err(ManifestError::Invalid {
-                path: path.to_path_buf(),
-                message: format!("dependency `{}` has an empty version requirement", name),
-            });
+            return Err(manifest_invalid(
+                path,
+                location,
+                format!("dependency `{}` has an empty version requirement", name),
+            ));
         }
 
         if let Err(msg) = crate::dependency_resolver::validate_cargo_version_req(version) {
-            return Err(ManifestError::Invalid {
-                path: path.to_path_buf(),
-                message: format!("dependency `{name}`: {msg}"),
-            });
+            return Err(manifest_invalid(path, location, format!("dependency `{name}`: {msg}")));
         }
     }
 
@@ -598,14 +929,16 @@ fn dependency_from_entry(
 fn parse_dependency_source(
     table: &DependencyEntryTable,
     path: &Path,
+    location: Option<ManifestLocation>,
 ) -> Result<(DependencySource, Option<String>), ManifestError> {
     let has_git = table.git.is_some();
     let has_path = table.path.is_some();
     if has_git && has_path {
-        return Err(ManifestError::Invalid {
-            path: path.to_path_buf(),
-            message: "dependency cannot specify both `git` and `path`".to_string(),
-        });
+        return Err(manifest_invalid(
+            path,
+            location,
+            "dependency cannot specify both `git` and `path`",
+        ));
     }
 
     if let Some(git) = &table.git {
@@ -614,16 +947,18 @@ fn parse_dependency_source(
             (None, Some(tag), None) => GitReference::Tag(tag.clone()),
             (None, None, Some(rev)) => GitReference::Rev(rev.clone()),
             (None, None, None) => {
-                return Err(ManifestError::Invalid {
-                    path: path.to_path_buf(),
-                    message: "git dependency must specify exactly one of branch, tag, or rev".to_string(),
-                });
+                return Err(manifest_invalid(
+                    path,
+                    location,
+                    "git dependency must specify exactly one of branch, tag, or rev",
+                ));
             }
             _ => {
-                return Err(ManifestError::Invalid {
-                    path: path.to_path_buf(),
-                    message: "git dependency must specify exactly one of branch, tag, or rev".to_string(),
-                });
+                return Err(manifest_invalid(
+                    path,
+                    location,
+                    "git dependency must specify exactly one of branch, tag, or rev",
+                ));
             }
         };
         return Ok((
@@ -650,8 +985,8 @@ fn parse_dependency_source(
 }
 
 fn validate_package_collisions(
-    deps: &HashMap<String, DependencySpec>,
-    dev_deps: &HashMap<String, DependencySpec>,
+    deps: &ParsedDependencyTable,
+    dev_deps: &ParsedDependencyTable,
     path: &Path,
 ) -> Result<(), ManifestError> {
     let mut seen: HashMap<(String, String), String> = HashMap::new();
@@ -660,16 +995,22 @@ fn validate_package_collisions(
         let package_name = spec.package.as_ref().unwrap_or(&spec.crate_name).to_string();
         let source_key = dependency_source_key(&spec.source);
         let key = (source_key, package_name.clone());
+        let location = deps
+            .locations
+            .get(&spec.crate_name)
+            .copied()
+            .or_else(|| dev_deps.locations.get(&spec.crate_name).copied());
 
         if let Some(existing) = seen.get(&key) {
             if existing != &spec.crate_name {
-                return Err(ManifestError::Invalid {
-                    path: path.to_path_buf(),
-                    message: format!(
+                return Err(manifest_invalid(
+                    path,
+                    location,
+                    format!(
                         "dependency keys collide: `{}` and `{}` resolve to the same package `{}`",
                         existing, spec.crate_name, package_name
                     ),
-                });
+                ));
             }
         } else {
             seen.insert(key, spec.crate_name.clone());
@@ -678,14 +1019,20 @@ fn validate_package_collisions(
         Ok(())
     };
 
-    for spec in deps.values() {
+    for spec in deps.specs.values() {
         check(spec)?;
     }
-    for spec in dev_deps.values() {
+    for spec in dev_deps.specs.values() {
         check(spec)?;
     }
 
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct ParsedDependencyTable {
+    specs: HashMap<String, DependencySpec>,
+    locations: HashMap<String, ManifestLocation>,
 }
 
 fn dependency_source_key(source: &DependencySource) -> String {
@@ -728,6 +1075,20 @@ mod tests {
         assert!(manifest.rust_dependencies().is_empty());
         assert!(manifest.rust_dev_dependencies().is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn malformed_manifest_reports_location() {
+        let content = "[dependencies\nserde = \"1.0\"\n";
+        let err = match ProjectManifest::from_str(content, Path::new("incan.toml")) {
+            Err(err) => err,
+            Ok(_) => panic!("expected malformed TOML to fail"),
+        };
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("incan.toml:1"),
+            "expected line-aware parse error, got: {rendered}"
+        );
     }
 
     #[test]
@@ -817,6 +1178,54 @@ tokio = "1.0"
     }
 
     #[test]
+    fn rust_alias_tables_conflict_reports_location() {
+        let content = "[rust-dependencies]\nserde = \"1.0\"\n\n[rust.dependencies]\ntokio = \"1.0\"\n";
+        let err = match ProjectManifest::from_str(content, Path::new("incan.toml")) {
+            Err(err) => err,
+            Ok(_) => panic!("expected conflicting rust dependency tables to fail"),
+        };
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("incan.toml:4:1"),
+            "expected line+column manifest error, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn unknown_project_field_reports_location() {
+        let content = "[project]\nname = \"x\"\nversion = \"0.1.0\"\nunknown = true\n";
+        let rendered = match ProjectManifest::from_str(content, Path::new("incan.toml")) {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("expected unknown project field to fail"),
+        };
+        assert!(
+            rendered.contains("incan.toml:4:1"),
+            "expected line+column manifest error, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("unknown field"),
+            "expected unknown-field wording, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn unknown_dependency_option_reports_location() {
+        let content = "[rust-dependencies]\nserde = { version = \"1.0\", feat = [\"derive\"] }\n";
+        let rendered = match ProjectManifest::from_str(content, Path::new("incan.toml")) {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("expected unknown dependency option to fail"),
+        };
+        assert!(
+            rendered.contains("incan.toml:2:35"),
+            "expected line+column manifest error, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("unknown field"),
+            "expected unknown-field wording, got: {rendered}"
+        );
+    }
+
+    #[test]
     fn legacy_dev_dependencies_table_is_rejected() {
         let content = r#"
 [dev-dependencies]
@@ -877,8 +1286,14 @@ crate = "crates/mylib_vocab"
 [vocab]
 crate = "   "
 "#;
-        let err = ProjectManifest::from_str(content, Path::new("incan.toml"));
-        assert!(matches!(err, Err(ManifestError::Invalid { .. })));
+        let rendered = match ProjectManifest::from_str(content, Path::new("incan.toml")) {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("expected empty crate field to fail"),
+        };
+        assert!(
+            rendered.contains("incan.toml:3:9"),
+            "expected line+column manifest error, got: {rendered}"
+        );
     }
 
     #[test]
@@ -887,8 +1302,18 @@ crate = "   "
 [vocab]
 some_other_field = "value"
 "#;
-        let err = ProjectManifest::from_str(content, Path::new("incan.toml"));
-        assert!(matches!(err, Err(ManifestError::Invalid { .. })));
+        let rendered = match ProjectManifest::from_str(content, Path::new("incan.toml")) {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("expected missing crate field to fail"),
+        };
+        assert!(
+            rendered.contains("incan.toml:3:1"),
+            "expected line+column manifest error, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("unknown field `some_other_field`"),
+            "expected unknown-field wording, got: {rendered}"
+        );
     }
 
     fn tempdir_with_manifest(content: &str) -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
