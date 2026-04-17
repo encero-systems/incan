@@ -5617,7 +5617,7 @@ reserved for future use when <code>module</code> is introduced as a keyword.</p>
 <li>[x] <code>std.web</code> response builders: pure Incan where possible, <code>@rust.extern</code> for framework I/O.</li>
 <li>[x] All stdlib <code>.incn</code> files with <code>@rust.extern</code> carry <code>rust.module()</code> directives.</li>
 <li>[x] <code>std.async.*</code> behavior is runtime-backed via narrow <code>@rust.extern</code> leaves (no broad <code>fail_t</code> placeholder surface).
-    &gt; Note: remaining closeout is concentrated in <code>std.async.select</code>; follow-up language/library work is now tracked by RFC 038 and RFC 039 rather than being hand-waved inside RFC 023.</li>
+    &gt; Note: remaining closeout is concentrated in the wrapper-style async modules (<code>std.async.task</code>, <code>std.async.sync</code>, <code>std.async.channel</code>, and <code>std.async.prelude</code>); <code>std.async.time</code> and <code>std.async.select</code> are already direct-interoperability modules.</li>
 <li>[x] <code>StdlibModuleInfo</code> fallback mapping removed (or marked deprecated).</li>
 </ul>
 <h3 id="diagnostics-checklist">Diagnostics checklist<a class="headerlink" href="#diagnostics-checklist" title="Permanent link">&para;</a></h3>

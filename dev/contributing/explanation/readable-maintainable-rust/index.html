@@ -5041,8 +5041,6 @@ cargo<span class="w"> </span>+nightly<span class="w"> </span>udeps<span class="w
 <hr />
 <h2 id="common-pitfalls-anti-patterns">Common Pitfalls &amp; Anti-Patterns<a class="headerlink" href="#common-pitfalls-anti-patterns" title="Permanent link">&para;</a></h2>
 <h3 id="quick-reference">Quick-reference<a class="headerlink" href="#quick-reference" title="Permanent link">&para;</a></h3>
-<!-- markdownlint-disable MD013 -->
-
 <table>
 <thead>
 <tr>
@@ -5104,12 +5102,9 @@ cargo<span class="w"> </span>+nightly<span class="w"> </span>udeps<span class="w
 </tr>
 </tbody>
 </table>
-<!-- markdownlint-enable MD013 -->
-
 <h3 id="detailed-guidance">Detailed guidance<a class="headerlink" href="#detailed-guidance" title="Permanent link">&para;</a></h3>
 <h4 id="panics-on-recoverable-paths">Panics on recoverable paths<a class="headerlink" href="#panics-on-recoverable-paths" title="Permanent link">&para;</a></h4>
-<p>Reserve <code>.unwrap()</code> and <code>.expect()</code> for cases where you can <strong>prove</strong> the value is always <code>Some</code>/<code>Ok</code> — and add a
-comment explaining the invariant. Everywhere else, propagate with <code>?</code>:</p>
+<p>In this repository, do <strong>not</strong> use <code>.unwrap()</code> or <code>.expect()</code> in compiler code, tests, or examples. Even when an invariant feels obvious, prefer <code>?</code>, an explicit <code>match</code>, or a helper that turns the failure into a typed error with context. The only accepted exception is emitting <code>.unwrap()</code> / <code>.expect()</code> as literal strings in generated Rust when that is the intended runtime contract of the compiled program.</p>
 <div class="language-rust highlight"><pre><span></span><code><span class="c1">// Bad — panics with no context if the file is missing</span>
 <span class="kd">let</span><span class="w"> </span><span class="n">file</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">File</span><span class="p">::</span><span class="n">open</span><span class="p">(</span><span class="n">path</span><span class="p">).</span><span class="n">unwrap</span><span class="p">();</span>
 
