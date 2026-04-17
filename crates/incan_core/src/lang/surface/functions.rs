@@ -130,11 +130,22 @@ pub fn as_str(id: SurfaceFnId) -> &'static str {
     info_for(id).canonical
 }
 
-pub fn info_for(id: SurfaceFnId) -> &'static SurfaceFnInfo {
-    SURFACE_FUNCTIONS
-        .iter()
-        .find(|f| f.id == id)
-        .expect("INVARIANT: surface function info missing")
+/// Return the metadata entry for a surface function.
+///
+/// The lookup is exhaustive over the closed enum, so adding a function requires updating this match at compile time.
+pub fn info_for(id: SurfaceFnId) -> SurfaceFnInfo {
+    match id {
+        SurfaceFnId::SleepMs => SURFACE_FUNCTIONS[0],
+        SurfaceFnId::Timeout => SURFACE_FUNCTIONS[1],
+        SurfaceFnId::TimeoutMs => SURFACE_FUNCTIONS[2],
+        SurfaceFnId::SelectTimeout => SURFACE_FUNCTIONS[3],
+        SurfaceFnId::YieldNow => SURFACE_FUNCTIONS[4],
+        SurfaceFnId::Spawn => SURFACE_FUNCTIONS[5],
+        SurfaceFnId::SpawnBlocking => SURFACE_FUNCTIONS[6],
+        SurfaceFnId::Channel => SURFACE_FUNCTIONS[7],
+        SurfaceFnId::UnboundedChannel => SURFACE_FUNCTIONS[8],
+        SurfaceFnId::Oneshot => SURFACE_FUNCTIONS[9],
+    }
 }
 
 const fn info(

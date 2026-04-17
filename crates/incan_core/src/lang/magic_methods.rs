@@ -79,11 +79,17 @@ pub fn as_str(id: MagicMethodId) -> &'static str {
 }
 
 /// Return the metadata entry for a magic method.
-pub fn info_for(id: MagicMethodId) -> &'static MagicMethodInfo {
-    MAGIC_METHODS
-        .iter()
-        .find(|m| m.id == id)
-        .expect("INVARIANT: magic method info missing")
+///
+/// The lookup is exhaustive over the closed enum, so adding a magic method requires updating this match at compile
+/// time.
+pub fn info_for(id: MagicMethodId) -> MagicMethodInfo {
+    match id {
+        MagicMethodId::Eq => MAGIC_METHODS[0],
+        MagicMethodId::Str => MAGIC_METHODS[1],
+        MagicMethodId::ClassName => MAGIC_METHODS[2],
+        MagicMethodId::Fields => MAGIC_METHODS[3],
+        MagicMethodId::Slice => MAGIC_METHODS[4],
+    }
 }
 
 const fn info(

@@ -104,15 +104,16 @@ pub fn as_str(id: NumericTypeId) -> &'static str {
 /// - `id`: Numeric type identifier.
 ///
 /// ## Returns
-/// - The associated [`NumericTypeInfo`] from [`NUMERIC_TYPES`].
+/// - The associated [`NumericTypeInfo`] copied from [`NUMERIC_TYPES`].
 ///
-/// ## Panics
-/// - If the registry is missing an entry for `id` (this indicates a programming error).
-pub fn info_for(id: NumericTypeId) -> &'static NumericTypeInfo {
-    NUMERIC_TYPES
-        .iter()
-        .find(|t| t.id == id)
-        .expect("INVARIANT: numeric type info missing")
+/// The lookup is exhaustive over the closed enum, so adding a numeric type requires updating this match at compile
+/// time.
+pub fn info_for(id: NumericTypeId) -> NumericTypeInfo {
+    match id {
+        NumericTypeId::Int => NUMERIC_TYPES[0],
+        NumericTypeId::Float => NUMERIC_TYPES[1],
+        NumericTypeId::Bool => NUMERIC_TYPES[2],
+    }
 }
 
 const fn info(

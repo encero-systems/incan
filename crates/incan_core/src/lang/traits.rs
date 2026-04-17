@@ -152,13 +152,26 @@ pub fn as_str(id: TraitId) -> &'static str {
 
 /// Return the full metadata entry for a builtin trait.
 ///
-/// ## Panics
-/// - If the registry is missing an entry for `id` (this indicates a programming error).
-pub fn info_for(id: TraitId) -> &'static TraitInfo {
-    TRAITS
-        .iter()
-        .find(|t| t.id == id)
-        .expect("INVARIANT: trait info missing")
+/// The lookup is exhaustive over the closed enum, so adding a trait requires updating this match at compile time.
+pub fn info_for(id: TraitId) -> TraitInfo {
+    match id {
+        TraitId::Debug => TRAITS[0],
+        TraitId::Display => TRAITS[1],
+        TraitId::Eq => TRAITS[2],
+        TraitId::PartialEq => TRAITS[3],
+        TraitId::Ord => TRAITS[4],
+        TraitId::PartialOrd => TRAITS[5],
+        TraitId::Hash => TRAITS[6],
+        TraitId::Clone => TRAITS[7],
+        TraitId::Default => TRAITS[8],
+        TraitId::From => TRAITS[9],
+        TraitId::Into => TRAITS[10],
+        TraitId::TryFrom => TRAITS[11],
+        TraitId::TryInto => TRAITS[12],
+        TraitId::Iterator => TRAITS[13],
+        TraitId::IntoIterator => TRAITS[14],
+        TraitId::Error => TRAITS[15],
+    }
 }
 
 const fn info(

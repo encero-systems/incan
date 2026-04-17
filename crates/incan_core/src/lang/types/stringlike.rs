@@ -125,15 +125,18 @@ pub fn as_str(id: StringLikeId) -> &'static str {
 /// - `id`: String-like type identifier.
 ///
 /// ## Returns
-/// - The associated [`StringLikeInfo`] from [`STRING_LIKE_TYPES`].
+/// - The associated [`StringLikeInfo`] copied from [`STRING_LIKE_TYPES`].
 ///
-/// ## Panics
-/// - If the registry is missing an entry for `id` (this indicates a programming error).
-pub fn info_for(id: StringLikeId) -> &'static StringLikeInfo {
-    STRING_LIKE_TYPES
-        .iter()
-        .find(|t| t.id == id)
-        .expect("INVARIANT: string-like info missing")
+/// The lookup is exhaustive over the closed enum, so adding a string-like type requires updating this match at compile
+/// time.
+pub fn info_for(id: StringLikeId) -> StringLikeInfo {
+    match id {
+        StringLikeId::Str => STRING_LIKE_TYPES[0],
+        StringLikeId::Bytes => STRING_LIKE_TYPES[1],
+        StringLikeId::FrozenStr => STRING_LIKE_TYPES[2],
+        StringLikeId::FrozenBytes => STRING_LIKE_TYPES[3],
+        StringLikeId::FString => STRING_LIKE_TYPES[4],
+    }
 }
 
 const fn info(

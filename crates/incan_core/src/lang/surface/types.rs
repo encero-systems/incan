@@ -316,11 +316,33 @@ pub fn as_str(id: SurfaceTypeId) -> &'static str {
     info_for(id).item.canonical
 }
 
-pub fn info_for(id: SurfaceTypeId) -> &'static SurfaceTypeInfo {
-    SURFACE_TYPES
-        .iter()
-        .find(|t| t.item.id == id)
-        .expect("INVARIANT: surface type info missing")
+/// Return the metadata entry for a surface type.
+///
+/// The lookup is exhaustive over the closed enum, so adding a surface type requires updating this match at compile
+/// time.
+pub fn info_for(id: SurfaceTypeId) -> SurfaceTypeInfo {
+    match id {
+        SurfaceTypeId::Mutex => SURFACE_TYPES[0],
+        SurfaceTypeId::RwLock => SURFACE_TYPES[1],
+        SurfaceTypeId::Semaphore => SURFACE_TYPES[2],
+        SurfaceTypeId::Barrier => SURFACE_TYPES[3],
+        SurfaceTypeId::JoinHandle => SURFACE_TYPES[4],
+        SurfaceTypeId::Sender => SURFACE_TYPES[5],
+        SurfaceTypeId::Receiver => SURFACE_TYPES[6],
+        SurfaceTypeId::OneshotSender => SURFACE_TYPES[7],
+        SurfaceTypeId::OneshotReceiver => SURFACE_TYPES[8],
+        SurfaceTypeId::Vec => SURFACE_TYPES[9],
+        SurfaceTypeId::HashMap => SURFACE_TYPES[10],
+        SurfaceTypeId::App => SURFACE_TYPES[11],
+        SurfaceTypeId::Response => SURFACE_TYPES[12],
+        SurfaceTypeId::Html => SURFACE_TYPES[13],
+        SurfaceTypeId::Json => SURFACE_TYPES[14],
+        SurfaceTypeId::Query => SURFACE_TYPES[15],
+        SurfaceTypeId::Path => SURFACE_TYPES[16],
+        SurfaceTypeId::Body => SURFACE_TYPES[17],
+        SurfaceTypeId::Request => SURFACE_TYPES[18],
+        SurfaceTypeId::FieldInfo => SURFACE_TYPES[19],
+    }
 }
 
 const fn info(
