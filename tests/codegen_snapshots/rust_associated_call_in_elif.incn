@@ -1,0 +1,10 @@
+from rust::std::path import Path
+
+
+def f(kind: str, output_uri: str) -> bool:
+    if kind == "a":
+        return Path.new(output_uri).exists()
+    elif kind == "b":
+        return Path.new(output_uri).exists()
+    else:
+        return false

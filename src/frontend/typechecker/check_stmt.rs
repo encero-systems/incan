@@ -547,6 +547,18 @@ impl TypeChecker {
         }
         self.symbols.exit_scope();
 
+        for (elif_cond, elif_body) in &if_stmt.elif_branches {
+            let elif_cond_ty = self.check_expr(elif_cond);
+            let elif_is_compatible = self.types_compatible(&elif_cond_ty, &ResolvedType::Bool);
+            ensure_bool_condition(&elif_cond_ty, elif_cond.span, elif_is_compatible, &mut self.errors);
+
+            self.symbols.enter_scope(ScopeKind::Block);
+            for stmt in elif_body {
+                self.check_statement(stmt);
+            }
+            self.symbols.exit_scope();
+        }
+
         if let Some(else_body) = &if_stmt.else_body {
             self.symbols.enter_scope(ScopeKind::Block);
             for stmt in else_body {

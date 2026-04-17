@@ -2107,6 +2107,42 @@ def main() -> None:
         assert_eq!(gcd, 6, "unexpected gcd value: {gcd}");
         assert_eq!(lcm, 24, "unexpected lcm value: {lcm}");
     }
+
+    #[test]
+    fn test_rust_associated_call_in_elif_branch_uses_path_syntax() {
+        let Ok(output) = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from rust::std::path import Path
+
+def f(kind: str, output_uri: str) -> bool:
+    if kind == "a":
+        return Path.new(output_uri).exists()
+    elif kind == "b":
+        return Path.new(output_uri).exists()
+    else:
+        return false
+
+def main() -> None:
+    println(f("a", "missing-a"))
+    println(f("b", "missing-b"))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+        else {
+            panic!("failed to run incan");
+        };
+
+        assert!(
+            output.status.success(),
+            "rust associated call in elif branch failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 /// End-to-end integration tests for `incan test`.
