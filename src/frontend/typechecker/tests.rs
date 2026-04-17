@@ -39,6 +39,11 @@ fn check_str_err(source: &str, context: &str) -> Vec<CompileError> {
     }
 }
 
+fn has_unknown_symbol_error(errors: &[CompileError], symbol: &str) -> bool {
+    let needle = format!("Unknown symbol '{symbol}'");
+    errors.iter().any(|err| err.message.contains(&needle))
+}
+
 fn check_str_with_library_index(source: &str, library_index: LibraryManifestIndex) -> Result<(), Vec<CompileError>> {
     let tokens = lexer::lex(source)?;
     let ast = parser::parse(&tokens)?;
@@ -508,6 +513,24 @@ def foo() -> int:
 "#;
     let result = check_str(source);
     assert!(result.is_err());
+}
+
+#[test]
+fn test_unknown_symbol_in_elif_branch_is_reported() {
+    let source = r#"
+def foo(flag: bool) -> int:
+  if flag:
+    return 1
+  elif true:
+    return unknown_var
+  else:
+    return 0
+"#;
+    let errors = check_str_err(source, "Expected typechecker error for unknown symbol in elif branch");
+    assert!(
+        has_unknown_symbol_error(&errors, "unknown_var"),
+        "Expected unknown symbol error for elif branch; got: {errors:?}"
+    );
 }
 
 #[test]
