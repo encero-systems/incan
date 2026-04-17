@@ -77,6 +77,7 @@ pub(in crate::backend::ir::emit) fn method_kind_uses_mutable_receiver(kind: &Met
             CollectionMethodKind::Insert
                 | CollectionMethodKind::Remove
                 | CollectionMethodKind::Append
+                | CollectionMethodKind::Extend
                 | CollectionMethodKind::Pop
                 | CollectionMethodKind::Swap
                 | CollectionMethodKind::Reserve

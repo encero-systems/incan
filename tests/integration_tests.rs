@@ -695,6 +695,79 @@ def main() -> None:
 }
 
 #[test]
+fn test_list_concatenation_plus_operator_runs() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def main() -> None:
+  a: List[int] = [1, 2]
+  b: List[int] = [3, 4]
+  c: List[int] = a + b
+  println(len(a))
+  println(len(b))
+  println(len(c))
+  println(c[0])
+  println(c[3])
+"#;
+    let output = Command::new(incan_debug_binary())
+        .args(["run", "-c", source])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "expected list concat program to run.\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    assert_eq!(
+        lines,
+        vec!["2", "2", "4", "1", "4"],
+        "expected concatenated list output 2/2/4/1/4.\nstdout:\n{}",
+        stdout
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_list_extend_method_runs_without_consuming_source() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def main() -> None:
+  mut a: List[int] = [1, 2]
+  b: List[int] = [3, 4]
+  a.extend(b)
+  println(len(a))
+  println(a[3])
+  println(len(b))
+  println(b[0])
+"#;
+    let output = Command::new(incan_debug_binary())
+        .args(["run", "-c", source])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "expected list extend program to run.\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    assert_eq!(
+        lines,
+        vec!["4", "4", "2", "3"],
+        "expected extended list output 4/4/2/3.\nstdout:\n{}",
+        stdout
+    );
+
+    Ok(())
+}
+
+#[test]
 fn test_rfc052_static_self_referential_method_arg_runs() {
     let source = r#"
 static items: list[int] = []

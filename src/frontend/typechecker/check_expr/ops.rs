@@ -8,6 +8,7 @@
 //! - `/` always yields `Float` (even `int / int`)
 //! - `%` supports floats with Python remainder semantics
 //! - `**` yields `Int` only for non-negative int literal exponents; otherwise `Float`
+//! - `+` supports string and list concatenation before numeric fallback
 //! - Mixed numeric comparisons are allowed (promote to float for comparison)
 
 use crate::frontend::ast::*;
@@ -19,6 +20,27 @@ use incan_core::{NumericTy, result_numeric_type};
 use super::TypeChecker;
 use crate::frontend::typechecker::helpers::{collection_type_id, is_str_like};
 use incan_core::lang::types::collections::CollectionTypeId;
+
+/// Check whether a resolved type is a runtime `List[T]` with one element slot.
+fn is_runtime_list(ty: &ResolvedType) -> bool {
+    matches!(
+        ty,
+        ResolvedType::Generic(name, args)
+            if collection_type_id(name.as_str()) == Some(CollectionTypeId::List) && args.len() == 1
+    )
+}
+
+/// Return the element type for a runtime `List[T]`, if known.
+fn runtime_list_elem_type(ty: &ResolvedType) -> Option<&ResolvedType> {
+    match ty {
+        ResolvedType::Generic(name, args)
+            if collection_type_id(name.as_str()) == Some(CollectionTypeId::List) && args.len() == 1 =>
+        {
+            args.first()
+        }
+        _ => None,
+    }
+}
 
 impl TypeChecker {
     /// Type-check a binary operation and return its result type.
@@ -55,6 +77,22 @@ impl TypeChecker {
                         ));
                         return ResolvedType::Unknown;
                     }
+                }
+
+                if matches!(op, BinaryOp::Add)
+                    && is_runtime_list(&left_ty)
+                    && is_runtime_list(&right_ty)
+                    && self.types_compatible(&left_ty, &right_ty)
+                {
+                    if let Some(elem_ty) = runtime_list_elem_type(&left_ty)
+                        && !self.is_copy_type(elem_ty)
+                        && !self.is_clone_type(elem_ty)
+                    {
+                        self.errors
+                            .push(errors::list_concat_requires_clone(&elem_ty.to_string(), span));
+                        return ResolvedType::Unknown;
+                    }
+                    return left_ty.clone();
                 }
 
                 // RFC 023: allow arithmetic on generic type variables.

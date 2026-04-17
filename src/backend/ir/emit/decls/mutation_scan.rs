@@ -21,6 +21,7 @@ use crate::backend::ir::emit::expressions::method_kind_uses_mutable_receiver;
 static MUTATING_METHOD_NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     vec![
         list_methods::as_str(list_methods::ListMethodId::Append),
+        list_methods::as_str(list_methods::ListMethodId::Extend),
         list_methods::as_str(list_methods::ListMethodId::Pop),
         list_methods::as_str(list_methods::ListMethodId::Swap),
         list_methods::as_str(list_methods::ListMethodId::Reserve),

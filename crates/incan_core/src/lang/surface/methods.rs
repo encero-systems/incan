@@ -279,6 +279,7 @@ pub mod list_methods {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub enum ListMethodId {
         Append,
+        Extend,
         Pop,
         Contains,
         Swap,
@@ -300,6 +301,14 @@ pub mod list_methods {
             "Append an element to the end of the list.",
             RFC::_009,
             Since(0, 1),
+        ),
+        info(
+            ListMethodId::Extend,
+            "extend",
+            &[],
+            "Append all elements from another list.",
+            RFC::_009,
+            Since(0, 2),
         ),
         info(
             ListMethodId::Pop,

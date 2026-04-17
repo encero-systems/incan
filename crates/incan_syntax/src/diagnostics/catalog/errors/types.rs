@@ -1036,6 +1036,24 @@ pub fn list_append_requires_clone(elem_type: &str, span: Span) -> CompileError {
     .with_hint("Add @derive(Clone) to the element type or append a Copy type")
 }
 
+pub fn list_concat_requires_clone(elem_type: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("List concatenation requires element type '{}' to be Clone", elem_type),
+        span,
+    )
+    .with_note("List + list preserves both source lists, so elements are cloned into the new list")
+    .with_hint("Add @derive(Clone) to the element type or concatenate a list of Clone elements")
+}
+
+pub fn list_extend_requires_clone(elem_type: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("List.extend requires element type '{}' to be Clone", elem_type),
+        span,
+    )
+    .with_note("List.extend preserves the source list, so elements are cloned into the receiver")
+    .with_hint("Add @derive(Clone) to the element type or extend from a list of Clone elements")
+}
+
 pub fn string_index_assignment_not_allowed(span: Span) -> CompileError {
     CompileError::type_error("Strings are immutable - cannot assign to index".to_string(), span)
 }

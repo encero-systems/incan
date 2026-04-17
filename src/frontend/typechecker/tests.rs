@@ -2850,6 +2850,52 @@ def add(mut xs: List[Mutex], value: Mutex) -> None:
     );
 }
 
+#[test]
+fn test_list_concat_requires_clone_for_external_type() {
+    let source = r#"
+from rust::std::sync import Mutex
+
+def combine(a: List[Mutex], b: List[Mutex]) -> List[Mutex]:
+  return a + b
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors");
+    };
+    assert!(
+        errs.iter().any(|e| {
+            e.message.contains("List concatenation requires element type")
+                && e.message.contains("Mutex")
+                && e.message.contains(incan_core::lang::traits::as_str(
+                    incan_core::lang::traits::TraitId::Clone,
+                ))
+        }),
+        "expected List + List / Clone diagnostic for Rust element type; got {errs:?}"
+    );
+}
+
+#[test]
+fn test_list_extend_requires_clone_for_external_type() {
+    let source = r#"
+from rust::std::sync import Mutex
+
+def extend_into(mut xs: List[Mutex], other: List[Mutex]) -> None:
+  xs.extend(other)
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors");
+    };
+    assert!(
+        errs.iter().any(|e| {
+            e.message.contains("List.extend requires element type")
+                && e.message.contains("Mutex")
+                && e.message.contains(incan_core::lang::traits::as_str(
+                    incan_core::lang::traits::TraitId::Clone,
+                ))
+        }),
+        "expected List.extend / Clone diagnostic for Rust element type; got {errs:?}"
+    );
+}
+
 // ========================================
 // Models implementing traits (Issue #42)
 // ========================================
@@ -4092,6 +4138,26 @@ def takes_names(names: List[str]) -> int:
 
 def foo() -> int:
   return takes_names([])
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_list_concatenation_with_plus() {
+    let source = r#"
+def foo() -> List[int]:
+  a: List[int] = [1, 2]
+  b: List[int] = [3, 4]
+  return a + b
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_list_extend_method() {
+    let source = r#"
+def foo(mut a: List[int], b: List[int]) -> None:
+  a.extend(b)
 "#;
     assert!(check_str(source).is_ok());
 }

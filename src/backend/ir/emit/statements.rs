@@ -857,6 +857,7 @@ mod tests {
             CollectionMethodKind::Insert,
             CollectionMethodKind::Remove,
             CollectionMethodKind::Append,
+            CollectionMethodKind::Extend,
             CollectionMethodKind::Pop,
             CollectionMethodKind::Swap,
             CollectionMethodKind::Reserve,

@@ -113,6 +113,14 @@ pub(super) fn emit_collection_method(
             }
             Ok(quote! { () })
         }
+        CollectionMethodKind::Extend => {
+            if let Some(arg) = args.first() {
+                let a = emitter.emit_expr(arg)?;
+                let list_mut = emit_list_mut_receiver(receiver, r);
+                return Ok(quote! { incan_stdlib::collections::list_extend(#list_mut, &#a) });
+            }
+            Ok(quote! { () })
+        }
         CollectionMethodKind::Pop => {
             // Incan types `pop()` as `T`, but `Vec::pop` is `Option<T>`. Avoid `unwrap_or_default()` so `T` need not
             // implement `Default` (e.g. Clone-only models, #194). Empty list uses canonical `IndexError: pop from

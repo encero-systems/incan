@@ -1071,6 +1071,23 @@ impl TypeChecker {
                             }
                             return ResolvedType::Unit;
                         }
+                        M::Extend => {
+                            let other_list_ty = list_ty(elem.clone());
+                            if let Some(arg0) = arg_types.first()
+                                && !self.types_compatible(arg0, &other_list_ty)
+                            {
+                                self.errors.push(errors::type_mismatch(
+                                    &other_list_ty.to_string(),
+                                    &arg0.to_string(),
+                                    span,
+                                ));
+                            }
+                            if !self.is_copy_type(&elem) && !self.is_clone_type(&elem) {
+                                self.errors
+                                    .push(errors::list_extend_requires_clone(&elem.to_string(), span));
+                            }
+                            return ResolvedType::Unit;
+                        }
                         M::Pop => return elem,
                         M::Contains => return ResolvedType::Bool,
                         M::Swap | M::Reserve | M::ReserveExact | M::Remove => return ResolvedType::Unit,

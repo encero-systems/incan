@@ -568,6 +568,8 @@ pub enum CollectionMethodKind {
     Remove,
     /// `list.append(item)` → `list.push(item)`
     Append,
+    /// `list.extend(items)` → `incan_stdlib::collections::list_extend(...)`
+    Extend,
     /// `list.pop()` lowers via `Vec::pop()` without requiring `T: Default`. An empty list raises
     /// `IndexError: pop from empty list` through `incan_stdlib::errors::raise_list_pop_empty` (#194).
     Pop,
@@ -630,6 +632,7 @@ impl MethodKind {
                 use list_methods::ListMethodId as L;
                 Some(Self::Collection(match id {
                     L::Append => CollectionMethodKind::Append,
+                    L::Extend => CollectionMethodKind::Extend,
                     L::Pop => CollectionMethodKind::Pop,
                     L::Swap => CollectionMethodKind::Swap,
                     L::Reserve => CollectionMethodKind::Reserve,

@@ -19,6 +19,7 @@
 //!
 //! **Other types currently supported:**
 //! - `Vec<&str>` → `Vec<String>` conversion for collections
+//! - `List[T] + List[T]` concatenation via `incan_stdlib::collections::list_concat`
 //!
 //! **Future extensions may include:**
 //! - Collections with non-Copy elements (may need `.clone()`)
@@ -312,6 +313,7 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
         IrType::Ref(inner) | IrType::RefMut(inner) => matches!(inner.as_ref(), IrType::String),
         _ => false,
     };
+    let is_runtime_list = |ty: &IrType| matches!(ty, IrType::List(_));
 
     if matches!(op, BinOp::Add) && is_stringish(&left.ty) && is_stringish(&right.ty) {
         return BinOpPlan {
@@ -320,6 +322,18 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
             result_ty: IrType::String,
             emit: BinOpEmitKind::StdlibCall {
                 path: quote! { incan_stdlib::strings::str_concat },
+                borrow_args: true,
+            },
+        };
+    }
+
+    if matches!(op, BinOp::Add) && is_runtime_list(&left.ty) && is_runtime_list(&right.ty) {
+        return BinOpPlan {
+            lhs_conv: NumericConversion::None,
+            rhs_conv: NumericConversion::None,
+            result_ty: left.ty.clone(),
+            emit: BinOpEmitKind::StdlibCall {
+                path: quote! { incan_stdlib::collections::list_concat },
                 borrow_args: true,
             },
         };

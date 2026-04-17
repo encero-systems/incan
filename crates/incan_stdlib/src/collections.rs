@@ -66,6 +66,27 @@ pub fn list_swap<T>(list: &mut [T], left: i64, right: i64) {
     list.swap(left_idx, right_idx);
 }
 
+/// Concatenate two lists into a new list, preserving left-to-right order.
+///
+/// This borrows both inputs so generated `list + list` expressions leave the original bindings usable, matching
+/// Incan's value-like list semantics.
+#[inline]
+#[must_use]
+pub fn list_concat<T: Clone>(lhs: &[T], rhs: &[T]) -> Vec<T> {
+    let mut out = Vec::with_capacity(lhs.len() + rhs.len());
+    out.extend_from_slice(lhs);
+    out.extend_from_slice(rhs);
+    out
+}
+
+/// Append the contents of `rhs` into `lhs`, preserving the source list.
+///
+/// This matches Incan's `list.extend(other)` behavior: mutate the receiver in place without consuming `other`.
+#[inline]
+pub fn list_extend<T: Clone>(lhs: &mut Vec<T>, rhs: &[T]) {
+    lhs.extend_from_slice(rhs);
+}
+
 /// Count occurrences of a value in a list.
 #[inline]
 #[must_use]
@@ -192,6 +213,24 @@ mod tests {
     fn list_swap_oob_panics_with_index_error() {
         let mut v = vec![10, 20, 30];
         list_swap(&mut v, 0, 3);
+    }
+
+    #[test]
+    fn list_concat_preserves_order() {
+        let lhs = vec![1, 2];
+        let rhs = vec![3, 4];
+        assert_eq!(list_concat(&lhs, &rhs), vec![1, 2, 3, 4]);
+        assert_eq!(lhs, vec![1, 2]);
+        assert_eq!(rhs, vec![3, 4]);
+    }
+
+    #[test]
+    fn list_extend_preserves_source_list() {
+        let mut lhs = vec![1, 2];
+        let rhs = vec![3, 4];
+        list_extend(&mut lhs, &rhs);
+        assert_eq!(lhs, vec![1, 2, 3, 4]);
+        assert_eq!(rhs, vec![3, 4]);
     }
 
     #[test]
