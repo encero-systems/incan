@@ -21,6 +21,9 @@ Integer:
   math.gcd(a, b)  - Greatest common divisor
   math.lcm(a, b)  - Lowest common multiple
 
+Integer notes:
+  gcd/lcm raise ValueError if the mathematical result exceeds Incan's signed 64-bit int range
+
 Basic:
   math.sqrt(x)    - Square root
   math.abs(x)     - Absolute value
@@ -54,7 +57,7 @@ Geometry:
 
 from rust::std::f64::consts import PI as RUST_PI, E as RUST_E, TAU as RUST_TAU
 from rust::std::f64 import INFINITY as RUST_INFINITY, NAN as RUST_NAN
-from rust::num_integer import gcd as rust_gcd, lcm as rust_lcm
+from rust::incan_stdlib::num import gcd_i64 as rust_gcd, lcm_i64 as rust_lcm
 from rust::libm import (
     sqrt as rust_sqrt,
     fabs as rust_abs,

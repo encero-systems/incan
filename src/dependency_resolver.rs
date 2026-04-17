@@ -538,30 +538,24 @@ fn known_good_spec(crate_name: &str) -> Option<DependencySpec> {
 fn known_good_spec_from_stdlib(crate_name: &str) -> Option<DependencySpec> {
     for ns in STDLIB_NAMESPACES {
         for dep in ns.extra_crate_deps {
-            let matches_declared_name = dep.crate_name == crate_name
-                || dep.crate_name.replace('-', "_") == crate_name
-                || dep.crate_name.replace('_', "-") == crate_name;
-            if !matches_declared_name {
-                continue;
+            if dep.crate_name == crate_name {
+                let StdlibExtraCrateSource::Version(version) = dep.source else {
+                    // Path dependencies are not registry crates; skip.
+                    continue;
+                };
+                return Some(
+                    DependencySpec {
+                        crate_name: crate_name.to_string(),
+                        version: Some(version.to_string()),
+                        features: vec![],
+                        default_features: true,
+                        source: DependencySource::Registry,
+                        optional: false,
+                        package: None,
+                    }
+                    .normalized(),
+                );
             }
-
-            let StdlibExtraCrateSource::Version(version) = dep.source else {
-                // Path dependencies are not registry crates; skip.
-                continue;
-            };
-            let package = (dep.crate_name != crate_name).then(|| dep.crate_name.to_string());
-            return Some(
-                DependencySpec {
-                    crate_name: crate_name.to_string(),
-                    version: Some(version.to_string()),
-                    features: vec![],
-                    default_features: true,
-                    source: DependencySource::Registry,
-                    optional: false,
-                    package,
-                }
-                .normalized(),
-            );
         }
     }
     None
@@ -663,17 +657,6 @@ mod tests {
         let err = first_error(&err)?;
         let msg = &err.error.message;
         assert!(msg.contains("conflicting"), "expected conflict error, got: {msg}");
-        Ok(())
-    }
-
-    #[test]
-    fn stdlib_hyphenated_known_good_dep_resolves_with_package_alias() -> TestResult {
-        let imports = vec![inline("num_integer", None, &[], false)];
-
-        let resolved = resolve_ok(None, &imports, false, &default_cargo_features())?;
-        let dep = dependency(&resolved.dependencies, "num_integer")?;
-        assert_eq!(dep.version.as_deref(), Some("0.1"));
-        assert_eq!(dep.package.as_deref(), Some("num-integer"));
         Ok(())
     }
 

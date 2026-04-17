@@ -34,7 +34,7 @@
 /// assert_eq!(py_floor_div_i64(7, -3), -3); // Rust would give -2
 /// assert_eq!(py_floor_div_i64(-7, -3), 2);
 /// ```
-use crate::errors::raise_zero_division;
+use crate::errors::{raise_value_error, raise_zero_division};
 
 // --- Numeric kernels (hot) ---------------------------------------------------------------------
 //
@@ -85,6 +85,38 @@ fn py_mod_f64_impl(a: f64, b: f64) -> f64 {
         r + b
     } else {
         r
+    }
+}
+
+#[inline]
+fn gcd_u64_impl(mut m: u64, mut n: u64) -> u64 {
+    if m == 0 || n == 0 {
+        return m | n;
+    }
+
+    let shift = (m | n).trailing_zeros();
+
+    m >>= m.trailing_zeros();
+    n >>= n.trailing_zeros();
+
+    while m != n {
+        if m > n {
+            m -= n;
+            m >>= m.trailing_zeros();
+        } else {
+            n -= m;
+            n >>= n.trailing_zeros();
+        }
+    }
+
+    m << shift
+}
+
+#[inline]
+fn non_negative_i64_or_overflow(value: u64, fn_name: &str) -> i64 {
+    match i64::try_from(value) {
+        Ok(value) => value,
+        Err(_) => raise_value_error(&format!("{fn_name} result overflows Incan int")),
     }
 }
 
@@ -441,6 +473,38 @@ pub fn py_mod_f64(a: f64, b: f64) -> f64 {
     py_mod_f64_impl(a, b)
 }
 
+/// Greatest common divisor for signed 64-bit integers.
+///
+/// The result is always non-negative and matches Python's `math.gcd` behavior for `int` when it
+/// fits in Incan's signed 64-bit `int`.
+///
+/// ## Panics
+///
+/// Raises `ValueError` if the mathematical result exceeds `i64::MAX`.
+#[inline]
+pub fn gcd_i64(a: i64, b: i64) -> i64 {
+    non_negative_i64_or_overflow(gcd_u64_impl(a.unsigned_abs(), b.unsigned_abs()), "math.gcd")
+}
+
+/// Lowest common multiple for signed 64-bit integers.
+///
+/// Returns `0` if either input is `0`.
+///
+/// ## Panics
+///
+/// Raises `ValueError` if the mathematical result exceeds `i64::MAX`.
+#[inline]
+pub fn lcm_i64(a: i64, b: i64) -> i64 {
+    if a == 0 || b == 0 {
+        return 0;
+    }
+    let gcd = gcd_u64_impl(a.unsigned_abs(), b.unsigned_abs());
+    let lcm = (a.unsigned_abs() / gcd)
+        .checked_mul(b.unsigned_abs())
+        .unwrap_or_else(|| raise_value_error("math.lcm result overflows Incan int"));
+    non_negative_i64_or_overflow(lcm, "math.lcm")
+}
+
 // --- Tests -------------------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -517,6 +581,60 @@ mod tests {
         assert!(approx_eq(py_mod(7_i64, 3.0_f64), 1.0));
         assert!(approx_eq(py_mod(7.0_f64, 3_i64), 1.0));
         assert!(approx_eq(py_mod(7.0_f64, 3.0_f64), 1.0));
+    }
+
+    #[test]
+    fn test_gcd_i64_matches_python_shape() {
+        assert_eq!(gcd_i64(54, 24), 6);
+        assert_eq!(gcd_i64(-54, 24), 6);
+        assert_eq!(gcd_i64(54, -24), 6);
+        assert_eq!(gcd_i64(0, 24), 24);
+        assert_eq!(gcd_i64(0, 0), 0);
+    }
+
+    #[test]
+    fn test_lcm_i64_matches_python_shape() {
+        assert_eq!(lcm_i64(6, 8), 24);
+        assert_eq!(lcm_i64(-6, 8), 24);
+        assert_eq!(lcm_i64(6, -8), 24);
+        assert_eq!(lcm_i64(0, 8), 0);
+        assert_eq!(lcm_i64(0, 0), 0);
+    }
+
+    #[test]
+    fn test_gcd_i64_reports_unrepresentable_result() {
+        let result = std::panic::catch_unwind(|| gcd_i64(i64::MIN, 0));
+        let panic = match result {
+            Ok(_) => panic!("expected overflow panic"),
+            Err(panic) => panic,
+        };
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&'static str>().copied())
+            .unwrap_or("<non-string panic>");
+        assert!(
+            message.contains("ValueError: math.gcd result overflows Incan int"),
+            "unexpected panic message: {message}"
+        );
+    }
+
+    #[test]
+    fn test_lcm_i64_reports_unrepresentable_result() {
+        let result = std::panic::catch_unwind(|| lcm_i64(i64::MIN, 1));
+        let panic = match result {
+            Ok(_) => panic!("expected overflow panic"),
+            Err(panic) => panic,
+        };
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&'static str>().copied())
+            .unwrap_or("<non-string panic>");
+        assert!(
+            message.contains("ValueError: math.lcm result overflows Incan int"),
+            "unexpected panic message: {message}"
+        );
     }
 
     #[test]
