@@ -70,10 +70,16 @@ impl AstLowering {
                 //
                 // The frontend type system does not model references, so `expr_type` typically returns `T` where
                 // lowering may have already marked the same binding as `Ref(T)`/`RefMut(T)`.
+                //
+                // Likewise, RFC-008 const lowering may have already refined `str`/`bytes` to their static IR forms.
+                // Keep those backend-specific const representations intact so later emission can materialize owned
+                // values only when required.
                 let inner = self.lower_resolved_type(res_ty);
                 lowered.ty = match &lowered.ty {
                     IrType::Ref(_) => IrType::Ref(Box::new(inner)),
                     IrType::RefMut(_) => IrType::RefMut(Box::new(inner)),
+                    IrType::StaticStr => IrType::StaticStr,
+                    IrType::StaticBytes => IrType::StaticBytes,
                     _ => inner,
                 };
             }

@@ -503,7 +503,7 @@ impl AstLowering {
         for decl in &program.declarations {
             if let ast::Declaration::Const(ref c) = decl.node {
                 let ty = if let Some(ann) = &c.ty {
-                    self.lower_type(&ann.node)
+                    self.lower_const_annotation_type(&ann.node)
                 } else {
                     IrType::Unknown
                 };

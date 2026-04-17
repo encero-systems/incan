@@ -1850,6 +1850,50 @@ def main() -> None:
     }
 
     #[test]
+    fn test_const_str_materializes_to_owned_str_at_runtime_sites() {
+        let Ok(output) = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+const PREFIX: str = "target/"
+
+def echo(value: str) -> str:
+    return value
+
+def direct() -> str:
+    return PREFIX
+
+def join(name: str) -> str:
+    return PREFIX + name
+
+def main() -> None:
+    local = PREFIX
+    println(direct())
+    println(echo(PREFIX))
+    println(echo(local))
+    println(join("orders.csv"))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+        else {
+            panic!("failed to run incan");
+        };
+
+        assert!(
+            output.status.success(),
+            "const str materialization test failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["target/", "target/", "target/", "target/orders.csv"]);
+    }
+
+    #[test]
     fn test_rfc041_rusttype_interop_typechecks_end_to_end() {
         let source = r#"
 from rust::std::string import String as RustString

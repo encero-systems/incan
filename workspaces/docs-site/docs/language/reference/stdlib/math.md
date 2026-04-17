@@ -53,4 +53,5 @@ Access values through the `math` namespace, for example `math.PI` or `math.sqrt(
 
 - `math.gcd` returns the greatest common divisor of two integers.
 - `math.lcm` returns the lowest common multiple of two integers.
+- `math.gcd` and `math.lcm` raise `ValueError` if the mathematical result does not fit Incan's signed 64-bit `int`.
 - The floating-point helpers remain thin wrappers over Rust math facilities.
