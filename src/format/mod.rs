@@ -44,10 +44,13 @@ pub enum FormatError {
 ///
 /// ```
 /// use incan::format_source;
+/// # fn main() -> Result<(), incan::FormatError> {
 ///
 /// let source = "def add(a: int, b: int) -> int:\n    return a + b\n";
-/// let formatted = format_source(source).unwrap();
+/// let formatted = format_source(source)?;
 /// assert!(formatted.contains("def add"));
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Errors
@@ -65,11 +68,14 @@ pub fn format_source(source: &str) -> Result<String, FormatError> {
 ///
 /// ```
 /// use incan::{FormatConfig, format_source_with_config};
+/// # fn main() -> Result<(), incan::FormatError> {
 ///
 /// let config = FormatConfig::default();
 /// let source = "def greet(name: str) -> str:\n    return name\n";
-/// let formatted = format_source_with_config(source, config).unwrap();
+/// let formatted = format_source_with_config(source, config)?;
 /// assert!(formatted.contains("def greet"));
+/// # Ok(())
+/// # }
 /// ```
 pub fn format_source_with_config(source: &str, config: FormatConfig) -> Result<String, FormatError> {
     // Parse the source - formatter requires valid syntax
@@ -373,12 +379,15 @@ fn trim_trailing_blank_comment_lines(lines: &[String]) -> Vec<String> {
 ///
 /// ```
 /// use incan::check_formatted;
+/// # fn main() -> Result<(), incan::FormatError> {
 ///
 /// // Check returns a boolean (true = already formatted)
 /// let source = "def foo() -> int:\n    return 42\n";
-/// let is_formatted = check_formatted(source).unwrap();
+/// let is_formatted = check_formatted(source)?;
 /// // Result depends on exact formatting rules
 /// assert!(is_formatted == true || is_formatted == false);
+/// # Ok(())
+/// # }
 /// ```
 pub fn check_formatted(source: &str) -> Result<bool, FormatError> {
     let formatted = format_source(source)?;

@@ -355,7 +355,10 @@ mod tests {
             },
         )]));
 
-        let err = resolve_helper_binding(&index, "demo", "filter").expect_err("expected missing export rejection");
+        let err = match resolve_helper_binding(&index, "demo", "filter") {
+            Err(err) => err,
+            Ok(_) => panic!("expected missing export rejection"),
+        };
         assert!(err.contains("missing export `filter`"), "unexpected error: {err}");
         Ok(())
     }

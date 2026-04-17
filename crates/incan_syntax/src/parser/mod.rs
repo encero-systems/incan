@@ -6,11 +6,14 @@
 //!
 //! ```rust,no_run
 //! use incan_syntax::{lexer, parser};
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!
 //! let source = "def foo() -> int:\n    return 42\n";
-//! let tokens = lexer::lex(source).unwrap();
-//! let ast = parser::parse(&tokens).unwrap();
+//! let tokens = lexer::lex(source)?;
+//! let ast = parser::parse(&tokens)?;
 //! assert_eq!(ast.declarations.len(), 1);
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::ast::*;

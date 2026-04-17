@@ -72,6 +72,7 @@ assert_eq!(config.__class__(), "Config");
 Generates convenience methods for JSON serialization (requires `serde` derives):
 
 ```rust
+fn demo() -> Result<(), Box<dyn std::error::Error>> {
 #[derive(Serialize, Deserialize, IncanJson)]
 struct ApiResponse {
     status: i64,
@@ -81,7 +82,11 @@ struct ApiResponse {
 let response = ApiResponse { status: 200, message: "OK".into() };
 let json = response.to_json();           // Compact JSON string
 let pretty = response.to_json_pretty();  // Pretty-printed JSON
-let parsed = ApiResponse::from_json(&json).unwrap();
+let parsed = ApiResponse::from_json(&json)?;
+# let _ = pretty;
+# let _ = parsed;
+# Ok(())
+}
 ```
 
 **Incan equivalent**: `@derive(Serialize, Deserialize)` (JSON methods added automatically)

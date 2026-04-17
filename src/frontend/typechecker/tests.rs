@@ -32,6 +32,13 @@ fn check_str(source: &str) -> Result<(), Vec<CompileError>> {
     check(&ast)
 }
 
+fn check_str_err(source: &str, context: &str) -> Vec<CompileError> {
+    match check_str(source) {
+        Err(errs) => errs,
+        Ok(()) => panic!("{context}"),
+    }
+}
+
 fn check_str_with_library_index(source: &str, library_index: LibraryManifestIndex) -> Result<(), Vec<CompileError>> {
     let tokens = lexer::lex(source)?;
     let ast = parser::parse(&tokens)?;
@@ -474,7 +481,7 @@ def accept(f: (int) -> int) -> int:
 def main() -> None:
   _ = accept(id)
 "#;
-    let err = check_str(source).expect_err("generic function name in value position should fail");
+    let err = check_str_err(source, "generic function name in value position should fail");
     assert!(
         err.iter()
             .any(|e| e.message.contains("generic function") && e.message.contains("'id'")),
@@ -1972,7 +1979,7 @@ from std.async.time import sleep
 def foo() -> None:
   await sleep(1.0)
 "#;
-    let errs = check_str(source).expect_err("await in sync function should fail");
+    let errs = check_str_err(source, "await in sync function should fail");
     assert!(
         errs.iter()
             .any(|e| e.message.contains("await") && e.message.contains("async")),
@@ -1991,7 +1998,7 @@ model Widget:
   def work(self) -> None:
     await sleep(1.0)
 "#;
-    let errs = check_str(source).expect_err("await in sync method should fail");
+    let errs = check_str_err(source, "await in sync method should fail");
     assert!(
         errs.iter()
             .any(|e| e.message.contains("await") && e.message.contains("async")),
@@ -3884,7 +3891,7 @@ def main() -> int:
   let _x = T()
   return 0
 "#;
-    let err = check_str(source).expect_err("trait constructor should be rejected");
+    let err = check_str_err(source, "trait constructor should be rejected");
     assert!(
         err.iter().any(|e| e.message.contains("Cannot construct trait")),
         "unexpected errors: {:?}",
@@ -6282,7 +6289,7 @@ def id[T](x: T) -> T:
 def run() -> int:
   return id[int, str](1)
 "#;
-    let errs = check_str(source).expect_err("expected explicit type arg arity error");
+    let errs = check_str_err(source, "expected explicit type arg arity error");
     assert!(
         errs.iter()
             .any(|e| e.message.contains("expects 1 explicit type argument(s), got 2")),
@@ -6316,7 +6323,7 @@ def run() -> int:
   let b = Box()
   return b.get[int](str("x"))
 "#;
-    let errs = check_str(source).expect_err("expected explicit method type arg mismatch");
+    let errs = check_str_err(source, "expected explicit method type arg mismatch");
     assert!(
         errs.iter().any(|e| e.message.contains("expected 'int', found 'str'")),
         "expected type mismatch after explicit method type specialization, got {errs:?}"
@@ -6358,7 +6365,7 @@ def mystery[T]() -> int:
 def run() -> int:
   return mystery[_]()
 "#;
-    let errs = check_str(source).expect_err("expected inference unresolved when no value args bind T");
+    let errs = check_str_err(source, "expected inference unresolved when no value args bind T");
     assert!(
         errs.iter()
             .any(|e| e.message.contains("Could not infer type parameter")),
@@ -6372,7 +6379,7 @@ fn explicit_call_type_args_rejected_on_builtin_callee() {
 def run() -> int:
   return len[int]([1, 2])
 "#;
-    let errs = check_str(source).expect_err("expected unsupported explicit type args on builtin");
+    let errs = check_str_err(source, "expected unsupported explicit type args on builtin");
     assert!(
         errs.iter()
             .any(|e| e.message.contains("not supported for this call form")),
@@ -6390,7 +6397,7 @@ def run() -> int:
   let f = id
   return f[int](1)
 "#;
-    let errs = check_str(source).expect_err("expected unsupported explicit type args on indirect call");
+    let errs = check_str_err(source, "expected unsupported explicit type args on indirect call");
     assert!(
         errs.iter()
             .any(|e| e.message.contains("not supported for this call form")),

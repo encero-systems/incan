@@ -1124,9 +1124,10 @@ analytics = { path = "deps/analytics-lib" }
         let parsed = ProjectManifest::from_str(manifest_content, &consumer_manifest_path)?;
         let index = LibraryManifestIndex::from_project_manifest(&parsed);
 
-        let error = index
-            .merged_provider_required_dependencies()
-            .expect_err("expected conflicting provider dependency requirements");
+        let error = match index.merged_provider_required_dependencies() {
+            Err(error) => error,
+            Ok(_) => panic!("expected conflicting provider dependency requirements"),
+        };
         assert!(
             matches!(error, ProviderRequirementError::DependencyConflict { ref crate_name, .. } if crate_name == "serde_json"),
             "unexpected error: {error}"

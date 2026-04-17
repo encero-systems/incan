@@ -789,8 +789,10 @@ mod tests {
     #[test]
     fn rejects_parent_directory_artifact_escape() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
-        let err = resolve_desugarer_artifact_path(root.path(), "../escape.wasm", "route")
-            .expect_err("expected path traversal rejection");
+        let err = match resolve_desugarer_artifact_path(root.path(), "../escape.wasm", "route") {
+            Err(err) => err,
+            Ok(_) => panic!("expected path traversal rejection"),
+        };
         assert!(
             matches!(err, VocabDesugarPassError::Resolution { .. }),
             "unexpected error: {err}"
@@ -801,8 +803,10 @@ mod tests {
     #[test]
     fn rejects_current_directory_artifact_prefix() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
-        let err = resolve_desugarer_artifact_path(root.path(), "./escape.wasm", "route")
-            .expect_err("expected non-normalized relative path rejection");
+        let err = match resolve_desugarer_artifact_path(root.path(), "./escape.wasm", "route") {
+            Err(err) => err,
+            Ok(_) => panic!("expected non-normalized relative path rejection"),
+        };
         assert!(
             matches!(err, VocabDesugarPassError::Resolution { .. }),
             "unexpected error: {err}"
@@ -821,8 +825,10 @@ mod tests {
             error_ptr: 64,
             error_len: 0,
         };
-        let err =
-            validate_runtime_layout_values(Path::new("mock.wasm"), 128, layout).expect_err("expected invalid layout");
+        let err = match validate_runtime_layout_values(Path::new("mock.wasm"), 128, layout) {
+            Err(err) => err,
+            Ok(_) => panic!("expected invalid layout"),
+        };
         assert!(
             matches!(err, VocabDesugarPassError::InvalidRuntimeLayout { .. }),
             "unexpected error: {err}"
@@ -841,8 +847,10 @@ mod tests {
             error_ptr: 64,
             error_len: 0,
         };
-        let err = validate_runtime_layout_values(Path::new("mock.wasm"), 128, layout)
-            .expect_err("expected out-of-bounds layout");
+        let err = match validate_runtime_layout_values(Path::new("mock.wasm"), 128, layout) {
+            Err(err) => err,
+            Ok(_) => panic!("expected out-of-bounds layout"),
+        };
         assert!(
             matches!(err, VocabDesugarPassError::InvalidRuntimeLayout { .. }),
             "unexpected error: {err}"

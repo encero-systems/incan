@@ -7,7 +7,7 @@
 //! This module prevents that by providing a macro that the compiler emits into every generated `main.rs`:
 //!
 //! ```rust,ignore
-//! incan_stdlib::__incan_stdlib_version_check!("0.2.0-dev.0");
+//! incan_stdlib::__incan_stdlib_version_check!("0.2.0");
 //! ```
 //!
 //! The macro expands into a `const` assertion that compares the compiler version (baked in as a string literal) against

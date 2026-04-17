@@ -12,6 +12,13 @@ mod tests {
         parse(&tokens)
     }
 
+    fn parse_str_err(source: &str, context: &str) -> Vec<CompileError> {
+        match parse_str(source) {
+            Err(errs) => errs,
+            Ok(_) => panic!("{context}"),
+        }
+    }
+
     fn parse_str_with_module_path(source: &str, module_path: Option<&str>) -> Result<Program, Vec<CompileError>> {
         let tokens = lexer::lex(source).map_err(|_| vec![])?;
         parse_with_module_path(&tokens, module_path)
@@ -1472,8 +1479,7 @@ def add(a: int, b: int) -> int:
     #[test]
     fn test_parse_from_import_parenthesized_unclosed_error() {
         let source = "from db import (CategoryId, TagId\n";
-        let result = parse_str(source);
-        let err = result.expect_err("Unclosed import list should produce a parse error");
+        let err = parse_str_err(source, "Unclosed import list should produce a parse error");
         assert!(
             err[0].message.contains(')') || err[0].message.to_lowercase().contains("close"),
             "Expected error to mention ')'; got: {}",
@@ -1485,8 +1491,7 @@ def add(a: int, b: int) -> int:
     #[test]
     fn test_parse_from_import_empty_parens_error() {
         let source = "from db import ()\n";
-        let result = parse_str(source);
-        let err = result.expect_err("Empty import list should produce a parse error");
+        let err = parse_str_err(source, "Empty import list should produce a parse error");
         assert!(
             err[0].message.to_lowercase().contains("empty") || err[0].message.to_lowercase().contains("cannot"),
             "Expected 'empty' diagnostic; got: {}",

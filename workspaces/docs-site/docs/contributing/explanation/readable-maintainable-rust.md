@@ -253,11 +253,9 @@ Note: MSRV is enforced via CI running build/test with a pinned toolchain.
 
 ---
 
-## Common Pitfalls & Anti-Patterns
+## Common Pitfalls & Anti-Patterns {#common-pitfalls-anti-patterns}
 
 ### Quick-reference
-
-<!-- markdownlint-disable MD013 -->
 
 |                  Instead of                   |                 Prefer                 |                                Why                                |
 | --------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------- |
@@ -272,14 +270,11 @@ Note: MSRV is enforced via CI running build/test with a pinned toolchain.
 | `Result<T, String>` in public APIs            | A typed error enum (`thiserror`)       | Stringly-typed errors are hard to match on and evolve             |
 | `Rc<RefCell<T>>` everywhere                   | Restructure data / ownership           | Usually signals a design that fights the borrow checker           |
 
-<!-- markdownlint-enable MD013 -->
-
 ### Detailed guidance
 
 #### Panics on recoverable paths
 
-Reserve `.unwrap()` and `.expect()` for cases where you can **prove** the value is always `Some`/`Ok` — and add a
-comment explaining the invariant. Everywhere else, propagate with `?`:
+In this repository, do **not** use `.unwrap()` or `.expect()` in compiler code, tests, or examples. Even when an invariant feels obvious, prefer `?`, an explicit `match`, or a helper that turns the failure into a typed error with context. The only accepted exception is emitting `.unwrap()` / `.expect()` as literal strings in generated Rust when that is the intended runtime contract of the compiled program.
 
 ```rust
 // Bad — panics with no context if the file is missing

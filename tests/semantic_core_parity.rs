@@ -98,7 +98,10 @@ pub const E: float = 7 / 2    # div => float
     let err_src = r#"
 pub const Z: int = 1 / 0
 "#;
-    let errs = run_const_eval_snippet(err_src).unwrap_err();
+    let errs = match run_const_eval_snippet(err_src) {
+        Err(errs) => errs,
+        Ok(_) => panic!("expected a const-eval error for division by zero"),
+    };
     // Accept any const-eval error for division by zero (message text may differ from runtime panic string)
     assert!(
         !errs.is_empty(),
