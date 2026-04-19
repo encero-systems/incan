@@ -973,7 +973,7 @@ def main() -> None:
 
 /// End-to-end codegen tests
 mod codegen_tests {
-    use super::incan_debug_binary;
+    use super::{incan_debug_binary, strip_ansi_escapes};
     use incan::backend::IrCodegen;
     use incan::frontend::{lexer, parser, typechecker};
     use std::fs;
@@ -1093,6 +1093,93 @@ mod codegen_tests {
             stdout.contains("The Zen of Incan") && stdout.contains("Readability counts"),
             "stdout missing zen line; got:\n{}",
             stdout
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_filtered_comprehensions_run_with_borrowed_iterables() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+model StoredNode:
+    store_id_raw: int
+    node: str
+
+def main() -> None:
+    nodes: list[StoredNode] = [
+        StoredNode(store_id_raw=1, node="a"),
+        StoredNode(store_id_raw=2, node="b"),
+    ]
+    filtered = [stored.node for stored in nodes if stored.store_id_raw == 1]
+    scores = [1, 2, 3, 4]
+    squared_evens = {x: x * x for x in scores if x % 2 == 0}
+    println(filtered[0])
+    println(squared_evens[2])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c filtered comprehension regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["a", "4"],
+            "unexpected filtered comprehension output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_result_ok_string_literals_run_without_manual_str_wrapping() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def returns_result() -> Result[str, str]:
+    return Ok("from_return")
+
+def main() -> None:
+    direct: Result[str, str] = Ok("from_call")
+    match direct:
+        case Ok(msg):
+            println(msg)
+        case Err(err):
+            println(err)
+
+    match returns_result():
+        case Ok(msg):
+            println(msg)
+        case Err(err):
+            println(err)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c Result[str, E] string regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["from_call", "from_return"],
+            "unexpected Result[str, E] output:\n{stdout}"
         );
         Ok(())
     }
