@@ -4183,6 +4183,33 @@ pub def display[T](data: DataSet[T]) -> None:
     }
 
     #[test]
+    fn build_succeeds_for_qualified_enum_constructor_match() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path().join("enum_constructor_match_project");
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"enum_constructor_match\"\nversion = \"0.1.0\"\n",
+        )?;
+        let main_path = project_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            "pub enum ConformanceRel:\n  Read\n  Filter\n  Project\n\npub def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:\n  match rel:\n    ConformanceRel.Read =>\n      return \"ReadRel\"\n    ConformanceRel.Filter =>\n      return \"FilterRel\"\n    ConformanceRel.Project =>\n      return \"ProjectRel\"\n    _ =>\n      return \"UnknownRel\"\n\ndef main() -> None:\n  println(relation_kind_name_from_conformance(ConformanceRel.Filter))\n",
+        )?;
+
+        let out_dir = project_root.join("out");
+        let project_build = run_build(&main_path, &out_dir)?;
+        assert!(
+            project_build.status.success(),
+            "expected qualified enum constructor match project to build successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&project_build.stdout),
+            String::from_utf8_lossy(&project_build.stderr)
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn build_lib_with_vocab_companion_embeds_vocab_payload() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let producer_root = tmp.path().join("widgets_vocab_project");
