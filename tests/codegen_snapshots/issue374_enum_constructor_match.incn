@@ -1,0 +1,22 @@
+"""Issue #374: qualified enum constructor patterns must resolve over enum scrutinees."""
+
+pub enum ConformanceRel:
+    Read
+    Filter
+    Project
+
+
+pub def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
+    match rel:
+        ConformanceRel.Read =>
+            return "ReadRel"
+        ConformanceRel.Filter =>
+            return "FilterRel"
+        ConformanceRel.Project =>
+            return "ProjectRel"
+        _ =>
+            return "UnknownRel"
+
+
+def main() -> None:
+    print(relation_kind_name_from_conformance(ConformanceRel.Filter))

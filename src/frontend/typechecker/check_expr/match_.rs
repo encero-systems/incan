@@ -16,6 +16,26 @@ use incan_core::lang::types::collections::{self, CollectionTypeId};
 use super::TypeChecker;
 
 impl TypeChecker {
+    /// Split a constructor pattern name into its optional enum qualifier and variant segment.
+    ///
+    /// The parser normalizes qualified surface patterns like `Color.Red` to `Color::Red`, while bare constructors
+    /// such as `Some` and `Ok` keep the unqualified spelling. Match checking needs both pieces separately so
+    /// qualifier validation and variant symbol lookup stay consistent.
+    fn split_pattern_constructor_name(name: &str) -> (Option<&str>, &str) {
+        match name.rsplit_once("::") {
+            Some((qualifier, variant)) => (Some(qualifier), variant),
+            None => (None, name),
+        }
+    }
+
+    /// Whether an explicit pattern qualifier names the same enum-like scrutinee type being matched.
+    fn pattern_qualifier_matches_expected_type(expected_ty: &ResolvedType, qualifier: &str) -> bool {
+        match expected_ty {
+            ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => qualifier == type_name,
+            _ => false,
+        }
+    }
+
     /// Type-check a `match` expression and return its resolved type.
     pub(in crate::frontend::typechecker::check_expr) fn check_match(
         &mut self,
@@ -68,7 +88,11 @@ impl TypeChecker {
             }
             Pattern::Literal(_) => {}
             Pattern::Constructor(name, sub_patterns) => {
-                if let Some(cid) = constructors::from_str(name.as_str()) {
+                let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.as_str());
+                let qualifier_matches_expected = enum_qualifier_opt
+                    .is_none_or(|qualifier| Self::pattern_qualifier_matches_expected_type(expected_ty, qualifier));
+
+                if qualifier_matches_expected && let Some(cid) = constructors::from_str(ctor_name) {
                     match cid {
                         ConstructorId::Ok => {
                             if let ResolvedType::Generic(type_name, args) = expected_ty
@@ -205,11 +229,20 @@ impl TypeChecker {
                     self.rust_enum_constructor_payload_types(expected_ty, name.as_str(), positional_count);
                 let field_types: Option<Vec<ResolvedType>> = self
                     .symbols
-                    .lookup(variant_name)
-                    .and_then(|id| self.symbols.get(id))
-                    .and_then(|sym| {
+                    .all_symbols()
+                    .iter()
+                    .rev()
+                    .find_map(|sym| {
+                        if sym.name != variant_name {
+                            return None;
+                        }
                         if let SymbolKind::Variant(info) = &sym.kind {
-                            if self.match_variant_symbol_applies_to_scrutinee(expected_ty, info, positional_count) {
+                            if self.match_variant_symbol_applies_to_scrutinee(
+                                expected_ty,
+                                info,
+                                positional_count,
+                                enum_qualifier_opt,
+                            ) {
                                 Some(info.fields.clone())
                             } else {
                                 None
@@ -322,14 +355,20 @@ impl TypeChecker {
     /// rust-inspect metadata and library manifests register variant names (e.g. `Root`) at module scope. A `rusttype`
     /// alias such as `PlanRel` uses a **different** Incan name than the backing Rust enum (`Sender`), so we must not
     /// let an unrelated `Root` stub with empty payload metadata shadow [`Self::rust_enum_constructor_payload_types`],
-    /// or payload bindings in the pattern are never registered and the arm body sees `Unknown symbol`.
+    /// or payload bindings in the pattern are never registered and the arm body sees `Unknown symbol`. Source enums can
+    /// also reuse variant names across distinct enums, so qualified patterns must check the enum name in addition to
+    /// the short variant symbol.
     fn match_variant_symbol_applies_to_scrutinee(
         &self,
         expected_ty: &ResolvedType,
         info: &VariantInfo,
         positional_count: usize,
+        enum_qualifier_opt: Option<&str>,
     ) -> bool {
         if positional_count > info.fields.len() {
+            return false;
+        }
+        if enum_qualifier_opt.is_some_and(|qualifier| qualifier != info.enum_name) {
             return false;
         }
         match expected_ty {

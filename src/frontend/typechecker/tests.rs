@@ -4603,6 +4603,77 @@ def f(x: Traffic) -> None:
     );
 }
 
+#[test]
+fn test_match_qualified_incan_enum_variant_resolves_against_scrutinee() {
+    let source = r#"
+pub enum ConformanceRel:
+  Read
+  Filter
+  Project
+
+pub def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
+  match rel:
+    ConformanceRel.Read =>
+      return "ReadRel"
+    ConformanceRel.Filter =>
+      return "FilterRel"
+    ConformanceRel.Project =>
+      return "ProjectRel"
+    _ =>
+      return "UnknownRel"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_match_qualified_incan_enum_variant_with_wrong_qualifier_reports_resolution_error() {
+    let source = r#"
+enum ConformanceRel:
+  Read
+  Filter
+
+enum OtherRel:
+  Read
+
+def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
+  match rel:
+    OtherRel.Read =>
+      return "ReadRel"
+    _ =>
+      return "UnknownRel"
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors for mismatched enum constructor qualifier");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("does not resolve for this match")),
+        "expected unknown_match_constructor_pattern, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_match_qualified_incan_enum_variant_stays_resolvable_with_duplicate_variant_names() {
+    let source = r#"
+enum ConformanceRel:
+  Read
+  Filter
+
+enum OtherRel:
+  Read
+
+def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
+  match rel:
+    ConformanceRel.Read =>
+      return "ReadRel"
+    ConformanceRel.Filter =>
+      return "FilterRel"
+    _ =>
+      return "UnknownRel"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
 // ========================================
 // Async function tests
 // ========================================

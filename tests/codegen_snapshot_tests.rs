@@ -1177,6 +1177,14 @@ fn test_issue367_result_ok_string_literal_emits_owned_strings() {
     );
 }
 
+/// Issue #374: qualified enum constructor patterns in `Pattern =>` arms must resolve for same-enum scrutinees.
+#[test]
+fn test_issue374_enum_constructor_match_codegen() {
+    let source = load_test_file("issue374_enum_constructor_match");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("issue374_enum_constructor_match", rust_code);
+}
+
 #[test]
 fn test_rust_interop_field_access_codegen() {
     let source = load_test_file("rust_interop_field_access");
