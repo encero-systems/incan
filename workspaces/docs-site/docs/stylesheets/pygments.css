@@ -178,3 +178,17 @@ body[data-md-color-scheme="slate"] .highlight .il { color: #AE81FF } /* Literal.
 .md-typeset .highlight span {
   text-decoration: none;
 }
+
+
+/* Fix: Light theme code block contrast - by Muhammad Zain */
+[data-md-color-scheme="default"] .highlight {
+  background-color: #f6f8fa !important;
+  color: #1f2328 !important;
+  border: 1px solid #d0d7de !important;
+  border-radius: 6px !important;
+}
+
+[data-md-color-scheme="default"] .highlight code {
+  background: transparent !important;
+  color: #1f2328 !important;
+}
