@@ -867,6 +867,23 @@ fn test_issue364_filtered_list_comp_borrow_codegen() {
     insta::assert_snapshot!("issue364_filtered_list_comp_borrow", rust_code);
 }
 
+/// Issue #366: struct fields initialized from `self.<owned_field>` inside `clone(self) -> Self` must clone the field.
+#[test]
+fn test_issue366_clone_self_string_field_codegen() {
+    let source = load_test_file("issue366_clone_self_string_field");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("logical_name:self.logical_name.clone()"),
+        "expected clone(self)->Self struct field emission to clone borrowed string fields; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("logical_name:self.logical_name,"),
+        "unexpected raw move from borrowed self field in clone(self)->Self emission; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("issue366_clone_self_string_field", rust_code);
+}
+
 /// Filtered dict comprehensions over borrowed iterables must own the item before evaluating the predicate.
 #[test]
 fn test_filtered_dict_comp_predicate_codegen() {

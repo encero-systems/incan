@@ -610,10 +610,43 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
         }
 
         ConversionContext::StructField => {
-            // Struct fields are always owned
-            match &expr.kind {
-                IrExprKind::String(_) => Conversion::ToString,
-                _ if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+            // Struct fields are owned sinks, so field reads and non-final local reads need the same materialization
+            // rules as ordinary Incan-owned call arguments.
+            match (&expr.kind, target_ty) {
+                (IrExprKind::String(_), Some(IrType::String)) => Conversion::ToString,
+                (IrExprKind::StaticRead { .. }, Some(IrType::String | IrType::Generic(_)))
+                    if matches!(expr.ty, IrType::StaticStr) =>
+                {
+                    Conversion::ToString
+                }
+                (IrExprKind::StaticRead { .. }, None) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+                (_, Some(IrType::String)) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+                (IrExprKind::String(_), Some(IrType::Generic(_))) => Conversion::ToString,
+                (_, Some(IrType::Generic(_))) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+                (IrExprKind::String(_), None) => Conversion::ToString,
+                (_, None) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+                (_, Some(IrType::List(elem))) if matches!(elem.as_ref(), IrType::String) => {
+                    if matches!(expr.ty, IrType::List(_)) {
+                        match &expr.kind {
+                            IrExprKind::List(items) if items.is_empty() => Conversion::None,
+                            _ => Conversion::VecStringConversion,
+                        }
+                    } else {
+                        Conversion::None
+                    }
+                }
+                (IrExprKind::Var { access, .. }, Some(IrType::String)) if matches!(expr.ty, IrType::String) => {
+                    match access {
+                        VarAccess::Move => Conversion::None,
+                        _ => Conversion::ToString,
+                    }
+                }
+                (IrExprKind::Var { access, .. }, _) if !expr.ty.is_copy() => match access {
+                    VarAccess::Move => Conversion::None,
+                    _ => Conversion::Clone,
+                },
+                (IrExprKind::Field { .. }, _) if matches!(expr.ty, IrType::String) => Conversion::Clone,
+                (IrExprKind::Field { .. }, _) if !expr.ty.is_copy() => Conversion::Clone,
                 _ => Conversion::None,
             }
         }
