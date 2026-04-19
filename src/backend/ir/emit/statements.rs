@@ -8,7 +8,7 @@ use quote::quote;
 use std::collections::HashSet;
 
 use super::super::conversions::{ConversionContext, determine_conversion};
-use super::super::expr::{IrExprKind, Pattern};
+use super::super::expr::{IrExprKind, Pattern, TypedExpr};
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::IrType;
 use super::super::types::Mutability;
@@ -385,12 +385,35 @@ impl<'a> IrEmitter<'a> {
     ) -> Result<TokenStream, EmitError> {
         let n = Self::rust_ident(name);
         let v = if matches!(value.kind, IrExprKind::StaticBinding { .. }) {
-            self.emit_expr(value)?
+            self.emit_assignment_value(value, None)?
         } else {
-            let emitted = self.emit_expr(value)?;
+            let emitted = self.emit_assignment_value(value, None)?;
             quote! { incan_stdlib::storage::StaticBinding::from_value((#emitted).into()) }
         };
         Ok(quote! { #n = #v; })
+    }
+
+    /// Emit an assignment RHS, seeding `Result` constructors from the assignment type when possible.
+    ///
+    /// Assignment-like contexts can carry enough type information to stabilize `Ok`/`Err` emission even when plain
+    /// expression emission would leave Rust inference underconstrained.
+    fn emit_assignment_value(&self, value: &TypedExpr, expected_ty: Option<&IrType>) -> Result<TokenStream, EmitError> {
+        let can_seed_result_constructor = matches!(value.kind, IrExprKind::Call { .. } | IrExprKind::Struct { .. });
+
+        if can_seed_result_constructor {
+            if let Some(target_ty) = expected_ty
+                && matches!(target_ty, IrType::Result(_, _))
+                && let Some(seed) = self.emit_inference_seeded_literal_arg(value, target_ty)?
+            {
+                return Ok(seed);
+            }
+            if matches!(&value.ty, IrType::Result(_, _))
+                && let Some(seed) = self.emit_inference_seeded_literal_arg(value, &value.ty)?
+            {
+                return Ok(seed);
+            }
+        }
+        self.emit_expr(value)
     }
 
     /// Emit assignment through a storage-rooted field or index path.
@@ -436,7 +459,7 @@ impl<'a> IrEmitter<'a> {
             AssignTarget::Field { object, .. } | AssignTarget::Index { object, .. } => object.as_ref(),
             _ => unreachable!("guarded above"),
         };
-        let emitted_value = self.emit_expr(value)?;
+        let emitted_value = self.emit_assignment_value(value, None)?;
         let wrapped = self.emit_storage_with_mut(storage_expr, inner)?;
         Ok(quote! {
             let #rhs_name = #emitted_value;
@@ -465,7 +488,7 @@ impl<'a> IrEmitter<'a> {
                 value,
             } => {
                 let n = Self::rust_ident(name);
-                let v = self.emit_expr(value)?;
+                let v = self.emit_assignment_value(value, Some(ty))?;
 
                 // Apply conversion if needed based on variable type
                 let conversion = determine_conversion(value, Some(ty), ConversionContext::Assignment);
@@ -483,7 +506,7 @@ impl<'a> IrEmitter<'a> {
             IrStmtKind::Assign { target, value } => {
                 if let AssignTarget::Static(name) = target {
                     let n = Self::rust_static_ident(name);
-                    let v = self.emit_expr(value)?;
+                    let v = self.emit_assignment_value(value, None)?;
                     return Ok(quote! {
                         let __incan_static_rhs = #v;
                         #n.with_mut(|__incan_static_value| {
@@ -513,11 +536,11 @@ impl<'a> IrEmitter<'a> {
                 {
                     let o = self.emit_expr(object)?;
                     let k = self.emit_expr(index)?;
-                    let v = self.emit_expr(value)?;
+                    let v = self.emit_assignment_value(value, None)?;
                     return Ok(quote! { #o.insert(#k, #v); });
                 }
                 let t = self.emit_assign_target(target)?;
-                let v = self.emit_expr(value)?;
+                let v = self.emit_assignment_value(value, None)?;
                 Ok(quote! { #t = #v; })
             }
             IrStmtKind::Return(Some(expr)) => {

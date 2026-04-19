@@ -15,7 +15,9 @@ impl<'a> IrEmitter<'a> {
     ///
     /// Converts `[expr for var in iter if cond]` to Rust iterator chain:
     /// - Without filter: `iter.iter().cloned().map(|var| expr).collect::<Vec<_>>()`
-    /// - With filter: `iter.iter().cloned().filter(|&var| cond).map(|var| expr).collect::<Vec<_>>()`
+    /// - With filter over ranges: `iter.filter(|&var| cond).map(|var| expr).collect::<Vec<_>>()`
+    /// - With filter over non-range iterables: `iter.iter().filter_map(|var| { let var = (*var).clone(); if cond {
+    ///   Some(expr) } else { None } })`
     ///
     /// For range iterables, we skip `.iter().cloned()` since ranges are already iterators.
     pub(in super::super) fn emit_list_comp(
@@ -25,6 +27,7 @@ impl<'a> IrEmitter<'a> {
         iterable: &TypedExpr,
         filter: Option<&TypedExpr>,
     ) -> Result<TokenStream, EmitError> {
+        // ---- Context: iterator setup ----
         let iter = self.emit_expr(iterable)?;
         let var_ident = format_ident!("{}", variable);
         let elem = self.emit_expr(element)?;
@@ -32,6 +35,7 @@ impl<'a> IrEmitter<'a> {
         let is_range = self.is_range_iterable(iterable);
         let iter_wrapped = quote! { (#iter) };
 
+        // ---- Context: filtered comprehensions ----
         if let Some(filter_expr) = filter {
             let filter_tokens = self.emit_expr(filter_expr)?;
             if is_range {
@@ -40,9 +44,20 @@ impl<'a> IrEmitter<'a> {
                 })
             } else {
                 Ok(quote! {
-                    #iter_wrapped.iter().cloned().filter(|&#var_ident| #filter_tokens).map(|#var_ident| #elem).collect::<Vec<_>>()
+                    #iter_wrapped
+                        .iter()
+                        .filter_map(|#var_ident| {
+                            let #var_ident = (*#var_ident).clone();
+                            if #filter_tokens {
+                                Some(#elem)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
                 })
             }
+        // ---- Context: unfiltered comprehensions ----
         } else if is_range {
             Ok(quote! {
                 #iter_wrapped.map(|#var_ident| #elem).collect::<Vec<_>>()
@@ -57,7 +72,9 @@ impl<'a> IrEmitter<'a> {
     /// Emit a dict comprehension.
     ///
     /// Converts `{key: value for var in iter if cond}` to Rust iterator chain:
-    /// `iter.iter().cloned().filter(...).map(|var| (key, value)).collect::<HashMap<_, _>>()`
+    /// - Without filter: `iter.iter().cloned().map(|var| (key, value)).collect::<HashMap<_, _>>()`
+    /// - With filter over borrowed iterables: `iter.iter().filter_map(|var| { let var = (*var).clone(); if cond {
+    ///   Some((key, value)) } else { None } })`
     pub(in super::super) fn emit_dict_comp(
         &self,
         key: &TypedExpr,
@@ -66,11 +83,13 @@ impl<'a> IrEmitter<'a> {
         iterable: &TypedExpr,
         filter: Option<&TypedExpr>,
     ) -> Result<TokenStream, EmitError> {
+        // ---- Context: iterator setup ----
         let iter = self.emit_expr(iterable)?;
         let var_ident = format_ident!("{}", variable);
         let key_tokens = self.emit_expr(key)?;
         let value_tokens = self.emit_expr(value)?;
 
+        // ---- Context: key ownership for collected map entries ----
         // Determine if the key needs cloning.
         // For dict comprehensions, keys need cloning when:
         // 1. The key type is non-Copy AND
@@ -100,10 +119,21 @@ impl<'a> IrEmitter<'a> {
             quote! { #key_tokens }
         };
 
+        // ---- Context: filtered vs unfiltered comprehensions ----
         if let Some(filter_expr) = filter {
             let filter_tokens = self.emit_expr(filter_expr)?;
             Ok(quote! {
-                #iter.iter().cloned().filter(|#var_ident| #filter_tokens).map(|#var_ident| (#cloned_key, #value_tokens)).collect::<std::collections::HashMap<_, _>>()
+                #iter
+                    .iter()
+                    .filter_map(|#var_ident| {
+                        let #var_ident = (*#var_ident).clone();
+                        if #filter_tokens {
+                            Some((#cloned_key, #value_tokens))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<std::collections::HashMap<_, _>>()
             })
         } else {
             Ok(quote! {

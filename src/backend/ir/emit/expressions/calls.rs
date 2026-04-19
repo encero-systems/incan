@@ -73,11 +73,26 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Promote string literals used as `Result` payloads to owned `String` tokens.
+    ///
+    /// Incan `str` values lower to owned Rust `String` in `Result[T, E]` payload positions. This helper keeps `Ok` and
+    /// `Err` constructor emission aligned across the different seeding paths.
+    fn emit_result_payload_tokens(inner_expr: &TypedExpr, inner_tokens: TokenStream) -> TokenStream {
+        if matches!(inner_expr.kind, IrExprKind::String(_)) {
+            quote! { (#inner_tokens).to_string() }
+        } else {
+            inner_tokens
+        }
+    }
+
     /// Emit a type-seeded literal argument for `None`/`Ok`/`Err` when possible.
     ///
     /// This helper rewrites constructor-shaped arguments into explicit generic forms (for example `None::<T>`, `Ok::<T,
     /// E>(x)`, `Err::<T, E>(e)`) based on the expected parameter type. It prevents Rust from failing inference in calls
     /// where the callee alone does not provide enough type context.
+    ///
+    /// For `Result[str, E]`, string-literal payloads in both `Ok` and `Err` constructors are emitted as owned `String`
+    /// values so generated Rust matches Incan string ownership semantics.
     ///
     /// If a fully-informed rewrite is not possible, this returns `Ok(None)` and the normal expression emission path is
     /// used.
@@ -88,12 +103,14 @@ impl<'a> IrEmitter<'a> {
     ///
     /// ## Returns
     /// - (`Result<Option<TokenStream>, EmitError>`): Seeded token stream when a rewrite applies, otherwise `None`.
-    fn emit_inference_seeded_literal_arg(
+    pub(in super::super) fn emit_inference_seeded_literal_arg(
         &self,
         arg: &TypedExpr,
         target_ty: &IrType,
     ) -> Result<Option<TokenStream>, EmitError> {
+        // ---- Context: constructor seeding from an expected parameter type ----
         match (&arg.kind, target_ty) {
+            // ---- Context: seed `None` from the target `Option[T]` ----
             (IrExprKind::None, IrType::Option(inner)) => {
                 let inner_ty = if Self::is_unresolved_call_seed_type(inner) {
                     quote! { () }
@@ -103,6 +120,7 @@ impl<'a> IrEmitter<'a> {
                 Ok(Some(quote! { None::<#inner_ty> }))
             }
 
+            // ---- Context: seed `Ok`/`Err` constructors spelled as calls ----
             (IrExprKind::Call { func, args, .. }, IrType::Result(ok_ty, err_ty)) => {
                 let IrExprKind::Var { name, .. } = &func.kind else {
                     return Ok(None);
@@ -110,7 +128,7 @@ impl<'a> IrEmitter<'a> {
                 let Some(first_arg) = args.first() else {
                     return Ok(None);
                 };
-                let inner = self.emit_expr(&first_arg.expr)?;
+                let inner = Self::emit_result_payload_tokens(&first_arg.expr, self.emit_expr(&first_arg.expr)?);
 
                 if name == constructors::as_str(ConstructorId::Ok) {
                     // For `Ok`, keep unresolved `T` as `_` so Rust can infer it
@@ -131,12 +149,6 @@ impl<'a> IrEmitter<'a> {
                 }
 
                 if name == constructors::as_str(ConstructorId::Err) {
-                    let inner = if matches!(first_arg.expr.kind, IrExprKind::String(_)) {
-                        // `Err("msg")` in Incan maps to owned `String` in Rust.
-                        quote! { (#inner).to_string() }
-                    } else {
-                        inner
-                    };
                     // Mirror `Ok` strategy: anchor the opposite side with `()`
                     // and leave the payload side as `_` when unresolved.
                     let ok_tokens = if Self::is_unresolved_call_seed_type(ok_ty) {
@@ -154,11 +166,12 @@ impl<'a> IrEmitter<'a> {
 
                 Ok(None)
             }
+            // ---- Context: seed `Ok`/`Err` constructors lowered as struct-like IR ----
             (IrExprKind::Struct { name, fields }, IrType::Result(ok_ty, err_ty)) => {
                 let Some((_, first_arg)) = fields.first() else {
                     return Ok(None);
                 };
-                let inner = self.emit_expr(first_arg)?;
+                let inner = Self::emit_result_payload_tokens(first_arg, self.emit_expr(first_arg)?);
 
                 if name == constructors::as_str(ConstructorId::Ok) {
                     let ok_tokens = if Self::is_unresolved_call_seed_type(ok_ty) {
@@ -175,12 +188,6 @@ impl<'a> IrEmitter<'a> {
                 }
 
                 if name == constructors::as_str(ConstructorId::Err) {
-                    let inner = if matches!(first_arg.kind, IrExprKind::String(_)) {
-                        // `Err("msg")` in Incan maps to owned `String` in Rust.
-                        quote! { (#inner).to_string() }
-                    } else {
-                        inner
-                    };
                     let ok_tokens = if Self::is_unresolved_call_seed_type(ok_ty) {
                         quote! { () }
                     } else {
@@ -200,6 +207,9 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit `Ok`/`Err` constructors with explicit generic context from an expected `Result<T, E>` type.
+    ///
+    /// String literals in `Ok` and `Err` payload positions are promoted to owned `String` values when emitted to Rust.
     pub(super) fn emit_result_constructor_with_context(
         &self,
         constructor_name: &str,
@@ -207,12 +217,15 @@ impl<'a> IrEmitter<'a> {
         ok_ty: &IrType,
         err_ty: &IrType,
     ) -> Result<Option<TokenStream>, EmitError> {
+        // ---- Context: normalize payload before we seed constructor generics ----
         let inner = if matches!(inner_expr.kind, IrExprKind::None) && matches!(ok_ty, IrType::Unit) {
             quote! { () }
         } else {
             self.emit_expr(inner_expr)?
         };
+        let inner = Self::emit_result_payload_tokens(inner_expr, inner);
 
+        // ---- Context: seed `Ok` using the expected result type ----
         if constructor_name == constructors::as_str(ConstructorId::Ok) {
             let ok_tokens = if Self::is_unresolved_type(ok_ty) {
                 quote! { _ }
@@ -227,12 +240,8 @@ impl<'a> IrEmitter<'a> {
             return Ok(Some(quote! { Ok::<#ok_tokens, #err_tokens>(#inner) }));
         }
 
+        // ---- Context: seed `Err` using the expected result type ----
         if constructor_name == constructors::as_str(ConstructorId::Err) {
-            let inner = if matches!(inner_expr.kind, IrExprKind::String(_)) {
-                quote! { (#inner).to_string() }
-            } else {
-                inner
-            };
             let ok_tokens = if Self::is_unresolved_type(ok_ty) {
                 quote! { () }
             } else {

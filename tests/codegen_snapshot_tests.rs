@@ -850,6 +850,40 @@ fn test_issue244_mut_str_param_codegen() {
     insta::assert_snapshot!("issue244_mut_str_param", rust_code);
 }
 
+/// Issue #364: filtered list comprehensions over non-Copy values must not destructure `&item` in `filter(...)`.
+#[test]
+fn test_issue364_filtered_list_comp_borrow_codegen() {
+    let source = load_test_file("issue364_filtered_list_comp_borrow");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains(".iter().filter_map(|stored|{letstored=(*stored).clone();ifstored.store_id_raw==store_id{Some(stored.node)}else{None}})"),
+        "expected filtered list comprehension to clone inside filter_map for non-Copy items; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains(".filter(|&stored|"),
+        "filtered list comprehension must not destructure `&stored`; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("issue364_filtered_list_comp_borrow", rust_code);
+}
+
+/// Filtered dict comprehensions over borrowed iterables must own the item before evaluating the predicate.
+#[test]
+fn test_filtered_dict_comp_predicate_codegen() {
+    let source = load_test_file("filtered_dict_comp_predicate");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains(".iter().filter_map(|x|{letx=(*x).clone();ifincan_stdlib::num::py_mod_i64(x,2)==0{Some((x,x*x))}else{None}})"),
+        "expected filtered dict comprehension to clone inside filter_map before evaluating the predicate; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains(".filter(|x|incan_stdlib::num::py_mod_i64(x,2)==0)"),
+        "filtered dict comprehension must not leave the predicate closure borrowing `x`; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("filtered_dict_comp_predicate", rust_code);
+}
+
 // ============================================================================
 // Tests for declarations (functions, classes, models, traits, enums)
 // ============================================================================
@@ -1023,6 +1057,44 @@ fn test_rust_associated_call_in_elif_codegen() {
     let source = load_test_file("rust_associated_call_in_elif");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("rust_associated_call_in_elif", rust_code);
+}
+
+#[test]
+fn test_issue367_result_ok_string_literal_codegen() {
+    let source = load_test_file("issue367_result_ok_string_literal");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("issue367_result_ok_string_literal", rust_code);
+}
+
+#[test]
+fn test_issue367_result_ok_string_literal_emits_owned_strings() {
+    let source = load_test_file("issue367_result_ok_string_literal");
+    let rust_code = generate_rust(&source);
+
+    assert!(
+        rust_code.contains("(\"from_call\").to_string()"),
+        "expected call-argument seeding path to coerce Ok string literals to owned String"
+    );
+    assert!(
+        rust_code.contains("(\"from_local\").to_string()"),
+        "expected assignment seeding path to coerce Ok string literals to owned String"
+    );
+    assert!(
+        rust_code.contains("(\"from_return\").to_string()"),
+        "expected return-context seeding path to coerce Ok string literals to owned String"
+    );
+    assert!(
+        !rust_code.contains("Ok::<std::string::String, std::string::String>(\"from_call\")"),
+        "unexpected raw &str Ok payload in call-argument seeding path"
+    );
+    assert!(
+        !rust_code.contains("Ok::<std::string::String, std::string::String>(\"from_local\")"),
+        "unexpected raw &str Ok payload in assignment seeding path"
+    );
+    assert!(
+        !rust_code.contains("Ok::<std::string::String, std::string::String>(\"from_return\")"),
+        "unexpected raw &str Ok payload in return-context seeding path"
+    );
 }
 
 #[test]
