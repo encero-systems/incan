@@ -1141,6 +1141,41 @@ def main() -> None:
     }
 
     #[test]
+    fn test_clone_self_struct_field_reads_do_not_move_out_of_borrowed_self() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+pub class ActiveRegistration:
+    pub logical_name: str
+    pub rank: int
+
+    def clone(self) -> Self:
+        return ActiveRegistration(logical_name=self.logical_name, rank=self.rank)
+
+def main() -> None:
+    reg = ActiveRegistration(logical_name="orders", rank=1)
+    copied = reg.clone()
+    println(copied.logical_name)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c clone(self)->Self field regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["orders"], "unexpected clone(self)->Self output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
     fn test_result_ok_string_literals_run_without_manual_str_wrapping() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([

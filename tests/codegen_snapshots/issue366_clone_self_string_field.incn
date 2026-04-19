@@ -1,0 +1,12 @@
+pub class ActiveRegistration:
+    pub logical_name: str
+    pub rank: int
+
+    def clone(self) -> Self:
+        return ActiveRegistration(logical_name=self.logical_name, rank=self.rank)
+
+
+def main() -> None:
+    reg = ActiveRegistration(logical_name="orders", rank=1)
+    copied = reg.clone()
+    println(copied.logical_name)
