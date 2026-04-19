@@ -959,6 +959,69 @@ fn test_for_in_list_enum_equality_codegen() {
     insta::assert_snapshot!("for_in_list_enum_equality", rust_code);
 }
 
+/// Issue #372: imported enums must still iterate as owned values in borrowed list loops.
+#[test]
+fn test_issue372_imported_enum_loop_ownership_codegen() {
+    let main_source = r#"
+from rels import ConformanceRel
+
+def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
+  match rel:
+    ConformanceRel.Read =>
+      return "ReadRel"
+    _ =>
+      return "Other"
+
+def scenario_matches(required: list[ConformanceRel]) -> bool:
+  for expected in required:
+    if expected == ConformanceRel.Read:
+      if relation_kind_name_from_conformance(expected) == "ReadRel":
+        return true
+  return false
+
+def main() -> None:
+  pass
+"#;
+    let rels_source = r#"
+@derive(Clone)
+pub enum ConformanceRel:
+  Read
+  Filter
+"#;
+
+    let Ok(main_tokens) = lexer::lex(main_source) else {
+        panic!("lexer failed")
+    };
+    let Ok(main_ast) = parser::parse(&main_tokens) else {
+        panic!("parser failed")
+    };
+    let Ok(rels_tokens) = lexer::lex(rels_source) else {
+        panic!("lexer failed")
+    };
+    let Ok(rels_ast) = parser::parse(&rels_tokens) else {
+        panic!("parser failed")
+    };
+
+    let mut codegen = IrCodegen::new();
+    codegen.add_module_with_path_segments("rels", &rels_ast, vec!["rels".to_string()]);
+    let Ok((main_code, _modules)) = codegen.try_generate_multi_file_nested(&main_ast, &[vec!["rels".to_string()]])
+    else {
+        panic!("codegen must succeed");
+    };
+    let rust_code = normalize_codegen_output(&main_code);
+
+    assert!(
+        rust_code.contains("for expected in required.iter().cloned()"),
+        "expected imported enum loop to use .iter().cloned(); generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("for expected in required.iter() {"),
+        "imported enum loop must not iterate borrowed enum refs; generated:\n{rust_code}"
+    );
+
+    insta::assert_snapshot!("issue372_imported_enum_loop_ownership", rust_code);
+}
+
 #[test]
 fn test_traits_codegen() {
     let source = load_test_file("traits");

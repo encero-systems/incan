@@ -641,6 +641,8 @@ impl<'a> IrEmitter<'a> {
                             IrType::Int | IrType::Float | IrType::Bool => {
                                 quote! { #iter.iter().copied() }
                             }
+                            // Imported enums lower to nominal `Struct(name)` types in consumer modules, so rely on
+                            // centralized enum metadata instead of local declaration shape.
                             e if self.type_is_user_enum(e) => quote! { #iter.iter().cloned() },
                             _ => quote! { #iter.iter() },
                         },

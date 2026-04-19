@@ -85,6 +85,11 @@ pub struct IrEmitter<'a> {
     type_module_paths: HashMap<String, Vec<String>>,
     /// Type names that are declared in multiple modules (ambiguous).
     ambiguous_type_names: HashSet<String>,
+    /// Imported enum type names discovered from dependency modules.
+    ///
+    /// Imported enums usually lower to `IrType::Struct(name)` in consumer modules, so for-loop emission needs this
+    /// side-channel to recognize that `list[name]` elements should be iterated as owned enum values.
+    dependency_enum_types: HashSet<String>,
     /// Known internal module roots for this compilation unit (e.g. {"db", "store"}).
     ///
     /// Used to disambiguate crate-internal module imports vs external crate imports when emitting `use` paths.
@@ -141,6 +146,7 @@ impl<'a> IrEmitter<'a> {
             const_string_literals: std::collections::HashMap::new(),
             type_module_paths: HashMap::new(),
             ambiguous_type_names: HashSet::new(),
+            dependency_enum_types: HashSet::new(),
             internal_module_roots: HashSet::new(),
             rust_module_path: None,
             rust_import_paths: RefCell::new(std::collections::HashMap::new()),
@@ -262,15 +268,24 @@ impl<'a> IrEmitter<'a> {
         self.ambiguous_type_names = ambiguous;
     }
 
-    /// True if `ty` is a user-defined Incan enum in IR.
+    /// Set imported enum type names discovered during codegen setup.
+    pub fn set_dependency_enum_types(&mut self, enum_type_names: HashSet<String>) {
+        self.dependency_enum_types = enum_type_names;
+    }
+
+    /// True if `ty` is a user-defined Incan enum in IR, including imported enums.
     ///
     /// Named enums lower to [`IrType::Struct`] (see `lower_resolved_type`); [`IrType::Enum`] is also treated as enum.
-    /// Used by for-loop emission to iterate with `.iter().cloned()` so the loop variable is an owned `E`, matching the
-    /// typechecker and `PartialEq` (#195).
+    /// Imported enums are tracked separately because consumer modules only carry the short nominal type name after
+    /// typechecking/lowering. Used by for-loop emission to iterate with `.iter().cloned()` so the loop variable is an
+    /// owned `E`, matching the typechecker and `PartialEq` for both local and cross-module enum loops (#195, #372).
     pub(super) fn type_is_user_enum(&self, ty: &IrType) -> bool {
         match ty {
             IrType::Enum(_) => true,
-            IrType::Struct(name) => self.enum_variant_fields.keys().any(|(enum_name, _)| enum_name == name),
+            IrType::Struct(name) => {
+                self.enum_variant_fields.keys().any(|(enum_name, _)| enum_name == name)
+                    || self.dependency_enum_types.contains(name)
+            }
             _ => false,
         }
     }
