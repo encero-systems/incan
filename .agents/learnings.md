@@ -6,6 +6,7 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 
 - **Bridge modules need contract docs**: adapter/bridge files that translate between internal and public ASTs must document directionality, error behavior, and unsupported shapes up front; sparse rustdocs in these boundaries cause incorrect call-site assumptions and fragile follow-on changes (RFC 027 Phase 6).
 - **Dependency policy changes need approval**: when `cargo-deny` surfaces new licenses or advisories, do not add global license allows or advisory ignores as a convenience step; first identify the exact dependency path and get explicit approval for any policy exception versus dependency upgrade. (Wasmtime/deny cleanup, April 2026)
+- **Dual module paths can collide**: when Incan emits Rust modules, having both a file module and directory module for the same name (`foo.incn` and `foo/mod.incn`) can map to conflicting Rust paths (`foo.rs` and `foo/mod.rs`) and fail with module ambiguity (`E0761`); pick one module shape and keep it consistent across the package.
 - **Never expose local paths**: Shareable artifacts must use repo-relative paths or plain command names; absolute workstation paths like `/Users/...` leak personal details and should be blocked in hooks and avoided in docs, issues, PR text, and examples.
 - **New AST variants need full pipeline wiring**: adding a `Statement`/`Expr` variant is never parser-only; you must update formatter, feature scanners, typechecker, lowering, and any AST bridge layers in the same change or compilation/tests will break in scattered places (RFC 027 Phase 6).
 - **Typechecker passing does not mean lowering works.** A feature that typechecks correctly can still generate invalid Rust if the lowering stage doesn't handle the transformation. Always verify both stages independently. (Learned from RFC 021: field aliases typechecked but lowering didn't translate them, producing broken Rust.)
@@ -21,6 +22,7 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 ## Testing strategy
 
 - **Always test both typechecker and codegen.** Typechecker unit tests validate semantics; codegen snapshot tests verify end-to-end output. Neither alone is sufficient.
+- **Conformance fixtures belong in tests**: production conformance modules should define scenario contracts and validators only; synthetic fixture plans and hardcoded sample literals belong in test-local builders so contract APIs stay clean and reusable.
 - **Extern fixture coverage must stay real**: when removing or renaming a Rust host-boundary symbol, update generic extern-delegation fixtures/snapshots (for example `rust_extern_delegation`) alongside feature-specific snapshots; otherwise test coverage keeps validating dead runtime paths instead of the current boundary shape. (Issues #301/#302)
 - **Snapshot tests must exercise features in expressions**, not just declarations. A model that declares an alias but never uses it in an expression won't catch lowering bugs.
 - **Test both `From` and `RustFrom` import forms** when changing import handling — they share `parse_import_items(rust_item_names)`; only `RustFrom` passes `true` so Rust symbols may be Incan keywords (e.g. `import type as proto_type`). Incan `from m import ...` keeps `rust_item_names=false`.
@@ -47,6 +49,8 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 
 ## Docs and RFC tooling
 
+- **North-star first for RFCs**: when a maintainer asks for an RFC, start from the desired end-state contract and only discuss incremental slices after that north-star is explicit; do not reflexively shrink RFC scope into the smallest implementable change unless the user asks for rollout planning.
+- **RFCs are decision records, not diaries**: keep RFCs as moment-in-time intent/status documents, and move implementation details, drift notes, and current behavior into regular docs or release notes with issue links instead of rewriting RFC narrative in flight.
 - **Stdlib closeouts need reference-nav parity**: when a stdlib issue changes a module's implementation shape or canonical docs path, update the stdlib reference index, MkDocs nav, and any legacy standalone reference page together; otherwise modules like `std.testing` drift out of the `language/reference/stdlib/` structure even when release notes and how-to docs were updated. (Issues #301/#302)
 - **RFC lifecycle edits need graph updates**: When an RFC is renamed, moved, split, or superseded, update inbound RFC references and regenerate `workspaces/docs-site/docs/_snippets/rfcs_refs.md` plus `workspaces/docs-site/docs/_snippets/tables/rfcs_index.md`; otherwise the docs graph silently points at stale RFC paths and statuses. (RFC 012/050/051 split)
 
