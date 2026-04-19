@@ -77,33 +77,62 @@ fn collect_model_field_aliases(main: &Program, deps: &[(&str, &Program)]) -> Has
     out
 }
 
-fn collect_type_module_paths(
-    deps: &[(&str, &Program, Option<Vec<String>>)],
-) -> (HashMap<String, Vec<String>>, HashSet<String>) {
+/// Dependency type facts gathered during codegen setup and reused by module emission.
+///
+/// Multi-file consumers only carry short nominal type names after typechecking/lowering, so emission cannot infer
+/// imported-enum ownership rules from local IR alone. This metadata keeps a single codegen-owned source of truth for:
+/// - dependency module qualification (`module_paths`)
+/// - short-name collisions that must not be auto-qualified (`ambiguous_type_names`)
+/// - imported enum names that are safe to treat as enum loop elements (`enum_type_names`)
+#[derive(Debug, Clone, Default)]
+struct DependencyTypeMetadata {
+    module_paths: HashMap<String, Vec<String>>,
+    ambiguous_type_names: HashSet<String>,
+    enum_type_names: HashSet<String>,
+}
+
+/// Collect dependency type metadata needed by IR emission for cross-module nominal types.
+///
+/// Enum loop ownership is the subtle case: imported enums lower to nominal `Struct(name)` references in consumer
+/// modules, so the emitter cannot rely on local enum declarations when deciding whether `list[T]` loops should emit
+/// `.iter().cloned()`. This helper records enum names from dependency modules while excluding ambiguous short names and
+/// short names that are also used by non-enum dependency types.
+fn collect_dependency_type_metadata(deps: &[(&str, &Program, Option<Vec<String>>)]) -> DependencyTypeMetadata {
     let mut paths: HashMap<String, Vec<String>> = HashMap::new();
     let mut ambiguous: HashSet<String> = HashSet::new();
+    let mut enum_type_names: HashSet<String> = HashSet::new();
+    let mut non_enum_type_names: HashSet<String> = HashSet::new();
 
     for (_name, program, path_segments) in deps {
-        let Some(segs) = path_segments.as_ref() else {
-            continue;
-        };
         for decl in &program.declarations {
             let type_name = match &decl.node {
-                Declaration::Model(m) => Some(&m.name),
-                Declaration::Class(c) => Some(&c.name),
-                Declaration::Enum(e) => Some(&e.name),
-                Declaration::TypeAlias(a) => Some(&a.name),
-                Declaration::Newtype(n) => Some(&n.name),
+                Declaration::Model(m) => Some((&m.name, false)),
+                Declaration::Class(c) => Some((&c.name, false)),
+                Declaration::Enum(e) => Some((&e.name, true)),
+                Declaration::TypeAlias(a) => Some((&a.name, false)),
+                Declaration::Newtype(n) => Some((&n.name, false)),
                 _ => None,
             };
-            if let Some(name) = type_name {
-                if let Some(existing) = paths.get(name) {
-                    if existing != segs {
-                        ambiguous.insert(name.clone());
-                    }
-                } else {
-                    paths.insert(name.clone(), segs.clone());
+            let Some((name, is_enum)) = type_name else {
+                continue;
+            };
+
+            if is_enum {
+                enum_type_names.insert(name.clone());
+            } else {
+                non_enum_type_names.insert(name.clone());
+            }
+
+            let Some(segs) = path_segments.as_ref() else {
+                continue;
+            };
+
+            if let Some(existing) = paths.get(name) {
+                if existing != segs {
+                    ambiguous.insert(name.clone());
                 }
+            } else {
+                paths.insert(name.clone(), segs.clone());
             }
         }
     }
@@ -111,8 +140,13 @@ fn collect_type_module_paths(
     for name in &ambiguous {
         paths.remove(name);
     }
+    enum_type_names.retain(|name| !ambiguous.contains(name) && !non_enum_type_names.contains(name));
 
-    (paths, ambiguous)
+    DependencyTypeMetadata {
+        module_paths: paths,
+        ambiguous_type_names: ambiguous,
+        enum_type_names,
+    }
 }
 
 fn collect_serde_derives(main: &Program, deps: &[(&str, &Program)]) -> (bool, bool) {
@@ -575,7 +609,7 @@ impl<'a> IrCodegen<'a> {
         // RFC 021: Make alias-aware lowering work across module boundaries by seeding alias maps
         // for models declared in dependency modules as well.
         let global_aliases = collect_model_field_aliases(program, &deps);
-        let (type_module_paths, ambiguous_type_names) = collect_type_module_paths(&self.dependency_modules);
+        let dependency_type_metadata = collect_dependency_type_metadata(&self.dependency_modules);
         let (needs_serialize, needs_deserialize) = collect_serde_derives(program, &deps);
 
         // Typecheck to obtain reusable type information for lowering.
@@ -623,7 +657,11 @@ impl<'a> IrCodegen<'a> {
             if self.emit_zen_in_main {
                 inner.set_emit_zen(true);
             }
-            inner.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
+            inner.set_type_module_paths(
+                dependency_type_metadata.module_paths.clone(),
+                dependency_type_metadata.ambiguous_type_names.clone(),
+            );
+            inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
             inner.set_needs_serde(self.needs_serde);
             inner.set_external_rust_functions(self.external_rust_functions.clone());
             Ok(svc.emit_program(&ir_program)?)
@@ -633,7 +671,11 @@ impl<'a> IrCodegen<'a> {
             if self.emit_zen_in_main {
                 emitter.set_emit_zen(true);
             }
-            emitter.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
+            emitter.set_type_module_paths(
+                dependency_type_metadata.module_paths.clone(),
+                dependency_type_metadata.ambiguous_type_names.clone(),
+            );
+            emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
             emitter.set_needs_serde(self.needs_serde);
             emitter.set_external_rust_functions(self.external_rust_functions.clone());
             Ok(emitter.emit_program(&ir_program)?)
@@ -748,7 +790,7 @@ impl<'a> IrCodegen<'a> {
             .map(|(name, ast, _)| (*name, *ast))
             .collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
-        let (type_module_paths, ambiguous_type_names) = collect_type_module_paths(&self.dependency_modules);
+        let dependency_type_metadata = collect_dependency_type_metadata(&self.dependency_modules);
 
         // Generate module files
         let mut modules = HashMap::new();
@@ -776,14 +818,22 @@ impl<'a> IrCodegen<'a> {
                     let mut svc = EmitService::new_from_program(&ir);
                     let inner = svc.inner_mut();
                     inner.set_internal_module_roots(internal_roots.clone());
-                    inner.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
+                    inner.set_type_module_paths(
+                        dependency_type_metadata.module_paths.clone(),
+                        dependency_type_metadata.ambiguous_type_names.clone(),
+                    );
+                    inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
                     inner.set_add_clippy_allows(false);
                     inner.set_external_rust_functions(self.external_rust_functions.clone());
                     svc.emit_program(&ir)?
                 } else {
                     let mut emitter = IrEmitter::new(&ir.function_registry);
                     emitter.set_internal_module_roots(internal_roots.clone());
-                    emitter.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
+                    emitter.set_type_module_paths(
+                        dependency_type_metadata.module_paths.clone(),
+                        dependency_type_metadata.ambiguous_type_names.clone(),
+                    );
+                    emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
                     emitter.set_add_clippy_allows(false);
                     emitter.set_external_rust_functions(self.external_rust_functions.clone());
                     emitter.emit_program(&ir)?
@@ -868,7 +918,7 @@ impl<'a> IrCodegen<'a> {
             .map(|(name, ast, _)| (*name, *ast))
             .collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
-        let (type_module_paths, ambiguous_type_names) = collect_type_module_paths(&self.dependency_modules);
+        let dependency_type_metadata = collect_dependency_type_metadata(&self.dependency_modules);
 
         // Generate module files by path
         let mut modules = HashMap::new();
@@ -900,14 +950,22 @@ impl<'a> IrCodegen<'a> {
                         let mut svc = EmitService::new_from_program(&ir);
                         let inner = svc.inner_mut();
                         inner.set_internal_module_roots(internal_roots.clone());
-                        inner.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
+                        inner.set_type_module_paths(
+                            dependency_type_metadata.module_paths.clone(),
+                            dependency_type_metadata.ambiguous_type_names.clone(),
+                        );
+                        inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
                         inner.set_add_clippy_allows(false);
                         inner.set_external_rust_functions(self.external_rust_functions.clone());
                         svc.emit_program(&ir)?
                     } else {
                         let mut emitter = IrEmitter::new(&ir.function_registry);
                         emitter.set_internal_module_roots(internal_roots.clone());
-                        emitter.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
+                        emitter.set_type_module_paths(
+                            dependency_type_metadata.module_paths.clone(),
+                            dependency_type_metadata.ambiguous_type_names.clone(),
+                        );
+                        emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
                         emitter.set_add_clippy_allows(false);
                         emitter.set_external_rust_functions(self.external_rust_functions.clone());
                         emitter.emit_program(&ir)?
