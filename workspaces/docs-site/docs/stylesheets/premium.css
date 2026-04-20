@@ -1,0 +1,62 @@
+/* ZAINJHANG - PREMIUM DOCS THEME - ISSUE #369 */
+/* Phase 1: Admonitions, Headers, Brand Assets */
+
+/* 1. HEADERS: Premium Look */
+.md-typeset h1 {
+  font-weight: 800 !important;
+  color: #0d1117 !important;
+  border-bottom: 3px solid #3b82f6;
+  padding-bottom: 8px;
+}
+
+.md-typeset h2 {
+  font-weight: 700 !important;
+  color: #1e293b !important;
+  border-left: 4px solid #3b82f6;
+  padding-left: 12px;
+}
+
+/* 2. ADMONITIONS: Note, Warning, Tip - Premium Cards */
+.md-typeset .admonition {
+  border-radius: 12px !important;
+  border: none !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+  transition: all 0.3s ease;
+}
+
+.md-typeset .admonition:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12) !important;
+}
+
+.md-typeset .admonition.note,
+.md-typeset .admonition.info {
+  background: linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%);
+}
+
+.md-typeset .admonition.warning,
+.md-typeset .admonition.caution {
+  background: linear-gradient(135deg, #fef3c7 0%, #fffbeb 100%);
+}
+
+.md-typeset .admonition.tip,
+.md-typeset .admonition.success {
+  background: linear-gradient(135deg, #d1fae5 0%, #ecfdf5 100%);
+}
+
+/* 3. BRAND ASSETS: Links and Code */
+.md-typeset a {
+  color: #2563eb !important;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.md-typeset a:hover {
+  color: #1d4ed8 !important;
+  text-decoration: underline;
+}
+
+.md-typeset pre > code {
+  border-radius: 8px !important;
+  border: 1px solid #e2e8f0;
+}

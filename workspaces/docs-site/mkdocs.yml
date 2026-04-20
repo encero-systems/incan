@@ -90,6 +90,7 @@ extra:
 
 extra_css:
   - stylesheets/pygments.css
+  - stylesheets/premium.css
 
 extra_javascript:
   - _snippets/javascripts/mathjax.js
