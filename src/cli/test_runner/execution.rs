@@ -84,6 +84,46 @@ fn absolute_project_root(path: &Path) -> PathBuf {
     fs::canonicalize(&absolute).unwrap_or(absolute)
 }
 
+/// Infer a package root for manifest-less test runs.
+///
+/// Prefer conventional package anchors like `tests/` or `src/` so a file such as
+/// `/repo/tests/test_cwd.incn` resolves its runtime cwd to `/repo`, not `/repo/tests`.
+/// If no conventional anchor is present, fall back to the caller cwd when the test
+/// file lives underneath it; otherwise use the test file's parent directory.
+fn infer_project_root_without_manifest(test_path: &Path) -> PathBuf {
+    let absolute_test_path = if test_path.is_absolute() {
+        test_path.to_path_buf()
+    } else if let Ok(cwd) = std::env::current_dir() {
+        cwd.join(test_path)
+    } else {
+        test_path.to_path_buf()
+    };
+    let absolute_test_path = fs::canonicalize(&absolute_test_path).unwrap_or(absolute_test_path);
+
+    for ancestor in absolute_test_path.ancestors().skip(1) {
+        if ancestor
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| matches!(name, "tests" | "src"))
+            && let Some(parent) = ancestor.parent()
+        {
+            return parent.to_path_buf();
+        }
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        let cwd = fs::canonicalize(&cwd).unwrap_or(cwd);
+        if absolute_test_path.starts_with(&cwd) {
+            return cwd;
+        }
+    }
+
+    absolute_test_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf()
+}
+
 fn compute_test_prep_cache_key(
     test_path: &Path,
     source: &str,
@@ -509,7 +549,7 @@ pub(super) fn run_file_tests_batch(
     let project_root = manifest
         .as_ref()
         .map(|m| m.project_root().to_path_buf())
-        .unwrap_or_else(|| first.file_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf());
+        .unwrap_or_else(|| infer_project_root_without_manifest(&first.file_path));
     let project_root = absolute_project_root(&project_root);
     let source_root = common::resolve_source_root(&project_root, manifest.as_ref());
     let source_modules = match collect_source_modules_for_test(

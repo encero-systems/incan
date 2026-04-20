@@ -2671,6 +2671,65 @@ def test_fixture_path_exists() -> None:
     }
 
     #[test]
+    fn e2e_test_runner_preserves_fixture_cwd_without_manifest_for_file_and_batch_runs() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let mut dir = std::env::temp_dir();
+        let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+            panic!("system time before UNIX epoch");
+        };
+        dir.push(format!("incan_e2e_test_nomani_{}", duration.as_nanos()));
+        if let Err(err) = std::fs::create_dir_all(&dir) {
+            panic!("failed to create temp dir: {}", err);
+        }
+        let tests_dir = dir.join("tests");
+        let fixtures_dir = tests_dir.join("fixtures");
+
+        if let Err(err) = std::fs::create_dir_all(&fixtures_dir) {
+            panic!("failed to create fixture dir: {}", err);
+        }
+        if let Err(err) = std::fs::write(fixtures_dir.join("ok.txt"), "ok\n") {
+            panic!("failed to write fixture file: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            tests_dir.join("test_cwd.incn"),
+            r#"
+from std.testing import assert_eq
+from rust::std::path import Path
+
+def test_cwd__fixture_path_is_repo_relative() -> None:
+    assert_eq(
+        Path.new("tests/fixtures/ok.txt").exists(),
+        true,
+        "fixture path should resolve from the project root in both per-file and batched test runs",
+    )
+"#,
+        ) {
+            panic!("failed to write fixture path test: {}", err);
+        }
+
+        let single = run_incan_test_relative(&dir, "tests/test_cwd.incn");
+        let single_stdout = String::from_utf8_lossy(&single.stdout);
+        let single_stderr = String::from_utf8_lossy(&single.stderr);
+        assert!(
+            single.status.success(),
+            "expected manifest-less single-file fixture-path run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            single_stdout,
+            single_stderr,
+        );
+
+        let batch = run_incan_test_relative(&dir, "tests");
+        let batch_stdout = String::from_utf8_lossy(&batch.stdout);
+        let batch_stderr = String::from_utf8_lossy(&batch.stderr);
+        assert!(
+            batch.status.success(),
+            "expected manifest-less batched fixture-path run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            batch_stdout,
+            batch_stderr,
+        );
+    }
+
+    #[test]
     fn e2e_imported_pub_static_scalar_read_in_tests_succeeds() {
         let dir = write_test_project(
             "incan.toml",
