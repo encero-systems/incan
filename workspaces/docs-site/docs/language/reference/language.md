@@ -252,7 +252,6 @@ def main() -> None:
 | ReadFile | `read_file` |  | Read a file from disk into a string/bytes. | RFC 000 | 0.1 | Stable |
 | WriteFile | `write_file` |  | Write a string/bytes to a file on disk. | RFC 000 | 0.1 | Stable |
 | JsonStringify | `json_stringify` |  | Serialize a value to JSON. | RFC 000 | 0.1 | Stable |
-| Sleep | `sleep` |  | Sleep for a duration. | RFC 000 | 0.1 | Stable |
 
 ## Decorators
 

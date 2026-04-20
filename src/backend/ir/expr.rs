@@ -478,8 +478,6 @@ pub enum BuiltinFn {
     WriteFile,
     /// `json_stringify(x)` → `serde_json::to_string(&x).unwrap()`
     JsonStringify,
-    /// `sleep(secs)` → `incan_stdlib::__private::tokio::time::sleep(...)`
-    Sleep,
 }
 
 impl BuiltinFn {
@@ -506,7 +504,6 @@ impl BuiltinFn {
             BuiltinFnId::ReadFile => Self::ReadFile,
             BuiltinFnId::WriteFile => Self::WriteFile,
             BuiltinFnId::JsonStringify => Self::JsonStringify,
-            BuiltinFnId::Sleep => Self::Sleep,
         })
     }
 }

@@ -191,22 +191,29 @@ impl AstLowering {
             if is_known_struct || is_uppercase {
                 return self.lower_constructor_call(name, args);
             }
+        }
 
-            // Check for known builtins (enum-based dispatch)
-            if let Some(builtin) = BuiltinFn::from_name(name) {
-                let args_ir = self.lower_call_args(args)?.into_iter().map(|a| a.expr).collect();
-                return Ok((
-                    IrExprKind::BuiltinCall {
-                        func: builtin,
-                        args: args_ir,
-                    },
-                    IrType::Unknown, // Return type depends on the builtin
-                ));
-            }
+        let imported_callee_path = match &f.node {
+            ast::Expr::Ident(name) => self.import_aliases.get(name).cloned(),
+            _ => None,
+        };
+        let func = self.lower_expr_spanned(f)?;
+        if let ast::Expr::Ident(name) = &f.node
+            && let Some(builtin) = BuiltinFn::from_name(name)
+            && imported_callee_path.is_none()
+            && !matches!(func.ty, IrType::Function { .. })
+        {
+            let args_ir = self.lower_call_args(args)?.into_iter().map(|a| a.expr).collect();
+            return Ok((
+                IrExprKind::BuiltinCall {
+                    func: builtin,
+                    args: args_ir,
+                },
+                IrType::Unknown, // Return type depends on the builtin
+            ));
         }
 
         // Regular function call (user-defined or unknown)
-        let func = self.lower_expr_spanned(f)?;
         let mut args_ir = self.lower_call_args(args)?;
         let lowered_type_args = self.lower_call_site_type_args(call_span, type_args);
         for (arg_ir, arg_ast) in args_ir.iter_mut().zip(args.iter()) {
@@ -223,7 +230,7 @@ impl AstLowering {
                 func: Box::new(func),
                 type_args: lowered_type_args,
                 args: args_ir,
-                canonical_path: None,
+                canonical_path: imported_callee_path,
             },
             ret_ty,
         ))

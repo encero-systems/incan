@@ -1995,6 +1995,20 @@ async def foo() -> None:
 }
 
 #[test]
+fn test_local_async_function_named_sleep_shadows_no_builtin() {
+    let source = r#"
+import std.async
+
+async def sleep(seconds: float) -> None:
+  pass
+
+async def foo() -> None:
+  await sleep(1.0)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
 fn test_await_outside_async_function() {
     let source = r#"
 from std.async.time import sleep
@@ -4471,6 +4485,18 @@ fn test_builtin_sum() {
 def foo() -> int:
   x = [True, False, True]
   return sum(x)
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_local_function_named_sum_shadows_builtin_sum() {
+    let source = r#"
+def sum(value: str) -> str:
+  return value
+
+def foo() -> str:
+  return sum("ok")
 "#;
     assert!(check_str(source).is_ok());
 }

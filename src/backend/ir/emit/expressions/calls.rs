@@ -276,6 +276,9 @@ impl<'a> IrEmitter<'a> {
             None
         };
         let callee_name = local_name.or(canonical_name);
+        let function_sig = local_name
+            .and_then(|name| self.function_registry.get(name))
+            .or_else(|| canonical_name.and_then(|name| self.function_registry.get(name)));
 
         // The checked-newtype lowering path emits a compiler-internal panic marker call. Render that as the Rust
         // `panic!` macro so generated code stays valid without colliding with user-defined functions that may also be
@@ -293,8 +296,11 @@ impl<'a> IrEmitter<'a> {
             return Ok(quote! { panic!(#(#panic_args),*) });
         }
 
-        // Handle builtin functions specially (legacy string-based path)
-        if let Some(name) = callee_name {
+        // Handle builtin functions specially only when the callee did not resolve to a real function signature.
+        if canonical_path.is_none()
+            && function_sig.is_none()
+            && let Some(name) = callee_name
+        {
             let positional: Vec<TypedExpr> = args.iter().map(|a| a.expr.clone()).collect();
             if let Some(result) = self.try_emit_builtin_call(name, &positional)? {
                 return Ok(result);
@@ -319,11 +325,6 @@ impl<'a> IrEmitter<'a> {
             let emitted: Vec<TokenStream> = type_args.iter().map(|ty| self.emit_type(ty)).collect();
             quote! { ::<#(#emitted),*> }
         };
-
-        // Look up function signature
-        let function_sig = local_name
-            .and_then(|name| self.function_registry.get(name))
-            .or_else(|| canonical_name.and_then(|name| self.function_registry.get(name)));
 
         // Order arguments only when keyword args are present (positional-only calls preserve previous behavior,
         // which is important for snapshots + for default-arg lowering work that happens elsewhere).
