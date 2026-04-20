@@ -2617,6 +2617,60 @@ def test_nested_dataset_modules() -> None:
     }
 
     #[test]
+    fn e2e_test_runner_preserves_project_fixture_cwd_for_file_and_batch_runs() {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "fixture_cwd_parity"
+version = "0.1.0"
+"#,
+        );
+        let tests_dir = dir.join("tests");
+        let fixtures_dir = tests_dir.join("fixtures");
+
+        if let Err(err) = std::fs::create_dir_all(&fixtures_dir) {
+            panic!("failed to create fixture dir: {}", err);
+        }
+        if let Err(err) = std::fs::write(fixtures_dir.join("orders.csv"), "id\n1\n") {
+            panic!("failed to write fixture file: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            tests_dir.join("test_fixture_path.incn"),
+            r#"
+from std.testing import assert_eq
+from rust::std::path import Path
+
+const FIXTURE: str = "tests/fixtures/orders.csv"
+
+def test_fixture_path_exists() -> None:
+    assert_eq(Path.new(FIXTURE).exists(), true)
+"#,
+        ) {
+            panic!("failed to write fixture path test: {}", err);
+        }
+
+        let single = run_incan_test_relative(&dir, "tests/test_fixture_path.incn");
+        let single_stdout = String::from_utf8_lossy(&single.stdout);
+        let single_stderr = String::from_utf8_lossy(&single.stderr);
+        assert!(
+            single.status.success(),
+            "expected single-file fixture-path run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            single_stdout,
+            single_stderr,
+        );
+
+        let batch = run_incan_test_relative(&dir, "tests");
+        let batch_stdout = String::from_utf8_lossy(&batch.stdout);
+        let batch_stderr = String::from_utf8_lossy(&batch.stderr);
+        assert!(
+            batch.status.success(),
+            "expected batched fixture-path run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            batch_stdout,
+            batch_stderr,
+        );
+    }
+
+    #[test]
     fn e2e_imported_pub_static_scalar_read_in_tests_succeeds() {
         let dir = write_test_project(
             "incan.toml",
@@ -4175,6 +4229,37 @@ pub def display[T](data: DataSet[T]) -> None:
         assert!(
             project_build.status.success(),
             "expected imported enum loop project to build successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&project_build.stdout),
+            String::from_utf8_lossy(&project_build.stderr)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_succeeds_for_imported_sum_helper_shadowing() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path().join("imported_sum_shadow_project");
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"imported_sum_shadow\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            project_root.join("src/functions.incn"),
+            "pub model ColumnRef:\n  pub name: str\n\npub model AggregateMeasure:\n  pub column_name: str\n\npub def col(name: str) -> ColumnRef:\n  return ColumnRef(name=name)\n\npub def sum(expr: ColumnRef) -> AggregateMeasure:\n  return AggregateMeasure(column_name=expr.name)\n",
+        )?;
+        let main_path = project_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            "from functions import col, sum\n\ndef selected_column_name() -> str:\n  amount = col(\"amount\")\n  result = sum(amount)\n  return result.column_name\n\ndef main() -> None:\n  println(selected_column_name())\n",
+        )?;
+
+        let out_dir = project_root.join("out");
+        let project_build = run_build(&main_path, &out_dir)?;
+        assert!(
+            project_build.status.success(),
+            "expected imported sum helper to shadow builtin sum and build successfully.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&project_build.stdout),
             String::from_utf8_lossy(&project_build.stderr)
         );

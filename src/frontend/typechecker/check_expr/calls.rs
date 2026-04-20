@@ -1,7 +1,7 @@
 //! Check calls, constructors, and builtins.
 //!
-//! This module handles the main call-expression logic (`foo(...)`), including special-cased builtins like
-//! `Ok(...)`/`Err(...)` and runtime helpers like `sleep(...)`. It also provides small utilities to type-check call
+//! This module handles the main call-expression logic (`foo(...)`), including special-cased constructors like
+//! `Ok(...)`/`Err(...)` and builtin/surface function dispatch. It also provides small utilities to type-check call
 //! argument lists consistently.
 
 // FIXME(maintainability): this module is too large (god module risk).
@@ -1180,11 +1180,7 @@ impl TypeChecker {
 
     /// Handle a known builtin call (if the callee is a builtin name).
     fn check_builtin_call(&mut self, name: &str, args: &[CallArg], call_span: Span) -> Option<ResolvedType> {
-        let has_function_symbol = self
-            .symbols
-            .lookup(name)
-            .and_then(|id| self.symbols.get(id))
-            .is_some_and(|sym| matches!(sym.kind, SymbolKind::Function(_)));
+        let has_function_symbol = self.has_non_builtin_function_definition(name);
 
         // Constructors (variant-like)
         if let Some(cid) = constructors::from_str(name) {
@@ -1244,7 +1240,7 @@ impl TypeChecker {
 
         // Core builtin functions (registry-driven)
         if let Some(bid) = builtins::from_str(name) {
-            if bid == BuiltinFnId::Sleep && !has_function_symbol {
+            if has_function_symbol {
                 return None;
             }
             return match bid {
@@ -1482,17 +1478,6 @@ impl TypeChecker {
                 BuiltinFnId::JsonStringify => {
                     self.check_call_args(args);
                     Some(ResolvedType::Str)
-                }
-                BuiltinFnId::Sleep => {
-                    if let Some(arg) = args.first() {
-                        let arg_expr = Self::call_arg_expr(arg);
-                        let arg_ty = self.check_expr(arg_expr);
-                        if !self.types_compatible(&arg_ty, &ResolvedType::Float) {
-                            self.errors
-                                .push(errors::type_mismatch("float", &arg_ty.to_string(), arg_expr.span));
-                        }
-                    }
-                    Some(ResolvedType::Unit)
                 }
             };
         }

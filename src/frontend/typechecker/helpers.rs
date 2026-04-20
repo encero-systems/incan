@@ -5,6 +5,7 @@
 
 mod consts;
 mod strings;
+mod symbols;
 mod types;
 
 pub use consts::*;

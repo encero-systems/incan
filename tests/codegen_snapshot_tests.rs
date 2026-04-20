@@ -1023,6 +1023,66 @@ pub enum ConformanceRel:
 }
 
 #[test]
+fn test_issue377_imported_sum_shadows_builtin_codegen() {
+    let main_source = r#"
+from functions import col, sum
+
+def selected_column_name() -> str:
+  amount = col("amount")
+  result = sum(amount)
+  return result.column_name
+
+def main() -> None:
+  pass
+"#;
+    let functions_source = r#"
+pub model ColumnRef:
+  pub name: str
+
+pub model AggregateMeasure:
+  pub column_name: str
+
+pub def col(name: str) -> ColumnRef:
+  return ColumnRef(name=name)
+
+pub def sum(expr: ColumnRef) -> AggregateMeasure:
+  return AggregateMeasure(column_name=expr.name)
+"#;
+
+    let Ok(main_tokens) = lexer::lex(main_source) else {
+        panic!("lexer failed")
+    };
+    let Ok(main_ast) = parser::parse(&main_tokens) else {
+        panic!("parser failed")
+    };
+    let Ok(function_tokens) = lexer::lex(functions_source) else {
+        panic!("lexer failed")
+    };
+    let Ok(functions_ast) = parser::parse(&function_tokens) else {
+        panic!("parser failed")
+    };
+
+    let mut codegen = IrCodegen::new();
+    codegen.add_module_with_path_segments("functions", &functions_ast, vec!["functions".to_string()]);
+    let Ok((main_code, _modules)) = codegen.try_generate_multi_file_nested(&main_ast, &[vec!["functions".to_string()]])
+    else {
+        panic!("codegen must succeed");
+    };
+    let rust_code = normalize_codegen_output(&main_code);
+
+    assert!(
+        rust_code.contains("let result = sum(amount);"),
+        "expected imported helper call to remain a normal function call; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains(".iter().sum::<i64>()"),
+        "expected imported helper call to avoid builtin sum lowering; generated:\n{rust_code}"
+    );
+
+    insta::assert_snapshot!("issue377_imported_sum_shadows_builtin", rust_code);
+}
+
+#[test]
 fn test_traits_codegen() {
     let source = load_test_file("traits");
     let rust_code = generate_rust(&source);

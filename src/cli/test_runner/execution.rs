@@ -73,6 +73,17 @@ fn canonical_path_for_cache_key(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+fn absolute_project_root(path: &Path) -> PathBuf {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Ok(cwd) = std::env::current_dir() {
+        cwd.join(path)
+    } else {
+        path.to_path_buf()
+    };
+    fs::canonicalize(&absolute).unwrap_or(absolute)
+}
+
 fn compute_test_prep_cache_key(
     test_path: &Path,
     source: &str,
@@ -233,8 +244,12 @@ fn harness_fn_name(test: &TestInfo, index: usize) -> String {
 
 /// Append a `#[cfg(test)]` module with one `#[test]` per collected case so `cargo test` runs an entire file in one
 /// shot.
-fn inject_file_test_harness(rust_code: &str, tests: &[TestInfo]) -> String {
+///
+/// The generated harness resets the process cwd to the source project root before each test so fixture paths behave
+/// the same way as ordinary `incan run/build/test` entrypoints rather than inheriting the generated temp crate path.
+fn inject_file_test_harness(rust_code: &str, tests: &[TestInfo], project_root: &Path) -> String {
     let mut out = rust_code.to_string();
+    let project_root_literal = format!("{:?}", project_root.to_string_lossy());
     out.push_str("\n\n#[cfg(test)]\nmod ");
     out.push_str(INCAN_FILE_TEST_MOD);
     out.push_str(" {\nuse super::*;\n");
@@ -247,6 +262,11 @@ fn inject_file_test_harness(rust_code: &str, tests: &[TestInfo]) -> String {
         out.push_str("    #[test]\n    fn ");
         out.push_str(&fname);
         out.push_str("() {\n");
+        out.push_str("        if let Err(err) = std::env::set_current_dir(");
+        out.push_str(&project_root_literal);
+        out.push_str(") {\n");
+        out.push_str("            panic!(\"failed to set generated test cwd: {}\", err);\n");
+        out.push_str("        }\n");
         out.push_str(&call);
         out.push_str("    }\n");
     }
@@ -490,6 +510,7 @@ pub(super) fn run_file_tests_batch(
         .as_ref()
         .map(|m| m.project_root().to_path_buf())
         .unwrap_or_else(|| first.file_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf());
+    let project_root = absolute_project_root(&project_root);
     let source_root = common::resolve_source_root(&project_root, manifest.as_ref());
     let source_modules = match collect_source_modules_for_test(
         &ast,
@@ -716,7 +737,7 @@ pub(super) fn run_file_tests_batch(
             Ok(code) => code,
             Err(e) => return gen_err(format!("Code generation error: {}", e)),
         };
-        let rust_code = inject_file_test_harness(&rust_code, tests);
+        let rust_code = inject_file_test_harness(&rust_code, tests, &prepared.project_root);
         if let Err(e) = generator.generate(&rust_code) {
             return gen_err(format!("Failed to generate project: {}", e));
         }
@@ -730,7 +751,7 @@ pub(super) fn run_file_tests_batch(
             Ok(result) => result,
             Err(e) => return gen_err(format!("Code generation error: {}", e)),
         };
-        let main_code = inject_file_test_harness(&main_code, tests);
+        let main_code = inject_file_test_harness(&main_code, tests, &prepared.project_root);
         if let Err(e) = generator.generate_nested(&main_code, &rust_modules) {
             return gen_err(format!("Failed to generate project: {}", e));
         }
@@ -755,7 +776,8 @@ pub(super) fn run_file_tests_batch(
 
     let output = match command
         .env("CARGO_TARGET_DIR", &shared_target_dir)
-        .current_dir(&temp_dir)
+        // Keep runtime-relative fixture paths anchored to the caller's project, not the generated test crate.
+        .current_dir(&prepared.project_root)
         .output()
     {
         Ok(o) => o,
@@ -1101,10 +1123,11 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
                 parametrize_call: None,
             },
         ];
-        let g = inject_file_test_harness(rust, &tests);
+        let g = inject_file_test_harness(rust, &tests, Path::new("."));
         assert!(g.contains("mod __incan_file_tests"));
         assert!(g.contains("fn incan_harness_0_test_a"));
         assert!(g.contains("fn incan_harness_1_test_b"));
+        assert!(g.contains("set_current_dir"));
         assert!(g.contains("super::test_a();"));
         assert!(g.contains("super::test_b();"));
     }

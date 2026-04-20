@@ -1168,19 +1168,4 @@ impl TypeChecker {
             )
         })
     }
-
-    /// Returns `true` when `name` resolves to a real definition that is not one of the implicit root builtins.
-    ///
-    /// Explicit Rust imports should shadow implicit builtins such as `HashMap` or `Some`, but they must not overwrite
-    /// user-defined or previously imported names.
-    fn has_non_builtin_real_definition(&self, name: &str) -> bool {
-        self.lookup_symbol(name).is_some_and(|sym| {
-            let is_real = matches!(
-                sym.kind,
-                SymbolKind::Type(_) | SymbolKind::Function(_) | SymbolKind::Trait(_) | SymbolKind::Variant(_)
-            );
-            let is_implicit_builtin = sym.scope == 0 && sym.span == Span::default();
-            is_real && !is_implicit_builtin
-        })
-    }
 }

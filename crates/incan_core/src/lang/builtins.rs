@@ -39,7 +39,6 @@ pub enum BuiltinFnId {
     ReadFile,
     WriteFile,
     JsonStringify,
-    Sleep,
 }
 
 /// Metadata for a builtin function.
@@ -187,14 +186,6 @@ pub const BUILTIN_FUNCTIONS: &[BuiltinFnInfo] = &[
         RFC::_000,
         Since(0, 1),
     ),
-    info(
-        BuiltinFnId::Sleep,
-        "sleep",
-        &[],
-        "Sleep for a duration.",
-        RFC::_000,
-        Since(0, 1),
-    ),
 ];
 
 /// Return the canonical spelling for a builtin function.
@@ -254,7 +245,6 @@ pub fn info_for(id: BuiltinFnId) -> BuiltinFnInfo {
         BuiltinFnId::ReadFile => BUILTIN_FUNCTIONS[14],
         BuiltinFnId::WriteFile => BUILTIN_FUNCTIONS[15],
         BuiltinFnId::JsonStringify => BUILTIN_FUNCTIONS[16],
-        BuiltinFnId::Sleep => BUILTIN_FUNCTIONS[17],
     }
 }
 
