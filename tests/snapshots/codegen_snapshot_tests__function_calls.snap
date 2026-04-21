@@ -38,7 +38,7 @@ fn test_function_calls() {
     let greeting1 = greet_with_title("Smith".to_string(), "Mr.".to_string());
     let greeting2 = greet_with_title("Jones".to_string(), "Dr.".to_string());
     let length = ::std::convert::identity("hello".len() as i64);
-    let string_list = vec!["a", "b", "c"];
+    let string_list = vec!["a".to_string(), "b".to_string(), "c".to_string()];
     let count = ::std::convert::identity(string_list.len() as i64);
     let upper = incan_stdlib::strings::str_upper(&"test");
     let lower = incan_stdlib::strings::str_lower(&"TEST");

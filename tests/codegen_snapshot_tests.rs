@@ -963,6 +963,35 @@ fn test_issue380_len_comparison_codegen() {
     insta::assert_snapshot!("issue380_len_comparison", rust_code);
 }
 
+/// Issue #383: shared `list[str]` loop args must not lower through consuming `into_iter()` inside repeated helper
+/// calls.
+#[test]
+fn test_issue383_loop_helper_shared_string_list_codegen() {
+    let source = load_test_file("issue383_loop_helper_shared_string_list");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("out.push(match_index(xs.clone(), y));"),
+        "expected loop helper call to preserve the shared string list via clone, not move it; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("xs.into_iter().map(|s| s.to_string()).collect()"),
+        "expected shared string-list helper calls to avoid consuming into_iter lowering; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("issue383_loop_helper_shared_string_list", rust_code);
+}
+
+/// Issue #383 follow-on: dict comprehensions must clone non-Copy keys before reading them in the value expression.
+#[test]
+fn test_issue383_dict_comp_reuses_noncopy_key_codegen() {
+    let source = load_test_file("issue383_dict_comp_reuses_noncopy_key");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains(".map(|name| (name.clone(), ::std::convert::identity(name.len() as i64)))"),
+        "expected dict comprehension to clone the non-Copy key before reading it again in the value expression; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("issue383_dict_comp_reuses_noncopy_key", rust_code);
+}
+
 /// Issue #195: `for x in list[E]` must iterate owned `E` (via `.iter().cloned()`) so `==` against `E` compiles.
 #[test]
 fn test_for_in_list_enum_equality_codegen() {

@@ -1,0 +1,9 @@
+"""Issue #383 follow-on regression: dict comprehensions must clone non-Copy keys before reading them in the value."""
+
+def lengths(names: list[str]) -> dict[str, int]:
+    return {name: len(name) for name in names}
+
+
+def main() -> None:
+    values = lengths(["alice", "bob"])
+    println(values["alice"])

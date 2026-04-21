@@ -59,6 +59,7 @@ use super::super::expr::{
 };
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
+use crate::backend::ir::conversions::{ConversionContext, determine_conversion};
 
 #[derive(Debug, Clone)]
 pub(super) enum StorageRoot {
@@ -87,6 +88,22 @@ pub(in crate::backend::ir::emit) fn method_kind_uses_mutable_receiver(kind: &Met
 }
 
 impl<'a> IrEmitter<'a> {
+    /// Emit one list-literal element, materializing owned sink semantics at the literal boundary.
+    ///
+    /// Incan `list[str]` literals should store owned Rust `String` elements up front, but ordinary Incan-to-Incan
+    /// helper calls should not re-lower already-owned `list[str]` variables through consuming iterator conversions.
+    /// Keeping this as a dedicated helper makes that ownership rule explicit instead of leaking a more incidental
+    /// conversion context into the call site.
+    fn emit_list_literal_item(
+        &self,
+        item: &TypedExpr,
+        item_target_ty: Option<&IrType>,
+    ) -> Result<TokenStream, EmitError> {
+        let emitted = self.emit_expr(item)?;
+        let conversion = determine_conversion(item, item_target_ty, ConversionContext::StructField);
+        Ok(conversion.apply(emitted))
+    }
+
     /// Check whether an expression is a type-like identifier that should use Rust path syntax.
     ///
     /// This covers Incan type names, enum variants, module placeholders, and external Rust imports.
@@ -333,8 +350,14 @@ impl<'a> IrEmitter<'a> {
             } => self.emit_dict_comp(key, value, variable, iterable, filter.as_deref()),
 
             IrExprKind::List(items) => {
-                let item_tokens: Vec<TokenStream> =
-                    items.iter().map(|i| self.emit_expr(i)).collect::<Result<_, _>>()?;
+                let item_target_ty = match &expr.ty {
+                    IrType::List(elem) => Some(elem.as_ref()),
+                    _ => None,
+                };
+                let item_tokens: Vec<TokenStream> = items
+                    .iter()
+                    .map(|i| self.emit_list_literal_item(i, item_target_ty))
+                    .collect::<Result<_, _>>()?;
                 Ok(quote! { vec![#(#item_tokens),*] })
             }
 
@@ -839,6 +862,38 @@ mod tests {
         assert!(
             rendered.contains("counts . get (< _ as AsRef < str >> :: as_ref (& \"the\"))"),
             "expected string-key dict lookup to normalize via fully-qualified `AsRef<str>`, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dict_index_with_string_literal_uses_str_lookup_shape() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::Index {
+                object: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "counts".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Dict(Box::new(IrType::String), Box::new(IrType::Int)),
+                )),
+                index: Box::new(TypedExpr::new(IrExprKind::String("the".to_string()), IrType::String)),
+            },
+            IrType::Int,
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains(
+                "incan_stdlib :: collections :: dict_get (& counts , < _ as AsRef < str >> :: as_ref (& \"the\"))"
+            ),
+            "expected dict index to normalize string probes via fully-qualified `AsRef<str>`, got `{rendered}`"
         );
         Ok(())
     }

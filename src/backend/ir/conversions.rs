@@ -18,7 +18,6 @@
 //! - String literals like `"hello"` are `&'static str` in Rust, requiring `.to_string()` for owned contexts
 //!
 //! **Other types currently supported:**
-//! - `Vec<&str>` → `Vec<String>` conversion for collections
 //! - `List[T] + List[T]` concatenation via `incan_stdlib::collections::list_concat`
 //!
 //! **Future extensions may include:**
@@ -49,7 +48,6 @@
 //! ```
 //! - String literals → `.to_string()` (e.g., `greet("Alice")` → `greet("Alice".to_string())`)
 //! - String variables → `.to_string()` (may be &str at runtime)
-//! - Vec<&str> → `.into_iter().map(|s| s.to_string()).collect()`
 //!
 //! ### ExternalFunctionArg
 //!
@@ -210,8 +208,6 @@ pub enum Conversion {
     MutBorrow,
     /// Clone with .clone()
     Clone,
-    /// Convert `Vec<&str>` to `Vec<String>`.
-    VecStringConversion,
 }
 
 impl Conversion {
@@ -224,9 +220,6 @@ impl Conversion {
             Conversion::Borrow => quote! { &#tokens },
             Conversion::MutBorrow => quote! { &mut #tokens },
             Conversion::Clone => quote! { #tokens.clone() },
-            Conversion::VecStringConversion => {
-                quote! { #tokens.into_iter().map(|s| s.to_string()).collect() }
-            }
         }
     }
 }
@@ -512,18 +505,6 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 // Const `str` values need the same owned-string materialization when the target is inferred.
                 (_, None) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
 
-                // Vec<&str> to Vec<String> - check before generic variable handling
-                (_, Some(IrType::List(elem))) if matches!(elem.as_ref(), IrType::String) => {
-                    if matches!(expr.ty, IrType::List(_)) {
-                        match &expr.kind {
-                            IrExprKind::List(items) if items.is_empty() => Conversion::None,
-                            _ => Conversion::VecStringConversion,
-                        }
-                    } else {
-                        Conversion::None
-                    }
-                }
-
                 // String variable to String param:
                 // - last-use read can move ownership directly
                 // - non-last-use read materializes owned String without consuming source
@@ -625,16 +606,6 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 (_, Some(IrType::Generic(_))) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
                 (IrExprKind::String(_), None) => Conversion::ToString,
                 (_, None) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
-                (_, Some(IrType::List(elem))) if matches!(elem.as_ref(), IrType::String) => {
-                    if matches!(expr.ty, IrType::List(_)) {
-                        match &expr.kind {
-                            IrExprKind::List(items) if items.is_empty() => Conversion::None,
-                            _ => Conversion::VecStringConversion,
-                        }
-                    } else {
-                        Conversion::None
-                    }
-                }
                 (IrExprKind::Var { access, .. }, Some(IrType::String)) if matches!(expr.ty, IrType::String) => {
                     match access {
                         VarAccess::Move => Conversion::None,
@@ -894,7 +865,7 @@ mod tests {
     }
 
     #[test]
-    fn test_incan_function_vec_string_conversion() {
+    fn test_incan_function_string_list_var_uses_owned_incan_semantics() {
         let expr = IrExpr::new(
             IrExprKind::Var {
                 name: "items".to_string(),
@@ -906,7 +877,7 @@ mod tests {
         let target = IrType::List(Box::new(IrType::String));
 
         let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
-        assert_eq!(conv, Conversion::VecStringConversion);
+        assert_eq!(conv, Conversion::None);
     }
 
     #[test]
@@ -1228,15 +1199,5 @@ mod tests {
         let tokens = quote::quote! { value };
         let result = Conversion::Clone.apply(tokens);
         assert_eq!(result.to_string(), "value . clone ()");
-    }
-
-    #[test]
-    fn test_apply_vec_string_conversion() {
-        let tokens = quote::quote! { items };
-        let result = Conversion::VecStringConversion.apply(tokens);
-        assert_eq!(
-            result.to_string(),
-            "items . into_iter () . map (| s | s . to_string ()) . collect ()"
-        );
     }
 }
