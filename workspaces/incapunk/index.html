@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Incapunk Style Guide</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="background">
+      <div class="background__art"></div>
+      <div class="background__mesh background__mesh--left"></div>
+      <div class="background__mesh background__mesh--right"></div>
+      <div class="background__noise"></div>
+    </div>
+
+    <div class="page-shell page-shell--docs">
+      <header class="site-header site-header--docs">
+        <div class="site-header__row site-header__row--primary">
+          <div class="brand-lockup">
+            <img
+              class="brand-mark"
+              src="./assets/wordmark_small_001.png"
+              alt="Incan"
+            />
+            <span class="docs-header__section">Incapunk</span>
+          </div>
+
+          <nav class="site-nav site-nav--primary" aria-label="Style guide">
+            <a href="#premise">Premise</a>
+            <a href="#hero-surfaces">Hero</a>
+            <a href="#chrome">Chrome</a>
+            <a href="#content">Content</a>
+            <a href="#components">Components</a>
+            <a href="#implementation">Implementation</a>
+            <a href="#footer">Notes</a>
+          </nav>
+
+          <div class="docs-header__actions">
+            <a class="docs-header__search" href="#implementation">Build notes</a>
+            <span class="docs-header__chip">final</span>
+          </div>
+        </div>
+      </header>
+
+      <main class="docs-layout">
+        <aside class="docs-sidebar" aria-label="Style guide navigation">
+          <div class="docs-panel docs-panel--sidebar">
+            <p class="docs-sidebar__label">Incapunk</p>
+            <ul class="docs-nav">
+              <li class="docs-nav__group">Foundation</li>
+              <li><a href="#premise">01. Premise</a></li>
+              <li><a href="#hero-surfaces">02. Hero surfaces</a></li>
+              <li><a href="#principles">03. Principles</a></li>
+              <li><a href="#chrome">04. Header and rails</a></li>
+              <li class="docs-nav__group">Content</li>
+              <li><a href="#typography">05. Typography</a></li>
+              <li><a href="#lists">06. Lists</a></li>
+              <li><a href="#admonitions">07. Admonitions</a></li>
+              <li><a href="#code">08. Code blocks</a></li>
+              <li><a href="#tables">09. Tables</a></li>
+              <li class="docs-nav__group">Handoff</li>
+              <li><a href="#implementation">10. MkDocs guidance</a></li>
+              <li><a href="#constraints">11. Constraints</a></li>
+            </ul>
+          </div>
+        </aside>
+
+        <article class="docs-article docs-panel docs-panel--article">
+          <div class="docs-hero" id="premise">
+            <p class="eyebrow">Final Style Guide</p>
+            <div class="docs-breadcrumbs">
+              <span>docs</span>
+              <span>/</span>
+              <span>theme</span>
+              <span>/</span>
+              <span>incapunk</span>
+            </div>
+            <h1>Incapunk.</h1>
+            <p class="docs-lead">
+              This page is the handoff artifact for the documentation theme. It is not a
+              fake docs page and it is not a marketing mockup. The surrounding prose exists
+              to explain the style system itself, so a frontend developer can start breaking
+              it into reusable parts for a real MkDocs Material implementation.
+            </p>
+          </div>
+
+          <section class="docs-section" id="hero-surfaces">
+            <h2>Hero surfaces</h2>
+            <div class="prose-stack">
+              <p>
+                The style language is not only for docs chrome. It also needs to support
+                the public-facing landing surface where the system first established its
+                forged gold, graphite, and prismatic edge behavior. That is where the CTA
+                hierarchy and the wordmark treatment matter most.
+              </p>
+              <p>
+                The hero should remain structurally cleaner than the docs body: fewer boxes,
+                more atmosphere, and stronger hierarchy between the primary and secondary
+                actions. A quiet secondary action should not compete with the luminous gold
+                CTA.
+              </p>
+            </div>
+
+            <section class="hero hero-v3" aria-label="Hero style language sample">
+              <div class="hero-v3__content">
+                <p class="eyebrow">Hero language</p>
+                <h1>Forged interfaces for executable systems.</h1>
+                <p class="hero-copy">
+                  The hero surface is where Incapunk can be louder: illuminated wordmark,
+                  atmospheric chroma, and stronger button hierarchy. The structure still
+                  matters more than effects, but this is the one place where the style can
+                  lean cinematic without compromising the docs system.
+                </p>
+                <div class="hero-actions">
+                  <a class="cta-button cta-button--prism" href="#implementation">Get Started</a>
+                  <a class="cta-button cta-button--quiet" href="#components">Read Notes</a>
+                </div>
+                <div class="hero-v3__meta">
+                  <div class="hero-v3__meta-item">
+                    <span>Primary CTA</span>
+                    <strong>Gold and chroma carry the hierarchy, not just larger text.</strong>
+                  </div>
+                  <div class="hero-v3__meta-item">
+                    <span>Secondary CTA</span>
+                    <strong>Quiet actions should be materially different, not just dimmer.</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div class="hero-v3__art">
+                <div class="hero-stage">
+                  <div class="hero-stage__rays" aria-hidden="true"></div>
+                  <img
+                    class="hero-wordmark"
+                    src="./assets/wordmark_inspiration_006.png"
+                    alt="Incan wordmark"
+                  />
+                </div>
+              </div>
+            </section>
+          </section>
+
+          <section class="docs-section" id="principles">
+            <h2>Principles</h2>
+            <div class="prose-stack">
+              <p>
+                Incapunk is forged rather than glossy. The base is dark graphite, the
+                structure is warm metal, and the chroma is restrained cyan and magenta
+                energy used as edge behavior, not as a neon blanket over the interface.
+              </p>
+              <p>
+                The north star is premium documentation chrome: serious, authored, and a
+                little strange. The system should feel more like an artifact or instrument
+                panel than a generic SaaS dashboard, but it still needs to behave like a
+                docs site first.
+              </p>
+            </div>
+
+            <div class="list-grid">
+              <div class="list-card">
+                <h3>What it should feel like</h3>
+                <ul class="docs-list">
+                  <li>Forged gold rails over graphite surfaces.</li>
+                  <li>Ornament concentrated in frames and seams.</li>
+                  <li>Cyan and magenta used as subtle edge energy.</li>
+                  <li>Readable as docs, not as a landing page.</li>
+                </ul>
+              </div>
+              <div class="list-card">
+                <h3>What to avoid</h3>
+                <ul class="docs-list">
+                  <li>Blob-like chroma glows detached from structure.</li>
+                  <li>Too many rounded, floating cards.</li>
+                  <li>Bronze-heavy body text that hurts legibility.</li>
+                  <li>Page-specific ornament that can’t scale across docs.</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section class="docs-section" id="chrome">
+            <h2>Header and rails</h2>
+            <div class="prose-stack">
+              <p>
+                The header should feel built, not merely bordered. Gold defines the frame.
+                Cyan biases the left edge of the top rail, magenta biases the right edge of
+                the lower rail. Those chroma accents should live inside the linework rather
+                than floating near it.
+              </p>
+              <p>
+                Horizontal separators follow the same rule. They are forged rails with soft
+                edge fade, not detached ornaments. The chroma should tint the ends and then
+                disappear into transparency.
+              </p>
+            </div>
+
+            <div class="admonition admonition--python admonition--info">
+              <div class="admonition__header">
+                <div class="admonition__icon" aria-hidden="true"></div>
+                <p class="admonition__title">Chrome rule</p>
+              </div>
+              <div class="admonition__content">
+                <p>
+                  If a decorative element cannot be tied back to a real structural edge, it
+                  probably does not belong. This was the recurring failure mode with early
+                  dividers, admonition corners, and table seams.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <section class="docs-section" id="typography">
+            <h2>Typography</h2>
+            <div class="prose-stack">
+              <p>
+                Headlines carry the material treatment. They can go warm and forged because
+                they are rare and structural. Body copy should remain cooler and more
+                neutral than the rails around it. If the prose becomes too gold, readability
+                drops fast and the page starts feeling muddy.
+              </p>
+              <p>
+                Inline <code>code</code>, <strong>emphasis</strong>, and breadcrumb labels
+                should remain visible, but secondary to actual headings and component
+                borders.
+              </p>
+            </div>
+          </section>
+
+          <section class="docs-section" id="lists">
+            <h2>Lists</h2>
+            <div class="prose-stack">
+              <p>
+                Lists are a first-class docs pattern. They should work both as plain prose
+                lists and as denser grouped callouts. RFC-style policy lists live inside the
+                prose flow; checklist cards are optional and used only when grouping adds
+                real value.
+              </p>
+            </div>
+
+            <h3>Inline bullets</h3>
+            <ul class="prose-list">
+              <li>The vertical guide rail should be subtle and structural.</li>
+              <li>Markers should feel forged, not like default browser bullets.</li>
+              <li>Nested bullets can shift cooler to keep hierarchy readable.</li>
+              <li>List styling should remain calmer than admonitions.</li>
+            </ul>
+
+            <h3>Ordered flow</h3>
+            <ol class="prose-list prose-list--ordered">
+              <li>Use the docs flow as the baseline, not boxed cards.</li>
+              <li>Reserve stronger framing for admonitions, tables, and code.</li>
+              <li>Let the numbering plaques carry the extra ceremony.</li>
+              <li>Keep the prose itself cool enough to read at length.</li>
+            </ol>
+          </section>
+
+          <section class="docs-section" id="admonitions">
+            <h2>Admonitions</h2>
+            <div class="prose-stack">
+              <p>
+                Admonitions inherit the gold frame language from the CTA buttons, but they
+                are quieter and split clearly into header and body. The outer frame is the
+                event; the inner surface should remain restrained.
+              </p>
+              <p>
+                The implementation target is Material for MkDocs, so the theme needs to
+                cover the full supported admonition taxonomy, not just one pleasant
+                note/warning pair.
+              </p>
+            </div>
+
+            <div class="admonition-grid">
+              <div class="admonition admonition--compact admonition--note">
+                <div class="admonition__header">
+                  <div class="admonition__icon" aria-hidden="true"></div>
+                  <p class="admonition__title">Note</p>
+                </div>
+                <div class="admonition__content">
+                  <p>Default guidance block for structural observations and small caveats.</p>
+                </div>
+              </div>
+
+              <div class="admonition admonition--compact admonition--abstract">
+                <div class="admonition__header">
+                  <div class="admonition__icon" aria-hidden="true"></div>
+                  <p class="admonition__title">Abstract</p>
+                </div>
+                <div class="admonition__content">
+                  <p>Use the calmer graphite treatment for summaries and conceptual framing.</p>
+                </div>
+              </div>
+
+              <div class="admonition admonition--compact admonition--info">
+                <div class="admonition__header">
+                  <div class="admonition__icon" aria-hidden="true"></div>
+                  <p class="admonition__title">Info</p>
+                </div>
+                <div class="admonition__content">
+                  <p>Cyan-leading rails can carry factual detail without turning neon.</p>
+                </div>
+              </div>
+
+              <div class="admonition admonition--compact admonition--tip">
+                <div class="admonition__header">
+                  <div class="admonition__icon" aria-hidden="true"></div>
+                  <p class="admonition__title">Tip</p>
+                </div>
+                <div class="admonition__content">
+                  <p>Helpful guidance should read bright and constructive, but still controlled.</p>
+                </div>
+              </div>
+
+              <div class="admonition admonition--compact admonition--success">
+                <div class="admonition__header">
+                  <div class="admonition__icon" aria-hidden="true"></div>
+                  <p class="admonition__title">Success</p>
+                </div>
+                <div class="admonition__content">
+                  <p>Completion states can go greener while preserving the forged frame logic.</p>
+                </div>
+              </div>
+
+              <div class="admonition admonition--compact admonition--question">
+                <div class="admonition__header">
+                  <div class="admonition__icon" aria-hidden="true"></div>
+                  <p class="admonition__title">Question</p>
+                </div>
+                <div class="admonition__content">
+                  <p>Interrogative callouts can tolerate a cooler violet-cyan bias.</p>
+                </div>
+              </div>
+
+              <div class="admonition admonition--compact admonition--warn">
+                <div class="admonition__header">
+                  <div class="admonition__icon" aria-hidden="true"></div>
+                  <p class="admonition__title">Warning</p>
+                </div>
+                <div class="admonition__content">
+                  <p>Warnings should be warmer and clearer than notes, not merely louder.</p>
+                </div>
+              </div>
+
+              <div class="admonition admonition--compact admonition--failure">
+                <div class="admonition__header">
+                  <div class="admonition__icon" aria-hidden="true"></div>
+                  <p class="admonition__title">Failure</p>
+                </div>
+                <div class="admonition__content">
+                  <p>Failure states want a stronger ember-to-crimson edge without cartoon danger.</p>
+                </div>
+              </div>
+
+              <div class="admonition admonition--compact admonition--danger">
+                <div class="admonition__header">
+                  <div class="admonition__icon" aria-hidden="true"></div>
+                  <p class="admonition__title">Danger</p>
+                </div>
+                <div class="admonition__content">
+                  <p>Reserve the hottest red treatment for genuinely destructive or unsafe behavior.</p>
+                </div>
+              </div>
+
+              <div class="admonition admonition--compact admonition--bug">
+                <div class="admonition__header">
+                  <div class="admonition__icon" aria-hidden="true"></div>
+                  <p class="admonition__title">Bug</p>
+                </div>
+                <div class="admonition__content">
+                  <p>Bug callouts can lean magenta-red to feel diagnostic rather than celebratory.</p>
+                </div>
+              </div>
+
+              <div class="admonition admonition--compact admonition--example">
+                <div class="admonition__header">
+                  <div class="admonition__icon" aria-hidden="true"></div>
+                  <p class="admonition__title">Example</p>
+                </div>
+                <div class="admonition__content">
+                  <p>Examples can carry the prismatic family more visibly than ordinary prose.</p>
+                </div>
+              </div>
+
+              <div class="admonition admonition--compact admonition--quote">
+                <div class="admonition__header">
+                  <div class="admonition__icon" aria-hidden="true"></div>
+                  <p class="admonition__title">Quote</p>
+                </div>
+                <div class="admonition__content">
+                  <p>Quotes should be quiet and authored, with graphite leading over gold.</p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="docs-section" id="code">
+            <h2>Code blocks</h2>
+            <div class="prose-stack">
+              <p>
+                Code is one of the strongest parts of the system because the darker interior
+                lets the token colors breathe. Headers should feel like metal caps, but the
+                actual code surface should stay calm and readable.
+              </p>
+            </div>
+
+            <div class="code-frame">
+              <div class="code-frame__header">
+                <span>preview_theme.in</span>
+                <span>code sample</span>
+              </div>
+              <pre><code>from std.async.time import sleep
+
+<span class="token token-keyword">def</span> accent_for(edge: str) -&gt; str:
+    if edge == <span class="token token-string">"left"</span>:
+        return <span class="token token-string">"cyan"</span>
+    return <span class="token token-string">"magenta"</span>
+
+<span class="token token-keyword">async def</span> preview_theme() -&gt; str:
+    await sleep(0.2)
+    return accent_for(<span class="token token-string">"left"</span>)
+
+<span class="token token-keyword">def</span> main() -&gt; None:
+    println(<span class="token token-string">"Rendering Incapunk preview..."</span>)</code></pre>
+            </div>
+          </section>
+
+          <section class="docs-section" id="tables">
+            <h2>Tables</h2>
+            <div class="prose-stack">
+              <p>
+                Tables should feel integrated into the same system as admonitions and code,
+                but they cannot become overly ornate. The header needs stronger separation
+                from the body. The frame needs continuous rails. Chroma should support the
+                seam and outer edge behavior, not fragment it.
+              </p>
+            </div>
+
+            <div class="table-frame">
+              <table class="docs-table">
+                <thead>
+                  <tr>
+                    <th>Element</th>
+                    <th>Role</th>
+                    <th>Guidance</th>
+                    <th>Failure mode</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>Header band</code></td>
+                    <td>Separation</td>
+                    <td>Use a darker cap and one continuous forged seam.</td>
+                    <td>Header visually blends into the table body.</td>
+                  </tr>
+                  <tr>
+                    <td><code>Outer frame</code></td>
+                    <td>Containment</td>
+                    <td>Keep the rails continuous across the corners.</td>
+                    <td>Chroma terminates abruptly into broken corners.</td>
+                  </tr>
+                  <tr>
+                    <td><code>Row rules</code></td>
+                    <td>Scan support</td>
+                    <td>Gold first, with a faint cyan/magenta bias at the ends.</td>
+                    <td>Rows become flat gray enterprise grid lines.</td>
+                  </tr>
+                  <tr>
+                    <td><code>Typography</code></td>
+                    <td>Legibility</td>
+                    <td>Keep body copy cooler than the frame and headings.</td>
+                    <td>Everything turns bronze and starts looking dirty.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="docs-section" id="components">
+            <h2>Reusable component language</h2>
+            <div class="api-grid">
+              <article class="api-card">
+                <div class="api-card__header">
+                  <h3><code>Header chrome</code></h3>
+                  <span>global</span>
+                </div>
+                <p>
+                  Full-width gold/chroma rails, serif nav, and a darker graphite fill. This
+                  is theme chrome, not page content.
+                </p>
+                <dl class="api-meta">
+                  <div>
+                    <dt>Implement with</dt>
+                    <dd>Theme override + CSS variables</dd>
+                  </div>
+                  <div>
+                    <dt>Avoid</dt>
+                    <dd>Page-specific header wrappers</dd>
+                  </div>
+                </dl>
+              </article>
+
+              <article class="api-card">
+                <div class="api-card__header">
+                  <h3><code>Content primitives</code></h3>
+                  <span>docs</span>
+                </div>
+                <p>
+                  Admonitions, tables, code frames, list patterns, and section rails should
+                  all read like one family without requiring custom markdown per page.
+                </p>
+                <dl class="api-meta">
+                  <div>
+                    <dt>Implement with</dt>
+                    <dd>CSS-first component restyling</dd>
+                  </div>
+                  <div>
+                    <dt>Avoid</dt>
+                    <dd>One-off ornamental wrappers around normal prose</dd>
+                  </div>
+                </dl>
+              </article>
+            </div>
+          </section>
+
+          <section class="docs-section" id="implementation">
+            <h2>MkDocs Material implementation guidance</h2>
+            <div class="prose-stack">
+              <p>
+                This system should be implemented as a theme layer, not as a collection of
+                handcrafted page templates. The right order is global chrome first, shared
+                content primitives second, and only then small structural overrides where
+                Material cannot express the intended layout cleanly enough.
+              </p>
+            </div>
+
+            <div class="bullet-band">
+              <article class="bullet-card">
+                <h3>CSS-first scope</h3>
+                <ul class="docs-list">
+                  <li>Typography and color tokens.</li>
+                  <li>Header rails and nav styling.</li>
+                  <li>Admonitions, tables, code blocks, lists.</li>
+                  <li>Sidebar, TOC, and horizontal rules.</li>
+                </ul>
+              </article>
+
+              <article class="bullet-card">
+                <h3>Template override scope</h3>
+                <ul class="docs-list">
+                  <li>Header structure and top chrome.</li>
+                  <li>Logo placement and nav grouping.</li>
+                  <li>Search area treatment.</li>
+                  <li>Nothing page-specific if it can be avoided.</li>
+                </ul>
+              </article>
+            </div>
+          </section>
+
+          <section class="docs-section" id="constraints">
+            <h2>Constraints and non-goals</h2>
+            <ul class="prose-list">
+              <li>Do not implement custom RFC frontmatter.</li>
+              <li>Do not turn ordinary prose sections into floating cards.</li>
+              <li>Do not use chroma unless it is structurally tied to a line or seam.</li>
+              <li>Do not sacrifice legibility for warmer text or heavier ornament.</li>
+            </ul>
+          </section>
+        </article>
+
+        <aside class="docs-toc" aria-label="Table of contents">
+          <div class="docs-panel docs-panel--toc">
+            <p class="docs-sidebar__label">On this page</p>
+            <ul class="toc-list">
+              <li><a href="#premise">Premise</a></li>
+              <li><a href="#hero-surfaces">Hero surfaces</a></li>
+              <li><a href="#principles">Principles</a></li>
+              <li><a href="#chrome">Header and rails</a></li>
+              <li><a href="#typography">Typography</a></li>
+              <li><a href="#lists">Lists</a></li>
+              <li><a href="#admonitions">Admonitions</a></li>
+              <li><a href="#code">Code blocks</a></li>
+              <li><a href="#tables">Tables</a></li>
+              <li><a href="#components">Components</a></li>
+              <li><a href="#implementation">Implementation</a></li>
+              <li><a href="#constraints">Constraints</a></li>
+            </ul>
+          </div>
+        </aside>
+      </main>
+
+      <footer class="site-footer" id="footer">
+        <p>Incapunk is a docs theme language: forged rails, graphite surfaces, restrained chroma, and structure-first ornament.</p>
+      </footer>
+    </div>
+  </body>
+</html>
