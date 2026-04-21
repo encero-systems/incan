@@ -17,6 +17,28 @@ use super::super::super::expr::{IrExprKind, TypedExpr, UnaryOp};
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 
+/// Normalize dictionary index probes to the borrow shape expected by runtime lookup helpers.
+///
+/// `Dict[str, V]` should accept borrowed string probes (`"x"`, `&str`, `String`) without forcing owned
+/// `String` materialization at every `dict[key]` read site. Non-string dictionaries keep the ordinary `&key` lookup
+/// shape.
+fn emit_dict_lookup_index_key(object: &TypedExpr, index: &TypedExpr, emitted: TokenStream) -> TokenStream {
+    match &object.ty {
+        IrType::Dict(key_ty, _)
+            if matches!(
+                key_ty.as_ref(),
+                IrType::String | IrType::StrRef | IrType::StaticStr | IrType::FrozenStr
+            ) =>
+        {
+            match &index.ty {
+                IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::StaticStr => emitted,
+                _ => quote! { <_ as AsRef<str>>::as_ref(&#emitted) },
+            }
+        }
+        _ => quote! { &#emitted },
+    }
+}
+
 impl<'a> IrEmitter<'a> {
     /// Emit an index expression.
     ///
@@ -63,10 +85,11 @@ impl<'a> IrEmitter<'a> {
         match obj_ty {
             IrType::Dict(_, v) => {
                 let i = self.emit_expr(index)?;
+                let key = emit_dict_lookup_index_key(object, index, i);
                 if v.is_copy() {
-                    Ok(quote! { *incan_stdlib::collections::dict_get(&#o, &#i) })
+                    Ok(quote! { *incan_stdlib::collections::dict_get(&#o, #key) })
                 } else {
-                    Ok(quote! { incan_stdlib::collections::dict_get(&#o, &#i).clone() })
+                    Ok(quote! { incan_stdlib::collections::dict_get(&#o, #key).clone() })
                 }
             }
             IrType::List(elem) => {

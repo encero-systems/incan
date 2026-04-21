@@ -16,7 +16,7 @@ fn test_collections() {
     let empty_list = vec![];
     let empty_dict = HashMap::new();
     let numbers = vec![1, 2, 3, 4, 5];
-    let strings = vec!["a", "b", "c"];
+    let strings = vec!["a".to_string(), "b".to_string(), "c".to_string()];
     let matrix = vec![vec![1, 2], vec![3, 4]];
     let simple_dict = [("a", 1), ("b", 2)].into_iter().collect::<HashMap<_, _>>();
     let int_keys = [(1, "one"), (2, "two")].into_iter().collect::<HashMap<_, _>>();
@@ -31,7 +31,10 @@ fn test_collections() {
     let multiple = ("a", pair, "b", triple, 42);
     let first = *incan_stdlib::collections::list_get(&numbers, (0) as i64);
     let last = *incan_stdlib::collections::list_get(&numbers, (-1) as i64);
-    let value = *incan_stdlib::collections::dict_get(&simple_dict, &"a");
+    let value = *incan_stdlib::collections::dict_get(
+        &simple_dict,
+        <_ as AsRef<str>>::as_ref(&"a"),
+    );
     let sub_list = incan_stdlib::collections::list_slice(
         &numbers,
         Some((1) as i64),

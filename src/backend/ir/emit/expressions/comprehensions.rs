@@ -90,29 +90,10 @@ impl<'a> IrEmitter<'a> {
         let value_tokens = self.emit_expr(value)?;
 
         // ---- Context: key ownership for collected map entries ----
-        // Determine if the key needs cloning.
-        // For dict comprehensions, keys need cloning when:
-        // 1. The key type is non-Copy AND
-        // 2. The key is NOT a simple variable reference to the loop variable (in which case it's already "consumed" by
-        //    the key tuple position)
-        //
-        // Special case: when iterating over a list of string literals (`Vec<&str>`), the IR element type is
-        // `IrType::String`, but the Rust runtime type is `&str` which IS Copy. Check if the key is just the loop
-        // variable, and if the iterable's element type is String (which emits as `&str` for literals).
-        let is_key_copy = key.ty.is_copy();
-        let is_key_just_loop_var = matches!(
-            &key.kind,
-            IrExprKind::Var { name, .. } if name == variable
-        );
-        let iterable_elem_is_string = match &iterable.ty {
-            super::super::super::types::IrType::List(elem) => {
-                matches!(elem.as_ref(), super::super::super::types::IrType::String)
-            }
-            _ => false,
-        };
-        // Skip clone if the key is Copy, OR if the key is just the loop var and we're iterating over a list of
-        // strings (which are &str at runtime)
-        let needs_clone = !(is_key_copy || (is_key_just_loop_var && iterable_elem_is_string));
+        // Dict comprehensions build `(key, value)` tuples left-to-right. For non-Copy keys we clone before the tuple so
+        // the value expression can still read the loop variable afterward (for example `{name: len(name) for name in
+        // names}`).
+        let needs_clone = !key.ty.is_copy();
         let cloned_key = if needs_clone {
             quote! { #key_tokens.clone() }
         } else {

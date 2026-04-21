@@ -3,6 +3,7 @@
 //! This module exists to keep runtime behavior Python-like while avoiding Rust-default panic messages
 //! (e.g. Vec/HashMap indexing panics). Instead, we raise canonical `IncanError` messages.
 
+use core::borrow::Borrow;
 use core::fmt::Display;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -156,12 +157,17 @@ pub fn list_slice<T: Clone>(list: &[T], start: Option<i64>, end: Option<i64>, st
 
 /// Get a dict value by key (Python-style `d[key]`).
 ///
+/// Mirrors `HashMap::get` by accepting borrowed probe keys (`&Q`) as long as the stored key type can borrow as `Q`.
+/// This keeps generated lookups ergonomic for `Dict[str, V]`, where source-level string literals and borrowed `str`
+/// probes should work without forcing owned `String` materialization at every index site.
+///
 /// ## Panics
 /// - `KeyError: '{key}' not found in dict` if missing.
 #[inline]
-pub fn dict_get<'a, K, V>(map: &'a HashMap<K, V>, key: &K) -> &'a V
+pub fn dict_get<'a, K, Q, V>(map: &'a HashMap<K, V>, key: &Q) -> &'a V
 where
-    K: Eq + Hash + Display,
+    K: Borrow<Q> + Eq + Hash,
+    Q: Eq + Hash + Display + ?Sized,
 {
     match map.get(key) {
         Some(v) => v,
@@ -256,11 +262,26 @@ mod tests {
     }
 
     #[test]
+    fn dict_get_accepts_borrowed_string_probe() {
+        let mut m: HashMap<String, i64> = HashMap::new();
+        m.insert("a".to_string(), 1);
+        assert_eq!(*dict_get(&m, "a"), 1);
+    }
+
+    #[test]
     #[should_panic(expected = "KeyError: 'b' not found in dict")]
     fn dict_get_missing_panics_with_key_error() {
         let mut m: HashMap<String, i64> = HashMap::new();
         m.insert("a".to_string(), 1);
         let _ = dict_get(&m, &"b".to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "KeyError: 'b' not found in dict")]
+    fn dict_get_missing_borrowed_string_probe_panics_with_key_error() {
+        let mut m: HashMap<String, i64> = HashMap::new();
+        m.insert("a".to_string(), 1);
+        let _ = dict_get(&m, "b");
     }
 
     #[test]
