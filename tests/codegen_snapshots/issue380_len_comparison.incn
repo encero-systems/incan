@@ -1,0 +1,23 @@
+pub def small(xs: list[int]) -> bool:
+    return len(xs) < 2
+
+
+@derive(Clone)
+pub enum ExprKind:
+    Column
+    Add
+
+
+@derive(Clone)
+pub model Expr:
+    pub kind: ExprKind
+    pub column_name: str
+    pub arguments: list[Expr]
+
+
+pub def lower(expr: Expr) -> int:
+    if expr.kind == ExprKind.Column:
+        return 0
+    if len(expr.arguments) < 2:
+        return -1
+    return 1

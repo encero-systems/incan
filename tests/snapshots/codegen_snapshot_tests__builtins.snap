@@ -17,7 +17,7 @@ fn test_print_builtin() {
 }
 fn test_len_builtin() {
     let items = vec![1, 2, 3, 4, 5];
-    let length = items.len() as i64;
+    let length = ::std::convert::identity(items.len() as i64);
     println!("{}", length);
 }
 fn test_range_builtin() {

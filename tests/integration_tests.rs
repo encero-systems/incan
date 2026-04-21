@@ -4296,6 +4296,33 @@ pub def display[T](data: DataSet[T]) -> None:
     }
 
     #[test]
+    fn build_succeeds_for_len_comparison_on_recursive_list_field() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path().join("len_comparison_recursive_project");
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"len_comparison_recursive\"\nversion = \"0.1.0\"\n",
+        )?;
+        let main_path = project_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            "@derive(Clone)\npub enum ExprKind:\n  Column\n  Add\n\n@derive(Clone)\npub model Expr:\n  pub kind: ExprKind\n  pub column_name: str\n  pub arguments: list[Expr]\n\npub def lower(expr: Expr) -> int:\n  if expr.kind == ExprKind.Column:\n    return 0\n  if len(expr.arguments) < 2:\n    return -1\n  return 1\n\ndef main() -> None:\n  println(lower(Expr(kind=ExprKind.Add, column_name=\"root\", arguments=[])))\n",
+        )?;
+
+        let out_dir = project_root.join("out");
+        let project_build = run_build(&main_path, &out_dir)?;
+        assert!(
+            project_build.status.success(),
+            "expected recursive list-field len comparison project to build successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&project_build.stdout),
+            String::from_utf8_lossy(&project_build.stderr)
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn build_succeeds_for_imported_sum_helper_shadowing() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path().join("imported_sum_shadow_project");

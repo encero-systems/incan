@@ -1433,7 +1433,7 @@ dependencies = [
 
 [[package]]
 name = "incan"
-version = "0.2.0-rc8"
+version = "0.2.0-rc9"
 dependencies = [
  "clap",
  "hex",
@@ -1471,14 +1471,14 @@ dependencies = [
 
 [[package]]
 name = "incan_core"
-version = "0.2.0-rc8"
+version = "0.2.0-rc9"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "incan_derive"
-version = "0.2.0-rc8"
+version = "0.2.0-rc9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1487,14 +1487,14 @@ dependencies = [
 
 [[package]]
 name = "incan_semantics_core"
-version = "0.2.0-rc8"
+version = "0.2.0-rc9"
 dependencies = [
  "incan_core",
 ]
 
 [[package]]
 name = "incan_semantics_stdlib"
-version = "0.2.0-rc8"
+version = "0.2.0-rc9"
 dependencies = [
  "incan_core",
  "incan_semantics_core",
@@ -1502,7 +1502,7 @@ dependencies = [
 
 [[package]]
 name = "incan_stdlib"
-version = "0.2.0-rc8"
+version = "0.2.0-rc9"
 dependencies = [
  "axum",
  "incan_core",
@@ -1515,7 +1515,7 @@ dependencies = [
 
 [[package]]
 name = "incan_syntax"
-version = "0.2.0-rc8"
+version = "0.2.0-rc9"
 dependencies = [
  "incan_core",
  "incan_semantics_core",
@@ -1536,7 +1536,7 @@ dependencies = [
 
 [[package]]
 name = "incan_web_macros"
-version = "0.2.0-rc8"
+version = "0.2.0-rc9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3068,7 +3068,7 @@ dependencies = [
 
 [[package]]
 name = "rust_inspect"
-version = "0.2.0-rc8"
+version = "0.2.0-rc9"
 dependencies = [
  "hex",
  "incan_core",
@@ -3592,9 +3592,9 @@ dependencies = [
 
 [[package]]
 name = "thin-vec"
-version = "0.2.14"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "144f754d318415ac792f9d69fc87abbbfc043ce2ef041c60f16ad828f638717d"
+checksum = "259cdf8ed4e4aca6f1e9d011e10bd53f524a2d0637d7b28450f6c64ac298c4c6"
 
 [[package]]
 name = "thiserror"

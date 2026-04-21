@@ -446,7 +446,7 @@ pub enum Pattern {
 pub enum BuiltinFn {
     /// `print(x)` / `println(x)` → `println!("{}", x)`
     Print,
-    /// `len(x)` → `x.len() as i64`
+    /// `len(x)` → `::std::convert::identity(x.len() as i64)`
     Len,
     /// `sum(x)` → `x.iter().sum::<i64>()`
     Sum,

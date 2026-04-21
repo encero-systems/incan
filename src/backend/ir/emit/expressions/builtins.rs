@@ -72,7 +72,7 @@ impl<'a> IrEmitter<'a> {
             BuiltinFn::Len => {
                 if let Some(arg) = args.first() {
                     let a = self.emit_expr(arg)?;
-                    Ok(quote! { #a.len() as i64 })
+                    Ok(quote! { ::std::convert::identity(#a.len() as i64) })
                 } else {
                     Ok(quote! { 0i64 })
                 }
@@ -316,7 +316,7 @@ impl<'a> IrEmitter<'a> {
             BuiltinFnId::Len => {
                 if let Some(arg) = args.first() {
                     let a = self.emit_expr(arg)?;
-                    Ok(Some(quote! { #a.len() as i64 }))
+                    Ok(Some(quote! { ::std::convert::identity(#a.len() as i64) }))
                 } else {
                     Ok(None)
                 }
