@@ -41,7 +41,9 @@
 
 .md-typeset .admonition.tip,
 .md-typeset .admonition.success {
-  background: linear-gradient(135deg, #d1fae5 0%, #ecfdf5 100%);
+  background: linear-gradient(135deg, #f0fdf4 0%, #f7fee7 100%);
+  border: 2px solid #22c55e !important;
+  border-left: 6px solid #16a34a !important;
 }
 
 /* 3. BRAND ASSETS: Links and Code */
