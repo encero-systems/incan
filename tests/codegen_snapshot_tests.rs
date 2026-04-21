@@ -947,6 +947,22 @@ fn test_list_pop_clone_only_model_codegen() {
     insta::assert_snapshot!("list_pop_clone_only_model", rust_code);
 }
 
+/// Issue #380: `len(...)` must lower to a parse-safe expression so comparisons compile as Rust.
+#[test]
+fn test_issue380_len_comparison_codegen() {
+    let source = load_test_file("issue380_len_comparison");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("return ::std::convert::identity(xs.len() as i64) < 2;"),
+        "expected len(list) comparison to isolate the cast in a parse-safe expression; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("if ::std::convert::identity(expr.arguments.len() as i64) < 2 {"),
+        "expected recursive field len comparison to isolate the cast in a parse-safe expression; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("issue380_len_comparison", rust_code);
+}
+
 /// Issue #195: `for x in list[E]` must iterate owned `E` (via `.iter().cloned()`) so `==` against `E` compiles.
 #[test]
 fn test_for_in_list_enum_equality_codegen() {
