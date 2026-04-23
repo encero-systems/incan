@@ -349,7 +349,7 @@ impl Formatter {
         }
     }
 
-    fn format_pattern(&mut self, pattern: &Pattern) {
+    pub(super) fn format_pattern(&mut self, pattern: &Pattern) {
         match pattern {
             Pattern::Wildcard => self.writer.write("_"),
             Pattern::Binding(name) => self.writer.write(name),

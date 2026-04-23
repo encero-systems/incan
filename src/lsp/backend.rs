@@ -893,6 +893,37 @@ def use_it(x: Serialize) -> None:
     }
 }
 
+#[cfg(test)]
+mod lsp_parse_tests {
+    use crate::frontend::{lexer, parser};
+
+    #[test]
+    fn lsp_parse_context_accepts_for_tuple_unpack_binding() {
+        let source = r#"
+def bind(input_columns: list[str]) -> list[str]:
+    mut bindings: list[str] = []
+    for idx, name in enumerate(input_columns):
+        bindings.append(name)
+    return bindings
+"#;
+
+        let tokens = match lexer::lex(source) {
+            Ok(tokens) => tokens,
+            Err(errors) => panic!("lexer failed for LSP tuple-for regression: {errors:?}"),
+        };
+        let parsed = parser::parse_with_context(
+            &tokens,
+            Some("/workspace/src/substrait/plan.incn"),
+            Some(&std::collections::HashMap::new()),
+        );
+
+        assert!(
+            parsed.is_ok(),
+            "LSP parser context should accept tuple-unpack for bindings, got {parsed:?}"
+        );
+    }
+}
+
 /// Symbol information for hover/goto
 #[derive(Debug, Clone)]
 pub struct SymbolInfo {

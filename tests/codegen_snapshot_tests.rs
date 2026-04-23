@@ -1291,6 +1291,17 @@ fn test_issue374_enum_constructor_match_codegen() {
 }
 
 #[test]
+fn test_issue389_for_tuple_unpack_enumerate_codegen() {
+    let source = load_test_file("issue389_for_tuple_unpack_enumerate");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("issue389_for_tuple_unpack_enumerate", rust_code);
+    assert!(
+        rust_code.contains("for (idx, name) in"),
+        "expected enumerate loop to emit a tuple-binding for pattern"
+    );
+}
+
+#[test]
 fn test_rust_interop_field_access_codegen() {
     let source = load_test_file("rust_interop_field_access");
     let rust_code = generate_rust(&source);

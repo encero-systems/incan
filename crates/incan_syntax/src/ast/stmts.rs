@@ -2,7 +2,7 @@
 
 use incan_semantics_core::SurfaceFeatureKey;
 
-use super::{Decorator, Expr, Ident, Span, Spanned, Type};
+use super::{Decorator, Expr, Ident, Pattern, Span, Spanned, Type};
 
 // ============================================================================
 // Statements
@@ -139,7 +139,7 @@ pub struct WhileStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForStmt {
-    pub var: Ident,
+    pub pattern: Spanned<Pattern>,
     pub iter: Spanned<Expr>,
     pub body: Vec<Spanned<Statement>>,
 }
