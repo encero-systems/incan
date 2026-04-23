@@ -1,0 +1,6314 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the Incan programming language">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>RFC 019: test runner, CLI, and ecosystem - Incan Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/pygments.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#rfc-019-test-runner-cli-and-ecosystem" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Incan Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              RFC 019: test runner, CLI, and ecosystem
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1M8 13h8v-2H8zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4a5 5 0 0 0 5-5 5 5 0 0 0-5-5"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="purple" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5m0 8a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-label="Switch to system preference"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Switch to system preference" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5M7 15a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/dannys-code-corner/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dannys-code-corner/incan
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Incan Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/dannys-code-corner/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dannys-code-corner/incan
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../start_here/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Start here
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Start here
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/coming_from_python/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Python (apps)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Rust (evaluator)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/beginner/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Beginner
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Language
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Language
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    The Incan Book (Basics)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_2_1" id="__nav_3_2_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            The Incan Book (Basics)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Hello world
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Values, variables, and types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Functions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Modules and imports
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Errors (Result/Option and `?`)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Strings and formatting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Collections and iteration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    9. Enums and better `match`
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    10. Models vs classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    11. Traits and derives
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    12. Newtypes (stronger types)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    13. Unit tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Build your first API
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/async_programming/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Async programming
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Customize derived behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling recipes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/error_messages/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error messages
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/module_state/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Modeling with enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing guide
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/string_processing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/performance/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Performance
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust interop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust types (coming from Python)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/reference/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Language reference (generated)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/glossary/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Glossary
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O reference (Path/File APIs)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/static_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Static storage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric semantics
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/strings/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Strings and Bytes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (reference)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_11" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/reference/stdlib/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Standard library
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_11" id="__nav_3_4_11_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_11">
+            <span class="md-nav__icon md-icon"></span>
+            Standard library
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.async
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.derives.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.traits.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.math
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_12" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Stdlib traits
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_12" id="__nav_3_4_12_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_12">
+            <span class="md-nav__icon md-icon"></span>
+            Stdlib traits
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Collection protocols
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Indexing and slicing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable objects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error trait
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Operators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Conversions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_13" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4_13" id="__nav_3_4_13_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Derives
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_13">
+            <span class="md-nav__icon md-icon"></span>
+            Derives
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String representation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Comparison
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Copying/default
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Serialization
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/validation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Validation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Custom behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/why_incan/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why Incan?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why not just Rust?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How Incan works
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/closures/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Closures
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/consts/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Consts
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/static_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Module static storage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (explained)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why call-site type args exist
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How derives work
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/error_handling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_14" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Models and classes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_5_14" id="__nav_3_5_14_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_14">
+            <span class="md-nav__icon md-icon"></span>
+            Models and classes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Models
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Traits as language hooks
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Scopes and name resolution
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../tooling/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Tooling
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Tooling
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipeline mini-project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Troubleshooting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Editor setup
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Formatting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Projects today
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP protocol support
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+          
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../contributing/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Contributing
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Contributing
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Incan Contributor Book (Advanced)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2_1" id="__nav_5_2_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            Incan Contributor Book (Advanced)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Architecture tour
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Layering and boundaries
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Proposals: issues vs RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Your first change: add a builtin
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Your first syntax change
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Tooling loop: formatter + tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Tooling loop: LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Docsite contributor loop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Extending the language
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Author library DSLs with incan_vocab
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Benchmarks & profiling (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Writing RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_4">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/layering/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Layering rules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Readable, maintainable Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing internals
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../release_notes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Release notes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            Release notes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_1/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.1
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../roadmap/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Roadmap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stability/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Stability policy
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Summary
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#motivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Motivation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation (how users think about it)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Guide-level explanation (how users think about it)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-to-read-this-rfc" class="md-nav__link">
+    <span class="md-ellipsis">
+      How to read this RFC
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#differences-from-pytest-cargo-test-jest-important" class="md-nav__link">
+    <span class="md-ellipsis">
+      Differences from pytest / cargo test / jest (important)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-testing-module" class="md-nav__link">
+    <span class="md-ellipsis">
+      The testing module
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#where-tests-can-live-two-test-contexts" class="md-nav__link">
+    <span class="md-ellipsis">
+      Where tests can live (two test contexts)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Where tests can live (two test contexts)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-test-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      1) Test files
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-inline-test-only-module-blocks-recommended-for-unit-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      2) Inline test-only module blocks (recommended for unit tests)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-to-use-inline-tests-vs-tests-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      When to use inline tests vs tests/ files
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#discovery-pytest-like" class="md-nav__link">
+    <span class="md-ellipsis">
+      Discovery: “pytest-like”
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixtures-pytest-style" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fixtures (pytest-style)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parametrize" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parametrize
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#running-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Running tests
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#additional-runner-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      Additional runner examples
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parallelism-and-shared-resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parallelism and shared resources
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#markers-pytest-style-and-marker-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Markers (pytest-style) and marker selection
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#default-marks-file-level-and-subtree-level-via-conftestincn" class="md-nav__link">
+    <span class="md-ellipsis">
+      Default marks (file-level and subtree-level via conftest.incn)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conditional-skipxfail" class="md-nav__link">
+    <span class="md-ellipsis">
+      Conditional skip/xfail
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parametrize-with-per-case-marks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parametrize with per-case marks
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shared-fixtures-via-conftestincn" class="md-nav__link">
+    <span class="md-ellipsis">
+      Shared fixtures via conftest.incn
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#built-in-fixtures" class="md-nav__link">
+    <span class="md-ellipsis">
+      Built-in fixtures
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#timeouts" class="md-nav__link">
+    <span class="md-ellipsis">
+      Timeouts
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reference-level explanation (precise rules)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reference-level explanation (precise rules)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#collection-time-evaluatability-const-evaluable-reference-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Collection-time evaluatability (“const-evaluable”) (reference rules)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#error-categories-reference-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Error categories (reference rules)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#testing-gated-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      Testing-gated resolution
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-contexts" class="md-nav__link">
+    <span class="md-ellipsis">
+      Test contexts
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-a-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      What is a test?
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-a-fixture" class="md-nav__link">
+    <span class="md-ellipsis">
+      What is a fixture?
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixture-injection-errors-reference-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fixture injection errors (reference rules)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixture-scopes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fixture scopes
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#autouse-fixtures-reference-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Autouse fixtures (reference rules)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixture-teardown-via-yield-reference-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fixture teardown via yield (reference rules)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keyword-selection-k-reference-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Keyword selection (-k) (reference rules)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fail-fast-x-exitfirst-reference-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fail-fast (-x / --exitfirst) (reference rules)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#markers-and-selection-m" class="md-nav__link">
+    <span class="md-ellipsis">
+      Markers and selection (-m)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Markers and selection (-m)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#marker-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Marker model
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#marker-selection-expression" class="md-nav__link">
+    <span class="md-ellipsis">
+      Marker selection expression
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slow-tests-slow-and-slow" class="md-nav__link">
+    <span class="md-ellipsis">
+      Slow tests (@slow and --slow)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parallel-execution-and-resource-locking-reference-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parallel execution and resource locking (reference rules)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Parallel execution and resource locking (reference rules)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cli-parallelism" class="md-nav__link">
+    <span class="md-ellipsis">
+      CLI parallelism
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scheduling-decorators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Scheduling decorators
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#output-reporting-and-runner-ergonomics-reference-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Output, reporting, and runner ergonomics (reference rules)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stable-test-identifiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Stable test identifiers
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Stable test identifiers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#output-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Output capture
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#listing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Listing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shuffling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Shuffling
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#durations" class="md-nav__link">
+    <span class="md-ellipsis">
+      Durations
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#machine-readable-reports" class="md-nav__link">
+    <span class="md-ellipsis">
+      Machine-readable reports
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conditional-skipxfail-reference-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Conditional skip/xfail (reference rules)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Conditional skip/xfail (reference rules)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#collection-time-probes-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Collection-time probes (testing)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parametrization-reference-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parametrization (reference rules)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parametrize-per-case-marks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parametrize per-case marks
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shared-fixtures-via-conftestincn-reference-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Shared fixtures via conftest.incn (reference rules)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#built-in-fixtures-reference-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Built-in fixtures (reference rules)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#timeouts-reference-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Timeouts (reference rules)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#xfail-policy-switches" class="md-nav__link">
+    <span class="md-ellipsis">
+      XFail policy switches
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#collection-order-deterministic" class="md-nav__link">
+    <span class="md-ellipsis">
+      Collection order (deterministic)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#async-testing-out-of-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      Async testing (out of scope)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compatibility-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compatibility / migration
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      Alternatives considered
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-testing-surface-inventory-informative" class="md-nav__link">
+    <span class="md-ellipsis">
+      Appendix: testing surface inventory (informative)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Appendix: testing surface inventory (informative)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-runner-cli-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      Test runner + CLI surface
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation architecture
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#implementation-dependencies-informative" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation dependencies (informative)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conformance-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Conformance tests
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design Decisions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      References
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="rfc-019-test-runner-cli-and-ecosystem">RFC 019: test runner, CLI, and ecosystem<a class="headerlink" href="#rfc-019-test-runner-cli-and-ecosystem" title="Permanent link">&para;</a></h1>
+<ul>
+<li><strong>Status:</strong> Planned</li>
+<li><strong>Created:</strong> 2026-01-14</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong> RFC 018 (language primitives for testing), RFC 007 (runner semantics; superseded), RFC 001 (runner portions; superseded), RFC 002 (runner portions; superseded)</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/77</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.1</li>
+<li><strong>Shipped in:</strong> —</li>
+</ul>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>Define the test runner and CLI semantics for Incan (pytest-inspired), including:</p>
+<ul>
+<li>discovery in test files and inline test contexts</li>
+<li>fixtures (scopes, autouse, teardown via <code>yield</code>)</li>
+<li>parametrized tests (<code>@parametrize</code>, <code>case(...)</code>, ids)</li>
+<li>markers and selection (<code>-m</code>, <code>skip/xfail/slow</code>, strict markers)</li>
+<li>parallel execution and resource locking (<code>--jobs</code>, <code>@resource</code>, <code>@serial</code>)</li>
+<li><code>tests/**/conftest.incn</code> auto-discovery and precedence rules</li>
+<li>built-in fixtures (<code>tmp_path</code>, <code>tmp_workdir</code>, <code>env</code>)</li>
+<li>timeouts (CLI + per-test override)</li>
+<li>output/reporting (<code>-k</code>, <code>--list</code>, shuffle/seed, durations, JSON/JUnit)</li>
+</ul>
+<p>Language constructs (<code>assert</code>, pattern binding, <code>module tests:</code>) are specified in <strong>RFC 018</strong>. This RFC is jointly normative with RFC 018.</p>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>Testing is a <em>system feature</em>: discovery, fixtures, parametrization, markers, parallelism, and reporting all interact. This RFC captures the runner/CLI behavior in one place, while language primitives are specified in RFC 018.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Define the runner and CLI contract for Incan testing in one place.</li>
+<li>Standardize discovery, fixtures, parametrization, markers, execution, timeouts, and reporting behavior.</li>
+<li>Keep the compiler-facing language semantics split cleanly across RFC 018 and RFC 019.</li>
+<li>Preserve a user-facing testing model that is Pythonic in ergonomics but explicit in semantics.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Redefining language-level <code>assert</code> or inline test block semantics already owned by RFC 018.</li>
+<li>Delegating the public testing contract to Cargo, pytest, or another external runner.</li>
+<li>Leaving core runner semantics to repo-local scripts or convention-only behavior.</li>
+</ul>
+<h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
+<h3 id="how-to-read-this-rfc">How to read this RFC<a class="headerlink" href="#how-to-read-this-rfc" title="Permanent link">&para;</a></h3>
+<p>This RFC specifies <strong>runner and CLI</strong> behavior: discovery, collection-time evaluation, fixture injection and lifecycle, execution model (<code>--jobs</code>), selection (<code>-k</code>/<code>-m</code>), timeouts, and report formats.</p>
+<p>Language constructs (<code>assert</code>, <code>module tests:</code>) are specified in RFC 018.</p>
+<p>Scope boundary:</p>
+<ul>
+<li><strong>In scope here</strong>: discovery, fixtures, parametrization, markers, execution model, timeouts, reporting.</li>
+<li><strong>Defined in RFC 018</strong>: <code>assert</code>, pattern binding, and <code>module tests:</code> language semantics.</li>
+</ul>
+<p>Suggested reading order:</p>
+<ol>
+<li>Guide-level explanation to form the mental model.</li>
+<li>Reference-level rules for precise behavior and edge cases.</li>
+<li>Implementation plan + conformance checklist for build order and tests.</li>
+</ol>
+<p>Quick navigation:</p>
+<ul>
+<li>Guide-level sections (discovery, fixtures, parametrization, markers, execution, reporting)</li>
+<li>Reference-level explanation (precise rules)</li>
+<li>Implementation plan and conformance checklist</li>
+<li>Appendix (runner surface inventory)</li>
+</ul>
+<p>Quick reference:</p>
+<ul>
+<li>Discovery: test files named <code>test_*.incn</code> / <code>*_test.incn</code>; inline <code>module tests:</code> blocks in source files.</li>
+<li>Fixtures: injected by parameter name; <code>@fixture(scope=...)</code>, autouse supported.</li>
+<li>Parametrize: <code>@parametrize</code> data must be collection-time evaluatable.</li>
+<li>Markers: <code>@skip</code>/<code>@xfail</code>/<code>@slow</code>/<code>@mark</code>, selected via <code>-m</code>.</li>
+<li>Parallelism: worker processes; session fixtures are per worker.</li>
+<li>Reporting: stable test ids drive <code>-k</code>, <code>--list</code>, JSON/JUnit.</li>
+</ul>
+<h3 id="differences-from-pytest-cargo-test-jest-important">Differences from pytest / cargo test / jest (important)<a class="headerlink" href="#differences-from-pytest-cargo-test-jest-important" title="Permanent link">&para;</a></h3>
+<p>This RFC is pytest-inspired, but there are a few deliberate differences that are easy to miss if you bring strong pytest/Rust/Jest muscle memory:</p>
+<ul>
+<li><strong><code>@slow</code> is excluded by default</strong>: you must opt in via <code>incan test --slow</code> (closer to Rust’s ignored tests than pytest
+markers).</li>
+<li><strong><code>skipif</code> / <code>xfailif</code> conditions must be collection-time evaluatable</strong> (const-evaluable + explicit <code>testing</code> probes).</li>
+<li><strong><code>conftest.incn</code> is only auto-discovered under <code>tests/</code></strong> (it does not apply to inline <code>module tests:</code> in <code>src/</code>).</li>
+<li><strong>Parallel execution (<code>--jobs</code>) uses worker processes</strong>, so process-global state (like <code>tmp_workdir</code> and <code>env</code>) remains
+isolated.</li>
+<li><strong><code>assert</code> can bind names via limited patterns</strong> (e.g. <code>assert opt is Some(v)</code>), defined in RFC 018.</li>
+</ul>
+<p>Quick CLI anchoring:</p>
+<table>
+<thead>
+<tr>
+<th>Ecosystem</th>
+<th>Concept</th>
+<th>Incan equivalent</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>pytest</td>
+<td>fail-fast (<code>-x</code>)</td>
+<td><code>incan test -x</code></td>
+</tr>
+<tr>
+<td>pytest-xdist</td>
+<td>parallel workers (<code>-n 8</code>)</td>
+<td><code>incan test -j 8</code></td>
+</tr>
+<tr>
+<td>pytest</td>
+<td>keyword filter (<code>-k</code>)</td>
+<td><code>incan test -k &lt;substr&gt;</code></td>
+</tr>
+<tr>
+<td>pytest</td>
+<td>marker filter (<code>-m</code>)</td>
+<td><code>incan test -m &lt;expr&gt;</code></td>
+</tr>
+<tr>
+<td>pytest</td>
+<td>strict markers</td>
+<td><code>incan test --strict-markers</code></td>
+</tr>
+<tr>
+<td>Rust</td>
+<td>ignored-by-default tests</td>
+<td><code>@slow</code> + <code>incan test --slow</code></td>
+</tr>
+<tr>
+<td>Rust</td>
+<td>show output (<code>-- --nocapture</code>)</td>
+<td><code>incan test --nocapture</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="the-testing-module">The <code>testing</code> module<a class="headerlink" href="#the-testing-module" title="Permanent link">&para;</a></h3>
+<p>Testing utilities are normal functions/decorators imported from the <code>testing</code> module:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_false</span><span class="p">,</span> <span class="n">fail</span>
+</code></pre></div>
+<p>Language-level <code>assert</code> semantics and the <code>testing.assert_*</code> mapping are defined in RFC 018.</p>
+<h3 id="where-tests-can-live-two-test-contexts">Where tests can live (two test contexts)<a class="headerlink" href="#where-tests-can-live-two-test-contexts" title="Permanent link">&para;</a></h3>
+<h4 id="1-test-files">1) Test files<a class="headerlink" href="#1-test-files" title="Permanent link">&para;</a></h4>
+<p>Put tests under <code>tests/</code>, using test file naming:</p>
+<ul>
+<li><code>test_*.incn</code></li>
+<li><code>*_test.incn</code></li>
+</ul>
+<p>Example:</p>
+<div class="language-incan highlight"><span class="filename">tests/test_math.incn</span><pre><span></span><code><span class="sd">&quot;&quot;&quot;Unit tests for math.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_addition</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nf">assert_eq</span><span class="p">(</span><span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="mi">5</span><span class="p">)</span>
+</code></pre></div>
+<p>Note: In test files, the entire file is already a test context. Do not wrap tests in <code>module tests:</code>; that construct is reserved for inline tests in production source files.</p>
+<h4 id="2-inline-test-only-module-blocks-recommended-for-unit-tests">2) Inline test-only module blocks (recommended for unit tests)<a class="headerlink" href="#2-inline-test-only-module-blocks-recommended-for-unit-tests" title="Permanent link">&para;</a></h4>
+<p>Inline tests live next to production code, but inside a <strong>test-only module block</strong>.</p>
+<p>See RFC 018 for the language-level <code>module tests:</code> example and scoping details.</p>
+<p>This keeps helpers/fixtures/test imports scoped to the test module. Stripping behavior in non-test builds is defined in RFC 018.</p>
+<p>A module block named <code>tests</code> (i.e. <code>module tests:</code>) is an exclusive test context; the language semantics are defined in RFC 018.</p>
+<h3 id="when-to-use-inline-tests-vs-tests-files">When to use inline tests vs <code>tests/</code> files<a class="headerlink" href="#when-to-use-inline-tests-vs-tests-files" title="Permanent link">&para;</a></h3>
+<p>Both test contexts exist on purpose; they serve different goals.</p>
+<p>Use <strong>inline tests</strong> (<code>module tests:</code>) when:</p>
+<ul>
+<li>you are writing <strong>unit tests</strong> for code in the same file/module</li>
+<li>tests are <strong>fast and deterministic</strong></li>
+<li>the test’s helpers/imports should remain <strong>test-only</strong> and scoped</li>
+</ul>
+<p>Use <strong>test files under <code>tests/</code></strong> when:</p>
+<ul>
+<li>you are writing <strong>integration/system tests</strong> spanning multiple modules</li>
+<li>the tests rely on shared suite infrastructure (e.g. DB, network, file layouts)</li>
+<li>you want to use shared fixtures via <code>tests/**/conftest.incn</code></li>
+</ul>
+<p>Guideline:</p>
+<ul>
+<li>Prefer inline tests for “local correctness”.</li>
+<li>Prefer <code>tests/</code> for “behavior of the system” and shared fixture setups.</li>
+</ul>
+<h3 id="discovery-pytest-like">Discovery: “pytest-like”<a class="headerlink" href="#discovery-pytest-like" title="Permanent link">&para;</a></h3>
+<p>Inside a test context, a function is a test if either:</p>
+<ul>
+<li>it is named <code>test_*</code>, or</li>
+<li>it is decorated with <code>@test</code> from the <code>testing</code> module</li>
+</ul>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
+
+<span class="k">module</span> <span class="k">tests</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="k">test</span>
+
+    <span class="c1"># implicitly marked as a test because it is named `test_*`</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_by_name</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nf">assert_eq</span><span class="p">(</span><span class="n">add</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="mi">3</span><span class="p">)</span>
+
+    <span class="nd">@test</span>  <span class="c1"># explicitly marked as a test</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">any_name_is_ok</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nf">assert_eq</span><span class="p">(</span><span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="mi">4</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="fixtures-pytest-style">Fixtures (pytest-style)<a class="headerlink" href="#fixtures-pytest-style" title="Permanent link">&para;</a></h3>
+<p>Fixtures are functions decorated with <code>@fixture</code> and injected by parameter name:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">module</span> <span class="k">tests</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span><span class="p">,</span> <span class="nf">assert_eq</span>
+
+    <span class="nd">@fixture</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">base</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mi">40</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_uses_fixture</span><span class="p">(</span><span class="n">base</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nf">assert_eq</span><span class="p">(</span><span class="n">base</span> <span class="o">+</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">42</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="parametrize">Parametrize<a class="headerlink" href="#parametrize" title="Permanent link">&para;</a></h3>
+<p>Parametrized tests expand into multiple cases:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
+
+<span class="k">module</span> <span class="k">tests</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">parametrize</span><span class="p">,</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="k">test</span>
+
+    <span class="nd">@parametrize</span><span class="p">(</span><span class="s2">&quot;a, b, expected&quot;</span><span class="p">,</span> <span class="p">[</span>
+        <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span>
+        <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>
+        <span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>
+    <span class="p">])</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_add</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">expected</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nf">assert_eq</span><span class="p">(</span><span class="n">add</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">),</span> <span class="n">expected</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="running-tests">Running tests<a class="headerlink" href="#running-tests" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span class="c1"># Run all tests under tests/</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests/
+
+<span class="c1"># Run tests in a particular file</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests/test_math.incn
+
+<span class="c1"># Run tests in source tree (includes inline test modules)</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>src/
+
+<span class="c1"># Filter by keyword</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-k<span class="w"> </span><span class="s2">&quot;add&quot;</span><span class="w"> </span>src/
+
+<span class="c1"># Set a per-test timeout (default for all tests)</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--timeout<span class="w"> </span>5s<span class="w"> </span>tests/
+
+<span class="c1"># Treat xfail tests as normal tests (run-xfail)</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--run-xfail<span class="w"> </span>tests/
+
+<span class="c1"># List collected tests without executing them</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--list<span class="w"> </span>tests/
+
+<span class="c1"># Machine-readable reports (CI)</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--format<span class="w"> </span>json<span class="w"> </span>tests/
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--junit<span class="w"> </span>reports/junit.xml<span class="w"> </span>tests/
+
+<span class="c1"># Output capture policy</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--nocapture<span class="w"> </span>tests/
+</code></pre></div>
+<h3 id="additional-runner-examples">Additional runner examples<a class="headerlink" href="#additional-runner-examples" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span class="c1"># Filter by marker expression (pytest-style)</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;slow and not flaky&quot;</span><span class="w"> </span>tests/
+
+<span class="c1"># Fail collection on unknown markers (requires marker registry; see reference rules)</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--strict-markers<span class="w"> </span>tests/
+
+<span class="c1"># Run tests in parallel</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-j<span class="w"> </span><span class="m">8</span><span class="w"> </span>tests/
+
+<span class="c1"># Shuffle collection order to catch order dependencies (seed for reproducibility)</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--shuffle<span class="w"> </span>--seed<span class="w"> </span><span class="m">12345</span><span class="w"> </span>tests/
+
+<span class="c1"># Show slowest N tests</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--durations<span class="w"> </span><span class="m">10</span><span class="w"> </span>tests/
+</code></pre></div>
+<h3 id="parallelism-and-shared-resources">Parallelism and shared resources<a class="headerlink" href="#parallelism-and-shared-resources" title="Permanent link">&para;</a></h3>
+<p>When tests run with <code>--jobs &gt; 1</code>, some tests can interfere with each other if they touch shared state (a database, external services, global singletons, etc.). Incan provides two stdlib-gated scheduling decorators:</p>
+<ul>
+<li><code>@serial</code>: run this test <em>alone</em> (exclusive against the entire test suite)</li>
+<li><code>@resource("name")</code>: run tests that share the same resource key exclusively, while allowing unrelated tests to run in parallel</li>
+</ul>
+<p>Important:</p>
+<ul>
+<li>With the worker-process model, <strong>session-scoped fixtures are per worker</strong>, not global to the entire run. Use <code>--jobs 1</code> if you need a single shared session fixture.</li>
+</ul>
+<p>Example:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">module</span> <span class="k">tests</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">resource</span><span class="p">,</span> <span class="n">serial</span>
+
+    <span class="nd">@resource</span><span class="p">(</span><span class="s2">&quot;db&quot;</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_migrate_schema</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="o">...</span>
+
+    <span class="nd">@resource</span><span class="p">(</span><span class="s2">&quot;db&quot;</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_user_repo_queries</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="o">...</span>
+
+    <span class="nd">@serial</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_uses_fixed_port_8080</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="o">...</span>
+</code></pre></div>
+<blockquote>
+<p>Note: <code>@mark("db")</code> is <em>classification</em> for selection/reporting; it does not imply locking. Use <code>@resource("db")</code> when you need mutual exclusion.</p>
+</blockquote>
+<h3 id="markers-pytest-style-and-marker-selection">Markers (pytest-style) and marker selection<a class="headerlink" href="#markers-pytest-style-and-marker-selection" title="Permanent link">&para;</a></h3>
+<p>Beyond the built-in markers (<code>@skip</code>, <code>@xfail</code>, <code>@slow</code>), Incan supports user-defined markers and marker-based selection:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">module</span> <span class="k">tests</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">mark</span>
+
+    <span class="nd">@mark</span><span class="p">(</span><span class="s2">&quot;db&quot;</span><span class="p">)</span>
+    <span class="nd">@mark</span><span class="p">(</span><span class="s2">&quot;flaky&quot;</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_query</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="o">...</span>
+</code></pre></div>
+<p>Run subsets of tests:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;db and not flaky&quot;</span><span class="w"> </span>tests/
+</code></pre></div>
+<h3 id="default-marks-file-level-and-subtree-level-via-conftestincn">Default marks (file-level and subtree-level via <code>conftest.incn</code>)<a class="headerlink" href="#default-marks-file-level-and-subtree-level-via-conftestincn" title="Permanent link">&para;</a></h3>
+<p>Sometimes you want to classify a whole <em>group</em> of tests (e.g. everything under <code>tests/integrations/</code> is “integration”), without repeating <code>@mark("integration")</code> on every test. Incan supports default marks in the <code>tests/</code> test suite:</p>
+<ul>
+<li><strong>File-level</strong>: apply to all tests collected from a single test file.</li>
+<li><strong>Subtree-level</strong>: apply to all tests collected under a directory subtree, configured via <code>tests/**/conftest.incn</code>.</li>
+</ul>
+<p>Syntax:</p>
+<ul>
+<li><code>const TEST_MARKS = ["name1", "name2", ...]</code></li>
+</ul>
+<p>Example file structure:</p>
+<ul>
+<li><code>tests/</code><ul>
+<li><code>integrations/</code><ul>
+<li><code>conftest.incn</code></li>
+<li><code>test_some_things.incn</code></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p><code>tests/integrations/conftest.incn</code>:</p>
+<div class="language-incan highlight"><span class="filename">tests/integrations/conftest.incn</span><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
+
+<span class="k">const</span> <span class="nc">TEST_MARKS</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;integration&quot;</span><span class="p">]</span>
+
+<span class="nd">@fixture</span><span class="p">(</span><span class="n">scope</span><span class="o">=</span><span class="s2">&quot;session&quot;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">base_url</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="s2">&quot;http://localhost:8080&quot;</span>
+</code></pre></div>
+<p><code>tests/integrations/test_some_things.incn</code>:</p>
+<div class="language-incan highlight"><span class="filename">tests/integrations/test_some_things.incn</span><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span>
+
+<span class="k">const</span> <span class="nc">TEST_MARKS</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;smoke&quot;</span><span class="p">]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_ping</span><span class="p">(</span><span class="n">base_url</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nf">assert_eq</span><span class="p">(</span><span class="n">base_url</span><span class="p">,</span> <span class="s2">&quot;http://localhost:8080&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Now:</p>
+<ul>
+<li><code>incan test -m "integration" tests/</code> selects all integration tests</li>
+<li><code>incan test -m "integration and smoke" tests/</code> selects the smoke subset inside integrations</li>
+</ul>
+<p>Inline tests (<code>module tests:</code> in production files) may also use <code>const TEST_MARKS</code> inside the test module, but this is discouraged: keep inline tests simple and prefer per-test marks (or move richer test organization into <code>tests/</code>).</p>
+<h3 id="conditional-skipxfail">Conditional skip/xfail<a class="headerlink" href="#conditional-skipxfail" title="Permanent link">&para;</a></h3>
+<p>Incan supports conditional skipping/xfail for platform- and feature-gated tests:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">module</span> <span class="k">tests</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">skipif</span><span class="p">,</span> <span class="n">xfailif</span><span class="p">,</span> <span class="n">platform</span><span class="p">,</span> <span class="n">feature</span>
+
+    <span class="nd">@skipif</span><span class="p">(</span><span class="n">platform</span><span class="p">()</span> <span class="o">==</span> <span class="s2">&quot;windows&quot;</span><span class="p">,</span> <span class="s2">&quot;path semantics differ&quot;</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_paths</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="o">...</span>
+
+    <span class="nd">@xfailif</span><span class="p">(</span><span class="n">feature</span><span class="p">(</span><span class="s2">&quot;new_parser&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="k">false</span><span class="p">,</span> <span class="s2">&quot;known bug #123&quot;</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_known_bug</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="o">...</span>
+</code></pre></div>
+<h3 id="parametrize-with-per-case-marks">Parametrize with per-case marks<a class="headerlink" href="#parametrize-with-per-case-marks" title="Permanent link">&para;</a></h3>
+<p>You can mark individual parameter cases (skip/xfail/etc.) via <code>case(...)</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">module</span> <span class="k">tests</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">parametrize</span><span class="p">,</span> <span class="k">case</span><span class="p">,</span> <span class="n">skip</span><span class="p">,</span> <span class="n">xfail</span>
+
+    <span class="nd">@parametrize</span><span class="p">(</span><span class="s2">&quot;x&quot;</span><span class="p">,</span> <span class="p">[</span>
+        <span class="k">case</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span>
+        <span class="k">case</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">marks</span><span class="o">=</span><span class="p">[</span><span class="n">xfail</span><span class="p">(</span><span class="s2">&quot;bug #123&quot;</span><span class="p">)]),</span>
+        <span class="k">case</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">marks</span><span class="o">=</span><span class="p">[</span><span class="n">skip</span><span class="p">(</span><span class="s2">&quot;too slow&quot;</span><span class="p">)]),</span>
+    <span class="p">])</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_x</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">assert</span> <span class="n">x</span> <span class="o">&gt;</span> <span class="mi">0</span>
+</code></pre></div>
+<h3 id="shared-fixtures-via-conftestincn">Shared fixtures via <code>conftest.incn</code><a class="headerlink" href="#shared-fixtures-via-conftestincn" title="Permanent link">&para;</a></h3>
+<p>To avoid repeating fixtures across many test files, any <code>conftest.incn</code> under <code>tests/</code> is automatically loaded by the test runner and contributes fixtures to tests in that directory subtree.</p>
+<p>Example:</p>
+<div class="language-incan highlight"><span class="filename">tests/conftest.incn</span><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
+
+<span class="nd">@fixture</span><span class="p">(</span><span class="n">scope</span><span class="o">=</span><span class="s2">&quot;session&quot;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">base_url</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="s2">&quot;http://localhost:8080&quot;</span>
+</code></pre></div>
+<div class="language-incan highlight"><span class="filename">tests/test_api.incn</span><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_ping</span><span class="p">(</span><span class="n">base_url</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nf">assert_eq</span><span class="p">(</span><span class="n">base_url</span><span class="p">,</span> <span class="s2">&quot;http://localhost:8080&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><code>conftest.incn</code> is only auto-discovered under <code>tests/</code> and only applies to tests located in that subtree. Inline tests in production source trees (e.g. <code>src/**</code> <code>module tests:</code> blocks) do not automatically receive <code>conftest</code> fixtures; share fixtures via explicit helper modules instead.</p>
+<h3 id="built-in-fixtures">Built-in fixtures<a class="headerlink" href="#built-in-fixtures" title="Permanent link">&para;</a></h3>
+<p>The test runner provides a small set of built-in fixtures:</p>
+<ul>
+<li><code>tmp_path: Path</code>: a unique temporary directory per test (cleaned up automatically)</li>
+<li><code>tmp_workdir: Path</code>: runs the test with the working directory set to a fresh temp directory (restored afterward)</li>
+<li><code>env: TestEnv</code>: a helper for temporary environment variables (restored afterward)</li>
+</ul>
+<p>Use <code>tmp_path</code> when you just need a scratch directory for files and don’t want to change process state. Use <code>tmp_workdir</code> when the code under test relies on relative paths; it switches the process working directory to a fresh temp directory and yields its path. Use <code>env</code> to temporarily set/unset environment variables for a test, with automatic restoration afterward.</p>
+<p>Example:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">module</span> <span class="k">tests</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span><span class="p">,</span> <span class="n">tmp_workdir</span><span class="p">,</span> <span class="n">tmp_path</span><span class="p">,</span> <span class="n">env</span><span class="p">,</span> <span class="nc">TestEnv</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_uses_tmp_path</span><span class="p">(</span><span class="n">tmp_path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">let</span> <span class="n">config</span> <span class="o">=</span> <span class="n">tmp_path</span> <span class="o">/</span> <span class="s2">&quot;config.json&quot;</span>
+        <span class="c1"># write/read config using an absolute path (error handling omitted in examples)</span>
+        <span class="n">config</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s2">&quot;</span><span class="si">{}</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">?</span>
+        <span class="k">assert</span> <span class="n">config</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_relative_paths</span><span class="p">(</span><span class="n">tmp_workdir</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># current working directory is a fresh temp dir for this test</span>
+        <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;output.txt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s2">&quot;ok&quot;</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="p">(</span><span class="n">tmp_workdir</span> <span class="o">/</span> <span class="s2">&quot;output.txt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_env</span><span class="p">(</span><span class="n">env</span><span class="p">:</span> <span class="nc">TestEnv</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">env</span><span class="o">.</span><span class="kt">set</span><span class="p">(</span><span class="s2">&quot;MODE&quot;</span><span class="p">,</span> <span class="s2">&quot;test&quot;</span><span class="p">)</span>
+        <span class="n">mode</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;MODE&quot;</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="n">mode</span> <span class="ow">is</span> <span class="nb">Some</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="n">v</span> <span class="o">==</span> <span class="s2">&quot;test&quot;</span>
+</code></pre></div>
+<h3 id="timeouts">Timeouts<a class="headerlink" href="#timeouts" title="Permanent link">&para;</a></h3>
+<p>Timeouts may be configured globally via CLI and overridden per test with a decorator (see reference-level rules).</p>
+<p>Warning:</p>
+<ul>
+<li>In the worker-process execution model, enforcing timeouts may terminate a worker process. In that case, fixture teardown is best-effort and may not run (this is called out explicitly in the reference-level timeout semantics).</li>
+</ul>
+<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
+<h3 id="collection-time-evaluatability-const-evaluable-reference-rules">Collection-time evaluatability (“const-evaluable”) (reference rules)<a class="headerlink" href="#collection-time-evaluatability-const-evaluable-reference-rules" title="Permanent link">&para;</a></h3>
+<p>Several runner features require evaluating expressions at collection time (before executing tests): <code>skipif</code>/<code>xfailif</code> conditions, <code>@parametrize</code> data (and ids), <code>TEST_MARKS</code>, and marker registries.</p>
+<p>In this RFC, “collection-time evaluatable” means “const-evaluable”, using the same rules as <code>const</code> initializers:</p>
+<ul>
+<li>allowed: literals, tuples/lists/dicts/sets of const-evaluable values, simple operators, and references to other consts</li>
+<li>disallowed: function/method calls, IO, randomness, and anything requiring running the program</li>
+</ul>
+<p>Static constructors (explicit exceptions):</p>
+<ul>
+<li>The following call-like forms are treated as <strong>compile-time data constructors</strong> and are allowed at collection time,
+as long as their arguments are themselves collection-time evaluatable:<ul>
+<li><code>case(...)</code></li>
+<li><code>mark("name")</code></li>
+<li><code>skip("reason")</code></li>
+<li><code>xfail("reason")</code></li>
+<li><code>slow</code></li>
+<li><code>resource("name")</code></li>
+<li><code>serial</code></li>
+</ul>
+</li>
+</ul>
+<p>Guidance:</p>
+<ul>
+<li>Keep <code>@parametrize</code> data simple and const-evaluable (literals, tuples, lists). Use fixtures or build values inside the test body when you need <code>Path</code>, UUIDs, or domain objects.</li>
+<li>Example: pass a filename as <code>str</code> and construct a <code>Path</code> inside the test.</li>
+</ul>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@parametrize</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;config.json&quot;</span><span class="p">,</span> <span class="s2">&quot;defaults.json&quot;</span><span class="p">])</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">test_config</span><span class="p">(</span><span class="n">tmp_path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">let</span> <span class="n">path</span> <span class="o">=</span> <span class="n">tmp_path</span> <span class="o">/</span> <span class="n">name</span>
+    <span class="k">assert</span> <span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span> <span class="o">==</span> <span class="kc">False</span>
+</code></pre></div>
+<p>If an expression required to be const-evaluable does not meet this, a <strong>test collection error</strong> (<code>TestCollectionError</code>) will be raised.</p>
+<p>Evaluation responsibility:</p>
+<ul>
+<li>Collection-time expressions are evaluated by the <strong>test runner</strong> during test collection (not by the compiler at compile time). This allows collection-time probes like <code>platform()</code> and <code>feature(name)</code> to inspect the runtime environment while still requiring the expression structure to be const-evaluable.</li>
+<li>The compiler validates that the expression is structurally const-evaluable; the runner evaluates it at collection time.</li>
+</ul>
+<h3 id="error-categories-reference-rules">Error categories (reference rules)<a class="headerlink" href="#error-categories-reference-rules" title="Permanent link">&para;</a></h3>
+<p>The test runner distinguishes the following error categories:</p>
+<ul>
+<li>
+<p><strong>Test collection error</strong> (<code>TestCollectionError</code>): the runner cannot finish collecting a valid, executable test suite.</p>
+<ul>
+<li>Examples:<ul>
+<li>non-const-evaluable <code>@parametrize</code> data / <code>ids</code></li>
+<li>non-evaluatable <code>skipif</code> / <code>xfailif</code> conditions</li>
+<li>missing fixture for a required parameter</li>
+<li>fixture dependency cycle</li>
+<li>duplicate fixture definition at the same precedence level</li>
+<li>unknown marker under <code>--strict-markers</code> (including in <code>TEST_MARKS</code>, <code>mark("...")</code>, or <code>-m</code> expressions)</li>
+</ul>
+</li>
+<li>Behavior:<ul>
+<li>abort test execution (tests are not run)</li>
+<li>exit with failure</li>
+<li>report the error with as much location context as possible (file/span, and the relevant declaration/decorator)</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>
+<p><strong>Test execution failure</strong>: a collected test case ran and failed.</p>
+<ul>
+<li>Examples: assertion failure, uncaught runtime error/panic, timeout.</li>
+<li>Behavior: record as a failed test case and continue unless <code>-x</code> is set.</li>
+</ul>
+</li>
+<li>
+<p><strong>Test skipped / expected-failure outcomes</strong>: a collected test case is skipped or treated specially by marker semantics.</p>
+<ul>
+<li>Examples: <code>skip</code>, <code>xfail</code>, <code>skipif</code>, <code>xfailif</code>.</li>
+</ul>
+</li>
+</ul>
+<h3 id="testing-gated-resolution">Testing-gated resolution<a class="headerlink" href="#testing-gated-resolution" title="Permanent link">&para;</a></h3>
+<p>The runner must only recognize testing constructs when they resolve to the <code>testing</code> module (imports and aliases) as specified in RFC 018.</p>
+<h3 id="test-contexts">Test contexts<a class="headerlink" href="#test-contexts" title="Permanent link">&para;</a></h3>
+<p>Test discovery operates on a set of <code>.incn</code> files selected by the CLI path argument.</p>
+<p>A file contributes tests/fixtures if it contains one or more <strong>test contexts</strong>:</p>
+<ol>
+<li><strong>Test file context</strong>: the whole file is a test context if the filename matches:</li>
+<li><code>test_*.incn</code>, or</li>
+<li><code>*_test.incn</code></li>
+<li><strong>Inline test module context</strong>: a <code>module tests:</code> block in the file is a test context.</li>
+</ol>
+<p>A file may contain at most one <code>module tests:</code> block (enforced by the compiler; see RFC 018).</p>
+<p>Restriction:</p>
+<ul>
+<li>A file that is a <strong>test file context</strong> (by name) must not also contain <code>module tests:</code> (restriction defined in RFC 018). This avoids a redundant/ambiguous “test context inside a test context” model and keeps the mental model simple.</li>
+</ul>
+<p>Rationale: a single inline test block keeps stripping rules, tooling, and scoping simple. This restriction may be relaxed in a future RFC once the feature is implemented and exercised in real codebases.</p>
+<h3 id="what-is-a-test">What is a test?<a class="headerlink" href="#what-is-a-test" title="Permanent link">&para;</a></h3>
+<p>Within a test context, a function is a test if:</p>
+<ul>
+<li>its name matches <code>test_*</code>, OR</li>
+<li>it is decorated with <code>testing.test</code></li>
+</ul>
+<p>Markers and parametrization apply to tests as defined in their respective sections.</p>
+<p>Test success criteria:</p>
+<ul>
+<li>A test is successful if it completes without an uncaught runtime error/panic or timeout.</li>
+<li>Test functions should return <code>None</code>; any return value is ignored by the runner.</li>
+</ul>
+<h3 id="what-is-a-fixture">What is a fixture?<a class="headerlink" href="#what-is-a-fixture" title="Permanent link">&para;</a></h3>
+<p>Within a test context, a function is a fixture if it is decorated with <code>testing.fixture</code>.</p>
+<p>Fixture dependency injection matches test/fixture parameters to fixture names.</p>
+<h3 id="fixture-injection-errors-reference-rules">Fixture injection errors (reference rules)<a class="headerlink" href="#fixture-injection-errors-reference-rules" title="Permanent link">&para;</a></h3>
+<p>Fixture resolution happens at collection time.</p>
+<p>Rules:</p>
+<ul>
+<li>If a test parameter has no matching fixture (including built-in fixtures), it is a <strong>test collection error</strong> (<code>TestCollectionError</code>).</li>
+<li>If fixture dependencies contain a cycle, it is a <strong>test collection error</strong> (<code>TestCollectionError</code>).</li>
+<li>If multiple fixtures with the same name are visible at the same precedence level (e.g. duplicate definitions in the same file), it is a <strong>test collection error</strong> (<code>TestCollectionError</code>).</li>
+</ul>
+<h3 id="fixture-scopes">Fixture scopes<a class="headerlink" href="#fixture-scopes" title="Permanent link">&para;</a></h3>
+<p><code>@fixture(scope="function"|"module"|"session", autouse=true|false)</code>:</p>
+<ul>
+<li><strong>function</strong>: created/teardown per test case</li>
+<li><strong>module</strong>: shared across all tests collected from the same source file</li>
+<li><strong>session</strong>: shared across the entire <code>incan test</code> run (note: under worker-process parallelism, session scope is per worker process unless a global coordinator is introduced)</li>
+</ul>
+<h3 id="autouse-fixtures-reference-rules">Autouse fixtures (reference rules)<a class="headerlink" href="#autouse-fixtures-reference-rules" title="Permanent link">&para;</a></h3>
+<p>An autouse fixture (<code>@fixture(..., autouse=true)</code>) runs automatically without being listed as a parameter.</p>
+<p>Where autouse applies:</p>
+<ul>
+<li>In a <strong>test file context</strong>, autouse fixtures defined in that file apply to all tests in that file.</li>
+<li>In an <strong>inline <code>module tests:</code> context</strong>, autouse fixtures defined in the test module apply to all tests in that test module.</li>
+<li>In <code>tests/**/conftest.incn</code>, autouse fixtures apply to all tests collected from files in that conftest’s directory subtree (subject to precedence rules already defined for conftest).</li>
+</ul>
+<p>Ordering and dependencies:</p>
+<ul>
+<li>Autouse fixtures may depend on other fixtures via parameters.</li>
+<li>For a given test case, the runner constructs the full fixture dependency graph (explicit + autouse) and executes setup in dependency order (topological order).</li>
+<li>If multiple fixtures are otherwise independent, ordering must be deterministic. The tie-breaker must be fixture name (lexicographic).</li>
+</ul>
+<p>Scope interaction:</p>
+<ul>
+<li>Autouse fixtures follow normal scope rules:<ul>
+<li>function-scoped autouse fixtures run once per test case</li>
+<li>module-scoped autouse fixtures run once per source file</li>
+<li>session-scoped autouse fixtures run once per test run (with <code>--jobs &gt; 1</code> this means once per worker process)</li>
+</ul>
+</li>
+</ul>
+<p>Failure behavior:</p>
+<ul>
+<li>If autouse fixture setup fails for a test case, the test is reported as failed due to fixture setup error (the test body does not run). Teardown for already-created fixtures is best-effort.</li>
+</ul>
+<h3 id="fixture-teardown-via-yield-reference-rules">Fixture teardown via <code>yield</code> (reference rules)<a class="headerlink" href="#fixture-teardown-via-yield-reference-rules" title="Permanent link">&para;</a></h3>
+<p>A fixture may optionally provide teardown logic using a <code>yield</code> expression, following Python/pytest's model.</p>
+<p>Design note (Python alignment):</p>
+<ul>
+<li>A fixture that uses <code>yield</code> is a <strong>generator function</strong>. This is the same semantics as Python: <code>yield</code> in a function body makes it a generator.</li>
+<li>The test runner detects generator-based fixtures and consumes them: it calls the generator to get the yielded value (setup), injects that value into tests, and then resumes/exhausts the generator after the test (teardown).</li>
+<li>This means <code>yield</code> has one meaning in the language (generator), and the runner uses that mechanism for setup/teardown.</li>
+</ul>
+<p>Form:</p>
+<ul>
+<li>The fixture function body contains exactly one <code>yield</code> statement.</li>
+<li>Either:<ul>
+<li><code>yield &lt;expr&gt;</code> (yields a value), OR</li>
+<li><code>yield</code> (yields the unit value; only valid for fixtures declared as <code>-&gt; None</code>)</li>
+</ul>
+</li>
+<li>The yielded value is the fixture value injected into tests/fixtures that depend on it.</li>
+<li>Statements <strong>after</strong> the <code>yield</code> are teardown logic.</li>
+</ul>
+<p>Rules:</p>
+<ul>
+<li>A fixture must execute <code>yield</code> exactly once. If <code>yield</code> executes zero times or more than once, it is a runtime error.</li>
+<li>Teardown must run even if the test fails (best-effort; failures in teardown are reported).</li>
+<li>Teardown timing is based on fixture scope:<ul>
+<li><strong>function</strong>: teardown runs after each test case that used the fixture</li>
+<li><strong>module</strong>: teardown runs after all tests from that source file finish</li>
+<li><strong>session</strong>: teardown runs at the end of the full test run</li>
+</ul>
+</li>
+</ul>
+<p>Errors:</p>
+<ul>
+<li>If teardown fails, the test run is considered failed (report as an error tied to the tests that used the fixture; for module/session scope, report at the end of the run).</li>
+</ul>
+<h3 id="keyword-selection-k-reference-rules">Keyword selection (<code>-k</code>) (reference rules)<a class="headerlink" href="#keyword-selection-k-reference-rules" title="Permanent link">&para;</a></h3>
+<p>CLI:</p>
+<ul>
+<li><code>-k &lt;substr&gt;</code>: include only tests whose identifier contains <code>&lt;substr&gt;</code> as a substring.</li>
+</ul>
+<p>Rules:</p>
+<ul>
+<li>Matching is performed against the test’s stable identifier (see “Stable test identifiers” below).</li>
+<li>The match is case-sensitive for now (future extensions may add richer expressions; this RFC only requires substring matching).</li>
+</ul>
+<p>Examples:</p>
+<ul>
+<li><code>incan test -k add tests/</code> selects tests whose id contains <code>add</code></li>
+</ul>
+<h3 id="fail-fast-x-exitfirst-reference-rules">Fail-fast (<code>-x</code> / <code>--exitfirst</code>) (reference rules)<a class="headerlink" href="#fail-fast-x-exitfirst-reference-rules" title="Permanent link">&para;</a></h3>
+<p>CLI:</p>
+<ul>
+<li><code>-x</code> / <code>--exitfirst</code>: stop the run after the first failure.</li>
+</ul>
+<p>Rules:</p>
+<ul>
+<li>“Failure” means any result that would make the overall run fail (e.g. <code>FAILED</code>, <code>XPASS</code>, fixture setup error, teardown error).</li>
+<li><code>XFAIL</code> does not count as a failure for <code>-x</code> (it is an expected failure).</li>
+<li>In sequential runs (<code>--jobs 1</code>), the runner stops executing further tests immediately after the first failure is recorded.</li>
+<li>With worker processes (<code>--jobs &gt; 1</code>):<ul>
+<li>the runner stops scheduling new tests after the first failure is recorded</li>
+<li>in-flight tests may complete and be reported (implementations may choose to terminate workers early, but should
+  prefer graceful shutdown to preserve fixture teardown)</li>
+</ul>
+</li>
+</ul>
+<h3 id="markers-and-selection-m">Markers and selection (<code>-m</code>)<a class="headerlink" href="#markers-and-selection-m" title="Permanent link">&para;</a></h3>
+<h4 id="marker-model">Marker model<a class="headerlink" href="#marker-model" title="Permanent link">&para;</a></h4>
+<p>Markers are labels attached to tests (and to individual parameter cases). They are used for:</p>
+<ul>
+<li>selection (<code>incan test -m ...</code>)</li>
+<li>conditional behavior (<code>skipif</code> / <code>xfailif</code>)</li>
+<li>reporting</li>
+</ul>
+<p>The following marker decorators are recognized when they resolve to the <code>testing</code> module:</p>
+<ul>
+<li><code>@skip(reason: str = "")</code></li>
+<li><code>@xfail(reason: str = "")</code></li>
+<li><code>@slow</code></li>
+<li><code>@mark(name: str)</code> (user-defined markers)</li>
+</ul>
+<p>Default marks:</p>
+<ul>
+<li>A <code>const TEST_MARKS: List[str]</code> binding (in a test file or in a <code>module tests:</code> context) adds default marks to all tests collected from that context.</li>
+<li>A <code>const TEST_MARKS: List[str]</code> binding in <code>tests/**/conftest.incn</code> adds default marks to all tests collected from files in that conftest’s directory subtree.</li>
+</ul>
+<p>Unknown markers:</p>
+<ul>
+<li>By default, unknown markers are allowed and recorded.</li>
+<li>With <code>--strict-markers</code>, unknown markers are a <strong>test collection error</strong> (<code>TestCollectionError</code>).</li>
+</ul>
+<p>Marker registration (required for <code>--strict-markers</code>):</p>
+<ul>
+<li>Marker names are considered “known” if they are:<ul>
+<li>built-in markers (<code>skip</code>, <code>xfail</code>, <code>slow</code>), OR</li>
+<li>declared in a <code>const TEST_MARKERS: List[str]</code> registry visible to the test.</li>
+</ul>
+</li>
+</ul>
+<p>Rules:</p>
+<ul>
+<li><code>TEST_MARKERS</code> may appear in:<ul>
+<li>a test file, or</li>
+<li>an inline <code>module tests:</code>, or</li>
+<li><code>tests/**/conftest.incn</code> (applies to its directory subtree).</li>
+</ul>
+</li>
+<li>All applicable <code>TEST_MARKERS</code> values from conftest files on the path to a test file are merged (union), outer-to-inner.</li>
+<li>The test file’s own <code>TEST_MARKERS</code> (if present) is also merged.</li>
+<li>With <code>--strict-markers</code>:<ul>
+<li>every <code>mark("name")</code> must use a name present in <code>TEST_MARKERS</code></li>
+<li>every name in <code>TEST_MARKS</code> must be present in <code>TEST_MARKERS</code></li>
+<li>every marker name referenced in <code>-m "&lt;expr&gt;"</code> must be present in <code>TEST_MARKERS</code></li>
+</ul>
+</li>
+</ul>
+<p>Terminology:</p>
+<ul>
+<li><code>TEST_MARKS</code> = default marks applied to tests</li>
+<li><code>TEST_MARKERS</code> = registry of <strong>allowed marker names</strong> for strict marker validation</li>
+</ul>
+<p>Restrictions:</p>
+<ul>
+<li><code>TEST_MARKERS</code> must be collection-time evaluatable.</li>
+<li>Marker names must match <code>^[a-z][a-z0-9_]*$</code> (snake_case). If this is violated, it is a <strong>test collection error</strong>
+(<code>TestCollectionError</code>).</li>
+</ul>
+<h4 id="marker-selection-expression">Marker selection expression<a class="headerlink" href="#marker-selection-expression" title="Permanent link">&para;</a></h4>
+<p><code>incan test -m &lt;expr&gt;</code> filters collected tests by marker expression, where <code>&lt;expr&gt;</code> supports:</p>
+<ul>
+<li>marker names (strings)</li>
+<li><code>and</code>, <code>or</code>, <code>not</code></li>
+<li>parentheses for grouping</li>
+</ul>
+<p>Operator precedence:</p>
+<ul>
+<li><code>not</code> &gt; <code>and</code> &gt; <code>or</code></li>
+<li>all operators are left-associative; parentheses override precedence</li>
+</ul>
+<p>Examples:</p>
+<ul>
+<li><code>-m "slow"</code></li>
+<li><code>-m "db and not flaky"</code></li>
+</ul>
+<h4 id="slow-tests-slow-and-slow">Slow tests (<code>@slow</code> and <code>--slow</code>)<a class="headerlink" href="#slow-tests-slow-and-slow" title="Permanent link">&para;</a></h4>
+<p>By default, tests marked <code>@slow</code> are excluded from collection.</p>
+<p>CLI:</p>
+<ul>
+<li><code>--slow</code>: include slow tests in collection.</li>
+</ul>
+<p>Interaction with <code>-m</code>:</p>
+<ul>
+<li>If <code>--slow</code> is not set, <code>@slow</code> tests are excluded even if they would otherwise match <code>-m</code> (use <code>--slow</code> explicitly to  opt in).</li>
+</ul>
+<h3 id="parallel-execution-and-resource-locking-reference-rules">Parallel execution and resource locking (reference rules)<a class="headerlink" href="#parallel-execution-and-resource-locking-reference-rules" title="Permanent link">&para;</a></h3>
+<h4 id="cli-parallelism">CLI parallelism<a class="headerlink" href="#cli-parallelism" title="Permanent link">&para;</a></h4>
+<p>CLI:</p>
+<ul>
+<li><code>--jobs &lt;n&gt;</code> / <code>-j &lt;n&gt;</code>: maximum number of tests to execute concurrently.</li>
+</ul>
+<p>Rules:</p>
+<ul>
+<li>The default is implementation-defined, but must be documented and stable (recommended: number of logical CPUs).</li>
+<li><code>--jobs 1</code> forces sequential execution.</li>
+</ul>
+<p>Execution model (important for correctness):</p>
+<ul>
+<li>Parallelism in this RFC refers to <strong>multiple worker processes</strong> (xdist-style), not concurrent execution within a single process. Each worker executes <strong>one test case at a time</strong>.</li>
+<li>This keeps process-global state changes (e.g. current working directory, environment variables) isolated per worker and avoids flakiness from thread-level shared state.</li>
+<li>Session-scoped fixtures under worker processes are a common source of surprises. In this RFC:<ul>
+<li>Session-scoped fixtures are <strong>per worker process</strong> (i.e., created once per worker). This is simple, deterministic, and avoids cross-process coordination.</li>
+<li>A future extension may introduce a coordinator for truly global session fixtures (once per overall run).</li>
+</ul>
+</li>
+</ul>
+<h4 id="scheduling-decorators">Scheduling decorators<a class="headerlink" href="#scheduling-decorators" title="Permanent link">&para;</a></h4>
+<p>The following decorators are recognized when they resolve to the <code>testing</code> module:</p>
+<ul>
+<li><code>@resource(name: str)</code></li>
+<li><code>@serial</code></li>
+</ul>
+<p>Rules:</p>
+<ul>
+<li>A test case may declare zero or more resources.</li>
+<li>Two test cases must not execute concurrently if they share any declared resource key.</li>
+<li><code>@serial</code> is equivalent to <code>@resource("__serial__")</code> and additionally conflicts with <em>all</em> other tests (i.e., it runs alone).</li>
+<li>Resource locks apply to expanded parametrized cases as well (each case is scheduled independently but inherits the same declared resources from the test function and/or per-case marks).</li>
+<li>Lock acquisition order: when a test declares multiple resources, the scheduler MUST acquire locks in lexicographic order of resource key. This prevents deadlocks and remains valid if future implementations allow &gt;1 concurrent test per worker.</li>
+</ul>
+<p>Non-goal:</p>
+<ul>
+<li>Marks (e.g. <code>@mark("db")</code>) do not imply resources. Locking is explicit.</li>
+</ul>
+<h3 id="output-reporting-and-runner-ergonomics-reference-rules">Output, reporting, and runner ergonomics (reference rules)<a class="headerlink" href="#output-reporting-and-runner-ergonomics-reference-rules" title="Permanent link">&para;</a></h3>
+<h3 id="stable-test-identifiers">Stable test identifiers<a class="headerlink" href="#stable-test-identifiers" title="Permanent link">&para;</a></h3>
+<p>The test runner must assign a stable identifier (“test id”) to each collected test case. This identifier is used by <code>--list</code>, <code>-k</code>, and machine-readable reports.</p>
+<p>Format (conceptual):</p>
+<ul>
+<li><code>&lt;relative_path&gt;::&lt;context&gt;::&lt;test_name&gt;[&lt;case_id&gt;]</code></li>
+</ul>
+<p>Rules:</p>
+<ul>
+<li><code>&lt;relative_path&gt;</code> is the path relative to the <strong>stable id root</strong>, determined as follows (in order):<ol>
+<li>If <code>incan test</code> is invoked with an explicit directory argument, that directory is the stable id root.</li>
+<li>Otherwise, if a project root exists (detected via <code>incan.toml</code> per RFC 015), the project root is the stable id root.</li>
+<li>Otherwise, the current working directory is the stable id root.</li>
+</ol>
+</li>
+<li><code>&lt;context&gt;</code> is:<ul>
+<li><code>file</code> for test-file context (the entire file is a test context), OR</li>
+<li><code>tests</code> for inline <code>module tests:</code> context</li>
+</ul>
+</li>
+<li><code>&lt;case_id&gt;</code> is present only for parametrized expansions (stable index order, e.g. <code>[0]</code>, <code>[1]</code>, ...).</li>
+</ul>
+<p>Examples:</p>
+<ul>
+<li><code>tests/test_math.incn::file::test_addition</code></li>
+<li><code>src/math.incn::tests::test_addition</code></li>
+<li><code>tests/test_math.incn::file::test_add[2]</code></li>
+</ul>
+<h4 id="output-capture">Output capture<a class="headerlink" href="#output-capture" title="Permanent link">&para;</a></h4>
+<p>CLI:</p>
+<ul>
+<li><code>--nocapture</code>: stream test output live.</li>
+</ul>
+<p>Default behavior:</p>
+<ul>
+<li>By default, the runner captures output and prints it for failed tests (and optionally on verbose mode).</li>
+</ul>
+<h4 id="listing">Listing<a class="headerlink" href="#listing" title="Permanent link">&para;</a></h4>
+<p>CLI:</p>
+<ul>
+<li><code>--list</code>: list collected tests (after applying collection-time filters like <code>-k</code> / <code>-m</code>) and exit with success.</li>
+</ul>
+<h4 id="shuffling">Shuffling<a class="headerlink" href="#shuffling" title="Permanent link">&para;</a></h4>
+<p>CLI:</p>
+<ul>
+<li><code>--shuffle</code>: randomize test execution order.</li>
+<li><code>--seed &lt;n&gt;</code>: set the shuffle seed for reproducibility.</li>
+</ul>
+<p>Rules:</p>
+<ul>
+<li>Without <code>--shuffle</code>, the order is deterministic and stable.</li>
+<li>With <code>--shuffle</code>, the runner must print the seed it used (explicit or generated).</li>
+</ul>
+<h4 id="durations">Durations<a class="headerlink" href="#durations" title="Permanent link">&para;</a></h4>
+<p>CLI:</p>
+<ul>
+<li><code>--durations &lt;n&gt;</code>: print the slowest N tests at the end of the run (by wall-clock time).</li>
+</ul>
+<h4 id="machine-readable-reports">Machine-readable reports<a class="headerlink" href="#machine-readable-reports" title="Permanent link">&para;</a></h4>
+<p>CLI:</p>
+<ul>
+<li><code>--format json</code>: emit one JSON record per test result (stable schema) suitable for CI tooling.</li>
+<li><code>--junit &lt;path&gt;</code>: write a JUnit XML report to <code>&lt;path&gt;</code>.</li>
+</ul>
+<p>Minimum JSON schema (one record per test result):</p>
+<ul>
+<li><code>schema_version: "incan.test.v1"</code></li>
+<li><code>id: str</code> (stable test id)</li>
+<li><code>outcome: "passed" | "failed" | "skipped" | "xfailed" | "xpassed"</code></li>
+<li><code>duration_ms: number</code></li>
+<li><code>file: str</code></li>
+<li><code>name: str</code></li>
+<li><code>case_id: str | null</code></li>
+<li><code>parameters: object</code> (optional; name → rendered value)</li>
+<li><code>markers: list[str]</code> (optional)</li>
+<li><code>message: str</code> (optional failure/skip reason)</li>
+</ul>
+<p>Outcome casing:</p>
+<ul>
+<li>JSON outcomes are lower-case as listed above.</li>
+<li>Console output may use upper-case labels for readability; this is purely presentation.</li>
+</ul>
+<p>Minimum reporting guarantees for parametrized tests:</p>
+<ul>
+<li>Console output and machine-readable reports must include the stable test id (including case id, if parametrized).</li>
+<li>For parametrized failures, the runner must include the bound parameter values in the failure output:<ul>
+<li>Console: show a <code>name=value</code> list (at minimum for the failing case).</li>
+<li>JSON: include a <code>parameters</code> object mapping parameter names to their rendered values.</li>
+<li>JUnit: encode parameter values in the test name (via case id) and/or include them in the failure message text.</li>
+</ul>
+</li>
+</ul>
+<h3 id="conditional-skipxfail-reference-rules">Conditional skip/xfail (reference rules)<a class="headerlink" href="#conditional-skipxfail-reference-rules" title="Permanent link">&para;</a></h3>
+<p>The following decorators are recognized when they resolve to the <code>testing</code> module:</p>
+<ul>
+<li><code>@skipif(condition: bool, reason: str = "")</code></li>
+<li><code>@xfailif(condition: bool, reason: str = "")</code></li>
+</ul>
+<p>Rules:</p>
+<ul>
+<li>The condition is evaluated at collection time using the same “const-evaluable subset” used for other compile-time
+evaluation, plus a small set of explicit <code>testing</code> probes (see below).</li>
+<li>If the condition is not evaluatable at collection time, it is a <strong>test collection error</strong> (<code>TestCollectionError</code>).</li>
+</ul>
+<h4 id="collection-time-probes-testing">Collection-time probes (testing)<a class="headerlink" href="#collection-time-probes-testing" title="Permanent link">&para;</a></h4>
+<p>The following <code>testing</code> functions are intended for use in <code>skipif/xfailif</code> conditions and must be supported in the collection-time evaluatable subset:</p>
+<ul>
+<li><code>platform() -&gt; str</code><ul>
+<li>Returns a stable platform identifier string (minimum set: <code>"linux"</code>, <code>"macos"</code>, <code>"windows"</code>).</li>
+</ul>
+</li>
+<li><code>feature(name: str) -&gt; bool</code><ul>
+<li>Returns whether a named test feature flag is enabled for this <code>incan test</code> run.</li>
+<li>If the feature is not enabled, returns <code>false</code> (default).</li>
+</ul>
+</li>
+</ul>
+<p>Feature enabling (CLI):</p>
+<ul>
+<li><code>--feature &lt;name&gt;</code> enables a named feature for <code>feature(name)</code> checks.</li>
+<li>The flag may be provided multiple times to enable multiple features.</li>
+</ul>
+<h3 id="parametrization-reference-rules">Parametrization (reference rules)<a class="headerlink" href="#parametrization-reference-rules" title="Permanent link">&para;</a></h3>
+<p><code>@parametrize(argnames: str, argvalues: List[Tuple|case(...)], ids: List[str] | None = None)</code> expands a single test function into multiple test cases.</p>
+<p>Collection-time evaluatability:</p>
+<ul>
+<li><code>argvalues</code> must be collection-time evaluatable:<ul>
+<li>literals, tuples, lists, dicts of literals (const-evaluable)</li>
+<li><code>case(...)</code> values with const-evaluable payloads and marks</li>
+</ul>
+</li>
+<li>If <code>argvalues</code> is not evaluatable at collection time, it is a <strong>test collection error</strong> (<code>TestCollectionError</code>).</li>
+</ul>
+<p>Deliberate tightening vs earlier drafts:</p>
+<ul>
+<li>Complex runtime expressions in <code>argvalues</code> (e.g. calling constructors, IO, random) are intentionally disallowed in this RFC because they undermine deterministic collection and stable test ids. Use fixtures to build complex objects from const inputs, or construct values inside the test body.</li>
+</ul>
+<p>Case identifiers:</p>
+<ul>
+<li>Expanded tests must get stable case ids.</li>
+<li>If <code>ids</code> is provided:<ul>
+<li>it must be collection-time evaluatable</li>
+<li>its length must equal the number of generated cases</li>
+<li>each id must be a <code>str</code></li>
+<li>ids must be unique within a single parametrized test function (duplicates are a <strong>test collection error</strong> (<code>TestCollectionError</code>))</li>
+<li>id format constraints:<ul>
+<li>ids must match the regex <code>^[A-Za-z0-9][A-Za-z0-9_.]*$</code></li>
+<li>ids must not contain <code>[</code> or <code>]</code> (reserved for stable id formatting)</li>
+<li>ids must not contain <code>-</code> (reserved for composing stacked parametrization case ids)</li>
+</ul>
+</li>
+<li>ids are used as the case id in the stable test identifier (e.g. <code>test_add[lowercase]</code>)</li>
+</ul>
+</li>
+<li>Otherwise, stable numeric indices are used in the stable index order in <code>argvalues</code> (e.g. <code>[0]</code>, <code>[1]</code>, ...).</li>
+</ul>
+<p>Multiple parametrization (cartesian product):</p>
+<ul>
+<li>A test may have multiple <code>@parametrize</code> decorators.</li>
+<li>The effective set of test cases is the cartesian product of the parameter sets.</li>
+<li>Expansion order is deterministic and follows source order of the decorators (top to bottom).</li>
+<li>Case id composition:<ul>
+<li>If any <code>@parametrize</code> provides <code>ids</code>, the composite case id joins components with <code>-</code> in decorator order (e.g. <code>[lowercase-utf8]</code>).</li>
+<li>Otherwise, join numeric indices with <code>-</code> (e.g. <code>[0-2]</code>).</li>
+</ul>
+</li>
+</ul>
+<p>Empty parameter list:</p>
+<ul>
+<li>If <code>argvalues</code> is empty (or the cartesian product is empty), no tests are generated for that parametrized function and the runner should emit a warning.</li>
+</ul>
+<p>Errors:</p>
+<ul>
+<li>If the number of values in a case tuple does not match <code>argnames</code>, it is a <strong>test collection error</strong> (<code>TestCollectionError</code>).</li>
+<li>If values do not type-check against the test function’s parameter types, it is a <strong>test collection error</strong> (<code>TestCollectionError</code>).</li>
+</ul>
+<h3 id="parametrize-per-case-marks">Parametrize per-case marks<a class="headerlink" href="#parametrize-per-case-marks" title="Permanent link">&para;</a></h3>
+<p><code>@parametrize</code> supports per-case marks via a <code>case(...)</code> helper from the <code>testing</code> module:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@parametrize</span><span class="p">(</span><span class="s2">&quot;x&quot;</span><span class="p">,</span> <span class="p">[</span>
+    <span class="k">case</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span>
+    <span class="k">case</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">marks</span><span class="o">=</span><span class="p">[</span><span class="n">xfail</span><span class="p">(</span><span class="s2">&quot;bug #123&quot;</span><span class="p">)]),</span>
+    <span class="k">case</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">marks</span><span class="o">=</span><span class="p">[</span><span class="n">skip</span><span class="p">(</span><span class="s2">&quot;too slow&quot;</span><span class="p">)]),</span>
+<span class="p">])</span>
+</code></pre></div>
+<p>Allowed per-case marks (in <code>case(..., marks=[...])</code>):</p>
+<ul>
+<li><code>skip("reason")</code></li>
+<li><code>xfail("reason")</code></li>
+<li><code>slow</code></li>
+<li><code>mark("name")</code></li>
+<li><code>resource("name")</code></li>
+<li><code>serial</code></li>
+</ul>
+<p>Resources declared per-case are merged with decorator-level resources for scheduling.</p>
+<h3 id="shared-fixtures-via-conftestincn-reference-rules">Shared fixtures via <code>conftest.incn</code> (reference rules)<a class="headerlink" href="#shared-fixtures-via-conftestincn-reference-rules" title="Permanent link">&para;</a></h3>
+<p>Any file named <code>conftest.incn</code> under <code>tests/</code> is discovered automatically and may contribute fixtures to tests in its directory subtree.</p>
+<p>Recognized constructs in <code>conftest.incn</code>:</p>
+<ul>
+<li><code>@fixture</code>-decorated functions (fixture definitions)</li>
+<li><code>const TEST_MARKS: List[str]</code> (default marks for the subtree)</li>
+<li><code>const TEST_MARKERS: List[str]</code> (marker registry for strict mode)</li>
+<li>imports required by the above</li>
+</ul>
+<p>Arbitrary top-level code in <code>conftest.incn</code> is <strong>not executed</strong> at collection time. Unlike pytest's conftest.py (which executes as a normal Python module), <code>conftest.incn</code> is parsed declaratively for fixture and marker definitions only. This avoids import-time side effects and keeps collection deterministic.</p>
+<p>Resolution:</p>
+<ul>
+<li>Fixtures defined in the same file as the test take precedence over fixtures from <code>conftest.incn</code>.</li>
+<li>If multiple <code>conftest.incn</code> files define the same fixture name, the nearest one (deepest directory) wins.</li>
+<li>Ambiguous duplicates at the same directory level are a <strong>test collection error</strong> (<code>TestCollectionError</code>).</li>
+</ul>
+<p>Default marks (<code>TEST_MARKS</code>):</p>
+<ul>
+<li><code>conftest.incn</code> may define <code>const TEST_MARKS: List[str]</code>.</li>
+<li>All applicable <code>TEST_MARKS</code> values from conftest files on the path to a test file are <strong>merged</strong> (union), from
+outer-to-inner directories.</li>
+<li>The test file’s own <code>TEST_MARKS</code> (if present) is also merged.</li>
+<li>Per-test and per-case marks are merged on top.</li>
+</ul>
+<p>This provides a simple way to classify whole subtrees (e.g. all tests under <code>tests/integrations/</code> are “integration”).</p>
+<h3 id="built-in-fixtures-reference-rules">Built-in fixtures (reference rules)<a class="headerlink" href="#built-in-fixtures-reference-rules" title="Permanent link">&para;</a></h3>
+<p>The test runner provides built-in fixtures (names reserved in the fixture namespace):</p>
+<ul>
+<li><code>tmp_path: Path</code><ul>
+<li>Function-scoped by default (unique per test case)</li>
+<li>Cleaned up automatically after the test</li>
+</ul>
+</li>
+<li><code>tmp_workdir: Path</code><ul>
+<li>Sets the process current working directory for the duration of the test (restored afterward)</li>
+</ul>
+</li>
+<li><code>env: TestEnv</code><ul>
+<li>A helper for temporary environment variables (restored afterward)</li>
+<li>API:<ul>
+<li><code>set(key: str, value: str) -&gt; None</code></li>
+<li><code>unset(key: str) -&gt; None</code></li>
+<li><code>get(key: str) -&gt; Option[str]</code></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p>Concurrency note:</p>
+<ul>
+<li>Because <code>tmp_workdir</code> and <code>env</code> affect process-global state, they are only safe if tests do not run concurrently in the same process. This RFC’s <code>--jobs</code> execution model uses worker processes; if an implementation deviates (e.g. thread-based parallelism), it must add implicit global locking (treat <code>tmp_workdir</code>/<code>env</code> as <code>@serial</code>) or disallow these fixtures under parallel execution.</li>
+</ul>
+<h3 id="timeouts-reference-rules">Timeouts (reference rules)<a class="headerlink" href="#timeouts-reference-rules" title="Permanent link">&para;</a></h3>
+<p>CLI:</p>
+<ul>
+<li><code>--timeout &lt;duration&gt;</code> sets the default per-test timeout (e.g. <code>5s</code>, <code>250ms</code>)</li>
+</ul>
+<p>Per-test override:</p>
+<ul>
+<li><code>@timeout(duration)</code> overrides the default timeout for a specific test.</li>
+</ul>
+<p>Timeout behavior:</p>
+<ul>
+<li>On timeout, the test case is recorded as failed with a timeout reason.</li>
+<li>If a test is executed in its own worker process (the default <code>--jobs</code> model), an implementation may terminate the worker process to enforce the timeout. In that case, fixture teardown is best-effort and may not run.<ul>
+<li>This is acceptable for now; stronger teardown guarantees under timeout may be specified in a future RFC.</li>
+</ul>
+</li>
+</ul>
+<h3 id="xfail-policy-switches">XFail policy switches<a class="headerlink" href="#xfail-policy-switches" title="Permanent link">&para;</a></h3>
+<p>CLI:</p>
+<ul>
+<li><code>--run-xfail</code>: treat xfail tests as normal tests (do not convert failures into “expected failures”)</li>
+</ul>
+<p>Rules:</p>
+<ul>
+<li>Default behavior (without <code>--run-xfail</code>):<ul>
+<li>A failing xfail test is recorded as <strong>XFAIL</strong> and does not fail the test run.</li>
+<li>A passing xfail test is recorded as <strong>XPASS</strong> and <strong>fails</strong> the test run (it indicates the expectation is outdated).</li>
+</ul>
+</li>
+<li>With <code>--run-xfail</code>:<ul>
+<li>xfail markers are ignored for pass/fail semantics; xfail tests behave like normal tests.</li>
+</ul>
+</li>
+</ul>
+<h3 id="collection-order-deterministic">Collection order (deterministic)<a class="headerlink" href="#collection-order-deterministic" title="Permanent link">&para;</a></h3>
+<p>For each file:</p>
+<ol>
+<li>Parse file and build a <code>testing</code> resolution map (imports/aliases).</li>
+<li>Discover and load <code>tests/**/conftest.incn</code> fixture providers.</li>
+<li>Collect inline test contexts (<code>module tests:</code>) and/or treat file as a test context if it is a test file.</li>
+<li>Collect fixtures in that file’s test contexts (including conftest fixtures).</li>
+<li>Collect tests in that file’s test contexts.</li>
+<li>Expand parametrized tests into per-case tests (including per-case marks).</li>
+<li>Apply selection/filters (<code>-k</code>, <code>-m</code>, <code>--slow</code>, <code>skip</code>, <code>skipif</code>, <code>xfail</code>, <code>xfailif</code>).</li>
+<li>Execute tests with fixture injection, lifecycle, and timeouts.</li>
+</ol>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="async-testing-out-of-scope">Async testing (out of scope)<a class="headerlink" href="#async-testing-out-of-scope" title="Permanent link">&para;</a></h3>
+<p>Async testing is <strong>not in scope</strong> in this RFC.</p>
+<p>This RFC does not specify specific async fixture/test execution semantics.</p>
+<p>Future direction:</p>
+<ul>
+<li>Async fixtures and async tests should compose with the same discovery model.</li>
+<li>See RFC 004 for Tokio integration; followup RFCs must specify runtime selection, timeout/cancellation interaction, and
+teardown guarantees.</li>
+</ul>
+<h2 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Existing name-based discovery (<code>test_*</code> functions in <code>test_*.incn</code> files) remains valid.</li>
+<li>Inline test discovery depends on the language-level <code>module tests:</code> block (RFC 018).</li>
+<li>New runner features are additive, but change defaults for capture and xfail policy as specified.</li>
+</ul>
+<p>CLI reference reconciliation:</p>
+<ul>
+<li>This RFC supersedes the <code>incan test</code> section of the CLI reference (<code>docs/tooling/reference/cli_reference.md</code>) for all flags and behaviors specified here.</li>
+<li>Flags in the current CLI reference that are not mentioned in this RFC (e.g. <code>--fail-on-empty</code>, <code>-v</code>) remain valid unless explicitly contradicted.</li>
+<li>Once this RFC is implemented, the CLI reference must be updated to reflect the authoritative surface defined here.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Top-level <code>@test</code> next to production functions</strong>: rejected; it pollutes the production namespace and makes it hard to keep test-only imports/helpers contained.</li>
+<li><strong>Doctest-only</strong>: useful but insufficient for fixtures/parametrize/markers.</li>
+<li><strong>Magic language keywords for tests/fixtures</strong>: rejected; harms tooling and contradicts the “stdlib-gated” principle.</li>
+</ul>
+<p>Out of scope (for now):</p>
+<ul>
+<li><code>capsys</code> / <code>caplog</code>-style capture fixtures (use explicit APIs; revisit later)</li>
+<li>monkeypatch-style runtime patching (prefer dependency injection and test doubles)</li>
+<li>a pytest-style plugin ecosystem (revisit once core semantics are stable)</li>
+</ul>
+<h2 id="appendix-testing-surface-inventory-informative">Appendix: testing surface inventory (informative)<a class="headerlink" href="#appendix-testing-surface-inventory-informative" title="Permanent link">&para;</a></h2>
+<p>This appendix is a contributor-oriented inventory of the testing surface <strong>after this RFC is implemented</strong>, with an informative snapshot of what exists <strong>today</strong> (at time of writing). It is <strong>not normative</strong>; the spec sections above are authoritative.</p>
+<p>Legend:</p>
+<ul>
+<li><strong>Today</strong>: implementation status in the current repository at RFC creation time<ul>
+<li><strong>Yes</strong>: implemented</li>
+<li><strong>Partial</strong>: some pieces exist, but not the full RFC behavior</li>
+<li><strong>No</strong>: not implemented</li>
+</ul>
+</li>
+<li><strong>After RFC 019</strong>: whether this RFC introduces it (<strong>New</strong>), modifies semantics (<strong>Changed</strong>), or leaves it (<strong>Unchanged</strong>)</li>
+</ul>
+<blockquote>
+<p>Note: this table should be used as a checkmark toward implementation completeness when this RFC is implemented.</p>
+</blockquote>
+<h3 id="test-runner-cli-surface">Test runner + CLI surface<a class="headerlink" href="#test-runner-cli-surface" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Today</th>
+<th>After RFC 019</th>
+<th>Notes</th>
+<th>Implemented</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Test file discovery (<code>test_*.incn</code>, <code>*_test.incn</code>)</td>
+<td>Yes</td>
+<td>Unchanged</td>
+<td>Test file context</td>
+<td></td>
+</tr>
+<tr>
+<td>Inline test discovery (<code>module tests:</code>)</td>
+<td>No</td>
+<td>New</td>
+<td>Inline test context</td>
+<td></td>
+</tr>
+<tr>
+<td>Test discovery by name (<code>test_*</code>)</td>
+<td>Yes</td>
+<td>Unchanged</td>
+<td>In test contexts</td>
+<td></td>
+</tr>
+<tr>
+<td>Test discovery by decorator (<code>@test</code>)</td>
+<td>No</td>
+<td>New</td>
+<td>In test contexts</td>
+<td></td>
+</tr>
+<tr>
+<td>Fixtures from same file</td>
+<td>Partial</td>
+<td>Changed</td>
+<td>Injection + lifetimes + errors</td>
+<td></td>
+</tr>
+<tr>
+<td><code>tests/**/conftest.incn</code> fixtures</td>
+<td>No</td>
+<td>New</td>
+<td>Auto-discovery + precedence rules</td>
+<td></td>
+</tr>
+<tr>
+<td>Built-in fixtures (<code>tmp_path</code>, <code>tmp_workdir</code>, <code>env</code>)</td>
+<td>No</td>
+<td>New</td>
+<td>Runner-provided</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-k &lt;substr&gt;</code></td>
+<td>Yes (fn-name)</td>
+<td>Changed</td>
+<td>RFC matches stable test id</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-m &lt;expr&gt;</code></td>
+<td>No</td>
+<td>New</td>
+<td>Marker expression selection</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--strict-markers</code></td>
+<td>No</td>
+<td>New</td>
+<td>Unknown marker is a collection-time error</td>
+<td></td>
+</tr>
+<tr>
+<td><code>@slow</code> excluded by default + <code>--slow</code> opt-in</td>
+<td>Yes (basic)</td>
+<td>Unchanged</td>
+<td>RFC clarifies interaction with <code>-m</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>@xfail</code> / XPASS policy</td>
+<td>Yes (basic)</td>
+<td>Changed</td>
+<td>XPASS fails; adds <code>--run-xfail</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>--run-xfail</code></td>
+<td>No</td>
+<td>New</td>
+<td>Ignore xfail semantics</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--timeout &lt;duration&gt;</code> + <code>@timeout(...)</code></td>
+<td>No</td>
+<td>New</td>
+<td>Timeouts (default + override)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--jobs/-j &lt;n&gt;</code></td>
+<td>No</td>
+<td>New</td>
+<td>Parallel execution limit (worker processes)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--shuffle</code> / <code>--seed &lt;n&gt;</code></td>
+<td>No</td>
+<td>New</td>
+<td>Reproducible order randomization</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--durations &lt;n&gt;</code></td>
+<td>No</td>
+<td>New</td>
+<td>Report slowest N tests</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--list</code></td>
+<td>No</td>
+<td>New</td>
+<td>List tests after filters; do not execute</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--format json</code></td>
+<td>No</td>
+<td>New</td>
+<td>One JSON record per test result</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--junit &lt;path&gt;</code></td>
+<td>No</td>
+<td>New</td>
+<td>JUnit XML report</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--nocapture</code></td>
+<td>Yes (default today)</td>
+<td>Changed</td>
+<td>RFC makes capture default; <code>--nocapture</code> opts out</td>
+<td></td>
+</tr>
+<tr>
+<td>Stable test id</td>
+<td>No</td>
+<td>New</td>
+<td>Used by <code>--list</code>, <code>-k</code>, JSON, JUnit</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--feature &lt;name&gt;</code></td>
+<td>No</td>
+<td>New</td>
+<td>Enables <code>testing.feature(name)</code> probes</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>CLI (<code>incan test</code>)</strong> — the test runner is the primary deliverable of this RFC. It must implement test discovery (both <code>tests/</code> files and inline <code>module tests:</code> contexts), fixture graph resolution, parametrization expansion, marker evaluation, and parallel/serial scheduling with resource locking.</li>
+<li><strong><code>conftest.incn</code> support</strong> — the compiler and test runner must support shared fixture files discovered at directory boundaries, with precedence rules for fixture shadowing.</li>
+<li><strong>Typechecker</strong> — must validate fixture injection signatures, detect unresolvable fixture dependencies at collection time, and surface them as <code>TestCollectionError</code> rather than runtime failures.</li>
+<li><strong>Stdlib (<code>std.testing</code>)</strong> — <code>@fixture</code>, <code>@parametrize</code>, <code>@skip</code>, <code>@xfail</code>, <code>@timeout</code>, <code>@serial</code>, <code>@resource</code>, and the <code>TEST_MARKS</code> registry must be defined and consumable by the runner as specified in this RFC.</li>
+<li><strong>Build system</strong> — <code>incan test</code> must compile test modules against the project source root, enabling <code>from mymodule import ...</code> in test files without duplication; it must strip <code>module tests:</code> bodies from production builds.</li>
+<li><strong>Reporting layer</strong> — the runner must support <code>--format json</code>, <code>--junit &lt;path&gt;</code>, <code>--list</code>, <code>--durations</code>, and <code>--shuffle</code> as specified; JSON reports must include a stable <code>schema_version</code> field.</li>
+</ul>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
+<p>Implement incrementally:</p>
+<ol>
+<li>Collection pipeline: discovery (test files + <code>module tests:</code> contexts) and stable test ids.</li>
+<li>Fixture resolution and lifecycle (scopes, autouse, teardown via <code>yield</code>).</li>
+<li>Parametrization expansion, case ids, and per-case marks.</li>
+<li>Marker model + selection (<code>-m</code>, strict markers, skip/xfail policies).</li>
+<li><code>tests/**/conftest.incn</code> discovery and precedence.</li>
+<li>Execution model: <code>--jobs</code>, resource locking, timeouts.</li>
+<li>Reporting: list/durations/shuffle, JSON/JUnit, output capture.</li>
+</ol>
+<h3 id="implementation-dependencies-informative">Implementation dependencies (informative)<a class="headerlink" href="#implementation-dependencies-informative" title="Permanent link">&para;</a></h3>
+<p>This section is informative (non-normative). It exists to help contributors implement the RFC in a sensible dependency order.</p>
+<p>Suggested dependency order:</p>
+<ul>
+<li>Discovery + stable test identifiers</li>
+<li>Fixture graph + <code>conftest.incn</code> precedence</li>
+<li>Parametrization expansion + per-case marks</li>
+<li>Marker evaluation + selection (<code>-m</code>, <code>--strict-markers</code>)</li>
+<li>Parallel execution + resource locking</li>
+<li>Timeouts + reporting surfaces (JSON/JUnit, durations, list, shuffle)</li>
+</ul>
+<h3 id="conformance-tests">Conformance tests<a class="headerlink" href="#conformance-tests" title="Permanent link">&para;</a></h3>
+<p>Turn the guide-level examples into real tests:</p>
+<ul>
+<li>[ ] stable test id formatting and <code>-k</code> filtering</li>
+<li>[ ] <code>testing.test</code> vs name-based discovery (<code>test_*</code>) in both test files and inline modules</li>
+<li>[ ] fixture resolution errors become <code>TestCollectionError</code></li>
+<li>[ ] <code>conftest.incn</code> fixtures resolve with correct precedence and scoping</li>
+<li>[ ] autouse fixtures apply per scope and respect dependency ordering</li>
+<li>[ ] parametrization ids and cartesian product ordering are stable</li>
+<li>[ ] per-case marks in <code>parametrize</code> skip/xfail individual cases correctly</li>
+<li>[ ] marker selection: <code>-m "db and not flaky"</code> filters tests correctly</li>
+<li>[ ] <code>--strict-markers</code> rejects unknown markers in <code>TEST_MARKS</code>, <code>mark(...)</code>, and <code>-m</code></li>
+<li>[ ] <code>skipif</code> / <code>xfailif</code> conditions are evaluated at collection time and behave as specified</li>
+<li>[ ] parallel scheduling: <code>--jobs 2</code> runs independent tests concurrently but respects <code>@resource("db")</code></li>
+<li>[ ] serial scheduling: <code>@serial</code> forces exclusive execution</li>
+<li>[ ] shuffle reproducibility: <code>--shuffle --seed 123</code> produces stable randomized order</li>
+<li>[ ] list mode: <code>--list</code> prints collected tests and exits without running them</li>
+<li>[ ] built-in fixtures exist (<code>tmp_path</code>, <code>tmp_workdir</code>, <code>env</code>) and are scoped/cleaned up correctly</li>
+<li>[ ] timeouts: <code>--timeout</code> default + <code>@timeout</code> override (teardown best-effort)</li>
+<li>[ ] <code>--run-xfail</code> policy switch changes xfail behavior as specified</li>
+<li>[ ] durations: <code>--durations 10</code> prints slowest tests with correct ids</li>
+<li>[ ] reports: <code>--format json</code> and <code>--junit &lt;path&gt;</code> emit stable machine-readable output</li>
+<li>[ ] JSON reports include <code>schema_version: "incan.test.v1"</code></li>
+</ul>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>RFC 019 owns runner and CLI behavior, while RFC 018 owns language-level testing constructs.</li>
+<li>Test discovery includes both dedicated test files and inline <code>module tests:</code> contexts.</li>
+<li>Fixture injection, parametrization, markers, timeouts, reporting, and scheduling are part of the core runner contract rather than repo-local convention.</li>
+<li>Parallel execution uses worker-process isolation rather than shared in-process concurrency by default.</li>
+</ul>
+<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
+<ul>
+<li>RFC 018: Language Primitives for Testing</li>
+<li>pytest good practices (discovery): <code>https://docs.pytest.org/en/stable/goodpractices.html#test-discovery</code></li>
+<li>pytest fixtures: <code>https://docs.pytest.org/en/stable/explanation/fixtures.html</code></li>
+<li>pytest parametrize: <code>https://docs.pytest.org/en/stable/how-to/parametrize.html</code></li>
+</ul>
+<!-- The "Design decisions" section (if present) was renamed from "Unresolved questions" once all open questions were resolved. If new unresolved questions arise during implementation, add an "Unresolved questions" section and move resolved items to "Design decisions" after resolution. -->
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+        <script src="../../_snippets/javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
+      
+        <script src="../../_snippets/javascripts/tablesort.js"></script>
+      
+        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,8135 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the Incan programming language">
+      
+      
+      
+      
+        <link rel="prev" href="../">
+      
+      
+        <link rel="next" href="../glossary/">
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Language reference (generated) - Incan Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../stylesheets/pygments.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#incan-language-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Incan Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Language reference (generated)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1M8 13h8v-2H8zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4a5 5 0 0 0 5-5 5 5 0 0 0-5-5"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="purple" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5m0 8a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-label="Switch to system preference"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Switch to system preference" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5M7 15a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/dannys-code-corner/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dannys-code-corner/incan
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Incan Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/dannys-code-corner/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dannys-code-corner/incan
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../start_here/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Start here
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Start here
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/coming_from_python/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Python (apps)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/coming_from_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Rust (evaluator)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/pipelines_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/beginner/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Beginner
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Language
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Language
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    The Incan Book (Basics)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_2_1" id="__nav_3_2_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            The Incan Book (Basics)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/book/01_hello_world/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Hello world
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Values, variables, and types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/book/03_functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Functions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/book/04_control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/book/05_modules_and_imports/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Modules and imports
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/book/06_errors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Errors (Result/Option and `?`)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Strings and formatting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Collections and iteration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/book/09_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    9. Enums and better `match`
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/book/10_models_vs_classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    10. Models vs classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/book/11_traits_and_derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    11. Traits and derives
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/book/12_newtypes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    12. Newtypes (stronger types)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/book/13_unit_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    13. Unit tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/build_your_first_api/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Build your first API
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/async_programming/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Async programming
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/customize_derived_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Customize derived behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/error_handling_recipes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling recipes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/error_messages/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error messages
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/module_state/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/modeling_with_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Modeling with enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/testing_stdlib/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing guide
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/string_processing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/performance/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Performance
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/rust_interop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust interop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/rust_types_for_python_devs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust types (coming from Python)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" checked>
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    Language reference (generated)
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    Language reference (generated)
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      Contents
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#keywords" class="md-nav__link">
+    <span class="md-ellipsis">
+      Keywords
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Keywords">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      Examples
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#soft-keywords" class="md-nav__link">
+    <span class="md-ellipsis">
+      Soft keywords
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#standard-library-namespaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      Standard library namespaces
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#builtin-exceptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Builtin exceptions
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Builtin exceptions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#examples_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Examples
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#valueerror" class="md-nav__link">
+    <span class="md-ellipsis">
+      ValueError
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#typeerror" class="md-nav__link">
+    <span class="md-ellipsis">
+      TypeError
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#zerodivisionerror" class="md-nav__link">
+    <span class="md-ellipsis">
+      ZeroDivisionError
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#indexerror" class="md-nav__link">
+    <span class="md-ellipsis">
+      IndexError
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keyerror" class="md-nav__link">
+    <span class="md-ellipsis">
+      KeyError
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#jsondecodeerror" class="md-nav__link">
+    <span class="md-ellipsis">
+      JsonDecodeError
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#builtin-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Builtin functions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decorators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Decorators
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#derives" class="md-nav__link">
+    <span class="md-ellipsis">
+      Derives
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#builtin-traits" class="md-nav__link">
+    <span class="md-ellipsis">
+      Builtin traits
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Operators
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Operators">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Notes
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#punctuation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Punctuation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#builtin-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Builtin types
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Builtin types">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#string-like" class="md-nav__link">
+    <span class="md-ellipsis">
+      String-like
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#numerics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Numerics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#collections-generic-bases" class="md-nav__link">
+    <span class="md-ellipsis">
+      Collections / generic bases
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#surface-constructors" class="md-nav__link">
+    <span class="md-ellipsis">
+      Surface constructors
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#surface-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Surface functions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#surface-string-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Surface string methods
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#surface-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Surface types
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#surface-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Surface methods
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Surface methods">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#float-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      float methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#list-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      List methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dict-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Dict methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#set-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Set methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Option methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#frozenlist-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      FrozenList methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#frozendict-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      FrozenDict methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#frozenset-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      FrozenSet methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#frozenbytes-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      FrozenBytes methods
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../glossary/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Glossary
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O reference (Path/File APIs)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../static_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Static storage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../numeric_semantics/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric semantics
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../strings/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Strings and Bytes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (reference)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_11" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../stdlib/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Standard library
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_11" id="__nav_3_4_11_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_11">
+            <span class="md-nav__icon md-icon"></span>
+            Standard library
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/async/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.async
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.derives.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.traits.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/math/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.math
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_12" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../stdlib_traits/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Stdlib traits
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_12" id="__nav_3_4_12_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_12">
+            <span class="md-nav__icon md-icon"></span>
+            Stdlib traits
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib_traits/collection_protocols/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Collection protocols
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Indexing and slicing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib_traits/callable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable objects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib_traits/error/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error trait
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib_traits/operators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Operators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib_traits/conversions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Conversions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_13" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4_13" id="__nav_3_4_13_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Derives
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_13">
+            <span class="md-nav__icon md-icon"></span>
+            Derives
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../derives/string_representation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String representation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../derives/comparison/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Comparison
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../derives/copying_default/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Copying/default
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../derives/serialization/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Serialization
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../derives/validation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Validation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../derives/custom_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Custom behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/why_incan/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why Incan?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/why_not_just_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why not just Rust?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/how_incan_works/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How Incan works
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/closures/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Closures
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/consts/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Consts
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/static_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Module static storage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (explained)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/call_site_type_arguments/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why call-site type args exist
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/how_derives_work/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How derives work
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/error_handling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_14" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../explanation/models_and_classes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Models and classes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_5_14" id="__nav_3_5_14_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_14">
+            <span class="md-nav__icon md-icon"></span>
+            Models and classes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/models_and_classes/models/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Models
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/models_and_classes/classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/traits_as_language_hooks/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Traits as language hooks
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/scopes_and_name_resolution/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Scopes and name resolution
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../tooling/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Tooling
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Tooling
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/tutorials/getting_started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/tutorials/your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipeline mini-project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/how-to/install_and_run/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/how-to/dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/how-to/troubleshooting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Troubleshooting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/how-to/editor_setup/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Editor setup
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/how-to/lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/how-to/formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Formatting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/how-to/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/explanation/projects_today/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Projects today
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/reference/cli_reference/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/reference/project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP protocol support
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+          
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../contributing/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Contributing
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Contributing
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../contributing/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Incan Contributor Book (Advanced)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2_1" id="__nav_5_2_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            Incan Contributor Book (Advanced)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Architecture tour
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Layering and boundaries
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Proposals: issues vs RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Your first change: add a builtin
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Your first syntax change
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Tooling loop: formatter + tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Tooling loop: LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Docsite contributor loop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/extending_language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Extending the language
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Author library DSLs with incan_vocab
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Benchmarks & profiling (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Writing RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_4">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/explanation/architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/explanation/layering/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Layering rules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Readable, maintainable Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing internals
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../RFCs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../release_notes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Release notes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            Release notes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../release_notes/0_1/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.1
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../roadmap/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Roadmap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../stability/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Stability policy
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      Contents
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#keywords" class="md-nav__link">
+    <span class="md-ellipsis">
+      Keywords
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Keywords">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      Examples
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#soft-keywords" class="md-nav__link">
+    <span class="md-ellipsis">
+      Soft keywords
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#standard-library-namespaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      Standard library namespaces
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#builtin-exceptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Builtin exceptions
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Builtin exceptions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#examples_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Examples
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#valueerror" class="md-nav__link">
+    <span class="md-ellipsis">
+      ValueError
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#typeerror" class="md-nav__link">
+    <span class="md-ellipsis">
+      TypeError
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#zerodivisionerror" class="md-nav__link">
+    <span class="md-ellipsis">
+      ZeroDivisionError
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#indexerror" class="md-nav__link">
+    <span class="md-ellipsis">
+      IndexError
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keyerror" class="md-nav__link">
+    <span class="md-ellipsis">
+      KeyError
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#jsondecodeerror" class="md-nav__link">
+    <span class="md-ellipsis">
+      JsonDecodeError
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#builtin-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Builtin functions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decorators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Decorators
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#derives" class="md-nav__link">
+    <span class="md-ellipsis">
+      Derives
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#builtin-traits" class="md-nav__link">
+    <span class="md-ellipsis">
+      Builtin traits
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Operators
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Operators">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Notes
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#punctuation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Punctuation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#builtin-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Builtin types
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Builtin types">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#string-like" class="md-nav__link">
+    <span class="md-ellipsis">
+      String-like
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#numerics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Numerics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#collections-generic-bases" class="md-nav__link">
+    <span class="md-ellipsis">
+      Collections / generic bases
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#surface-constructors" class="md-nav__link">
+    <span class="md-ellipsis">
+      Surface constructors
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#surface-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Surface functions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#surface-string-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Surface string methods
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#surface-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Surface types
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#surface-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Surface methods
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Surface methods">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#float-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      float methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#list-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      List methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dict-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Dict methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#set-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Set methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Option methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#frozenlist-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      FrozenList methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#frozendict-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      FrozenDict methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#frozenset-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      FrozenSet methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#frozenbytes-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      FrozenBytes methods
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="incan-language-reference">Incan language reference<a class="headerlink" href="#incan-language-reference" title="Permanent link">&para;</a></h1>
+<div class="admonition warning">
+<p class="admonition-title">Generated file</p>
+<p>Do not edit this page by hand.
+If it looks wrong/outdated, regenerate it from source and commit the result.</p>
+<p>Regenerate with: <code>cargo run -p incan_core --bin generate_lang_reference</code></p>
+</div>
+<h2 id="contents">Contents<a class="headerlink" href="#contents" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="#keywords">Keywords</a></li>
+<li><a href="#soft-keywords">Soft keywords</a></li>
+<li><a href="#standard-library-namespaces">Standard library namespaces</a></li>
+<li><a href="#builtin-exceptions">Builtin exceptions</a></li>
+<li><a href="#builtin-functions">Builtin functions</a></li>
+<li><a href="#decorators">Decorators</a></li>
+<li><a href="#derives">Derives</a></li>
+<li><a href="#builtin-traits">Builtin traits</a></li>
+<li><a href="#operators">Operators</a></li>
+<li><a href="#punctuation">Punctuation</a></li>
+<li><a href="#builtin-types">Builtin types</a></li>
+<li><a href="#surface-constructors">Surface constructors</a></li>
+<li><a href="#surface-functions">Surface functions</a></li>
+<li><a href="#surface-string-methods">Surface string methods</a></li>
+<li><a href="#surface-types">Surface types</a></li>
+<li><a href="#surface-methods">Surface methods</a></li>
+</ul>
+<h2 id="keywords">Keywords<a class="headerlink" href="#keywords" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Reservation</th>
+<th>Activation</th>
+<th>Category</th>
+<th>Usage</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>If</td>
+<td><code>if</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>ControlFlow</td>
+<td>Statement, Expression</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Else</td>
+<td><code>else</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>ControlFlow</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Elif</td>
+<td><code>elif</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>ControlFlow</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Match</td>
+<td><code>match</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>ControlFlow</td>
+<td>Statement, Expression</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Case</td>
+<td><code>case</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>ControlFlow</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>While</td>
+<td><code>while</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>ControlFlow</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>For</td>
+<td><code>for</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>ControlFlow</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Break</td>
+<td><code>break</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>ControlFlow</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Continue</td>
+<td><code>continue</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>ControlFlow</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Return</td>
+<td><code>return</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>ControlFlow</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Yield</td>
+<td><code>yield</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>ControlFlow</td>
+<td>Statement, Expression</td>
+<td>RFC 001</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Pass</td>
+<td><code>pass</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>ControlFlow</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Assert</td>
+<td><code>assert</code></td>
+<td></td>
+<td>Soft</td>
+<td><code>std.testing</code></td>
+<td>ControlFlow</td>
+<td>Statement</td>
+<td>RFC 018</td>
+<td>0.2</td>
+<td>Draft</td>
+</tr>
+<tr>
+<td>Def</td>
+<td><code>def</code></td>
+<td><code>fn</code></td>
+<td>Hard</td>
+<td>-</td>
+<td>Definition</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Async</td>
+<td><code>async</code></td>
+<td></td>
+<td>Soft</td>
+<td><code>std.async</code></td>
+<td>Definition</td>
+<td>Modifier</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Await</td>
+<td><code>await</code></td>
+<td></td>
+<td>Soft</td>
+<td><code>std.async</code></td>
+<td>Definition</td>
+<td>Expression</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Class</td>
+<td><code>class</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Definition</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Model</td>
+<td><code>model</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Definition</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Trait</td>
+<td><code>trait</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Definition</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Enum</td>
+<td><code>enum</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Definition</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Type</td>
+<td><code>type</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Definition</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Newtype</td>
+<td><code>newtype</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Definition</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>With</td>
+<td><code>with</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Definition</td>
+<td>Modifier</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Extends</td>
+<td><code>extends</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Definition</td>
+<td>Modifier</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Pub</td>
+<td><code>pub</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Definition</td>
+<td>Modifier</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Import</td>
+<td><code>import</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Import</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>From</td>
+<td><code>from</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Import</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>As</td>
+<td><code>as</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Import</td>
+<td>Modifier</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Rust</td>
+<td><code>rust</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Import</td>
+<td>Modifier</td>
+<td>RFC 005</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Python</td>
+<td><code>python</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Import</td>
+<td>Modifier</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Super</td>
+<td><code>super</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Import</td>
+<td>Expression</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Crate</td>
+<td><code>crate</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Import</td>
+<td>Expression</td>
+<td>RFC 005</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Const</td>
+<td><code>const</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Binding</td>
+<td>Statement</td>
+<td>RFC 008</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Static</td>
+<td><code>static</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Binding</td>
+<td>Statement</td>
+<td>RFC 052</td>
+<td>0.2</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Let</td>
+<td><code>let</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Binding</td>
+<td>Statement</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Mut</td>
+<td><code>mut</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Binding</td>
+<td>Modifier</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>SelfKw</td>
+<td><code>self</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Binding</td>
+<td>ReceiverOnly</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>True</td>
+<td><code>true</code></td>
+<td><code>True</code></td>
+<td>Hard</td>
+<td>-</td>
+<td>Literal</td>
+<td>Expression</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>False</td>
+<td><code>false</code></td>
+<td><code>False</code></td>
+<td>Hard</td>
+<td>-</td>
+<td>Literal</td>
+<td>Expression</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>None</td>
+<td><code>None</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Literal</td>
+<td>Expression</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>And</td>
+<td><code>and</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Operator</td>
+<td>Operator</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Or</td>
+<td><code>or</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Operator</td>
+<td>Operator</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Not</td>
+<td><code>not</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Operator</td>
+<td>Operator</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>In</td>
+<td><code>in</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Operator</td>
+<td>Operator</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Is</td>
+<td><code>is</code></td>
+<td></td>
+<td>Hard</td>
+<td>-</td>
+<td>Operator</td>
+<td>Operator</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h3 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h3>
+<p>Only keywords with examples are listed here.</p>
+<h2 id="soft-keywords">Soft keywords<a class="headerlink" href="#soft-keywords" title="Permanent link">&para;</a></h2>
+<p>Soft keywords are only reserved when their activating <code>std.*</code> namespace is imported.</p>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Activated by</th>
+<th>Category</th>
+<th>Usage</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Assert</td>
+<td><code>assert</code></td>
+<td><code>std.testing</code></td>
+<td>ControlFlow</td>
+<td>Statement</td>
+<td>RFC 018</td>
+<td>0.2</td>
+<td>Draft</td>
+</tr>
+<tr>
+<td>Async</td>
+<td><code>async</code></td>
+<td><code>std.async</code></td>
+<td>Definition</td>
+<td>Modifier</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Await</td>
+<td><code>await</code></td>
+<td><code>std.async</code></td>
+<td>Definition</td>
+<td>Expression</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h2 id="standard-library-namespaces">Standard library namespaces<a class="headerlink" href="#standard-library-namespaces" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Namespace</th>
+<th>Feature gate</th>
+<th>Submodules</th>
+<th>Activates soft keywords</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>std.web</code></td>
+<td><code>web</code></td>
+<td><code>std.web.app</code>, <code>std.web.routing</code>, <code>std.web.request</code>, <code>std.web.response</code>, <code>std.web.macros</code>, <code>std.web.prelude</code></td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>std.testing</code></td>
+<td>-</td>
+<td>-</td>
+<td><code>assert</code></td>
+</tr>
+<tr>
+<td><code>std.async</code></td>
+<td><code>async</code></td>
+<td><code>std.async.time</code>, <code>std.async.task</code>, <code>std.async.channel</code>, <code>std.async.select</code>, <code>std.async.sync</code>, <code>std.async.prelude</code></td>
+<td><code>async</code>, <code>await</code></td>
+</tr>
+<tr>
+<td><code>std.serde</code></td>
+<td><code>json</code></td>
+<td><code>std.serde.json</code></td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>std.reflection</code></td>
+<td>-</td>
+<td>-</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>std.derives</code></td>
+<td>-</td>
+<td><code>std.derives.string</code>, <code>std.derives.comparison</code>, <code>std.derives.copying</code>, <code>std.derives.collection</code></td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>std.traits</code></td>
+<td>-</td>
+<td><code>std.traits.convert</code>, <code>std.traits.ops</code>, <code>std.traits.error</code>, <code>std.traits.indexing</code>, <code>std.traits.callable</code>, <code>std.traits.prelude</code></td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>std.math</code></td>
+<td>-</td>
+<td>-</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>std.rust</code></td>
+<td>-</td>
+<td>-</td>
+<td>-</td>
+</tr>
+</tbody>
+</table>
+<h2 id="builtin-exceptions">Builtin exceptions<a class="headerlink" href="#builtin-exceptions" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ValueError</td>
+<td><code>ValueError</code></td>
+<td></td>
+<td>Raised when an operation receives a value of the right type but an invalid value.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>TypeError</td>
+<td><code>TypeError</code></td>
+<td></td>
+<td>Raised when an operation receives a value of an inappropriate type.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>ZeroDivisionError</td>
+<td><code>ZeroDivisionError</code></td>
+<td></td>
+<td>Raised when dividing or taking modulo by zero (Python-like numeric semantics).</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>IndexError</td>
+<td><code>IndexError</code></td>
+<td></td>
+<td>Raised when an index is out of bounds (e.g. string/list indexing) or when calling <code>list.pop()</code> on an empty list.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>KeyError</td>
+<td><code>KeyError</code></td>
+<td></td>
+<td>Raised when a dict key is missing.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>JsonDecodeError</td>
+<td><code>JSONDecodeError</code></td>
+<td></td>
+<td>Raised when parsing JSON fails (Python-like).</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h3 id="examples_1">Examples<a class="headerlink" href="#examples_1" title="Permanent link">&para;</a></h3>
+<p>Only exceptions with examples are listed here.</p>
+<h4 id="valueerror"><code>ValueError</code><a class="headerlink" href="#valueerror" title="Permanent link">&para;</a></h4>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;abc&quot;</span><span class="p">[</span><span class="mi">0</span><span class="p">:</span><span class="mi">3</span><span class="p">:</span><span class="mi">0</span><span class="p">])</span>  <span class="c1"># step 0</span>
+</code></pre></div>
+<p>Panics at runtime with <code>ValueError: slice step cannot be zero</code>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">_</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="s2">&quot;abc&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Panics at runtime with <code>ValueError: cannot convert 'abc' to int</code>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">_</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;abc&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Panics at runtime with <code>ValueError: cannot convert 'abc' to float</code>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="c1"># range step cannot be zero (Python-like)</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">0</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+</code></pre></div>
+<p>Panics at runtime with <code>ValueError: range() arg 3 must not be zero</code>.</p>
+<h4 id="typeerror"><code>TypeError</code><a class="headerlink" href="#typeerror" title="Permanent link">&para;</a></h4>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="c1"># Example: JSON serialization failures (e.g. NaN/Inf) raise TypeError</span>
+    <span class="n">_</span> <span class="o">=</span> <span class="nb">json_stringify</span><span class="p">(</span><span class="n">nan</span><span class="p">)</span>
+</code></pre></div>
+<p>Panics at runtime with a <code>TypeError: ... is not JSON serializable</code> message.</p>
+<h4 id="zerodivisionerror"><code>ZeroDivisionError</code><a class="headerlink" href="#zerodivisionerror" title="Permanent link">&para;</a></h4>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="mi">1</span> <span class="o">/</span> <span class="mi">0</span><span class="p">)</span>
+</code></pre></div>
+<p>Panics at runtime with <code>ZeroDivisionError: float division by zero</code>.</p>
+<h4 id="indexerror"><code>IndexError</code><a class="headerlink" href="#indexerror" title="Permanent link">&para;</a></h4>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;a&quot;</span><span class="p">[</span><span class="mi">99</span><span class="p">])</span>
+</code></pre></div>
+<p>Panics at runtime with <code>IndexError: ...</code>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">xs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">xs</span><span class="p">[</span><span class="mi">99</span><span class="p">])</span>
+</code></pre></div>
+<p>Panics at runtime with <code>IndexError: index 99 out of range for list of length 3</code>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">xs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">_</span> <span class="o">=</span> <span class="n">xs</span><span class="o">.</span><span class="nb">pop</span><span class="p">()</span>
+</code></pre></div>
+<p>Panics at runtime with <code>IndexError: pop from empty list</code>.</p>
+<h4 id="keyerror"><code>KeyError</code><a class="headerlink" href="#keyerror" title="Permanent link">&para;</a></h4>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">d</span><span class="p">:</span> <span class="kt">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;a&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">}</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="p">[</span><span class="s2">&quot;b&quot;</span><span class="p">])</span>
+</code></pre></div>
+<p>Panics at runtime with <code>KeyError: 'b' not found in dict</code>.</p>
+<h4 id="jsondecodeerror"><code>JsonDecodeError</code><a class="headerlink" href="#jsondecodeerror" title="Permanent link">&para;</a></h4>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Deserialize</span><span class="p">)</span>
+<span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">bad</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;{&quot;</span>
+    <span class="k">match</span> <span class="nc">User</span><span class="o">.</span><span class="n">from_json</span><span class="p">(</span><span class="n">bad</span><span class="p">):</span>
+        <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">u</span><span class="p">):</span> <span class="nb">print</span><span class="p">(</span><span class="n">u</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+        <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">print</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+</code></pre></div>
+<p><code>from_json</code> returns <code>Result[T, str]</code>; on failure the error string is prefixed with <code>JSONDecodeError: ...</code>.</p>
+<h2 id="builtin-functions">Builtin functions<a class="headerlink" href="#builtin-functions" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Print</td>
+<td><code>print</code></td>
+<td><code>println</code></td>
+<td>Print values to stdout.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Len</td>
+<td><code>len</code></td>
+<td></td>
+<td>Return the length of a collection/string.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Sum</td>
+<td><code>sum</code></td>
+<td></td>
+<td>Sum a numeric iterable/collection.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Min</td>
+<td><code>min</code></td>
+<td></td>
+<td>Return the minimum element of a collection.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Max</td>
+<td><code>max</code></td>
+<td></td>
+<td>Return the maximum element of a collection.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Str</td>
+<td><code>str</code></td>
+<td></td>
+<td>Convert a value to a string.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Int</td>
+<td><code>int</code></td>
+<td></td>
+<td>Convert a value to an integer.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Float</td>
+<td><code>float</code></td>
+<td></td>
+<td>Convert a value to a float.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Bool</td>
+<td><code>bool</code></td>
+<td></td>
+<td>Convert a value to a boolean.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Abs</td>
+<td><code>abs</code></td>
+<td></td>
+<td>Absolute value (numeric).</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Range</td>
+<td><code>range</code></td>
+<td></td>
+<td>Create a range of integers.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Enumerate</td>
+<td><code>enumerate</code></td>
+<td></td>
+<td>Enumerate an iterable into (index, value) pairs.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Zip</td>
+<td><code>zip</code></td>
+<td></td>
+<td>Zip iterables element-wise into tuples.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Sorted</td>
+<td><code>sorted</code></td>
+<td></td>
+<td>Return a sorted copy of a collection.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>ReadFile</td>
+<td><code>read_file</code></td>
+<td></td>
+<td>Read a file from disk into a string/bytes.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>WriteFile</td>
+<td><code>write_file</code></td>
+<td></td>
+<td>Write a string/bytes to a file on disk.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>JsonStringify</td>
+<td><code>json_stringify</code></td>
+<td></td>
+<td>Serialize a value to JSON.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h2 id="decorators">Decorators<a class="headerlink" href="#decorators" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Derive</td>
+<td><code>@derive</code></td>
+<td></td>
+<td>Derive common trait implementations.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>RustExtern</td>
+<td><code>@rust.extern</code></td>
+<td></td>
+<td>Mark functions whose body is provided by a Rust module.</td>
+<td>RFC 022</td>
+<td>0.2</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>StaticMethod</td>
+<td><code>@staticmethod</code></td>
+<td></td>
+<td>Mark a method as static (no self receiver).</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>ClassMethod</td>
+<td><code>@classmethod</code></td>
+<td></td>
+<td>Mark a method as a class method (no implicit self receiver).</td>
+<td>RFC 000</td>
+<td>0.2</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Requires</td>
+<td><code>@requires</code></td>
+<td></td>
+<td>Declare required fields for trait default methods.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h2 id="derives">Derives<a class="headerlink" href="#derives" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Debug</td>
+<td><code>Debug</code></td>
+<td></td>
+<td>Derive Rust-style debug formatting.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Display</td>
+<td><code>Display</code></td>
+<td></td>
+<td>Derive user-facing string formatting.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Eq</td>
+<td><code>Eq</code></td>
+<td></td>
+<td>Derive equality comparisons.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>PartialEq</td>
+<td><code>PartialEq</code></td>
+<td></td>
+<td>Derive partial equality comparisons.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Ord</td>
+<td><code>Ord</code></td>
+<td></td>
+<td>Derive ordering comparisons.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>PartialOrd</td>
+<td><code>PartialOrd</code></td>
+<td></td>
+<td>Derive partial ordering comparisons.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Hash</td>
+<td><code>Hash</code></td>
+<td></td>
+<td>Derive hashing support (for map/set keys).</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Clone</td>
+<td><code>Clone</code></td>
+<td></td>
+<td>Derive deep cloning.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Copy</td>
+<td><code>Copy</code></td>
+<td></td>
+<td>Derive copy semantics for simple value types.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Default</td>
+<td><code>Default</code></td>
+<td></td>
+<td>Derive a default value constructor.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Serialize</td>
+<td><code>Serialize</code></td>
+<td></td>
+<td>Derive serialization support (e.g. JSON).</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Deserialize</td>
+<td><code>Deserialize</code></td>
+<td></td>
+<td>Derive deserialization support (e.g. JSON).</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Validate</td>
+<td><code>Validate</code></td>
+<td></td>
+<td>Enable validated construction via <code>TypeName.new(...)</code> and require a <code>validate(self) -&gt; Result[Self, E]</code> method.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h2 id="builtin-traits">Builtin traits<a class="headerlink" href="#builtin-traits" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Debug</td>
+<td><code>Debug</code></td>
+<td></td>
+<td>Trait for debug formatting output.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Display</td>
+<td><code>Display</code></td>
+<td></td>
+<td>Trait for user-facing string formatting.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Eq</td>
+<td><code>Eq</code></td>
+<td></td>
+<td>Trait for equality comparisons.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>PartialEq</td>
+<td><code>PartialEq</code></td>
+<td></td>
+<td>Trait for partial equality comparisons.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Ord</td>
+<td><code>Ord</code></td>
+<td></td>
+<td>Trait for ordering comparisons.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>PartialOrd</td>
+<td><code>PartialOrd</code></td>
+<td></td>
+<td>Trait for partial ordering comparisons.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Hash</td>
+<td><code>Hash</code></td>
+<td></td>
+<td>Trait for hashing support.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Clone</td>
+<td><code>Clone</code></td>
+<td></td>
+<td>Trait for cloning values.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Default</td>
+<td><code>Default</code></td>
+<td></td>
+<td>Trait for default value construction.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>From</td>
+<td><code>From</code></td>
+<td></td>
+<td>Trait for conversions.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Into</td>
+<td><code>Into</code></td>
+<td></td>
+<td>Trait for conversions.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>TryFrom</td>
+<td><code>TryFrom</code></td>
+<td></td>
+<td>Trait for fallible conversions.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>TryInto</td>
+<td><code>TryInto</code></td>
+<td></td>
+<td>Trait for fallible conversions.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Iterator</td>
+<td><code>Iterator</code></td>
+<td></td>
+<td>Trait for iterator behavior.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>IntoIterator</td>
+<td><code>IntoIterator</code></td>
+<td></td>
+<td>Trait for conversion into iterators.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Error</td>
+<td><code>Error</code></td>
+<td></td>
+<td>Trait for error-like values.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h2 id="operators">Operators<a class="headerlink" href="#operators" title="Permanent link">&para;</a></h2>
+<h3 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Precedence</strong>: Higher binds tighter (e.g. <code>*</code> &gt; <code>+</code>). Values are relative and must be consistent with the parser.</li>
+<li><strong>Associativity</strong>: How operators of the same precedence group (left-to-right vs right-to-left).</li>
+<li><strong>Fixity</strong>: Whether the operator is used as a prefix unary operator or an infix binary operator.</li>
+<li><strong>KeywordSpelling</strong>: Whether the operator token is spelled as a reserved word (e.g. <code>and</code>, <code>not</code>).</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Spellings</th>
+<th style="text-align: right;">Precedence</th>
+<th>Associativity</th>
+<th>Fixity</th>
+<th>KeywordSpelling</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Plus</td>
+<td><code>+</code></td>
+<td style="text-align: right;">50</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Minus</td>
+<td><code>-</code></td>
+<td style="text-align: right;">50</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Star</td>
+<td><code>*</code></td>
+<td style="text-align: right;">60</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>StarStar</td>
+<td><code>**</code></td>
+<td style="text-align: right;">70</td>
+<td>Right</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Slash</td>
+<td><code>/</code></td>
+<td style="text-align: right;">60</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>SlashSlash</td>
+<td><code>//</code></td>
+<td style="text-align: right;">60</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Percent</td>
+<td><code>%</code></td>
+<td style="text-align: right;">60</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>EqEq</td>
+<td><code>==</code></td>
+<td style="text-align: right;">40</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>NotEq</td>
+<td><code>!=</code></td>
+<td style="text-align: right;">40</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Lt</td>
+<td><code>&lt;</code></td>
+<td style="text-align: right;">40</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>LtEq</td>
+<td><code>&lt;=</code></td>
+<td style="text-align: right;">40</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Gt</td>
+<td><code>&gt;</code></td>
+<td style="text-align: right;">40</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>GtEq</td>
+<td><code>&gt;=</code></td>
+<td style="text-align: right;">40</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Eq</td>
+<td><code>=</code></td>
+<td style="text-align: right;">10</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>PlusEq</td>
+<td><code>+=</code></td>
+<td style="text-align: right;">10</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>MinusEq</td>
+<td><code>-=</code></td>
+<td style="text-align: right;">10</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>StarEq</td>
+<td><code>*=</code></td>
+<td style="text-align: right;">10</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>SlashEq</td>
+<td><code>/=</code></td>
+<td style="text-align: right;">10</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>SlashSlashEq</td>
+<td><code>//=</code></td>
+<td style="text-align: right;">10</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>PercentEq</td>
+<td><code>%=</code></td>
+<td style="text-align: right;">10</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>DotDot</td>
+<td><code>..</code></td>
+<td style="text-align: right;">30</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>DotDotEq</td>
+<td><code>..=</code></td>
+<td style="text-align: right;">30</td>
+<td>Left</td>
+<td>Infix</td>
+<td>false</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>And</td>
+<td><code>and</code></td>
+<td style="text-align: right;">35</td>
+<td>Left</td>
+<td>Infix</td>
+<td>true</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Or</td>
+<td><code>or</code></td>
+<td style="text-align: right;">35</td>
+<td>Left</td>
+<td>Infix</td>
+<td>true</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Not</td>
+<td><code>not</code></td>
+<td style="text-align: right;">45</td>
+<td>Left</td>
+<td>Prefix</td>
+<td>true</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>In</td>
+<td><code>in</code></td>
+<td style="text-align: right;">35</td>
+<td>Left</td>
+<td>Infix</td>
+<td>true</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Is</td>
+<td><code>is</code></td>
+<td style="text-align: right;">35</td>
+<td>Left</td>
+<td>Infix</td>
+<td>true</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h2 id="punctuation">Punctuation<a class="headerlink" href="#punctuation" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Category</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Comma</td>
+<td><code>,</code></td>
+<td></td>
+<td>Separator</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Colon</td>
+<td><code>:</code></td>
+<td></td>
+<td>Separator</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Question</td>
+<td><code>?</code></td>
+<td></td>
+<td>Marker</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>At</td>
+<td><code>@</code></td>
+<td></td>
+<td>Marker</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Dot</td>
+<td><code>.</code></td>
+<td></td>
+<td>Access</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>ColonColon</td>
+<td><code>::</code></td>
+<td></td>
+<td>Access</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Arrow</td>
+<td><code>-&gt;</code></td>
+<td></td>
+<td>Arrow</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>FatArrow</td>
+<td><code>=&gt;</code></td>
+<td></td>
+<td>Arrow</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Ellipsis</td>
+<td><code>...</code></td>
+<td></td>
+<td>Marker</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>LParen</td>
+<td><code>(</code></td>
+<td></td>
+<td>Delimiter</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>RParen</td>
+<td><code>)</code></td>
+<td></td>
+<td>Delimiter</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>LBracket</td>
+<td><code>[</code></td>
+<td></td>
+<td>Delimiter</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>RBracket</td>
+<td><code>]</code></td>
+<td></td>
+<td>Delimiter</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>LBrace</td>
+<td><code>{</code></td>
+<td></td>
+<td>Delimiter</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>RBrace</td>
+<td><code>}</code></td>
+<td></td>
+<td>Delimiter</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h2 id="builtin-types">Builtin types<a class="headerlink" href="#builtin-types" title="Permanent link">&para;</a></h2>
+<h3 id="string-like">String-like<a class="headerlink" href="#string-like" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Str</td>
+<td><code>str</code></td>
+<td></td>
+<td>Builtin UTF-8 string type.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Bytes</td>
+<td><code>bytes</code></td>
+<td></td>
+<td>Builtin byte buffer type.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>FrozenStr</td>
+<td><code>frozenstr</code></td>
+<td><code>FrozenStr</code></td>
+<td>Immutable/const-friendly string type.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>FrozenBytes</td>
+<td><code>frozenbytes</code></td>
+<td><code>FrozenBytes</code></td>
+<td>Immutable/const-friendly bytes type.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>FString</td>
+<td><code>fstring</code></td>
+<td><code>FString</code></td>
+<td>Formatted string result type.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h3 id="numerics">Numerics<a class="headerlink" href="#numerics" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Int</td>
+<td><code>int</code></td>
+<td><code>i64</code>, <code>i32</code></td>
+<td>Builtin signed integer type.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Float</td>
+<td><code>float</code></td>
+<td><code>f64</code>, <code>f32</code></td>
+<td>Builtin floating-point type.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Bool</td>
+<td><code>bool</code></td>
+<td></td>
+<td>Builtin boolean type.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h3 id="collections-generic-bases">Collections / generic bases<a class="headerlink" href="#collections-generic-bases" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>List</td>
+<td><code>List</code></td>
+<td><code>list</code>, <code>Vec</code></td>
+<td>Growable list (generic sequence) type.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Dict</td>
+<td><code>Dict</code></td>
+<td><code>dict</code>, <code>HashMap</code></td>
+<td>Key/value map type.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Set</td>
+<td><code>Set</code></td>
+<td><code>set</code></td>
+<td>Unordered set type.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Tuple</td>
+<td><code>Tuple</code></td>
+<td><code>tuple</code></td>
+<td>Fixed-length heterogeneous tuple type.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Option</td>
+<td><code>Option</code></td>
+<td><code>option</code></td>
+<td>Optional value type (<code>Some</code>/<code>None</code>).</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Result</td>
+<td><code>Result</code></td>
+<td><code>result</code></td>
+<td>Result type (<code>Ok</code>/<code>Err</code>).</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>FrozenList</td>
+<td><code>FrozenList</code></td>
+<td><code>frozenlist</code></td>
+<td>Immutable/const-friendly list type.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>FrozenDict</td>
+<td><code>FrozenDict</code></td>
+<td><code>frozendict</code></td>
+<td>Immutable/const-friendly dict type.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>FrozenSet</td>
+<td><code>FrozenSet</code></td>
+<td><code>frozenset</code></td>
+<td>Immutable/const-friendly set type.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h2 id="surface-constructors">Surface constructors<a class="headerlink" href="#surface-constructors" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ok</td>
+<td><code>Ok</code></td>
+<td></td>
+<td>Construct an <code>Ok(T)</code> variant (Result success).</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Err</td>
+<td><code>Err</code></td>
+<td></td>
+<td>Construct an <code>Err(E)</code> variant (Result failure).</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Some</td>
+<td><code>Some</code></td>
+<td></td>
+<td>Construct a <code>Some(T)</code> variant (Option present).</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>None</td>
+<td><code>None</code></td>
+<td></td>
+<td>Construct a <code>None</code> variant (Option absent).</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h2 id="surface-functions">Surface functions<a class="headerlink" href="#surface-functions" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SleepMs</td>
+<td><code>sleep_ms</code></td>
+<td></td>
+<td>Sleep for N milliseconds.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Timeout</td>
+<td><code>timeout</code></td>
+<td></td>
+<td>Run an async operation with a timeout.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>TimeoutMs</td>
+<td><code>timeout_ms</code></td>
+<td></td>
+<td>Run an async operation with a timeout in milliseconds.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>SelectTimeout</td>
+<td><code>select_timeout</code></td>
+<td></td>
+<td>Select between futures with a timeout.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>YieldNow</td>
+<td><code>yield_now</code></td>
+<td></td>
+<td>Yield execution back to the async scheduler.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Spawn</td>
+<td><code>spawn</code></td>
+<td></td>
+<td>Spawn an async task.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>SpawnBlocking</td>
+<td><code>spawn_blocking</code></td>
+<td></td>
+<td>Spawn a blocking task on a dedicated thread pool.</td>
+<td>RFC 004</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Channel</td>
+<td><code>channel</code></td>
+<td></td>
+<td>Create a bounded channel (sender, receiver).</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>UnboundedChannel</td>
+<td><code>unbounded_channel</code></td>
+<td></td>
+<td>Create an unbounded channel (sender, receiver).</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Oneshot</td>
+<td><code>oneshot</code></td>
+<td></td>
+<td>Create a oneshot channel (sender, receiver).</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h2 id="surface-string-methods">Surface string methods<a class="headerlink" href="#surface-string-methods" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Upper</td>
+<td><code>upper</code></td>
+<td></td>
+<td>Convert to uppercase.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Lower</td>
+<td><code>lower</code></td>
+<td></td>
+<td>Convert to lowercase.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Strip</td>
+<td><code>strip</code></td>
+<td></td>
+<td>Strip leading and trailing whitespace.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Replace</td>
+<td><code>replace</code></td>
+<td></td>
+<td>Replace occurrences of a substring.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Join</td>
+<td><code>join</code></td>
+<td></td>
+<td>Join an iterable/list of strings with this separator.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>ToString</td>
+<td><code>to_string</code></td>
+<td></td>
+<td>Return a string representation (identity for strings).</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>SplitWhitespace</td>
+<td><code>split_whitespace</code></td>
+<td></td>
+<td>Split on Unicode whitespace.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Split</td>
+<td><code>split</code></td>
+<td></td>
+<td>Split on a separator substring.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Contains</td>
+<td><code>contains</code></td>
+<td></td>
+<td>Return true if the substring occurs within the string.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>StartsWith</td>
+<td><code>startswith</code></td>
+<td><code>starts_with</code></td>
+<td>Return true if the string starts with a prefix.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>EndsWith</td>
+<td><code>endswith</code></td>
+<td><code>ends_with</code></td>
+<td>Return true if the string ends with a suffix.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Len</td>
+<td><code>len</code></td>
+<td></td>
+<td>Return the length (in Unicode scalars).</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>IsEmpty</td>
+<td><code>is_empty</code></td>
+<td></td>
+<td>Return true if the length is zero.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h2 id="surface-types">Surface types<a class="headerlink" href="#surface-types" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Kind</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Mutex</td>
+<td><code>Mutex</code></td>
+<td></td>
+<td>Generic</td>
+<td>Async/runtime mutex.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>RwLock</td>
+<td><code>RwLock</code></td>
+<td></td>
+<td>Generic</td>
+<td>Async/runtime read-write lock.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Semaphore</td>
+<td><code>Semaphore</code></td>
+<td></td>
+<td>Named</td>
+<td>Async/runtime semaphore.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Barrier</td>
+<td><code>Barrier</code></td>
+<td></td>
+<td>Named</td>
+<td>Async/runtime barrier.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>JoinHandle</td>
+<td><code>JoinHandle</code></td>
+<td></td>
+<td>Generic</td>
+<td>Handle to a spawned task.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Sender</td>
+<td><code>Sender</code></td>
+<td></td>
+<td>Generic</td>
+<td>Bounded channel sender.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Receiver</td>
+<td><code>Receiver</code></td>
+<td></td>
+<td>Generic</td>
+<td>Bounded channel receiver.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>OneshotSender</td>
+<td><code>OneshotSender</code></td>
+<td></td>
+<td>Generic</td>
+<td>Oneshot channel sender.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>OneshotReceiver</td>
+<td><code>OneshotReceiver</code></td>
+<td></td>
+<td>Generic</td>
+<td>Oneshot channel receiver.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Vec</td>
+<td><code>Vec</code></td>
+<td></td>
+<td>Generic</td>
+<td>Rust interop <code>Vec&lt;T&gt;</code>.</td>
+<td>RFC 005</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>HashMap</td>
+<td><code>HashMap</code></td>
+<td></td>
+<td>Generic</td>
+<td>Rust interop <code>HashMap&lt;K, V&gt;</code>.</td>
+<td>RFC 005</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>App</td>
+<td><code>App</code></td>
+<td></td>
+<td>Named</td>
+<td>Web application handle for running an HTTP server.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Response</td>
+<td><code>Response</code></td>
+<td></td>
+<td>Named</td>
+<td>HTTP response builder for web handlers.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Html</td>
+<td><code>Html</code></td>
+<td></td>
+<td>Named</td>
+<td>HTML response wrapper for web handlers.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Json</td>
+<td><code>Json</code></td>
+<td></td>
+<td>Generic</td>
+<td>JSON response/extractor wrapper for web handlers.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Query</td>
+<td><code>Query</code></td>
+<td></td>
+<td>Generic</td>
+<td>Query-string extractor wrapper for web handlers.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Path</td>
+<td><code>Path</code></td>
+<td></td>
+<td>Generic</td>
+<td>Path-parameter extractor wrapper for web handlers.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Body</td>
+<td><code>Body</code></td>
+<td></td>
+<td>Generic</td>
+<td>Request body extractor wrapper for web handlers.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Request</td>
+<td><code>Request</code></td>
+<td></td>
+<td>Named</td>
+<td>Full HTTP request access for web handlers.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>FieldInfo</td>
+<td><code>FieldInfo</code></td>
+<td></td>
+<td>Named</td>
+<td>Field metadata record returned by <strong>fields</strong>().</td>
+<td>RFC 021</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h2 id="surface-methods">Surface methods<a class="headerlink" href="#surface-methods" title="Permanent link">&para;</a></h2>
+<h3 id="float-methods">float methods<a class="headerlink" href="#float-methods" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sqrt</td>
+<td><code>sqrt</code></td>
+<td></td>
+<td>Square root.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Abs</td>
+<td><code>abs</code></td>
+<td></td>
+<td>Absolute value.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Floor</td>
+<td><code>floor</code></td>
+<td></td>
+<td>Round down to the nearest integer (as float).</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Ceil</td>
+<td><code>ceil</code></td>
+<td></td>
+<td>Round up to the nearest integer (as float).</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Round</td>
+<td><code>round</code></td>
+<td></td>
+<td>Round to the nearest integer (as float).</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Sin</td>
+<td><code>sin</code></td>
+<td></td>
+<td>Sine.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Cos</td>
+<td><code>cos</code></td>
+<td></td>
+<td>Cosine.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Tan</td>
+<td><code>tan</code></td>
+<td></td>
+<td>Tangent.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Exp</td>
+<td><code>exp</code></td>
+<td></td>
+<td>Exponentiation (e^x).</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Ln</td>
+<td><code>ln</code></td>
+<td></td>
+<td>Natural logarithm.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Log2</td>
+<td><code>log2</code></td>
+<td></td>
+<td>Base-2 logarithm.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Log10</td>
+<td><code>log10</code></td>
+<td></td>
+<td>Base-10 logarithm.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>IsNan</td>
+<td><code>is_nan</code></td>
+<td></td>
+<td>Return true if this value is NaN.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>IsInfinite</td>
+<td><code>is_infinite</code></td>
+<td></td>
+<td>Return true if this value is ±infinity.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>IsFinite</td>
+<td><code>is_finite</code></td>
+<td></td>
+<td>Return true if this value is finite.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Powi</td>
+<td><code>powi</code></td>
+<td></td>
+<td>Raise to an integer power.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Powf</td>
+<td><code>powf</code></td>
+<td></td>
+<td>Raise to a float power.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h3 id="list-methods">List methods<a class="headerlink" href="#list-methods" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Append</td>
+<td><code>append</code></td>
+<td></td>
+<td>Append an element to the end of the list.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Extend</td>
+<td><code>extend</code></td>
+<td></td>
+<td>Append all elements from another list.</td>
+<td>RFC 009</td>
+<td>0.2</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Pop</td>
+<td><code>pop</code></td>
+<td></td>
+<td>Remove and return the last element. On an empty list, panics with <code>IndexError: pop from empty list</code> (Python-compatible).</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Contains</td>
+<td><code>contains</code></td>
+<td></td>
+<td>Return true if the list contains a value.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Swap</td>
+<td><code>swap</code></td>
+<td></td>
+<td>Swap two elements by index.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Reserve</td>
+<td><code>reserve</code></td>
+<td></td>
+<td>Reserve capacity for at least N more elements.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>ReserveExact</td>
+<td><code>reserve_exact</code></td>
+<td></td>
+<td>Reserve capacity for exactly N more elements.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Remove</td>
+<td><code>remove</code></td>
+<td></td>
+<td>Remove and return the element at the given index.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Count</td>
+<td><code>count</code></td>
+<td></td>
+<td>Count occurrences of a value.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Index</td>
+<td><code>index</code></td>
+<td></td>
+<td>Return the index of a value (or error if not found).</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h3 id="dict-methods">Dict methods<a class="headerlink" href="#dict-methods" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Keys</td>
+<td><code>keys</code></td>
+<td></td>
+<td>Return an iterable/list of keys.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Values</td>
+<td><code>values</code></td>
+<td></td>
+<td>Return an iterable/list of values.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Get</td>
+<td><code>get</code></td>
+<td></td>
+<td>Get a value by key, optionally with a default.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Insert</td>
+<td><code>insert</code></td>
+<td></td>
+<td>Insert or overwrite a key/value pair.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h3 id="set-methods">Set methods<a class="headerlink" href="#set-methods" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Contains</td>
+<td><code>contains</code></td>
+<td></td>
+<td>Return true if the set contains a value.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h3 id="option-methods">Option methods<a class="headerlink" href="#option-methods" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Copied</td>
+<td><code>copied</code></td>
+<td></td>
+<td>Copy from Option[&amp;T] to Option[T] when T: Copy.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>UnwrapOr</td>
+<td><code>unwrap_or</code></td>
+<td></td>
+<td>Return the contained value or a default.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Unwrap</td>
+<td><code>unwrap</code></td>
+<td></td>
+<td>Return the contained value or panic.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h3 id="frozenlist-methods">FrozenList methods<a class="headerlink" href="#frozenlist-methods" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Len</td>
+<td><code>len</code></td>
+<td></td>
+<td>Return the number of elements.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>IsEmpty</td>
+<td><code>is_empty</code></td>
+<td></td>
+<td>Return true if the list is empty.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h3 id="frozendict-methods">FrozenDict methods<a class="headerlink" href="#frozendict-methods" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Len</td>
+<td><code>len</code></td>
+<td></td>
+<td>Return the number of entries.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>IsEmpty</td>
+<td><code>is_empty</code></td>
+<td></td>
+<td>Return true if the dict is empty.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>ContainsKey</td>
+<td><code>contains_key</code></td>
+<td></td>
+<td>Return true if the dict contains a key.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h3 id="frozenset-methods">FrozenSet methods<a class="headerlink" href="#frozenset-methods" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Len</td>
+<td><code>len</code></td>
+<td></td>
+<td>Return the number of elements.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>IsEmpty</td>
+<td><code>is_empty</code></td>
+<td></td>
+<td>Return true if the set is empty.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Contains</td>
+<td><code>contains</code></td>
+<td></td>
+<td>Return true if the set contains a value.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h3 id="frozenbytes-methods">FrozenBytes methods<a class="headerlink" href="#frozenbytes-methods" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Len</td>
+<td><code>len</code></td>
+<td></td>
+<td>Return the number of bytes.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>IsEmpty</td>
+<td><code>is_empty</code></td>
+<td></td>
+<td>Return true if the byte string is empty.</td>
+<td>RFC 009</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+        <script src="../../../_snippets/javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
+      
+        <script src="../../../_snippets/javascripts/tablesort.js"></script>
+      
+        <script src="../../../_snippets/javascripts/rfc_table_filter.js"></script>
+      
+    
+  </body>
+</html>
