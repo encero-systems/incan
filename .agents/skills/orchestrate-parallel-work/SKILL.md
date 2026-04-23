@@ -174,6 +174,7 @@ Do not parallelize by:
 
 - Use `start-work` first when you need issue/RFC context, a base branch, or learnings.
 - Use `create-plan` first when the main task still needs a settled implementation plan.
+- Use `ralph-loop` when the user wants a heavier end-to-end loop with per-worker planning, review/fix iteration, orchestrator integration review, and final commit/PR drafting.
 - Use this skill after that preparation, when the task is clearly decomposable.
 
 If the task cannot be decomposed cleanly, do not force parallelism. Keep the work local.

@@ -10,8 +10,9 @@ description: Perform a thorough, Incan-project-aware code review. Use when the u
 1. Identify scope: run `git diff main...HEAD` (or read the files specified by the user).
 2. Determine which pipeline stages are touched: Parser · Typechecker · Lowering · Emission.
 3. If the change is user-facing, stdlib-facing, or architectural, also consult `AGENTS.md`, `architecture.md`, `layering.md`, `readable-maintainable-rust.md`, and `extending_language.md` as relevant.
-4. Work through the checklists below in order.
-5. Output a structured report (see **Output format**).
+4. If review uncovers a likely compiler bug outside the current change scope, trigger `flag-compiler-bug`: minimize the repro, judge blocking vs workaround, check whether the bug is already filed, and then raise or draft the bug before continuing.
+5. Work through the checklists below in order.
+6. Output a structured report (see **Output format**).
 
 ---
 
@@ -76,7 +77,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 ## Checklist 5 — Style and readability
 
 - [ ] **Section headers** (`// ---- Context: ... ----`) in functions ≥ 30 lines or ≥ 3 logical blocks.
-- [ ] **Rustdoc line length ≤ 120 chars** for `///` and `//!` comments. Prose in `.md` files is never hard-wrapped.
+- [ ] **Code comment prose is wrapped deliberately** — prose in `//`, `///`, and `//!` comments should usually stay within 120 chars and be reflowed as paragraphs. Flag multi-line comments that are hard-wrapped into many short lines not ending at a sentence or clause boundary; keep short lines only when structure requires it (bullets, tables, code blocks, deliberate emphasis, or a clean break at punctuation). Prose in `.md` files is never hard-wrapped.
 - [ ] **Changed public APIs have updated docs** — doc comments/rustdoc should still match behavior, invariants, and examples after the change.
 - [ ] **Touched non-trivial functions/methods are documented** — not just public APIs. Private helpers may skip rustdoc only when they are genuinely tiny and self-evident.
 - [ ] **Docs explain intent and constraints** — especially for public types, traits, derives, runtime adapters, and non-obvious lowering/emission behavior.
@@ -121,6 +122,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 ## Checklist 9 — Contributor hygiene
 
 - [ ] **User-facing changes update the right docs** — rustdoc, docs-site pages, examples, and release notes stay aligned when behavior changes.
+- [ ] **Compiler bugs discovered during review are surfaced explicitly** — if you find a likely compiler defect that should not be fixed inside the current change, invoke `flag-compiler-bug` instead of burying it in review notes.
 - [ ] **Repo learnings are captured when warranted** — if the change taught a durable lesson about architecture, testing, or pitfalls, consider whether `AGENTS.md` should be updated.
 
 ---
@@ -143,6 +145,9 @@ Produce a report with:
 
 ### Notes 💡
 <observation or question that doesn't require a change>
+
+### Follow-up bugs
+<drafted issue or explicit recommendation to file one, when review uncovered a likely compiler bug outside scope>
 
 ### Summary
 One or two sentences on overall quality and merge-readiness.

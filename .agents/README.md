@@ -17,3 +17,9 @@ This folder contains subagents and reference material for AI agents working on t
 ## Adding learnings
 
 When an implementation teaches a durable lesson about architeture, testing, or pitfalls, use the `/add-learning` skill to append new insights. It handles section matching, formatting, and deduplication.
+
+## Skills worth discovering
+
+| Skill | Purpose |
+| --- | --- |
+| `flag-compiler-bug` | Pause when a likely compiler defect is found, minimize the repro, check for duplicates, decide blocking vs workaround, and raise or draft the bug. |
