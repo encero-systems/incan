@@ -11,25 +11,21 @@
       
       
       
-        <link rel="prev" href="../contributing/explanation/stdlib_testing_internals/">
       
       
-        <link rel="next" href="../release_notes/">
-      
-      
-      <link rel="icon" href="../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>RFCs - Incan Documentation</title>
+        <title>RFC 072: std.logging — Pythonic structured logging on a tracing-backed runtime - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -48,9 +44,9 @@
       
     
     
-      <link rel="stylesheet" href="../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../stylesheets/pygments.css">
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -76,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfcs-design-records" class="md-skip">
+        <a href="#rfc-072-stdlogging-pythonic-structured-logging-on-a-tracing-backed-runtime" class="md-skip">
           Skip to content
         </a>
       
@@ -96,7 +92,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -116,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFCs
+              RFC 072: std.logging — Pythonic structured logging on a tracing-backed runtime
             
           </span>
         </div>
@@ -239,7 +235,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -269,7 +265,7 @@
   
   
     <li class="md-nav__item">
-      <a href=".." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -320,7 +316,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../start_here/" class="md-nav__link ">
+            <a href="../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -353,7 +349,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -374,7 +370,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -395,7 +391,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -416,7 +412,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../start_here/beginner/" class="md-nav__link">
+      <a href="../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -475,7 +471,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../language/" class="md-nav__link ">
+            <a href="../../language/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -599,7 +595,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../language/tutorials/book/" class="md-nav__link ">
+            <a href="../../language/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -632,7 +628,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -653,7 +649,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -674,7 +670,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -695,7 +691,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -716,7 +712,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -737,7 +733,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -758,7 +754,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -779,7 +775,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -800,7 +796,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -821,7 +817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -842,7 +838,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -863,7 +859,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -884,7 +880,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -913,7 +909,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -934,7 +930,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1028,7 +1024,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/async_programming/" class="md-nav__link">
+      <a href="../../language/how-to/async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1049,7 +1045,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1070,7 +1066,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1091,7 +1087,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/error_messages/" class="md-nav__link">
+      <a href="../../language/how-to/error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1112,7 +1108,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/file_io/" class="md-nav__link">
+      <a href="../../language/how-to/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1133,7 +1129,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1154,7 +1150,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/module_state/" class="md-nav__link">
+      <a href="../../language/how-to/module_state/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1175,7 +1171,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1196,7 +1192,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1217,7 +1213,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/string_processing/" class="md-nav__link">
+      <a href="../../language/how-to/string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1238,7 +1234,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/performance/" class="md-nav__link">
+      <a href="../../language/how-to/performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1259,7 +1255,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1280,7 +1276,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1353,7 +1349,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../language/reference/" class="md-nav__link ">
+            <a href="../../language/reference/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1386,7 +1382,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/language/" class="md-nav__link">
+      <a href="../../language/reference/language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1407,7 +1403,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/glossary/" class="md-nav__link">
+      <a href="../../language/reference/glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1428,7 +1424,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/file_io/" class="md-nav__link">
+      <a href="../../language/reference/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1449,7 +1445,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1470,7 +1466,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/static_storage/" class="md-nav__link">
+      <a href="../../language/reference/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1491,7 +1487,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1512,7 +1508,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/strings/" class="md-nav__link">
+      <a href="../../language/reference/strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1533,7 +1529,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/reflection/" class="md-nav__link">
+      <a href="../../language/reference/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1554,7 +1550,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1607,7 +1603,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../language/reference/stdlib/" class="md-nav__link ">
+            <a href="../../language/reference/stdlib/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1640,7 +1636,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib/async/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1661,7 +1657,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib/derives/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1682,7 +1678,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib/reflection/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1703,7 +1699,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib/traits/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1724,7 +1720,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib/testing/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1745,7 +1741,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib/math/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1806,7 +1802,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1839,7 +1835,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1860,7 +1856,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1881,7 +1877,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1902,7 +1898,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1923,7 +1919,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1944,7 +1940,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2024,7 +2020,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2045,7 +2041,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2066,7 +2062,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2087,7 +2083,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2108,7 +2104,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../language/reference/derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2129,7 +2125,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2237,7 +2233,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/why_incan/" class="md-nav__link">
+      <a href="../../language/explanation/why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2258,7 +2254,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2279,7 +2275,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2300,7 +2296,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/control_flow/" class="md-nav__link">
+      <a href="../../language/explanation/control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2321,7 +2317,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/closures/" class="md-nav__link">
+      <a href="../../language/explanation/closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2342,7 +2338,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/consts/" class="md-nav__link">
+      <a href="../../language/explanation/consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2363,7 +2359,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/static_storage/" class="md-nav__link">
+      <a href="../../language/explanation/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2384,7 +2380,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2405,7 +2401,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/call_site_type_arguments/" class="md-nav__link">
+      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2426,7 +2422,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2447,7 +2443,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/enums/" class="md-nav__link">
+      <a href="../../language/explanation/enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2468,7 +2464,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/error_handling/" class="md-nav__link">
+      <a href="../../language/explanation/error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2489,7 +2485,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2534,7 +2530,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2567,7 +2563,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2588,7 +2584,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2617,7 +2613,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2638,7 +2634,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2705,7 +2701,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../tooling/" class="md-nav__link ">
+            <a href="../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2783,7 +2779,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2804,7 +2800,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2825,7 +2821,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2909,7 +2905,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2930,7 +2926,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2951,7 +2947,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2972,7 +2968,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2993,7 +2989,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3014,7 +3010,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3035,7 +3031,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3056,7 +3052,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3128,7 +3124,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3149,7 +3145,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3223,7 +3219,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3244,7 +3240,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3265,7 +3261,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3298,8 +3294,6 @@
       
   
   
-    
-  
   
   
     
@@ -3327,16 +3321,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../contributing/" class="md-nav__link ">
+            <a href="../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3353,7 +3347,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             Contributing
@@ -3446,7 +3440,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3479,7 +3473,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3500,7 +3494,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3521,7 +3515,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3542,7 +3536,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3563,7 +3557,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3584,7 +3578,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3605,7 +3599,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3626,7 +3620,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3712,7 +3706,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3733,7 +3727,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3754,7 +3748,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3775,7 +3769,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3796,7 +3790,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3872,7 +3866,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3893,7 +3887,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3914,7 +3908,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3935,7 +3929,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3961,30 +3955,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  <span class="md-ellipsis">
-    RFCs
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3993,44 +3967,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#index" class="md-nav__link">
-    <span class="md-ellipsis">
-      Index
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
-    <span class="md-ellipsis">
-      See also
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -4077,7 +4013,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../release_notes/" class="md-nav__link ">
+            <a href="../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4110,7 +4046,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../release_notes/0_2/" class="md-nav__link">
+      <a href="../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4131,7 +4067,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../release_notes/0_1/" class="md-nav__link">
+      <a href="../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4159,7 +4095,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../roadmap/" class="md-nav__link">
+      <a href="../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4179,7 +4115,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../stability/" class="md-nav__link">
+      <a href="../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4219,18 +4155,324 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#index" class="md-nav__link">
+  <a href="#summary" class="md-nav__link">
     <span class="md-ellipsis">
-      Index
+      Summary
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
+  <a href="#core-model" class="md-nav__link">
     <span class="md-ellipsis">
-      See also
+      Core model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#motivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Motivation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Guide-level explanation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#basic-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      Basic use
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#libraries-should-emit-not-configure" class="md-nav__link">
+    <span class="md-ellipsis">
+      Libraries should emit, not configure
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hierarchical-logger-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      Hierarchical logger names
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#structured-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      Structured fields
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bound-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      Bound context
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#checking-whether-a-level-is-enabled" class="md-nav__link">
+    <span class="md-ellipsis">
+      Checking whether a level is enabled
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reference-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reference-level explanation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reference-level explanation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#required-module-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      Required module surface
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      Levels
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logger-acquisition-and-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      Logger acquisition and identity
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configuration-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration model
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#log-record-content" class="md-nav__link">
+    <span class="md-ellipsis">
+      Log record content
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#structured-field-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Structured field semantics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#effective-level-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Effective-level checks
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sensible-sensitive-data-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      Sensible sensitive-data behavior
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#library-and-application-split" class="md-nav__link">
+    <span class="md-ellipsis">
+      Library and application split
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-the-surface-is-python-shaped" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why the surface is Python-shaped
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-the-runtime-should-be-tracing-backed" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why the runtime should be tracing-backed
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-this-rfc-does-not-start-with-a-full-span-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why this RFC does not start with a full span API
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-root-configuration-stays-narrow-in-v1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why root configuration stays narrow in v1
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-warning-is-the-preferred-spelling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why warning is the preferred spelling
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-context-binding-matters" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why context binding matters
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      Alternatives considered
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#drawbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Drawbacks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation architecture
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unresolved-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unresolved questions
     </span>
   </a>
   
@@ -4254,491 +4496,279 @@
   
 
 
-<h1 id="rfcs-design-records">RFCs (Design records)<a class="headerlink" href="#rfcs-design-records" title="Permanent link">&para;</a></h1>
-<p>RFCs are design/evolution records (PEP-style). They are primarily for contributors and advanced readers.</p>
+<h1 id="rfc-072-stdlogging-pythonic-structured-logging-on-a-tracing-backed-runtime">RFC 072: <code>std.logging</code> — Pythonic structured logging on a tracing-backed runtime<a class="headerlink" href="#rfc-072-stdlogging-pythonic-structured-logging-on-a-tracing-backed-runtime" title="Permanent link">&para;</a></h1>
 <ul>
-<li>RFCs are not canonical user docs.</li>
-<li>User docs may link to RFCs for background and rationale.</li>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2026-04-23</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong><ul>
+<li>RFC 022 (namespaced stdlib modules and compiler handoff)</li>
+<li>RFC 023 (compilable stdlib and Rust module binding)</li>
+<li>RFC 041 (first-class Rust interop authoring)</li>
+<li>RFC 063 (<code>std.process</code> process spawning and command execution)</li>
+<li>RFC 066 (<code>std.http</code> HTTP client surface)</li>
 </ul>
-<p>For status, see: <a href="../roadmap/">Roadmap</a>.</p>
-<h2 id="index">Index<a class="headerlink" href="#index" title="Permanent link">&para;</a></h2>
-<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
-
-<!-- markdownlint-disable MD013 MD060 MD053 MD033 -->
-<!-- Include RFC reference links (DRY: reuse rfcs_refs.md) -->
-<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
-
-<!-- RFC reference links for reuse: '[RFC 018]' or '[RFC 018: Title][RFC 018]' -->
-<!-- RFCs index table -->
-
-<!-- RFC index filter UI -->
-
-<div class="rfc-index-filter">
-  <label>
-    Filter RFCs: <input type="search" data-rfc-filter="rfcs-index" placeholder="e.g. 018, testing, superseded">
-  </label>
-  <p><small>Tip: press <code>Esc</code> to clear.</small></p>
-</div>
-
-<div data-rfc-table="rfcs-index">
-<table>
-<thead>
-<tr>
-<th style="text-align: right;">RFC</th>
-<th>Status</th>
-<th>Track</th>
-<th>Title</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/000_core_rfc">RFC 000</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Incan Core Language RFC (Phase 1)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/001_test_fixtures">RFC 001</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Test Fixtures</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/002_test_parametrize">RFC 002</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Parametrized Tests</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/003_frontend_wasm">RFC 003</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>frontend and WebAssembly support</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/004_async_fixtures">RFC 004</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>async fixtures</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Rust Interop</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/006_generators">RFC 006</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Python-style generators</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/007_inline_tests">RFC 007</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Inline Tests</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/008_const_bindings">RFC 008</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Const Bindings</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/009_sized_integers">RFC 009</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Sized numeric types and builtin type registry</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/010_tempfile">RFC 010</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Python-style <code>tempfile</code> standard library</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/011_fstring_error_spans">RFC 011</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Precise Error Spans in F-Strings</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/012_json_value_enum_methods_and_trait_adoption">RFC 012</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td><code>JsonValue</code>, enum methods, and enum trait adoption</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Rust Crate Dependencies</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/014_generated_code_error_handling">RFC 014</a></td>
-<td>Rejected</td>
-<td>proposed / active</td>
-<td>user-facing runtime error behavior for generated code</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a></td>
-<td>In Progress</td>
-<td>proposed / active</td>
-<td>hatch-like tooling (project lifecycle CLI)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/016_loop_and_break_value">RFC 016</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>loop</code> and <code>break &lt;value&gt;</code> (Loop Expressions)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/017_validated_newtypes_with_implicit_coercion">RFC 017</a></td>
-<td>In Progress</td>
-<td>proposed / active</td>
-<td>Validated newtypes with implicit coercion (pydantic-like feel)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/018_testing">RFC 018</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>language primitives for testing</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/019_runner_testing">RFC 019</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>test runner, CLI, and ecosystem</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/020_offline_locked_reproducible_builds">RFC 020</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>offline / locked / reproducible builds (Cargo policy + generated project contract)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/021_model_field_metadata_and_aliases">RFC 021</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Model field metadata and schema-safe aliases</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Namespaced stdlib modules and compiler→stdlib handoff</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Compilable Stdlib &amp; Rust Module Binding</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>extensible derive protocol</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>multi-instantiation trait dispatch</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/026_user_defined_trait_bridges">RFC 026</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>User-Defined Trait Bridges</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/027_incan_vocab_crate">RFC 027</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td><code>incan-vocab</code> — Library Vocabulary Registration Crate</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/028_trait_based_operator_overloading">RFC 028</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>trait-based operator overloading</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/029_union_types">RFC 029</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>union types and type narrowing</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/030_std_collections">RFC 030</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.collections</code> — extended collection types</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/031_library_system_phase1">RFC 031</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Incan Library System — Phase 1 (Local Path Dependencies)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/032_value_enums">RFC 032</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>value enums — <code>StrEnum</code> and <code>IntEnum</code></td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/033_ctx_keyword">RFC 033</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>ctx</code> — typed configuration context</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/034_incan_pub_registry">RFC 034</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>incan.pub</code> — The Incan Package Registry</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/035_first_class_function_references">RFC 035</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>First-Class Named Function References</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/036_user_defined_decorators">RFC 036</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>user-defined decorators</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/037_native_web_stdlib_redesign">RFC 037</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>native web and HTTP stdlib redesign</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/038_variadic_positional_args_and_keyword_capture">RFC 038</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Variadic Positional Args and Keyword-Argument Capture (<code>*args</code> / <code>**kwargs</code>)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/039_race_for_awaitable_concurrency">RFC 039</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>race</code> for awaitable concurrency</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/040_scoped_dsl_glyph_surfaces">RFC 040</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Scoped DSL Glyph Surfaces</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>First-Class Rust Interop Authoring</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/042_traits_are_always_abstract">RFC 042</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Traits Are Always Abstract</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/043_rust_trait_impl_from_incan">RFC 043</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Rust Trait Implementation from Incan</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/044_open_ended_trait_methods">RFC 044</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Open-Ended Trait Methods</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/045_scoped_dsl_symbol_surfaces">RFC 045</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Scoped DSL symbol surfaces</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/046_computed_properties">RFC 046</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Computed properties (<code>property name -&gt; Type</code>)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/047_lightweight_directed_graph_stdlib">RFC 047</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Lightweight directed graph types (stdlib)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/048_contract_backed_models_emit_and_tooling">RFC 048</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Contract-backed models, Incan emit, and interrogation tooling</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/049_single_arm_conditional_match">RFC 049</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>if let</code> single-arm conditional match</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/050_enum_methods_and_trait_adoption">RFC 050</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Enum methods and enum trait adoption</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/051_json_value">RFC 051</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>JsonValue</code> for <code>std.json</code></td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/052_module_static_storage">RFC 052</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Module Static Storage</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/053_formatter_vertical_spacing_buckets">RFC 053</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Formatter vertical spacing (three blank-line buckets)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/054_explicit_call_site_generics">RFC 054</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Explicit call-site generic arguments for function and method calls</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/055_std_fs">RFC 055</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>std.fs</code> — pathlib-shaped filesystem APIs with chunked file I/O</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/056_std_io">RFC 056</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>std.io</code> — in-memory byte streams and binary parsing helpers</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/057_rust_allow_targeted_lint_suppression">RFC 057</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>@rust.allow(...)</code> — targeted Rust lint suppression for generated code</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/058_std_datetime">RFC 058</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>std.datetime</code> — temporal values, intervals, and runtime timing</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/059_std_regex">RFC 059</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>std.regex</code> — regular expressions, matches, captures, and replacement</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/060_std_uuid">RFC 060</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.uuid</code> — UUID parsing, generation, and formatting</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/061_std_compression">RFC 061</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.compression</code> — codec-based compression and decompression</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/062_std_archive">RFC 062</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.archive</code> — archive container creation and extraction</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/063_std_process">RFC 063</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.process</code> — process spawning and command execution</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/064_std_encoding">RFC 064</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.encoding</code> — binary-text encoding and decoding utilities</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/065_std_hash">RFC 065</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.hash</code> — stable hashing primitives for data and integrity workflows</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/066_std_http">RFC 066</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.http</code> — Incan-first HTTP client and request/response surface</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/067_std_ci">RFC 067</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.ci</code> — deterministic CI and automation scripting primitives</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/068_protocol_hooks_for_core_language_syntax">RFC 068</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>protocol hooks for core language syntax</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/069_list_repeat_std_helper">RFC 069</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>list.repeat</code> Helper for Fixed-Length Initialization</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/070_result_combinators_for_result_types">RFC 070</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Result Combinators for <code>Result[T, E]</code></td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/071_pattern_alternation_in_match_and_if_let">RFC 071</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Pattern alternation in <code>match</code> and <code>if let</code></td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/072_std_logging">RFC 072</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.logging</code> — Pythonic structured logging on a tracing-backed runtime</td>
-</tr>
-</tbody>
-</table>
-</div>
-<!-- markdownlint-enable MD013 MD060 MD053 MD033 -->
-
-<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/392</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> —</li>
+</ul>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>This RFC proposes <code>std.logging</code> as Incan's standard library surface for ordinary application and library logging. The user-facing model is intentionally Pythonic: acquire a logger with <code>get_logger(...)</code>, configure the root logger once near program startup with <code>basic_config(...)</code>, and emit messages with methods such as <code>log.info("message")</code>. Under that simple surface, log records remain structured events with optional fields and context, so the runtime can map them onto Rust's <code>tracing</code> ecosystem rather than committing Incan to a text-only or <code>println</code>-shaped logging story.</p>
+<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
+<p>Read this RFC as one foundation plus four mechanisms:</p>
+<ol>
+<li><strong>Foundation:</strong> Logging is a stdlib capability, not a Rust interop recipe and not a language keyword.</li>
+<li><strong>Mechanism A:</strong> Users acquire hierarchical <code>Logger</code> values through <code>get_logger(...)</code>, and the common case should feel as simple as <code>log.info("message")</code>.</li>
+<li><strong>Mechanism B:</strong> Log calls are structured events with a message, a level, a logger name, and optional fields or bound context, not just raw text writes.</li>
+<li><strong>Mechanism C:</strong> Applications configure logging once near startup; libraries emit logs but should not own process-wide logger configuration.</li>
+<li><strong>Mechanism D:</strong> The runtime should preserve compatibility with Rust's real logging world by mapping onto <code>tracing</code> and interoperating with the <code>log</code> facade where practical.</li>
+</ol>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>Logging is one of the first places where a language either feels credible for real programs or immediately falls back to ad hoc glue. CLIs, services, automation scripts, libraries, test helpers, and future query-language surfaces all need a shared story for diagnostics. Today, the escape hatch is Rust interop. That is serviceable, but it is not a stable language surface. It leaks Rust crate names, Rust backend assumptions, and Rust macro-oriented ergonomics into code that should stay ordinary Incan.</p>
+<p>That leak is already visible in the project's own documentation. The Rust interop docs currently show <code>import rust::tracing as log</code> followed by <code>log.info("Starting server...")</code>. That proves the underlying capability exists, but it is not a coherent standard-library contract. Users should not need to know whether Rust prefers <code>log</code>, <code>env_logger</code>, <code>tracing</code>, or some other crate just to say "emit an info log here".</p>
+<p>Python gets an important part of this right: the everyday developer experience is simple, hierarchical, and library-friendly. A module acquires a logger, the application configures the root logger, and records flow upward through the hierarchy. That model is learnable, composable, and already familiar to a large part of Incan's target audience.</p>
+<p>However, copying Python's API shape is not enough by itself. Rust's ecosystem has a real distinction between the lightweight <code>log</code> facade and the richer <code>tracing</code> model. That distinction matters, especially for async code. A simplistic text-only logger would feel familiar for a week and limiting for years. Incan should therefore adopt the Python-shaped user model while keeping structured fields and tracing-oriented runtime semantics as the architectural center.</p>
+<p>This also matters for operational hygiene. Logging surfaces tend to grow accidental bad habits: duplicate global configuration, eager expensive debug formatting, secrets dumped into output, and inconsistent correlation identifiers. Prior art from Scala and production Python code shows that convenience and discipline need to coexist. <code>std.logging</code> should therefore optimize for simple call sites without turning the runtime contract into ambient magic.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>RFC template: <a href="TEMPLATE/">TEMPLATE</a></li>
-<li>How to write an RFC: <a href="../contributing/how-to/writing_rfcs/">Writing RFCs (how-to)</a></li>
+<li>Provide a first-class <code>std.logging</code> module for application and library diagnostics.</li>
+<li>Make the common path simple and recognizably Pythonic: <code>get_logger(...)</code>, <code>basic_config(...)</code>, and <code>log.info("message")</code>.</li>
+<li>Standardize hierarchical logger names and root-oriented configuration.</li>
+<li>Make structured fields and bound context first-class so logs are useful for machines as well as humans.</li>
+<li>Keep library emission separate from application-wide logger configuration.</li>
+<li>Give the runtime a backend model that fits Rust reality by aligning with <code>tracing</code> and interoperating with <code>log</code> where practical.</li>
+<li>Prefer conservative defaults around log level, root output, and sensitive field handling.</li>
 </ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Exposing Rust logging crates directly as the stdlib contract.</li>
+<li>Reproducing Python's full handler / formatter / filter object graph in the first version.</li>
+<li>Defining distributed tracing, OpenTelemetry export, or metrics collection in this RFC.</li>
+<li>Making logging a keyword, decorator-only surface, or compiler special form.</li>
+<li>Standardizing every feature of <code>tracing-subscriber</code>, <code>log4rs</code>, <code>env_logger</code>, or other backend crates.</li>
+<li>Mirroring Python's exception-oriented logging helpers one-to-one where the language model does not justify them.</li>
+</ul>
+<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
+<h3 id="basic-use">Basic use<a class="headerlink" href="#basic-use" title="Permanent link">&para;</a></h3>
+<p>Programs configure logging once near startup and then acquire named loggers where they need them:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Level</span><span class="p">,</span> <span class="n">basic_config</span><span class="p">,</span> <span class="n">get_logger</span>
+
+<span class="n">basic_config</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="nc">Level</span><span class="o">.</span><span class="nc">INFO</span><span class="p">)</span>
+
+<span class="n">log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Starting session&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>The intended user experience is ordinary and unsurprising:</p>
+<ul>
+<li>use <code>basic_config(...)</code> in the executable or top-level script</li>
+<li>use <code>get_logger(...)</code> in modules and libraries</li>
+<li>call <code>debug</code>, <code>info</code>, <code>warning</code>, <code>error</code>, <code>critical</code>, or <code>trace</code> on the resulting logger</li>
+</ul>
+<h3 id="libraries-should-emit-not-configure">Libraries should emit, not configure<a class="headerlink" href="#libraries-should-emit-not-configure" title="Permanent link">&para;</a></h3>
+<p>Libraries should not take over process-wide logging policy. They should simply acquire a logger and emit records:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_logger</span>
+
+<span class="n">log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">()</span>
+
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">preview</span><span class="p">(</span><span class="n">dataset_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Preparing preview&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;dataset&quot;</span><span class="p">:</span> <span class="n">dataset_name</span><span class="p">})</span>
+</code></pre></div>
+<p>The application decides where those records go and which levels are visible.</p>
+<h3 id="hierarchical-logger-names">Hierarchical logger names<a class="headerlink" href="#hierarchical-logger-names" title="Permanent link">&para;</a></h3>
+<p>Named loggers should be hierarchical and dot-separated:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_logger</span>
+
+<span class="n">session_log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">(</span><span class="s2">&quot;inql.session&quot;</span><span class="p">)</span>
+<span class="n">csv_log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">(</span><span class="s2">&quot;inql.session.csv&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>This keeps filtering and output understandable. Logs from <code>inql.session.csv</code> are visibly related to <code>inql.session</code>, and root configuration can treat them as part of one tree.</p>
+<p>For the common case, <code>get_logger()</code> with no explicit name should use the current module path when that information is available, so users are not forced to spell the module name manually in every file.</p>
+<h3 id="structured-fields">Structured fields<a class="headerlink" href="#structured-fields" title="Permanent link">&para;</a></h3>
+<p>The logging API should support additional fields without forcing users into manual string interpolation:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_logger</span>
+
+<span class="n">log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">load_rows</span><span class="p">(</span><span class="n">dataset</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">row_count</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Loaded dataset rows&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;dataset&quot;</span><span class="p">:</span> <span class="n">dataset</span><span class="p">,</span> <span class="s2">&quot;rows&quot;</span><span class="p">:</span> <span class="n">row_count</span><span class="p">})</span>
+</code></pre></div>
+<p>Human-readable output may render these fields textually, while JSON or tracing-oriented output may preserve them as structured values.</p>
+<h3 id="bound-context">Bound context<a class="headerlink" href="#bound-context" title="Permanent link">&para;</a></h3>
+<p>For repeated context such as request IDs or pipeline run IDs, users should be able to derive a contextual logger instead of repeating the same fields on every call:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_logger</span>
+
+<span class="n">log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">handle_request</span><span class="p">(</span><span class="n">request_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">request_log</span> <span class="o">=</span> <span class="n">log</span><span class="o">.</span><span class="n">with_fields</span><span class="p">({</span><span class="s2">&quot;request_id&quot;</span><span class="p">:</span> <span class="n">request_id</span><span class="p">})</span>
+    <span class="n">request_log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;request started&quot;</span><span class="p">)</span>
+    <span class="n">request_log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;request finished&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="mi">200</span><span class="p">})</span>
+</code></pre></div>
+<p>This is the intended answer for correlation-friendly logging. The logger stays simple, but the emitted records remain structured.</p>
+<h3 id="checking-whether-a-level-is-enabled">Checking whether a level is enabled<a class="headerlink" href="#checking-whether-a-level-is-enabled" title="Permanent link">&para;</a></h3>
+<p>For expensive debug-only work, users should be able to check the effective level explicitly:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Level</span><span class="p">,</span> <span class="n">get_logger</span>
+
+<span class="n">log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">debug_plan</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">log</span><span class="o">.</span><span class="n">is_enabled</span><span class="p">(</span><span class="nc">Level</span><span class="o">.</span><span class="nc">DEBUG</span><span class="p">):</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="n">render_debug_summary</span><span class="p">())</span>
+</code></pre></div>
+<p>The goal is not to force this pattern for ordinary logs. The goal is to provide an explicit escape hatch when the message construction itself is materially expensive.</p>
+<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
+<h3 id="required-module-surface">Required module surface<a class="headerlink" href="#required-module-surface" title="Permanent link">&para;</a></h3>
+<p><code>std.logging</code> must provide, at minimum:</p>
+<ul>
+<li><code>Level</code></li>
+<li><code>Logger</code></li>
+<li><code>get_logger(name: str | None = None) -&gt; Logger</code></li>
+<li><code>basic_config(...)</code></li>
+</ul>
+<p>The root <code>Logger</code> type must provide, at minimum:</p>
+<ul>
+<li><code>trace(message, fields=...)</code></li>
+<li><code>debug(message, fields=...)</code></li>
+<li><code>info(message, fields=...)</code></li>
+<li><code>warning(message, fields=...)</code></li>
+<li><code>error(message, fields=...)</code></li>
+<li><code>critical(message, fields=...)</code></li>
+<li><code>is_enabled(level: Level) -&gt; bool</code></li>
+<li><code>with_fields(fields=...) -&gt; Logger</code></li>
+</ul>
+<p>Implementations may add more helpers, but the public contract must remain centered on the simple logger model above.</p>
+<h3 id="levels">Levels<a class="headerlink" href="#levels" title="Permanent link">&para;</a></h3>
+<p>The standard level set must include:</p>
+<ul>
+<li><code>TRACE</code></li>
+<li><code>DEBUG</code></li>
+<li><code>INFO</code></li>
+<li><code>WARNING</code></li>
+<li><code>ERROR</code></li>
+<li><code>CRITICAL</code></li>
+</ul>
+<p>User-facing APIs must expose <code>warning</code>, not only <code>warn</code>.</p>
+<p>Implementations may provide <code>warn</code> as a compatibility alias, but it should be documented as a legacy or compatibility spelling rather than as the preferred surface.</p>
+<h3 id="logger-acquisition-and-identity">Logger acquisition and identity<a class="headerlink" href="#logger-acquisition-and-identity" title="Permanent link">&para;</a></h3>
+<p><code>get_logger(name)</code> must return a logger associated with the given name.</p>
+<p>If <code>name</code> is omitted:</p>
+<ul>
+<li>implementations should use the current module path when that information is available</li>
+<li>implementations may fall back to the root logger when the current module path is unavailable</li>
+</ul>
+<p>Multiple calls to <code>get_logger()</code> for the same effective logger name must return the same logical logger identity for the purposes of configuration, filtering, and output metadata. The implementation is not required to preserve object identity if a different representation achieves the same observable behavior, but it must not behave as though each call created an unrelated logger namespace.</p>
+<p>Logger names must be hierarchical and dot-separated. A logger named <code>a.b.c</code> must be treated as a descendant of <code>a.b</code> and <code>a</code>.</p>
+<h3 id="configuration-model">Configuration model<a class="headerlink" href="#configuration-model" title="Permanent link">&para;</a></h3>
+<p><code>basic_config(...)</code> must configure the process-wide root logging behavior.</p>
+<p>The first version of the contract must support, at minimum:</p>
+<ul>
+<li>configuring the minimum visible level</li>
+<li>configuring console output</li>
+<li>choosing a human-readable text format and a structured format such as JSON</li>
+</ul>
+<p>The standard runtime should behave conservatively if the user does not call <code>basic_config(...)</code>:</p>
+<ul>
+<li>it should install a default root logger at level <code>WARNING</code></li>
+<li>it should send human-readable output to standard error</li>
+<li>it should avoid silently promoting low-priority logs into visible output</li>
+</ul>
+<p>Libraries should not call <code>basic_config(...)</code> except in test fixtures or executable-style examples.</p>
+<p>If the runtime supports repeated configuration, that behavior must be explicit. A Python-like <code>force=True</code> model is acceptable. Silently reconfiguring global logging state on repeated ordinary calls is not.</p>
+<h3 id="log-record-content">Log record content<a class="headerlink" href="#log-record-content" title="Permanent link">&para;</a></h3>
+<p>Each emitted log record must preserve, at minimum:</p>
+<ul>
+<li>timestamp or an equivalent time source suitable for output formatting</li>
+<li>level</li>
+<li>logger name</li>
+<li>message text</li>
+<li>structured fields provided at the call site</li>
+<li>structured fields bound through <code>with_fields(...)</code></li>
+</ul>
+<p>Text output may render these into a line-oriented format. Structured output must preserve fields as fields rather than flattening everything into one preformatted string.</p>
+<h3 id="structured-field-semantics">Structured field semantics<a class="headerlink" href="#structured-field-semantics" title="Permanent link">&para;</a></h3>
+<p>The <code>fields=</code> argument must accept key-value data that can be carried across the logging boundary without forcing the user to manually interpolate the values into the message string.</p>
+<p>Implementations must preserve scalar field values faithfully for structured sinks. They should preserve richer structured values where the configured sink format supports them.</p>
+<p>When the same field key is present both in a logger produced by <code>with_fields(...)</code> and in a per-call <code>fields=</code> argument, the per-call field value should win.</p>
+<h3 id="effective-level-checks">Effective-level checks<a class="headerlink" href="#effective-level-checks" title="Permanent link">&para;</a></h3>
+<p><code>is_enabled(level)</code> must reflect the logger's effective level under root and hierarchical configuration, not merely a local per-instance default.</p>
+<p>The purpose of <code>is_enabled(level)</code> is to allow callers to guard expensive debug-only or trace-only computation. It must not itself emit log output or mutate logger state.</p>
+<h3 id="sensible-sensitive-data-behavior">Sensible sensitive-data behavior<a class="headerlink" href="#sensible-sensitive-data-behavior" title="Permanent link">&para;</a></h3>
+<p>The logging contract should treat obviously sensitive fields conservatively. Implementations should support redaction for keys such as <code>authorization</code>, <code>token</code>, <code>secret</code>, <code>password</code>, and similar credentials or bearer values.</p>
+<p>The first version does not need a complete secret-type system, but it must not encourage APIs that casually dump sensitive structured data into debug-facing output by default.</p>
+<h3 id="library-and-application-split">Library and application split<a class="headerlink" href="#library-and-application-split" title="Permanent link">&para;</a></h3>
+<p>This RFC standardizes a strong separation of concerns:</p>
+<ul>
+<li>libraries should emit logs through <code>Logger</code></li>
+<li>applications should configure root logging policy</li>
+</ul>
+<p>Library code must not require a particular logging backend crate name in user-facing docs or examples. Users should not need to choose between <code>log</code> and <code>tracing</code> in ordinary Incan code.</p>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="why-the-surface-is-python-shaped">Why the surface is Python-shaped<a class="headerlink" href="#why-the-surface-is-python-shaped" title="Permanent link">&para;</a></h3>
+<p>Python's standard logging model gets one crucial thing right for a general-purpose language: most code only needs a hierarchical logger and one root configuration point. That model is easy to teach, easy to compose across libraries, and familiar to the users Incan already targets. The key ergonomic choice in this RFC is therefore not novelty; it is choosing the boring path where boring is correct.</p>
+<p>That is why <code>get_logger(...)</code>, <code>basic_config(...)</code>, dot-separated logger names, and root-oriented configuration are the center of the proposal. They make it easy for a user to read code and immediately understand where diagnostics come from.</p>
+<h3 id="why-the-runtime-should-be-tracing-backed">Why the runtime should be tracing-backed<a class="headerlink" href="#why-the-runtime-should-be-tracing-backed" title="Permanent link">&para;</a></h3>
+<p>Rust's <code>log</code> crate is intentionally a lightweight facade, and that separation between API and backend is valuable. But <code>tracing</code> exists for a reason. Its model is explicitly structured and async-aware, and it explains why plain text logs become hard to interpret once concurrent work is interleaved. Incan should not ignore that lesson.</p>
+<p>Therefore this RFC deliberately keeps the public surface event-first and simple while recommending that the implementation preserve structured fields all the way down and map naturally onto <code>tracing</code> events. That gives Incan room to add richer scope or span-oriented diagnostics later without breaking the basic logger contract.</p>
+<h3 id="why-this-rfc-does-not-start-with-a-full-span-api">Why this RFC does not start with a full span API<a class="headerlink" href="#why-this-rfc-does-not-start-with-a-full-span-api" title="Permanent link">&para;</a></h3>
+<p>There is a temptation to expose <code>tracing</code> concepts directly because they are powerful. That would be the wrong first move. Most users need logging before they need tracing, and the proposal fails if the first thing an ordinary script author sees is a span taxonomy or a Rust crate adapter story.</p>
+<p>The right order is the opposite:</p>
+<ul>
+<li>first, a strong event logger with names, levels, fields, and root configuration</li>
+<li>later, optional scope or span abstractions that layer on top of the same structured substrate</li>
+</ul>
+<p>This keeps the entry path Pythonic without closing the door on tracing-oriented growth.</p>
+<h3 id="why-root-configuration-stays-narrow-in-v1">Why root configuration stays narrow in v1<a class="headerlink" href="#why-root-configuration-stays-narrow-in-v1" title="Permanent link">&para;</a></h3>
+<p>Python's logging module exposes handlers, filters, adapters, and formatters as a broad object graph. Rust's ecosystem exposes many backend crates and many subscriber layers. Both are powerful, and both are more than Incan needs to standardize on day one.</p>
+<p>This RFC therefore keeps the committed configuration surface narrow: level, console output, and a choice between human-readable and structured output. That is enough to make the language credible without prematurely standardizing a large graph of handler types that would mostly mirror backend internals.</p>
+<h3 id="why-warning-is-the-preferred-spelling">Why <code>warning</code> is the preferred spelling<a class="headerlink" href="#why-warning-is-the-preferred-spelling" title="Permanent link">&para;</a></h3>
+<p>The Rust ecosystem commonly uses <code>warn</code>, but Python's standard library documents <code>warn</code> as obsolete and prefers <code>warning</code>. Since the explicit design target here is a Pythonic user-facing surface, the preferred method name should follow Python rather than Rust. A compatibility alias is acceptable, but it should not define the public style of the stdlib.</p>
+<h3 id="why-context-binding-matters">Why context binding matters<a class="headerlink" href="#why-context-binding-matters" title="Permanent link">&para;</a></h3>
+<p>Koheesio's logger factory and logger-ID filter illustrate a practical production concern: repeated context such as run IDs or correlation IDs should not require manual duplication across every log call. The <code>with_fields(...)</code> design is the minimal structured answer to that problem. It keeps the call sites readable while still producing records that backends can filter, serialize, or correlate.</p>
+<p>This also interacts well with a tracing-backed implementation. Bound fields can map naturally onto structured event fields or future scope-oriented features without changing ordinary user code.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Expose <code>rust::tracing</code> or <code>rust::log</code> directly</strong></li>
+<li>Rejected because it leaks backend crate choices into ordinary Incan code and makes the stdlib story contingent on Rust crate literacy.</li>
+<li><strong>Copy Python logging wholesale</strong></li>
+<li>Rejected because the full handler / formatter / filter object graph is too large a contract for the first version.</li>
+<li><strong>Make logging basically <code>println</code> with levels</strong></li>
+<li>Rejected because it throws away structured fields, correlation context, and future tracing compatibility.</li>
+<li><strong>Start with spans instead of loggers</strong></li>
+<li>Rejected because it optimizes for power users at the expense of the ordinary <code>log.info("message")</code> path the language needs first.</li>
+<li><strong>Standardize only the facade and leave startup behavior undefined</strong></li>
+<li>Rejected because users need predictable default behavior, not a silent no-op logger surprise.</li>
+</ul>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
+<ul>
+<li>This RFC intentionally leaves some advanced backend configuration unspecified, so power users will still want follow-up RFCs.</li>
+<li>A Python-shaped surface on top of a tracing-oriented runtime creates a real documentation burden; the contract has to stay simple without lying about structured behavior.</li>
+<li>Inferring the current module name for <code>get_logger()</code> without an explicit argument may require compiler or runtime support that is slightly more opinionated than a plain library function.</li>
+<li>Sensitive-field handling is easy to underspecify; if the redaction defaults are vague, users will fill the gaps with unsafe habits.</li>
+</ul>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
+<p><em>(Non-normative.)</em> A sensible implementation maps <code>Logger</code> method calls to <code>tracing</code> events, preserves the logger name as a <code>target</code>, and carries <code>fields=</code> data as native structured fields rather than eagerly flattening them into one string. The default executable bootstrap can install a conservative <code>tracing_subscriber</code> formatter at <code>WARNING</code> level so ordinary programs get visible warnings and errors without any manual setup.</p>
+<p>Where Rust dependencies still emit through the <code>log</code> facade, the runtime should bridge that ecosystem into the same output path so mixed Rust crates and Incan code do not produce two unrelated logging systems. The public contract should continue to present one <code>std.logging</code> surface even if the runtime needs adapters underneath.</p>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Stdlib / runtime (<code>incan_stdlib</code>)</strong>: new <code>std.logging</code> module, root configuration helpers, logger values, and structured field handling.</li>
+<li><strong>Compiler / stdlib handoff</strong>: if <code>get_logger()</code> without a name infers the current module path, the language/runtime boundary must preserve that metadata.</li>
+<li><strong>Emission</strong>: generated Rust output must map the stdlib logging surface onto the chosen runtime backend without losing levels, names, or structured fields.</li>
+<li><strong>LSP / Tooling</strong>: completions and hover docs for <code>std.logging</code>, especially around <code>Level</code>, <code>basic_config(...)</code>, and <code>Logger</code> methods.</li>
+<li><strong>Docs / examples</strong>: standard examples should stop teaching backend crate names for ordinary logging and instead center <code>std.logging</code>.</li>
+</ul>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Should <code>get_logger()</code> with no explicit name infer the current module path in the first version, or should explicit names be required until module metadata is standardized more formally?</li>
+<li>Should the first version include a lazy-message helper beyond <code>is_enabled(level)</code> so Incan can capture more of Scala Logging's "simple call site, guarded expensive work" ergonomics?</li>
+<li>Should <code>basic_config(...)</code> in v1 include file output and JSON output, or should the committed surface stay even smaller and standardize only console behavior first?</li>
+<li>Should a future span or scope API live under <code>std.logging</code> as an additive extension, or should tracing-oriented scopes be a distinct follow-up RFC once plain event logging is implemented and used?</li>
+</ul>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved.
+     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
@@ -4787,18 +4817,18 @@
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="../_snippets/javascripts/mathjax.js"></script>
+        <script src="../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../_snippets/javascripts/tablesort.js"></script>
+        <script src="../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>
