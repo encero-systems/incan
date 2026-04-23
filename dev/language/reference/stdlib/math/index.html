@@ -1814,6 +1814,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Notes
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4240,6 +4249,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Notes
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4305,6 +4323,14 @@ Use this module for standard mathematical constants and functions.</p>
 </tr>
 </thead>
 <tbody>
+<tr>
+<td><code>math.gcd(a: int, b: int)</code></td>
+<td><code>int</code></td>
+</tr>
+<tr>
+<td><code>math.lcm(a: int, b: int)</code></td>
+<td><code>int</code></td>
+</tr>
 <tr>
 <td><code>math.sqrt(x: float)</code></td>
 <td><code>float</code></td>
@@ -4391,6 +4417,13 @@ Use this module for standard mathematical constants and functions.</p>
 </tr>
 </tbody>
 </table>
+<h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>math.gcd</code> returns the greatest common divisor of two integers.</li>
+<li><code>math.lcm</code> returns the lowest common multiple of two integers.</li>
+<li><code>math.gcd</code> and <code>math.lcm</code> raise <code>ValueError</code> if the mathematical result does not fit Incan's signed 64-bit <code>int</code>.</li>
+<li>The floating-point helpers remain thin wrappers over Rust math facilities.</li>
+</ul>
 
 
 

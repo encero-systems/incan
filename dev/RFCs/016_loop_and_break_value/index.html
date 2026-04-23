@@ -4480,13 +4480,13 @@
         <span class="k">if</span> <span class="k">await</span> <span class="n">done</span><span class="p">():</span>
             <span class="k">break</span>
 </code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">wait_with_backoff</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">loop</span><span class="p">:</span>
         <span class="k">if</span> <span class="n">done</span><span class="p">():</span>
             <span class="k">break</span>
-        <span class="k">await</span> <span class="nb">sleep</span><span class="p">(</span><span class="mf">0.01</span><span class="p">)</span>
+        <span class="k">await</span> <span class="n">sleep</span><span class="p">(</span><span class="mf">0.01</span><span class="p">)</span>
 
     <span class="k">return</span>
 </code></pre></div>

@@ -5113,7 +5113,7 @@ reserved keywords after importing a particular <code>std.*</code> namespace.</p>
 <p>If you forget the import, you’ll get a targeted diagnostic telling you what to add.</p>
 <p>Example:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">work</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="k">await</span> <span class="nb">sleep</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">sleep</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
 </code></pre></div>
 <div class="language-text highlight"><pre><span></span><code>error: `async` is only available after importing `std.async`
 
@@ -5127,13 +5127,13 @@ hint: Add `import std.async` or `from std.async import ...`
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
 
 <span class="c1"># Import async time helpers (also activates `async`/`await`)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span>
 
 <span class="c1"># Import JSON helpers</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nb">json_stringify</span><span class="p">,</span> <span class="n">json_parse</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">do_work</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="k">await</span> <span class="nb">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="reserved-root-namespaces">Reserved root namespaces<a class="headerlink" href="#reserved-root-namespaces" title="Permanent link">&para;</a></h3>
 <p>The names <code>std</code> and <code>rust</code> are reserved at the root level. You cannot shadow them with local modules or aliases:</p>
@@ -5254,7 +5254,7 @@ hint: Add `import std.async` or `from std.async import ...`
 <p>See generated/curated stdlib signatures: <a href="../stdlib/async/">Standard library reference: <code>std.async</code></a>.</p>
 <p><code>std.async</code> includes runtime support for asynchronous programming and activates the <code>async</code>/<code>await</code> soft keywords when imported.</p>
 <p>You can import time helpers directly:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span><span class="p">,</span> <span class="nb">timeout</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span><span class="p">,</span> <span class="nb">timeout</span>
 </code></pre></div>
 <p>Or import a complete surface from the prelude:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.prelude</span><span class="w"> </span><span class="kn">import</span> <span class="o">*</span>

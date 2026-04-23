@@ -4167,13 +4167,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#what-02-delivers" class="md-nav__link">
+  <a href="#major-additions" class="md-nav__link">
     <span class="md-ellipsis">
-      What 0.2 delivers
+      Major additions
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="What 0.2 delivers">
+    <nav class="md-nav" aria-label="Major additions">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4245,27 +4245,51 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#other-v02-features" class="md-nav__link">
+  <a href="#further-reading" class="md-nav__link">
     <span class="md-ellipsis">
-      Other v0.2 features
+      Further reading
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#features-and-enhancements" class="md-nav__link">
+  <a href="#detailed-inventory" class="md-nav__link">
     <span class="md-ellipsis">
-      Features and Enhancements
+      Detailed inventory
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Detailed inventory">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#core-language-and-stdlib-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core language and stdlib surface
     </span>
   </a>
   
 </li>
+        
+          <li class="md-nav__item">
+  <a href="#rust-interop-libraries-and-project-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust interop, libraries, and project model
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
       
         <li class="md-nav__item">
-  <a href="#bugfixes" class="md-nav__link">
+  <a href="#stabilization-and-bugfixes" class="md-nav__link">
     <span class="md-ellipsis">
-      Bugfixes
+      Stabilization and bugfixes
     </span>
   </a>
   
@@ -4462,13 +4486,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#what-02-delivers" class="md-nav__link">
+  <a href="#major-additions" class="md-nav__link">
     <span class="md-ellipsis">
-      What 0.2 delivers
+      Major additions
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="What 0.2 delivers">
+    <nav class="md-nav" aria-label="Major additions">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4540,27 +4564,51 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#other-v02-features" class="md-nav__link">
+  <a href="#further-reading" class="md-nav__link">
     <span class="md-ellipsis">
-      Other v0.2 features
+      Further reading
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#features-and-enhancements" class="md-nav__link">
+  <a href="#detailed-inventory" class="md-nav__link">
     <span class="md-ellipsis">
-      Features and Enhancements
+      Detailed inventory
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Detailed inventory">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#core-language-and-stdlib-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core language and stdlib surface
     </span>
   </a>
   
 </li>
+        
+          <li class="md-nav__item">
+  <a href="#rust-interop-libraries-and-project-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust interop, libraries, and project model
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
       
         <li class="md-nav__item">
-  <a href="#bugfixes" class="md-nav__link">
+  <a href="#stabilization-and-bugfixes" class="md-nav__link">
     <span class="md-ellipsis">
-      Bugfixes
+      Stabilization and bugfixes
     </span>
   </a>
   
@@ -4647,10 +4695,10 @@
 </code></pre></div>
 <p>This also applies to async modules:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Before (0.1)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span>
 
 <span class="c1"># After (0.2)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sleep</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span>
 </code></pre></div>
 <p>Types like <code>App</code>, <code>Response</code>, <code>Html</code>, <code>Json</code>, and <code>Query</code> are no longer implicitly available. Import them from <code>std.web</code> in each file that uses them.</p>
 <p>See also: <a href="../../language/reference/imports_and_modules/">Imports and modules (reference)</a>, <a href="../../language/reference/stdlib/">Stdlib index</a></p>
@@ -4692,7 +4740,7 @@
 <p>See also: <a href="../../language/how-to/async_programming/">Async programming</a>, <a href="../../language/reference/stdlib/async/">std.async (reference)</a></p>
 <h3 id="5-avoid-reserved-namespace-names">5. Avoid reserved namespace names<a class="headerlink" href="#5-avoid-reserved-namespace-names" title="Permanent link">&para;</a></h3>
 <p><code>std</code> and <code>rust</code> are now reserved at module scope and can no longer be used as declaration names.</p>
-<h2 id="what-02-delivers">What 0.2 delivers<a class="headerlink" href="#what-02-delivers" title="Permanent link">&para;</a></h2>
+<h2 id="major-additions">Major additions<a class="headerlink" href="#major-additions" title="Permanent link">&para;</a></h2>
 <h3 id="a-namespaced-source-authored-stdlib">A namespaced, source-authored stdlib<a class="headerlink" href="#a-namespaced-source-authored-stdlib" title="Permanent link">&para;</a></h3>
 <p>The most important architectural change in <code>0.2</code> is that stdlib features are now presented as explicit modules instead of ambient compiler surface. Web, testing, async, derives, traits, and related surfaces are increasingly defined through ordinary stdlib modules and metadata rather than bespoke compiler branches. That gives users a more readable import story and gives contributors a cleaner place to evolve the standard library.</p>
 <p>For the new stdlib surface, start with <a href="../../language/reference/stdlib/">std.* module reference</a>, <a href="../../language/reference/stdlib/testing/">std.testing</a>, <a href="../../language/reference/stdlib/async/">std.async</a>, <a href="../../language/reference/stdlib/traits/">std.traits</a>, and <a href="../../language/reference/stdlib/derives/">std.derives</a>.</p>
@@ -4743,10 +4791,11 @@
 <p>See also: <a href="../../language/reference/static_storage/">Static storage (reference)</a>, <a href="../../language/how-to/module_state/">Module state</a>, <a href="../../language/explanation/static_storage/">Static storage (explanation)</a></p>
 <h2 id="call-site-type-arguments">Call-site type arguments (<a href="/dev/RFCs/closed/implemented/054_explicit_call_site_generics">RFC 054</a>, #266)<a class="headerlink" href="#call-site-type-arguments" title="Permanent link">&para;</a></h2>
 <p>Calls and method calls may now supply explicit generic type arguments in brackets immediately before the value argument list, for example <code>id[int](1)</code> or <code>box.get[int](1)</code>. The <code>_</code> placeholder still allows inference for selected positions, so forms like <code>pair_map[int, _](1, 2)</code> remain concise. Unsupported call forms now fail clearly instead of silently ignoring explicit brackets. See <a href="../../language/reference/derives_and_traits/#call-site-type-arguments">Call-site type arguments</a> for the full rules and examples.</p>
-<h2 id="other-v02-features">Other v0.2 features<a class="headerlink" href="#other-v02-features" title="Permanent link">&para;</a></h2>
+<h2 id="further-reading">Further reading<a class="headerlink" href="#further-reading" title="Permanent link">&para;</a></h2>
 <p>Other <code>0.2</code> areas that are worth reading directly in the docs are <a href="../../language/how-to/rust_interop/">Rust interop</a>, <a href="../../language/reference/stdlib/reflection/">Reflection</a>, <a href="../../language/reference/derives_and_traits/">Traits and derives</a>, <a href="../../language/tutorials/book/05_modules_and_imports/">book chapter: modules and imports</a>, and <a href="../../language/tutorials/book/11_traits_and_derives/">book chapter: traits and derives</a>.</p>
-<h2 id="features-and-enhancements">Features and Enhancements<a class="headerlink" href="#features-and-enhancements" title="Permanent link">&para;</a></h2>
-<p>The sections above are the release story. The list below is the detailed inventory of language, compiler, runtime, tooling, and docs changes that shipped in <code>0.2</code>.</p>
+<h2 id="detailed-inventory">Detailed inventory<a class="headerlink" href="#detailed-inventory" title="Permanent link">&para;</a></h2>
+<p>The sections above are the release story. The list below is the detailed inventory of language, compiler, runtime, tooling, and docs changes that shipped in <code>0.2</code>, grouped roughly by theme rather than by the order work happened to land.</p>
+<h3 id="core-language-and-stdlib-surface">Core language and stdlib surface<a class="headerlink" href="#core-language-and-stdlib-surface" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Compiler</strong>: Namespaced stdlib imports under <code>std.*</code> — all stdlib modules use qualified paths (<a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a>).</li>
 <li><strong>Compiler</strong>: New <code>static</code> keyword for module-owned runtime state, plus <code>pub static</code> exports through library manifests and <code>pub::</code> imports (<a href="/dev/RFCs/closed/implemented/052_module_static_storage">RFC 052</a>, #242). See <a href="#module-static-storage">Module Static Storage</a>.</li>
@@ -4772,14 +4821,13 @@
 <li><strong>Compiler</strong>: Stdlib namespace registry (<code>STDLIB_NAMESPACES</code>) replaces the flat stdlib-module list — convention-based submodule discovery, registry-driven unknown-module diagnostics, and soft-keyword activation metadata.</li>
 <li><strong>Compiler</strong>: Reserved root namespaces — <code>std</code> and <code>rust</code> cannot be used as user declaration names.</li>
 <li><strong>Compiler</strong>: Stdlib types require explicit imports with actionable error messages when used without import.</li>
+</ul>
+<h3 id="rust-interop-libraries-and-project-model">Rust interop, libraries, and project model<a class="headerlink" href="#rust-interop-libraries-and-project-model" title="Permanent link">&para;</a></h3>
+<ul>
 <li><strong>Compiler</strong>: <code>from rust import &lt;crate&gt;</code> syntax for importing Rust crates — the compiler validates imports against <code>[rust-dependencies]</code> in <code>incan.toml</code> and emits the correct <code>use</code> statements in generated Rust (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
 <li><strong>Compiler</strong>: <code>rust::</code> paths accept segments whose spellings match Incan keywords (for example Rust modules named <code>type</code>), and <code>from rust::... import</code> can import such symbols — use <code>as</code> for a safe local name (e.g. <code>from rust::my_crate::proto import type as proto_type</code>) (#197).</li>
-<li><strong>Compiler</strong>: <code>rust-inspect</code> is now caller-owned again instead of ambient in <code>TypeChecker</code>, which fixes the accidental repo-root extraction regression in plain semantic/test paths and restores cheap permissive handling for unextracted Rust members.</li>
-<li><strong>Compiler</strong>: project-local rust-inspect caches now persist extracted RFC 041 item metadata under <code>target/incan_lock</code>, so generated metadata workspaces can reuse extracted items across sessions instead of rebuilding every lookup from scratch.</li>
-<li><strong>Tooling</strong>: Regenerating the stub Cargo workspace under <code>target/incan_lock</code> is skipped when a fingerprint of the dependency graph, <code>Cargo.lock</code> payload, stdlib feature flags, and edition matches the on-disk marker, which avoids redundant work across repeated <code>incan test</code> cases in the same package (#268).</li>
-<li><strong>Tooling</strong>: <code>incan test</code> reuses a session cache of parsed tests, collected source modules, resolved Rust dependencies, and lock payloads when multiple collected tests share the same test file contents and <code>incan.toml</code> inputs, so parametrized variants and multi-test files avoid repeating that front-end work (#269).</li>
-<li><strong>Tooling</strong>: <code>incan test</code> runs all collected cases from the same <code>.incn</code> file in a single generated library crate via <code>cargo test</code> (one Cargo invocation per test file), cutting repeated compile/link overhead for multi-test and parametrized files (#271).</li>
-<li><strong>Compiler</strong>: Borrowed Rust free-function signatures now preserve <code>&amp;T</code> / <code>&amp;mut T</code> semantics through more of the typechecker, lowering, and emission pipeline, including generated-lock metadata workspaces and typed imported callees. Some downstream rust-inspect dependency-loading gaps are still being closed (#257).</li>
+<li><strong>Compiler</strong>: <code>rust-inspect</code> and generated interop metadata are now handled much more robustly. Inspection is caller-owned again instead of ambient in <code>TypeChecker</code>, project-local metadata is cached under <code>target/incan_lock</code>, borrowed Rust free-function contracts are preserved further through the pipeline, and rust-analyzer-degraded borrowed pointee types such as <code>&amp;?</code> are recovered from source more reliably during interop analysis (#257, #259).</li>
+<li><strong>Tooling</strong>: <code>incan test</code> now avoids a large amount of repeated harness work. The generated <code>target/incan_lock</code> workspace is fingerprinted and reused when inputs match, test discovery/runtime metadata is cached across equivalent cases, and all collected tests from a single <code>.incn</code> file now run through one generated Cargo test crate instead of repeated per-test invocations (#268, #269, #271).</li>
 <li><strong>Compiler</strong>: <code>rusttype</code> backing types may use Rust-style qualified paths after a <code>rust::</code> import binding (e.g. <code>type Binary = rusttype proto_type::Binary</code> when <code>proto_type</code> is an imported module). Generics on qualified paths (<code>a::B[T]</code>) are rejected at parse time with a clear diagnostic (#197).</li>
 <li><strong>Tooling</strong>: <code>make build</code> in the Incan repository symlinks <code>~/.cargo/bin/incan</code> and <code>~/.cargo/bin/incan-lsp</code> to the workspace <code>target/debug</code> binaries when not running under CI (opt out with <code>INCAN_SKIP_CARGO_BIN_LINK=1</code>), so the CLI and language server on your PATH match the checkout without a separate <code>cargo install</code>.</li>
 <li><strong>Compiler</strong>: Rust crate dependency management with inline version annotations, manifest-based configuration, version validation (semver), and lock files for reproducible builds (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
@@ -4811,25 +4859,24 @@
 <li><strong>Compiler/Tooling</strong>: AST expression traversal for serde runtime detection and test-fixture teardown discovery is now centralized through a shared walker, closing false-negative gaps in contexts like <code>elif</code> branches and loop condition/iterator expressions (#123).</li>
 <li><strong>Compiler</strong>: Explicit generic <code>with</code> bounds now use nominal trait conformance (including transitive supertraits and trait-typed arguments) for non-builtin trait capabilities, so capability-constrained APIs are enforced without receiver-name special-casing (#299).</li>
 </ul>
-<h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
+<h2 id="stabilization-and-bugfixes">Stabilization and bugfixes<a class="headerlink" href="#stabilization-and-bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Compiler/Codegen</strong>: A broad ownership/materialization pass now keeps generated Rust much closer to ordinary Incan value semantics. Filtered comprehensions, <code>Result[str, E]</code> payloads, <code>clone(self) -&gt; Self</code> struct constructors, borrowed enum loops, repeated helper calls over shared <code>list[str]</code> values, and <code>list[str].append("...")</code> all stopped requiring downstream ownership workarounds in real projects (#364, #366, #367, #372, #383, #391).</li>
+<li><strong>Parser/Compiler</strong>: Python-shaped iteration and pattern forms are now materially stronger. Qualified enum constructor patterns like <code>ConformanceRel.Filter =&gt;</code> resolve correctly in <code>match</code> arms, <code>for idx, name in enumerate(xs):</code> now parses and lowers correctly, and <code>enumerate(...)</code> emits ordinary Incan <code>int</code> (<code>i64</code>) indices instead of leaking Rust <code>usize</code> values through tuple-unpacked loop bindings (#374, #389).</li>
+<li><strong>Compiler/Codegen</strong>: Imported and user-defined helpers that share names with core builtins now keep their ordinary function resolution through typechecking, lowering, and Rust emission, so aggregate-builder libraries no longer need aliasing workarounds like <code>sum as agg_sum</code>, and async <code>sleep</code> now consistently follows stdlib import semantics instead of a legacy builtin side path (#377).</li>
+<li><strong>Tooling</strong>: Generated <code>incan test</code> harnesses now reset their runtime cwd to the owning project root, so fixture paths like <code>tests/fixtures/orders.csv</code> resolve the same way in single-file and batched test runs (#378).</li>
+<li><strong>Compiler</strong>: <code>len(...)</code> now lowers to a parse-safe <code>usize -&gt; i64</code> expression in generated Rust comparisons, so expressions like <code>len(xs) &lt; 2</code> no longer fail emission with a Rust syntax error (#380).</li>
 <li><strong>Compiler</strong>: <code>pub from ... import ...</code> now works in any module under <code>src/</code> (not just <code>src/lib.incn</code>), which unblocks package submodule facades that re-export symbols for parent imports like <code>from session import Session</code> (#287).</li>
 <li><strong>Compiler/Codegen</strong>: Multi-file generated Rust now escapes keyword-named module declarations consistently with explicit <code>#[path = ...]</code> attributes, so top-level and nested modules whose names collide with Rust keywords build and run cleanly through the full pipeline (#122).</li>
 <li><strong>Compiler / Stdlib</strong>: Lists now support <code>list + list</code> concatenation and <code>list.extend(other)</code> with Python-like source-list preservation, so combining lists no longer fails at typecheck/codegen time or consumes the original bindings unexpectedly (#181).</li>
 <li><strong>Tooling</strong>: <code>incan.toml</code> parsing and validation errors now include manifest line/column locations across malformed TOML, conflicting dependency sections, unknown fields, and dependency-entry shape/type errors, making migration and dependency configuration failures much easier to locate (#130).</li>
-<li><strong>Tooling</strong>: <code>incan test &lt;single-file&gt;</code> now isolates generated per-file harness crates and resolves outcomes against the requested file only, fixing cross-wired runs that could report <code>Test runner did not report outcome</code> for unrelated tests (#288).</li>
-<li><strong>Tooling/Performance</strong>: <code>incan test</code> now reuses shared build and rust-inspect metadata caches more aggressively, reducing repeated cold-start overhead between runs, especially across multi-file test sessions (#288).</li>
-<li><strong>Compiler/Tooling</strong>: <code>await expr?</code> now lowers/emits in Rust-safe order (<code>expr.await?</code>), and <code>incan fmt</code> preserves escaped f-string newlines as <code>\\n</code> text instead of materializing physical newlines that can trigger <code>Unterminated f-string</code> parse errors (#289).</li>
+<li><strong>Tooling</strong>: <code>incan test</code> now isolates requested single-file runs correctly and reuses shared build/rust-inspect metadata more aggressively across sessions, which fixes cross-wired outcomes and reduces repeated cold-start overhead in real test workflows (#288).</li>
+<li><strong>Compiler/Tooling</strong>: <code>await expr?</code> now lowers/emits in Rust-safe order (<code>expr.await?</code>), and <code>incan fmt</code> now preserves more source intent when round-tripping code: escaped f-string newlines stay as <code>\\n</code> text, qualified enum/constructor match patterns stay in dot form, numeric literals keep their source spelling, blank-line normalization stays stable inside blocks, <code>mut</code> markers on parameters are preserved, and output ends with a single trailing newline instead of formatter-induced drift (#235, #250, #264, #289).</li>
 <li><strong>Compiler</strong>: Cyclic cross-module projects now resolve imported dependencies during per-module typechecking by import graph (not discovery order), so direct explicit call-site generic calls like <code>collect_with_active_session[T](...)</code> no longer fail with a false unsupported-call-form diagnostic in <code>incan run</code> / <code>incan --check</code> flows (#279).</li>
 <li><strong>Tooling/Codegen</strong>: Generated projects now resolve relative entry paths correctly and emit cleaner Rust for internal module calls and module statics, reducing false errors and compiler-noise in real project workflows.</li>
 <li><strong>Compiler/Core</strong>: Shared language registries now resolve builtin/trait/operator metadata through exhaustive enum matches instead of panic-backed <code>.expect(...)</code> lookups, tightening internal compiler invariants and guardrail coverage (#346).</li>
-<li><strong>Compiler</strong>: rust-inspect now recovers concrete borrowed function parameter pointee types from source when rust-analyzer degrades them to placeholders like <code>&amp;?</code>, so imported Rust calls keep exact borrowed contracts during typechecking and generated-lock workspace interop paths (#259).</li>
 <li><strong>Compiler</strong>: Generic instance methods on classes, traits, models, and newtypes now parse and flow through formatting, typechecking, lowering, and library export metadata correctly (#253).</li>
 <li><strong>Compiler</strong>: Locals initialized from call expressions now preserve the callee's declared result type through later field access, method chaining, and <code>match</code> scrutinees. This fixes false receiver-typed errors after static factory calls such as <code>Session.default()</code> and the related local-inference family regressions (#252, #255).</li>
-<li><strong>Tooling</strong>: <code>incan fmt</code> keeps qualified enum/constructor match patterns in the dot form (<code>Type.Variant</code>), instead of rewriting them to <code>Type::Variant</code>, which the parser does not accept in pattern position (#235).</li>
-<li><strong>Tooling</strong>: <code>incan fmt</code> re-emits numeric literals using their source spelling (integer and float, including <code>_</code> separators and <code>E</code>/<code>e</code> in float exponents), avoiding <code>Display</code> normalization such as <code>120.0</code> → <code>120</code> or <code>1_000</code> → <code>1000</code>, so comment reattachment keeps standalone <code>#</code> lines next to the right statements instead of moving them to the end of a block (#250).</li>
-<li><strong>Tooling</strong>: <code>incan fmt</code> preserves a single blank line between statements in indented blocks (functions, control flow, match arms, vocab bodies, and similar) and collapses two or more consecutive empty lines down to one.</li>
-<li><strong>Tooling</strong>: <code>incan fmt</code> preserves <code>mut</code> markers on function parameters instead of rewriting signatures as immutable parameters, preventing downstream mutable-borrow compile failures after formatting (#264).</li>
 <li><strong>Tooling</strong>: <code>incan run</code> now defaults to Cargo's debug profile for faster cold-start iteration, supports explicit <code>--release</code> for optimized runs, and prints clear build-phase progress before program execution so first-run compiles no longer look hung (#276).</li>
 <li><strong>Compiler/Codegen</strong>: Checked <code>newtype</code> constructors no longer emit <code>.expect(...)</code> extraction in generated Rust. The success path is lowered as an explicit <code>match</code>, keeping emitted Rust valid while preserving the existing panic-on-invalid-construction contract.</li>
 <li><strong>Compiler</strong>: <code>pub::</code> library consumers now preserve transitive imported method result types and trait/supertrait compatibility, so calls like <code>lazy.collect()?</code> keep their <code>Result[...]</code> contract and <code>DataFrame[T]</code> values satisfy <code>DataSet[T]</code> parameters across library boundaries (#277, #278).</li>
@@ -4845,9 +4892,7 @@
 <li><strong>Diagnostics</strong>: Unknown symbol errors in f-string interpolations now point to the precise <code>{expr}</code> span (including nested interpolation expressions) instead of the full f-string (<a href="/dev/RFCs/closed/implemented/011_fstring_error_spans">RFC 011</a>, #71).</li>
 <li><strong>Compiler</strong>: Fixed project root resolving to empty string when running <code>incan run src/main.incn</code> from the project directory, causing "No such file or directory" errors.</li>
 <li><strong>Compiler</strong>: Trait-typed values are now correctly assignable to supertrait return types in function returns and generic upcasts with compatible type arguments (<a href="/dev/RFCs/closed/implemented/042_traits_are_always_abstract">RFC 042</a>, #184).</li>
-<li><strong>Docs</strong>: Web tutorial examples updated to <code>std.web</code> imports and namespaced decorators.</li>
-<li><strong>Docs</strong>: Derives and traits explanation updated to use <code>@rust.extern</code>.</li>
-<li><strong>Tooling</strong>: <code>incan fmt</code> no longer appends an extra blank line at end of file — output ends with a single trailing newline (#189).</li>
+<li><strong>Docs</strong>: Tutorial/reference examples were updated to match the new <code>0.2</code> surface, including <code>std.web</code> imports, namespaced decorators, and <code>@rust.extern</code> usage.</li>
 <li><strong>Compiler</strong>: Trait bound inference now covers trait methods and impl methods, not just standalone functions. Generic bounds required by return types (e.g., <code>impl BoundedDataSet&lt;T&gt;</code>) are properly inferred and emitted in the Rust codegen, even when the bounds aren't used in the function body (#196).</li>
 <li><strong>Compiler/Tooling</strong>: Library builds now treat <code>mod.incn</code> as a directory entrypoint instead of a semantic module segment, so nested package modules no longer leak <code>crate::&lt;module&gt;::r#mod</code> paths or stale flat-vs-nested Rust files during <code>incan build --lib</code> (#227).</li>
 </ul>
@@ -4855,7 +4900,8 @@
 <ul>
 <li>Web route handlers and their request models must be declared <code>pub</code> for cross-module wrapper generation (#117).</li>
 <li>Rust macro syntax (e.g., <code>serde_json::json!(...)</code>) is not supported in Incan source — use Rust crate functions and types directly instead.</li>
-<li><strong>Compiler</strong>: In some method-call shapes involving field-backed values, ownership lowering can still require an explicit <code>.clone()</code> to satisfy generated Rust, even though Incan is intended to hide borrow-checker mechanics from user code (#241). Targeted for the <code>0.3 Release</code> milestone.</li>
+<li><code>incan fmt</code> remains intentionally conservative and can still leave ordinary signatures, constructor calls, and nested expressions beyond the documented 120-character line-length target (#248). The broader formatter contract work, including vertical spacing rules, is tracked separately in RFC 053 / #336.</li>
+<li><strong>Compiler</strong>: Ownership/borrow lowering is still handled by a set of compiler heuristics rather than a complete, centralized ownership planner. <code>0.2</code> fixed the known release-blocking cases, but the broader duckborrowing design is tracked for <code>0.3</code> in #121; field-backed method-call <code>.clone()</code> workarounds remain one visible symptom (#241).</li>
 </ul>
 <h2 id="rfcs-implemented">RFCs implemented<a class="headerlink" href="#rfcs-implemented" title="Permanent link">&para;</a></h2>
 <ul>
@@ -4865,7 +4911,7 @@
 <li>Library vocabularies, registry-driven keyword activation, and vocab desugaring: <a href="/dev/RFCs/closed/implemented/027_incan_vocab_crate">RFC 027</a></li>
 <li>Module static storage: <a href="/dev/RFCs/closed/implemented/052_module_static_storage">RFC 052</a></li>
 <li>Rust crate dependency management: <a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a></li>
-<li>Hatch-like tooling (partial — <code>incan init</code>, project discovery, source root resolution): <a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a></li>
+<li>Hatch-like tooling (partial: <code>incan init</code>, project discovery, source root resolution): <a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a></li>
 <li>Rust interop surface (<code>rust::</code> imports, type mapping, string borrow adaptation, curated derives): <a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a></li>
 <li>Precise f-string interpolation diagnostics: <a href="/dev/RFCs/closed/implemented/011_fstring_error_spans">RFC 011</a></li>
 <li>Trait supertrait assignability and generic upcasts: <a href="/dev/RFCs/closed/implemented/042_traits_are_always_abstract">RFC 042</a></li>
