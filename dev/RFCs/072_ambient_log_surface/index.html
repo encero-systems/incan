@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 072: std.logging — Pythonic structured logging on a tracing-backed runtime - Incan Documentation</title>
+        <title>RFC 072: Ambient log Surface with Tracing-Backed Runtime Policy - Incan Documentation</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-072-stdlogging-pythonic-structured-logging-on-a-tracing-backed-runtime" class="md-skip">
+        <a href="#rfc-072-ambient-log-surface-with-tracing-backed-runtime-policy" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 072: std.logging — Pythonic structured logging on a tracing-backed runtime
+              RFC 072: Ambient log Surface with Tracing-Backed Runtime Policy
             
           </span>
         </div>
@@ -4219,45 +4219,72 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#libraries-should-emit-not-configure" class="md-nav__link">
+  <a href="#scoped-operations" class="md-nav__link">
     <span class="md-ellipsis">
-      Libraries should emit, not configure
+      Scoped operations
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#hierarchical-logger-names" class="md-nav__link">
+  <a href="#nested-work" class="md-nav__link">
     <span class="md-ellipsis">
-      Hierarchical logger names
+      Nested work
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#structured-fields" class="md-nav__link">
+  <a href="#runtime-overrides-vs-project-defaults" class="md-nav__link">
     <span class="md-ellipsis">
-      Structured fields
+      Runtime overrides vs project defaults
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#bound-context" class="md-nav__link">
+  <a href="#color-policy" class="md-nav__link">
     <span class="md-ellipsis">
-      Bound context
+      Color policy
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#checking-whether-a-level-is-enabled" class="md-nav__link">
+  <a href="#renderer-templates" class="md-nav__link">
     <span class="md-ellipsis">
-      Checking whether a level is enabled
+      Renderer templates
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#human-output-styles" class="md-nav__link">
+    <span class="md-ellipsis">
+      Human output styles
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#machine-oriented-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      Machine-oriented output
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#custom-presentation-and-delivery" class="md-nav__link">
+    <span class="md-ellipsis">
+      Custom presentation and delivery
     </span>
   </a>
   
@@ -4279,9 +4306,9 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#required-module-surface" class="md-nav__link">
+  <a href="#ambient-surface" class="md-nav__link">
     <span class="md-ellipsis">
-      Required module surface
+      Ambient surface
     </span>
   </a>
   
@@ -4297,63 +4324,81 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#logger-acquisition-and-identity" class="md-nav__link">
+  <a href="#event-records" class="md-nav__link">
     <span class="md-ellipsis">
-      Logger acquisition and identity
+      Event records
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#configuration-model" class="md-nav__link">
+  <a href="#structured-field-syntax" class="md-nav__link">
     <span class="md-ellipsis">
-      Configuration model
+      Structured field syntax
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#log-record-content" class="md-nav__link">
+  <a href="#spans" class="md-nav__link">
     <span class="md-ellipsis">
-      Log record content
+      Spans
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#structured-field-semantics" class="md-nav__link">
+  <a href="#human-renderers" class="md-nav__link">
     <span class="md-ellipsis">
-      Structured field semantics
+      Human renderers
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#effective-level-checks" class="md-nav__link">
+  <a href="#machine-format" class="md-nav__link">
     <span class="md-ellipsis">
-      Effective-level checks
+      Machine format
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#sensible-sensitive-data-behavior" class="md-nav__link">
+  <a href="#project-defaults-vs-runtime-overrides" class="md-nav__link">
     <span class="md-ellipsis">
-      Sensible sensitive-data behavior
+      Project defaults vs runtime overrides
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#library-and-application-split" class="md-nav__link">
+  <a href="#future-export-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
-      Library and application split
+      Future export compatibility
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#custom-renderers-and-sinks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Custom renderers and sinks
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#color-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Color handling
     </span>
   </a>
   
@@ -4375,54 +4420,90 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#why-the-surface-is-python-shaped" class="md-nav__link">
+  <a href="#why-there-is-no-get_logger" class="md-nav__link">
     <span class="md-ellipsis">
-      Why the surface is Python-shaped
+      Why there is no get_logger(...)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#why-the-runtime-should-be-tracing-backed" class="md-nav__link">
+  <a href="#why-the-source-surface-stays-method-shaped" class="md-nav__link">
     <span class="md-ellipsis">
-      Why the runtime should be tracing-backed
+      Why the source surface stays method-shaped
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#why-this-rfc-does-not-start-with-a-full-span-api" class="md-nav__link">
+  <a href="#why-structured-fields-use-keyword-arguments" class="md-nav__link">
     <span class="md-ellipsis">
-      Why this RFC does not start with a full span API
+      Why structured fields use keyword arguments
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#why-root-configuration-stays-narrow-in-v1" class="md-nav__link">
+  <a href="#why-spans-exist-separately-from-trace-level-logs" class="md-nav__link">
     <span class="md-ellipsis">
-      Why root configuration stays narrow in v1
+      Why spans exist separately from trace-level logs
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#why-warning-is-the-preferred-spelling" class="md-nav__link">
+  <a href="#why-human-output-is-message-first" class="md-nav__link">
     <span class="md-ellipsis">
-      Why warning is the preferred spelling
+      Why human output is message-first
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#why-context-binding-matters" class="md-nav__link">
+  <a href="#why-json-is-not-a-style" class="md-nav__link">
     <span class="md-ellipsis">
-      Why context binding matters
+      Why JSON is not a style
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-project-defaults-and-runtime-policy-are-separate" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why project defaults and runtime policy are separate
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-export-is-split-into-a-follow-up-rfc" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why export is split into a follow-up RFC
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-custom-renderers-are-allowed" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why custom renderers are allowed
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-color-is-runtime-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why color is runtime policy
     </span>
   </a>
   
@@ -4496,7 +4577,7 @@
   
 
 
-<h1 id="rfc-072-stdlogging-pythonic-structured-logging-on-a-tracing-backed-runtime">RFC 072: <code>std.logging</code> — Pythonic structured logging on a tracing-backed runtime<a class="headerlink" href="#rfc-072-stdlogging-pythonic-structured-logging-on-a-tracing-backed-runtime" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-072-ambient-log-surface-with-tracing-backed-runtime-policy">RFC 072: Ambient <code>log</code> Surface with Tracing-Backed Runtime Policy<a class="headerlink" href="#rfc-072-ambient-log-surface-with-tracing-backed-runtime-policy" title="Permanent link">&para;</a></h1>
 <ul>
 <li><strong>Status:</strong> Draft</li>
 <li><strong>Created:</strong> 2026-04-23</li>
@@ -4504,6 +4585,7 @@
 <li><strong>Related:</strong><ul>
 <li>RFC 022 (namespaced stdlib modules and compiler handoff)</li>
 <li>RFC 023 (compilable stdlib and Rust module binding)</li>
+<li>RFC 033 (<code>ctx</code> typed configuration context)</li>
 <li>RFC 041 (first-class Rust interop authoring)</li>
 <li>RFC 063 (<code>std.process</code> process spawning and command execution)</li>
 <li>RFC 066 (<code>std.http</code> HTTP client surface)</li>
@@ -4515,132 +4597,188 @@
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC proposes <code>std.logging</code> as Incan's standard library surface for ordinary application and library logging. The user-facing model is intentionally Pythonic: acquire a logger with <code>get_logger(...)</code>, configure the root logger once near program startup with <code>basic_config(...)</code>, and emit messages with methods such as <code>log.info("message")</code>. Under that simple surface, log records remain structured events with optional fields and context, so the runtime can map them onto Rust's <code>tracing</code> ecosystem rather than committing Incan to a text-only or <code>println</code>-shaped logging story.</p>
+<p>This RFC proposes a built-in ambient <code>log</code> surface for Incan. Users should write <code>log.info(...)</code>, <code>log.warning(...)</code>, <code>log.error(...)</code>, and optionally scoped operations through <code>with log.span(...)</code> without importing or constructing logger objects. The emitted diagnostics model is language-level and backend-agnostic, while the reference Rust runtime maps it onto <code>tracing</code> and <code>tracing-subscriber</code>. Project defaults live in <code>incan.toml</code>, runtime overrides come from CLI flags and environment variables, and built-in human renderers prioritize terminal readability over prefix-heavy verbosity. The canonical event/span model defined here must remain rich enough for a follow-up RFC to add OpenTelemetry export without changing the source-level API.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
-<p>Read this RFC as one foundation plus four mechanisms:</p>
+<p>Read this RFC as one foundation plus five mechanisms:</p>
 <ol>
-<li><strong>Foundation:</strong> Logging is a stdlib capability, not a Rust interop recipe and not a language keyword.</li>
-<li><strong>Mechanism A:</strong> Users acquire hierarchical <code>Logger</code> values through <code>get_logger(...)</code>, and the common case should feel as simple as <code>log.info("message")</code>.</li>
-<li><strong>Mechanism B:</strong> Log calls are structured events with a message, a level, a logger name, and optional fields or bound context, not just raw text writes.</li>
-<li><strong>Mechanism C:</strong> Applications configure logging once near startup; libraries emit logs but should not own process-wide logger configuration.</li>
-<li><strong>Mechanism D:</strong> The runtime should preserve compatibility with Rust's real logging world by mapping onto <code>tracing</code> and interoperating with the <code>log</code> facade where practical.</li>
+<li><strong>Foundation:</strong> Logging is an ambient language surface, not an imported stdlib logger object and not a Rust interop recipe.</li>
+<li><strong>Mechanism A:</strong> Ordinary code emits events through <code>log.info(...)</code>, <code>log.debug(...)</code>, <code>log.warning(...)</code>, <code>log.error(...)</code>, <code>log.critical(...)</code>, and <code>log.trace(...)</code>.</li>
+<li><strong>Mechanism B:</strong> Scoped units of work may be expressed through <code>with log.span(...)</code>, which groups nested events, carries inherited metadata, and enables duration-aware tracing.</li>
+<li><strong>Mechanism C:</strong> Runtime policy is separate from emission. CLI flags and environment variables control what is rendered or exported for a given run, while <code>incan.toml</code> provides project defaults.</li>
+<li><strong>Mechanism D:</strong> The runtime records structured events and spans even when human output is compact. Human renderers, JSON output, and future external exporters are presentation and delivery concerns over one canonical payload.</li>
+<li><strong>Mechanism E:</strong> The reference Rust runtime should use <code>tracing</code> and <code>tracing-subscriber</code> internally, but those crates must not define the Incan source-language contract.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Logging is one of the first places where a language either feels credible for real programs or immediately falls back to ad hoc glue. CLIs, services, automation scripts, libraries, test helpers, and future query-language surfaces all need a shared story for diagnostics. Today, the escape hatch is Rust interop. That is serviceable, but it is not a stable language surface. It leaks Rust crate names, Rust backend assumptions, and Rust macro-oriented ergonomics into code that should stay ordinary Incan.</p>
-<p>That leak is already visible in the project's own documentation. The Rust interop docs currently show <code>import rust::tracing as log</code> followed by <code>log.info("Starting server...")</code>. That proves the underlying capability exists, but it is not a coherent standard-library contract. Users should not need to know whether Rust prefers <code>log</code>, <code>env_logger</code>, <code>tracing</code>, or some other crate just to say "emit an info log here".</p>
-<p>Python gets an important part of this right: the everyday developer experience is simple, hierarchical, and library-friendly. A module acquires a logger, the application configures the root logger, and records flow upward through the hierarchy. That model is learnable, composable, and already familiar to a large part of Incan's target audience.</p>
-<p>However, copying Python's API shape is not enough by itself. Rust's ecosystem has a real distinction between the lightweight <code>log</code> facade and the richer <code>tracing</code> model. That distinction matters, especially for async code. A simplistic text-only logger would feel familiar for a week and limiting for years. Incan should therefore adopt the Python-shaped user model while keeping structured fields and tracing-oriented runtime semantics as the architectural center.</p>
-<p>This also matters for operational hygiene. Logging surfaces tend to grow accidental bad habits: duplicate global configuration, eager expensive debug formatting, secrets dumped into output, and inconsistent correlation identifiers. Prior art from Scala and production Python code shows that convenience and discipline need to coexist. <code>std.logging</code> should therefore optimize for simple call sites without turning the runtime contract into ambient magic.</p>
+<p>Logging is one of the first places where a language either feels credible for real applications or falls back to awkward glue. CLIs, services, automation scripts, libraries, test helpers, and future query-language surfaces all need one coherent diagnostics story. Today, the escape hatch is Rust interop. That proves capability, but not language design. It leaks Rust crate names, backend assumptions, and macro-shaped habits into code that should stay ordinary Incan.</p>
+<p>The ordinary Python answer is also not sufficient. Python's logging module gets the basics right for many users, but it assumes a runtime world that Incan is not obligated to copy. Incan is not constrained to threadlocals, ad hoc adapters, or logger-object plumbing. It can deliberately choose a simpler source surface because the compiler and runtime can cooperate.</p>
+<p>The real use-cases also go beyond plain text logging. Purpose-built libraries, pipeline frameworks, query systems, and future application surfaces will need correlation identifiers, operation boundaries, and nested work visibility. That means the design has to separate the easy source surface from the richer runtime model. Plain log messages are not enough if the end-state includes trace-capable spans and future external observability integration.</p>
+<p>Prior art points in two directions. Rust's <code>log</code> crate gives a facade, while <code>tracing</code> models events and spans explicitly. Frameworks such as Koheesio show that users care as much about how logs are consumed as how they are emitted: rich default context, automatic operation grouping, and low boilerplate at call sites matter more than whether a module is named <code>logging</code>. Incan should therefore optimize for an ambient, language-native event surface with a tracing-capable runtime behind it.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Provide a first-class <code>std.logging</code> module for application and library diagnostics.</li>
-<li>Make the common path simple and recognizably Pythonic: <code>get_logger(...)</code>, <code>basic_config(...)</code>, and <code>log.info("message")</code>.</li>
-<li>Standardize hierarchical logger names and root-oriented configuration.</li>
-<li>Make structured fields and bound context first-class so logs are useful for machines as well as humans.</li>
-<li>Keep library emission separate from application-wide logger configuration.</li>
-<li>Give the runtime a backend model that fits Rust reality by aligning with <code>tracing</code> and interoperating with <code>log</code> where practical.</li>
-<li>Prefer conservative defaults around log level, root output, and sensitive field handling.</li>
+<li>Provide an ambient <code>log</code> surface that exists by default with no <code>get_logger(...)</code> or import ceremony in ordinary code.</li>
+<li>Keep the call-site model simple and unsurprising: <code>log.info(...)</code>, <code>log.warning(...)</code>, and similar method calls.</li>
+<li>Support scoped operation grouping through <code>with log.span(...)</code> so nested work, duration, and correlation can be represented cleanly.</li>
+<li>Distinguish emission semantics from runtime policy, project defaults, and future external export.</li>
+<li>Provide built-in human renderers that are readable in terminals, with <code>short</code> as the default.</li>
+<li>Provide a machine-oriented JSON mode without forcing JSON as the default terminal experience.</li>
+<li>Allow custom renderers and sinks over the canonical structured event/span payload.</li>
+<li>Keep the source-language contract backend-agnostic while making a <code>tracing</code>-backed Rust runtime the recommended implementation architecture.</li>
+<li>Leave room for typed ambient context, including possible <code>ctx</code> integration, without requiring <code>ctx</code> just to log.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Exposing Rust logging crates directly as the stdlib contract.</li>
-<li>Reproducing Python's full handler / formatter / filter object graph in the first version.</li>
-<li>Defining distributed tracing, OpenTelemetry export, or metrics collection in this RFC.</li>
-<li>Making logging a keyword, decorator-only surface, or compiler special form.</li>
-<li>Standardizing every feature of <code>tracing-subscriber</code>, <code>log4rs</code>, <code>env_logger</code>, or other backend crates.</li>
-<li>Mirroring Python's exception-oriented logging helpers one-to-one where the language model does not justify them.</li>
+<li>Requiring users to create or acquire logger objects through <code>get_logger(...)</code>.</li>
+<li>Exposing Rust crate names such as <code>tracing</code>, <code>log</code>, or OpenTelemetry packages in ordinary Incan source code.</li>
+<li>Defining a full distributed tracing surface area or exporter configuration matrix in the first version.</li>
+<li>Standardizing every knob of <code>tracing-subscriber</code> or every backend-specific formatter and transport.</li>
+<li>Making JSON the default human-facing terminal output.</li>
+<li>Making the logging surface dependent on <code>ctx</code>; <code>ctx</code> integration is additive, not foundational.</li>
+<li>Treating the first version as a text-only <code>print</code> replacement with no structured event model underneath.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="basic-use">Basic use<a class="headerlink" href="#basic-use" title="Permanent link">&para;</a></h3>
-<p>Programs configure logging once near startup and then acquire named loggers where they need them:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Level</span><span class="p">,</span> <span class="n">basic_config</span><span class="p">,</span> <span class="n">get_logger</span>
-
-<span class="n">basic_config</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="nc">Level</span><span class="o">.</span><span class="nc">INFO</span><span class="p">)</span>
-
-<span class="n">log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">()</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<p>Logging should exist by default. Ordinary code should not need imports or logger construction:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Starting session&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p>The intended user experience is ordinary and unsurprising:</p>
+<p>The common path is intentionally boring:</p>
 <ul>
-<li>use <code>basic_config(...)</code> in the executable or top-level script</li>
-<li>use <code>get_logger(...)</code> in modules and libraries</li>
-<li>call <code>debug</code>, <code>info</code>, <code>warning</code>, <code>error</code>, <code>critical</code>, or <code>trace</code> on the resulting logger</li>
+<li><code>log.trace(...)</code> for very low-priority diagnostic events</li>
+<li><code>log.debug(...)</code> for development-oriented detail</li>
+<li><code>log.info(...)</code> for ordinary operational messages</li>
+<li><code>log.warning(...)</code> for degraded-but-continuing behavior</li>
+<li><code>log.error(...)</code> for failures in the current operation</li>
+<li><code>log.critical(...)</code> for severe failures</li>
 </ul>
-<h3 id="libraries-should-emit-not-configure">Libraries should emit, not configure<a class="headerlink" href="#libraries-should-emit-not-configure" title="Permanent link">&para;</a></h3>
-<p>Libraries should not take over process-wide logging policy. They should simply acquire a logger and emit records:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_logger</span>
+<h3 id="scoped-operations">Scoped operations<a class="headerlink" href="#scoped-operations" title="Permanent link">&para;</a></h3>
+<p>Some work is more than one message. Query execution, pipeline steps, request handling, and export jobs all have a start, nested work, and an end. Those should be expressible as a scoped operation:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">run_query</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">ResultFrame</span><span class="p">:</span>
+    <span class="k">with</span> <span class="n">log</span><span class="o">.</span><span class="n">span</span><span class="p">(</span><span class="s2">&quot;run_query&quot;</span><span class="p">):</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Parsing query&quot;</span><span class="p">)</span>
+        <span class="n">parsed</span> <span class="o">=</span> <span class="n">parse_query</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
 
-<span class="n">log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">()</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Planning query&quot;</span><span class="p">)</span>
+        <span class="n">plan</span> <span class="o">=</span> <span class="n">build_plan</span><span class="p">(</span><span class="n">parsed</span><span class="p">)</span>
 
-<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">preview</span><span class="p">(</span><span class="n">dataset_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Preparing preview&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;dataset&quot;</span><span class="p">:</span> <span class="n">dataset_name</span><span class="p">})</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Executing query&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">execute_plan</span><span class="p">(</span><span class="n">plan</span><span class="p">)</span>
 </code></pre></div>
-<p>The application decides where those records go and which levels are visible.</p>
-<h3 id="hierarchical-logger-names">Hierarchical logger names<a class="headerlink" href="#hierarchical-logger-names" title="Permanent link">&para;</a></h3>
-<p>Named loggers should be hierarchical and dot-separated:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_logger</span>
+<p>The value of the span is not syntax cleverness. The value is that the runtime can group those events under one operation, measure duration, and preserve a trace-capable structure for human renderers, JSON output, and future export integrations.</p>
+<h3 id="nested-work">Nested work<a class="headerlink" href="#nested-work" title="Permanent link">&para;</a></h3>
+<p>Scoped operations may nest:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">compile_query</span><span class="p">(</span><span class="n">plan</span><span class="p">:</span> <span class="nc">Plan</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">CompiledQuery</span><span class="p">:</span>
+    <span class="k">with</span> <span class="n">log</span><span class="o">.</span><span class="n">span</span><span class="p">(</span><span class="s2">&quot;compile_query&quot;</span><span class="p">):</span>
+        <span class="k">with</span> <span class="n">log</span><span class="o">.</span><span class="n">span</span><span class="p">(</span><span class="s2">&quot;lower_plan&quot;</span><span class="p">):</span>
+            <span class="n">lowered</span> <span class="o">=</span> <span class="n">lower_plan</span><span class="p">(</span><span class="n">plan</span><span class="p">)</span>
 
-<span class="n">session_log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">(</span><span class="s2">&quot;inql.session&quot;</span><span class="p">)</span>
-<span class="n">csv_log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">(</span><span class="s2">&quot;inql.session.csv&quot;</span><span class="p">)</span>
+        <span class="k">with</span> <span class="n">log</span><span class="o">.</span><span class="n">span</span><span class="p">(</span><span class="s2">&quot;emit_sql&quot;</span><span class="p">):</span>
+            <span class="n">sql</span> <span class="o">=</span> <span class="n">emit_sql</span><span class="p">(</span><span class="n">lowered</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="nc">CompiledQuery</span><span class="p">(</span><span class="n">sql</span><span class="o">=</span><span class="n">sql</span><span class="p">)</span>
 </code></pre></div>
-<p>This keeps filtering and output understandable. Logs from <code>inql.session.csv</code> are visibly related to <code>inql.session</code>, and root configuration can treat them as part of one tree.</p>
-<p>For the common case, <code>get_logger()</code> with no explicit name should use the current module path when that information is available, so users are not forced to spell the module name manually in every file.</p>
-<h3 id="structured-fields">Structured fields<a class="headerlink" href="#structured-fields" title="Permanent link">&para;</a></h3>
-<p>The logging API should support additional fields without forcing users into manual string interpolation:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_logger</span>
-
-<span class="n">log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">()</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">load_rows</span><span class="p">(</span><span class="n">dataset</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">row_count</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Loaded dataset rows&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;dataset&quot;</span><span class="p">:</span> <span class="n">dataset</span><span class="p">,</span> <span class="s2">&quot;rows&quot;</span><span class="p">:</span> <span class="n">row_count</span><span class="p">})</span>
+<p>The human renderer should make that hierarchy visible, while structured output should preserve the full parent-child relationship.</p>
+<h3 id="runtime-overrides-vs-project-defaults">Runtime overrides vs project defaults<a class="headerlink" href="#runtime-overrides-vs-project-defaults" title="Permanent link">&para;</a></h3>
+<p>Project defaults belong in <code>incan.toml</code>:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[logging]</span>
+<span class="n">default_level</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;warning&quot;</span>
+<span class="n">default_style</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;short&quot;</span>
+<span class="n">default_format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;human&quot;</span>
+<span class="n">timestamp_format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;%H:%M:%S&quot;</span>
+<span class="n">color</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span>
 </code></pre></div>
-<p>Human-readable output may render these fields textually, while JSON or tracing-oriented output may preserve them as structured values.</p>
-<h3 id="bound-context">Bound context<a class="headerlink" href="#bound-context" title="Permanent link">&para;</a></h3>
-<p>For repeated context such as request IDs or pipeline run IDs, users should be able to derive a contextual logger instead of repeating the same fields on every call:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_logger</span>
-
-<span class="n">log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">()</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">handle_request</span><span class="p">(</span><span class="n">request_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">request_log</span> <span class="o">=</span> <span class="n">log</span><span class="o">.</span><span class="n">with_fields</span><span class="p">({</span><span class="s2">&quot;request_id&quot;</span><span class="p">:</span> <span class="n">request_id</span><span class="p">})</span>
-    <span class="n">request_log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;request started&quot;</span><span class="p">)</span>
-    <span class="n">request_log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;request finished&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="mi">200</span><span class="p">})</span>
+<p>Runtime overrides belong to the run command or the environment:</p>
+<div class="language-text highlight"><pre><span></span><code>incan run --log-level=debug
+incan run --log-style=complete
+INCAN_LOG_LEVEL=debug incan run
+INCAN_LOG_STYLE=minimal incan run
 </code></pre></div>
-<p>This is the intended answer for correlation-friendly logging. The logger stays simple, but the emitted records remain structured.</p>
-<h3 id="checking-whether-a-level-is-enabled">Checking whether a level is enabled<a class="headerlink" href="#checking-whether-a-level-is-enabled" title="Permanent link">&para;</a></h3>
-<p>For expensive debug-only work, users should be able to check the effective level explicitly:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Level</span><span class="p">,</span> <span class="n">get_logger</span>
-
-<span class="n">log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">()</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">debug_plan</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="k">if</span> <span class="n">log</span><span class="o">.</span><span class="n">is_enabled</span><span class="p">(</span><span class="nc">Level</span><span class="o">.</span><span class="nc">DEBUG</span><span class="p">):</span>
-        <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="n">render_debug_summary</span><span class="p">())</span>
+<p>The runtime values override the project defaults. A project can declare a sensible baseline without taking control away from operators or developers running the program.</p>
+<h3 id="color-policy">Color policy<a class="headerlink" href="#color-policy" title="Permanent link">&para;</a></h3>
+<p>Color belongs to the human renderer layer, not to the canonical event/span payload. Human renderers should support color policies such as <code>auto</code>, <code>always</code>, and <code>never</code>.</p>
+<p>Illustrative shape:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[logging]</span>
+<span class="n">default_level</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;warning&quot;</span>
+<span class="n">default_style</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;short&quot;</span>
+<span class="n">default_format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;human&quot;</span>
+<span class="n">color</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span>
 </code></pre></div>
-<p>The goal is not to force this pattern for ordinary logs. The goal is to provide an explicit escape hatch when the message construction itself is materially expensive.</p>
+<p><code>auto</code> should enable color in interactive terminal contexts and disable it when the output is redirected or consumed as plain text. JSON output should remain colorless regardless of the human renderer color policy.</p>
+<h3 id="renderer-templates">Renderer templates<a class="headerlink" href="#renderer-templates" title="Permanent link">&para;</a></h3>
+<p>Human renderers should be configured through templates in the runtime policy layer rather than through language syntax. Built-in human styles and custom house styles should use the same renderer template system.</p>
+<p>Illustrative shape:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[logging]</span>
+<span class="n">default_level</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;warning&quot;</span>
+<span class="n">default_style</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;short&quot;</span>
+<span class="n">default_format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;human&quot;</span>
+
+<span class="k">[logging.renderers.minimal]</span>
+<span class="n">template</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;[{level}] {message}&quot;</span>
+
+<span class="k">[logging.renderers.short]</span>
+<span class="n">template</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;{timestamp} {tree_prefix}[{level}] {message}&quot;</span>
+<span class="n">timestamp_format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;%H:%M:%S&quot;</span>
+
+<span class="k">[logging.renderers.complete]</span>
+<span class="n">template</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;{timestamp} {tree_prefix}[{level}] {message}&quot;</span>
+<span class="n">timestamp_format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;%Y-%m-%dT%H:%M:%S.%fZ&quot;</span>
+
+<span class="k">[logging.renderers.verbose]</span>
+<span class="n">template</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;{timestamp} {tree_prefix}[{level}] {message}</span><span class="se">\n</span><span class="s2">  target={target} trace={trace_id} span={span_id} run={run_id}&quot;</span>
+<span class="n">timestamp_format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;%Y-%m-%dT%H:%M:%S.%fZ&quot;</span>
+
+<span class="k">[logging.renderers.house_style]</span>
+<span class="n">template</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;[{run_id}] [{timestamp}] [{level}] [{target}] {{{file}:{function}:{line}}} - {message}&quot;</span>
+<span class="n">timestamp_format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;%Y-%m-%d %H:%M:%S&quot;</span>
+</code></pre></div>
+<p>The template language should borrow the familiar named-placeholder model used by Python formatters, but it may extend that model with logging-specific fields such as <code>{tree_prefix}</code>, <code>{trace_id}</code>, <code>{span_id}</code>, and other structured diagnostics metadata. Projects that need to match an existing ecosystem's house style, such as Koheesio, should do so through a project-defined renderer profile rather than by making that external name part of the built-in contract.</p>
+<h3 id="human-output-styles">Human output styles<a class="headerlink" href="#human-output-styles" title="Permanent link">&para;</a></h3>
+<p>The runtime must provide built-in human styles. <code>short</code> should be the default because it keeps timestamps and hierarchy without overwhelming the terminal. Those built-in styles are named defaults over the same renderer-template mechanism available to custom project renderers.</p>
+<p>Illustrative shapes:</p>
+<p><code>minimal</code></p>
+<div class="language-text highlight"><pre><span></span><code>[INFO] starting query
+└─ [INFO] lowering plan
+└─ [INFO] emitting sql
+└─ [INFO] query complete
+</code></pre></div>
+<p><code>short</code></p>
+<div class="language-text highlight"><pre><span></span><code>21:18:04 [INFO] starting query
+21:18:04 └─ [INFO] lowering plan
+21:18:04 └─ [INFO] emitting sql
+21:18:04 └─ [INFO] query complete
+</code></pre></div>
+<p><code>complete</code></p>
+<div class="language-text highlight"><pre><span></span><code>2026-04-23T21:18:04.221Z [INFO] starting query
+2026-04-23T21:18:04.228Z └─ [INFO] lowering plan
+2026-04-23T21:18:04.240Z └─ [INFO] emitting sql
+2026-04-23T21:18:04.261Z └─ [INFO] query complete
+</code></pre></div>
+<p><code>verbose</code></p>
+<div class="language-text highlight"><pre><span></span><code>2026-04-23T21:18:04.221Z [INFO] starting query
+  target=inql.query trace=7f9c span=01 run=abc123
+2026-04-23T21:18:04.228Z └─ [INFO] lowering plan
+  target=inql.query.lowering trace=7f9c span=02 parent=01 run=abc123
+</code></pre></div>
+<p>The exact spacing and glyphs are renderer choices, but the first line must stay message-first and terminal-readable. Human styles should not sacrifice readability for metadata density.</p>
+<h3 id="machine-oriented-output">Machine-oriented output<a class="headerlink" href="#machine-oriented-output" title="Permanent link">&para;</a></h3>
+<p>JSON output is a format choice, not a style. It is appropriate for machine consumers, collectors, and ingestion pipelines, not as the default human terminal experience.</p>
+<div class="language-text highlight"><pre><span></span><code>incan run --log-format=json
+</code></pre></div>
+<h3 id="custom-presentation-and-delivery">Custom presentation and delivery<a class="headerlink" href="#custom-presentation-and-delivery" title="Permanent link">&para;</a></h3>
+<p>Teams that want a house style should be able to define custom renderers and sinks. That extensibility belongs at the runtime presentation and delivery layer, not in the source-level emission API. Ordinary Incan code should keep using the standard <code>log</code> surface regardless of how a project renders or exports its diagnostics.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="required-module-surface">Required module surface<a class="headerlink" href="#required-module-surface" title="Permanent link">&para;</a></h3>
-<p><code>std.logging</code> must provide, at minimum:</p>
+<h3 id="ambient-surface">Ambient surface<a class="headerlink" href="#ambient-surface" title="Permanent link">&para;</a></h3>
+<p>The language must provide an ambient <code>log</code> surface in every ordinary execution context. Users must not need to import a logging module or call <code>get_logger(...)</code> before emitting events.</p>
+<p>The ambient surface must provide, at minimum:</p>
 <ul>
-<li><code>Level</code></li>
-<li><code>Logger</code></li>
-<li><code>get_logger(name: str | None = None) -&gt; Logger</code></li>
-<li><code>basic_config(...)</code></li>
+<li><code>log.trace(message, ...)</code></li>
+<li><code>log.debug(message, ...)</code></li>
+<li><code>log.info(message, ...)</code></li>
+<li><code>log.warning(message, ...)</code></li>
+<li><code>log.error(message, ...)</code></li>
+<li><code>log.critical(message, ...)</code></li>
+<li><code>with log.span(name, ...)</code></li>
 </ul>
-<p>The root <code>Logger</code> type must provide, at minimum:</p>
-<ul>
-<li><code>trace(message, fields=...)</code></li>
-<li><code>debug(message, fields=...)</code></li>
-<li><code>info(message, fields=...)</code></li>
-<li><code>warning(message, fields=...)</code></li>
-<li><code>error(message, fields=...)</code></li>
-<li><code>critical(message, fields=...)</code></li>
-<li><code>is_enabled(level: Level) -&gt; bool</code></li>
-<li><code>with_fields(fields=...) -&gt; Logger</code></li>
-</ul>
-<p>Implementations may add more helpers, but the public contract must remain centered on the simple logger model above.</p>
+<p>The first argument to each event method must be a message expression. Additional named arguments on <code>log.info(...)</code>, <code>log.debug(...)</code>, and the other event methods must be treated as structured event fields. Additional named arguments on <code>with log.span(...)</code> must be treated as structured span fields. The runtime payload must preserve those fields as structured data rather than flattening them into one interpolated string.</p>
 <h3 id="levels">Levels<a class="headerlink" href="#levels" title="Permanent link">&para;</a></h3>
 <p>The standard level set must include:</p>
 <ul>
@@ -4652,120 +4790,148 @@
 <li><code>CRITICAL</code></li>
 </ul>
 <p>User-facing APIs must expose <code>warning</code>, not only <code>warn</code>.</p>
-<p>Implementations may provide <code>warn</code> as a compatibility alias, but it should be documented as a legacy or compatibility spelling rather than as the preferred surface.</p>
-<h3 id="logger-acquisition-and-identity">Logger acquisition and identity<a class="headerlink" href="#logger-acquisition-and-identity" title="Permanent link">&para;</a></h3>
-<p><code>get_logger(name)</code> must return a logger associated with the given name.</p>
-<p>If <code>name</code> is omitted:</p>
+<h3 id="event-records">Event records<a class="headerlink" href="#event-records" title="Permanent link">&para;</a></h3>
+<p>Every emitted event record must preserve, at minimum:</p>
 <ul>
-<li>implementations should use the current module path when that information is available</li>
-<li>implementations may fall back to the root logger when the current module path is unavailable</li>
-</ul>
-<p>Multiple calls to <code>get_logger()</code> for the same effective logger name must return the same logical logger identity for the purposes of configuration, filtering, and output metadata. The implementation is not required to preserve object identity if a different representation achieves the same observable behavior, but it must not behave as though each call created an unrelated logger namespace.</p>
-<p>Logger names must be hierarchical and dot-separated. A logger named <code>a.b.c</code> must be treated as a descendant of <code>a.b</code> and <code>a</code>.</p>
-<h3 id="configuration-model">Configuration model<a class="headerlink" href="#configuration-model" title="Permanent link">&para;</a></h3>
-<p><code>basic_config(...)</code> must configure the process-wide root logging behavior.</p>
-<p>The first version of the contract must support, at minimum:</p>
-<ul>
-<li>configuring the minimum visible level</li>
-<li>configuring console output</li>
-<li>choosing a human-readable text format and a structured format such as JSON</li>
-</ul>
-<p>The standard runtime should behave conservatively if the user does not call <code>basic_config(...)</code>:</p>
-<ul>
-<li>it should install a default root logger at level <code>WARNING</code></li>
-<li>it should send human-readable output to standard error</li>
-<li>it should avoid silently promoting low-priority logs into visible output</li>
-</ul>
-<p>Libraries should not call <code>basic_config(...)</code> except in test fixtures or executable-style examples.</p>
-<p>If the runtime supports repeated configuration, that behavior must be explicit. A Python-like <code>force=True</code> model is acceptable. Silently reconfiguring global logging state on repeated ordinary calls is not.</p>
-<h3 id="log-record-content">Log record content<a class="headerlink" href="#log-record-content" title="Permanent link">&para;</a></h3>
-<p>Each emitted log record must preserve, at minimum:</p>
-<ul>
-<li>timestamp or an equivalent time source suitable for output formatting</li>
+<li>timestamp</li>
 <li>level</li>
-<li>logger name</li>
-<li>message text</li>
-<li>structured fields provided at the call site</li>
-<li>structured fields bound through <code>with_fields(...)</code></li>
+<li>message</li>
+<li>source identity sufficient for human rendering and debugging</li>
+<li>any structured fields provided at the call site</li>
+<li>active operation context, if the event is emitted inside a span</li>
 </ul>
-<p>Text output may render these into a line-oriented format. Structured output must preserve fields as fields rather than flattening everything into one preformatted string.</p>
-<h3 id="structured-field-semantics">Structured field semantics<a class="headerlink" href="#structured-field-semantics" title="Permanent link">&para;</a></h3>
-<p>The <code>fields=</code> argument must accept key-value data that can be carried across the logging boundary without forcing the user to manually interpolate the values into the message string.</p>
-<p>Implementations must preserve scalar field values faithfully for structured sinks. They should preserve richer structured values where the configured sink format supports them.</p>
-<p>When the same field key is present both in a logger produced by <code>with_fields(...)</code> and in a per-call <code>fields=</code> argument, the per-call field value should win.</p>
-<h3 id="effective-level-checks">Effective-level checks<a class="headerlink" href="#effective-level-checks" title="Permanent link">&para;</a></h3>
-<p><code>is_enabled(level)</code> must reflect the logger's effective level under root and hierarchical configuration, not merely a local per-instance default.</p>
-<p>The purpose of <code>is_enabled(level)</code> is to allow callers to guard expensive debug-only or trace-only computation. It must not itself emit log output or mutate logger state.</p>
-<h3 id="sensible-sensitive-data-behavior">Sensible sensitive-data behavior<a class="headerlink" href="#sensible-sensitive-data-behavior" title="Permanent link">&para;</a></h3>
-<p>The logging contract should treat obviously sensitive fields conservatively. Implementations should support redaction for keys such as <code>authorization</code>, <code>token</code>, <code>secret</code>, <code>password</code>, and similar credentials or bearer values.</p>
-<p>The first version does not need a complete secret-type system, but it must not encourage APIs that casually dump sensitive structured data into debug-facing output by default.</p>
-<h3 id="library-and-application-split">Library and application split<a class="headerlink" href="#library-and-application-split" title="Permanent link">&para;</a></h3>
-<p>This RFC standardizes a strong separation of concerns:</p>
+<p>The runtime may record more metadata than a human renderer shows. Human rendering must be a projection of the structured event, not the event itself.</p>
+<h3 id="structured-field-syntax">Structured field syntax<a class="headerlink" href="#structured-field-syntax" title="Permanent link">&para;</a></h3>
+<p>Structured fields must use keyword-style arguments at the call site.</p>
+<p>Illustrative shapes:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Loaded dataset rows&quot;</span><span class="p">,</span> <span class="n">dataset</span><span class="o">=</span><span class="n">dataset</span><span class="p">,</span> <span class="n">rows</span><span class="o">=</span><span class="n">row_count</span><span class="p">)</span>
+
+<span class="k">with</span> <span class="n">log</span><span class="o">.</span><span class="n">span</span><span class="p">(</span><span class="s2">&quot;run_query&quot;</span><span class="p">,</span> <span class="n">query_id</span><span class="o">=</span><span class="n">query_id</span><span class="p">,</span> <span class="n">dataset</span><span class="o">=</span><span class="n">dataset_name</span><span class="p">):</span>
+    <span class="o">...</span>
+</code></pre></div>
+<p>The runtime must preserve these named arguments as structured event or span fields. It must not treat them as mere string interpolation aids.</p>
+<h3 id="spans">Spans<a class="headerlink" href="#spans" title="Permanent link">&para;</a></h3>
+<p><code>with log.span(...)</code> must represent a scoped unit of work with a beginning and an end. Events emitted inside a span must be associated with that span. Nested spans must preserve parent-child structure.</p>
+<p>The runtime must preserve, at minimum:</p>
 <ul>
-<li>libraries should emit logs through <code>Logger</code></li>
-<li>applications should configure root logging policy</li>
+<li>span name</li>
+<li>start time</li>
+<li>end time or duration</li>
+<li>parent span identity, when nested</li>
+<li>active contextual metadata inherited by nested events</li>
 </ul>
-<p>Library code must not require a particular logging backend crate name in user-facing docs or examples. Users should not need to choose between <code>log</code> and <code>tracing</code> in ordinary Incan code.</p>
+<p>The runtime must not flatten spans into ordinary standalone log lines that lose structural information.</p>
+<h3 id="human-renderers">Human renderers<a class="headerlink" href="#human-renderers" title="Permanent link">&para;</a></h3>
+<p>The runtime must provide built-in human renderers with at least the following style names:</p>
+<ul>
+<li><code>minimal</code></li>
+<li><code>short</code></li>
+<li><code>complete</code></li>
+<li><code>verbose</code></li>
+</ul>
+<p><code>short</code> must be the default human style.</p>
+<p>Normative rendering expectations:</p>
+<ul>
+<li><code>minimal</code> must omit timestamps.</li>
+<li><code>short</code> must render a compact time-of-day prefix.</li>
+<li><code>complete</code> must render a full datetime prefix.</li>
+<li><code>verbose</code> may render one additional metadata continuation line per event or span, but it must remain human-readable and message-first.</li>
+</ul>
+<p>The runtime must allow built-in human styles to be expressed through the same renderer-template mechanism available to custom renderers. Timestamp rendering must be configurable separately from the surrounding message template through a standard timestamp-format setting.</p>
+<p>Hierarchy in human renderers should be visible through lightweight layout cues such as glyphs or guides rather than long repeated target prefixes. The renderer does not need to reproduce the exact finalized tree glyph topology in a live stream as long as nesting remains visually obvious.</p>
+<h3 id="machine-format">Machine format<a class="headerlink" href="#machine-format" title="Permanent link">&para;</a></h3>
+<p>The runtime must support a machine-oriented JSON output format that preserves the canonical structured event/span payload. JSON is a format choice and must not replace the built-in human styles as the default terminal experience.</p>
+<h3 id="project-defaults-vs-runtime-overrides">Project defaults vs runtime overrides<a class="headerlink" href="#project-defaults-vs-runtime-overrides" title="Permanent link">&para;</a></h3>
+<p>Project defaults may be declared in <code>incan.toml</code>. Runtime overrides may be provided through CLI flags and environment variables.</p>
+<p>The precedence order must be:</p>
+<ol>
+<li>CLI flags</li>
+<li>environment variables</li>
+<li>project defaults from <code>incan.toml</code></li>
+<li>built-in runtime default</li>
+</ol>
+<p>At minimum, the runtime must support policy control over:</p>
+<ul>
+<li>log level</li>
+<li>human style</li>
+<li>output format</li>
+<li>renderer template selection</li>
+<li>timestamp format</li>
+<li>color policy</li>
+</ul>
+<p>The exact option names may vary, but the distinction between project defaults and runtime overrides must remain explicit.</p>
+<h3 id="future-export-compatibility">Future export compatibility<a class="headerlink" href="#future-export-compatibility" title="Permanent link">&para;</a></h3>
+<p>The canonical structured event/span payload defined by this RFC must preserve enough information that a follow-up RFC can add structured export and OpenTelemetry-compatible tracing without changing the source-level <code>log</code> API. The language-level contract must remain backend-agnostic.</p>
+<h3 id="custom-renderers-and-sinks">Custom renderers and sinks<a class="headerlink" href="#custom-renderers-and-sinks" title="Permanent link">&para;</a></h3>
+<p>The runtime must allow custom renderers and sinks to consume the canonical structured event/span payload. Projects may define custom presentation and delivery behavior, including renderer templates that match surrounding house styles such as Koheesio, but they must not change the meaning of the source-level <code>log</code> API.</p>
+<h3 id="color-handling">Color handling<a class="headerlink" href="#color-handling" title="Permanent link">&para;</a></h3>
+<p>The canonical structured event/span payload must be colorless. Color is a presentation concern of human renderers only.</p>
+<p>The runtime must support, at minimum:</p>
+<ul>
+<li><code>auto</code></li>
+<li><code>always</code></li>
+<li><code>never</code></li>
+</ul>
+<p>When color is enabled, the renderer may colorize level markers, hierarchy glyphs, timestamps, or other human-facing fragments, but it must not encode color into JSON output.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="why-the-surface-is-python-shaped">Why the surface is Python-shaped<a class="headerlink" href="#why-the-surface-is-python-shaped" title="Permanent link">&para;</a></h3>
-<p>Python's standard logging model gets one crucial thing right for a general-purpose language: most code only needs a hierarchical logger and one root configuration point. That model is easy to teach, easy to compose across libraries, and familiar to the users Incan already targets. The key ergonomic choice in this RFC is therefore not novelty; it is choosing the boring path where boring is correct.</p>
-<p>That is why <code>get_logger(...)</code>, <code>basic_config(...)</code>, dot-separated logger names, and root-oriented configuration are the center of the proposal. They make it easy for a user to read code and immediately understand where diagnostics come from.</p>
-<h3 id="why-the-runtime-should-be-tracing-backed">Why the runtime should be tracing-backed<a class="headerlink" href="#why-the-runtime-should-be-tracing-backed" title="Permanent link">&para;</a></h3>
-<p>Rust's <code>log</code> crate is intentionally a lightweight facade, and that separation between API and backend is valuable. But <code>tracing</code> exists for a reason. Its model is explicitly structured and async-aware, and it explains why plain text logs become hard to interpret once concurrent work is interleaved. Incan should not ignore that lesson.</p>
-<p>Therefore this RFC deliberately keeps the public surface event-first and simple while recommending that the implementation preserve structured fields all the way down and map naturally onto <code>tracing</code> events. That gives Incan room to add richer scope or span-oriented diagnostics later without breaking the basic logger contract.</p>
-<h3 id="why-this-rfc-does-not-start-with-a-full-span-api">Why this RFC does not start with a full span API<a class="headerlink" href="#why-this-rfc-does-not-start-with-a-full-span-api" title="Permanent link">&para;</a></h3>
-<p>There is a temptation to expose <code>tracing</code> concepts directly because they are powerful. That would be the wrong first move. Most users need logging before they need tracing, and the proposal fails if the first thing an ordinary script author sees is a span taxonomy or a Rust crate adapter story.</p>
-<p>The right order is the opposite:</p>
-<ul>
-<li>first, a strong event logger with names, levels, fields, and root configuration</li>
-<li>later, optional scope or span abstractions that layer on top of the same structured substrate</li>
-</ul>
-<p>This keeps the entry path Pythonic without closing the door on tracing-oriented growth.</p>
-<h3 id="why-root-configuration-stays-narrow-in-v1">Why root configuration stays narrow in v1<a class="headerlink" href="#why-root-configuration-stays-narrow-in-v1" title="Permanent link">&para;</a></h3>
-<p>Python's logging module exposes handlers, filters, adapters, and formatters as a broad object graph. Rust's ecosystem exposes many backend crates and many subscriber layers. Both are powerful, and both are more than Incan needs to standardize on day one.</p>
-<p>This RFC therefore keeps the committed configuration surface narrow: level, console output, and a choice between human-readable and structured output. That is enough to make the language credible without prematurely standardizing a large graph of handler types that would mostly mirror backend internals.</p>
-<h3 id="why-warning-is-the-preferred-spelling">Why <code>warning</code> is the preferred spelling<a class="headerlink" href="#why-warning-is-the-preferred-spelling" title="Permanent link">&para;</a></h3>
-<p>The Rust ecosystem commonly uses <code>warn</code>, but Python's standard library documents <code>warn</code> as obsolete and prefers <code>warning</code>. Since the explicit design target here is a Pythonic user-facing surface, the preferred method name should follow Python rather than Rust. A compatibility alias is acceptable, but it should not define the public style of the stdlib.</p>
-<h3 id="why-context-binding-matters">Why context binding matters<a class="headerlink" href="#why-context-binding-matters" title="Permanent link">&para;</a></h3>
-<p>Koheesio's logger factory and logger-ID filter illustrate a practical production concern: repeated context such as run IDs or correlation IDs should not require manual duplication across every log call. The <code>with_fields(...)</code> design is the minimal structured answer to that problem. It keeps the call sites readable while still producing records that backends can filter, serialize, or correlate.</p>
-<p>This also interacts well with a tracing-backed implementation. Bound fields can map naturally onto structured event fields or future scope-oriented features without changing ordinary user code.</p>
+<h3 id="why-there-is-no-get_logger">Why there is no <code>get_logger(...)</code><a class="headerlink" href="#why-there-is-no-get_logger" title="Permanent link">&para;</a></h3>
+<p>Logger-object acquisition is ceremony that ordinary Incan code does not need. It is inherited from library-shaped ecosystems, not a necessary property of logging itself. Since Incan controls both the language surface and the runtime boundary, it can provide an ambient <code>log</code> surface directly and avoid forcing users to thread logger values or repeat boilerplate in every module.</p>
+<h3 id="why-the-source-surface-stays-method-shaped">Why the source surface stays method-shaped<a class="headerlink" href="#why-the-source-surface-stays-method-shaped" title="Permanent link">&para;</a></h3>
+<p>The design deliberately keeps <code>log.info(...)</code> and similar method calls rather than introducing a floating statement form. The dot-method shape is familiar, readable, and easy to extend without creating a special DSL that feels isolated from the rest of the language.</p>
+<h3 id="why-structured-fields-use-keyword-arguments">Why structured fields use keyword arguments<a class="headerlink" href="#why-structured-fields-use-keyword-arguments" title="Permanent link">&para;</a></h3>
+<p>Keyword-style arguments are the most direct and readable way to attach named metadata to events and spans. They preserve Python familiarity, avoid an extra <code>fields={...}</code> wrapper, and keep the call-site model simple while still producing a structured payload underneath.</p>
+<h3 id="why-spans-exist-separately-from-trace-level-logs">Why spans exist separately from trace-level logs<a class="headerlink" href="#why-spans-exist-separately-from-trace-level-logs" title="Permanent link">&para;</a></h3>
+<p><code>trace</code> as a severity level and spans as scoped operations are different concepts. Reusing one word for both would be confusing. <code>log.trace(...)</code> should remain the very low-severity event level, while <code>with log.span(...)</code> should represent scoped work and hierarchy.</p>
+<h3 id="why-human-output-is-message-first">Why human output is message-first<a class="headerlink" href="#why-human-output-is-message-first" title="Permanent link">&para;</a></h3>
+<p>Rich metadata is valuable, but not if it obscures the actual log stream in a terminal. The built-in human renderers should therefore keep the message as the primary unit the eye reads first. Timestamps, hierarchy markers, and optional metadata lines support the message rather than competing with it.</p>
+<h3 id="why-json-is-not-a-style">Why JSON is not a style<a class="headerlink" href="#why-json-is-not-a-style" title="Permanent link">&para;</a></h3>
+<p>JSON is a serialization format for machine consumers, not a human terminal style. Treating it as just another style would blur the line between terminal UX and structured export and would encourage noisy defaults in interactive environments.</p>
+<h3 id="why-project-defaults-and-runtime-policy-are-separate">Why project defaults and runtime policy are separate<a class="headerlink" href="#why-project-defaults-and-runtime-policy-are-separate" title="Permanent link">&para;</a></h3>
+<p>Projects need a baseline policy, but operators and developers still need per-run control. That makes <code>incan.toml</code> an appropriate home for defaults and CLI/env an appropriate home for runtime overrides. The runtime must not collapse those into one opaque setting source.</p>
+<h3 id="why-export-is-split-into-a-follow-up-rfc">Why export is split into a follow-up RFC<a class="headerlink" href="#why-export-is-split-into-a-follow-up-rfc" title="Permanent link">&para;</a></h3>
+<p>OpenTelemetry and similar systems are about transporting and correlating diagnostics across processes and systems. They are real requirements, but they add enough propagation and backend-contract detail to deserve a follow-up RFC. This RFC therefore defines the source-level event/span model and runtime policy boundaries that the follow-up export RFC will build on.</p>
+<h3 id="why-custom-renderers-are-allowed">Why custom renderers are allowed<a class="headerlink" href="#why-custom-renderers-are-allowed" title="Permanent link">&para;</a></h3>
+<p>Different applications and teams will want different human output surfaces. Built-in styles are necessary, but not sufficient. Allowing custom renderers over the canonical structured payload gives flexibility without fragmenting the source-language API. Using one template system for both built-in and custom human renderers keeps that flexibility coherent instead of creating two different formatting worlds.</p>
+<h3 id="why-color-is-runtime-policy">Why color is runtime policy<a class="headerlink" href="#why-color-is-runtime-policy" title="Permanent link">&para;</a></h3>
+<p>Color improves terminal readability, but it is not part of the meaning of an event. The same event may be rendered with color in an interactive terminal, without color in redirected output, and as structured JSON for machines. That makes color a renderer/theme concern rather than part of the language or payload contract.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Expose <code>rust::tracing</code> or <code>rust::log</code> directly</strong></li>
-<li>Rejected because it leaks backend crate choices into ordinary Incan code and makes the stdlib story contingent on Rust crate literacy.</li>
-<li><strong>Copy Python logging wholesale</strong></li>
-<li>Rejected because the full handler / formatter / filter object graph is too large a contract for the first version.</li>
-<li><strong>Make logging basically <code>println</code> with levels</strong></li>
-<li>Rejected because it throws away structured fields, correlation context, and future tracing compatibility.</li>
-<li><strong>Start with spans instead of loggers</strong></li>
-<li>Rejected because it optimizes for power users at the expense of the ordinary <code>log.info("message")</code> path the language needs first.</li>
-<li><strong>Standardize only the facade and leave startup behavior undefined</strong></li>
-<li>Rejected because users need predictable default behavior, not a silent no-op logger surprise.</li>
+<li><strong>Python-style <code>get_logger(...)</code> plus <code>basic_config(...)</code></strong></li>
+<li>Rejected because it keeps logger-object ceremony that Incan does not need and over-anchors the design to Python's runtime assumptions.</li>
+<li><strong>Rust-style logging crates as the public surface</strong></li>
+<li>Rejected because ordinary Incan code should not need to know about <code>log</code>, <code>tracing</code>, subscriber layers, or exporter crates.</li>
+<li><strong>A floating statement syntax such as <code>log info "message"</code></strong></li>
+<li>Rejected for now because it reads like a narrow DSL and does not buy enough over <code>log.info(...)</code>.</li>
+<li><strong>Plain text logging with no span model</strong></li>
+<li>Rejected because the end-state includes nested work and trace-capable diagnostics, and must remain compatible with future export.</li>
+<li><strong>A stdlib-only formatting API with no custom renderer hook</strong></li>
+<li>Rejected because real applications will need house styles and custom delivery behavior.</li>
 </ul>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>This RFC intentionally leaves some advanced backend configuration unspecified, so power users will still want follow-up RFCs.</li>
-<li>A Python-shaped surface on top of a tracing-oriented runtime creates a real documentation burden; the contract has to stay simple without lying about structured behavior.</li>
-<li>Inferring the current module name for <code>get_logger()</code> without an explicit argument may require compiler or runtime support that is slightly more opinionated than a plain library function.</li>
-<li>Sensitive-field handling is easy to underspecify; if the redaction defaults are vague, users will fill the gaps with unsafe habits.</li>
+<li>Making logging ambient is a stronger language commitment than shipping another stdlib module.</li>
+<li><code>with log.span(...)</code> introduces a scoped operation concept that will need careful syntax and formatter support.</li>
+<li>The runtime architecture is richer than plain console logging, which raises implementation complexity.</li>
+<li>The style system can sprawl if the built-in options are not kept disciplined and clearly differentiated.</li>
+<li>Keeping the runtime model export-compatible without specifying the export layer here leaves some future integration details intentionally deferred.</li>
 </ul>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p><em>(Non-normative.)</em> A sensible implementation maps <code>Logger</code> method calls to <code>tracing</code> events, preserves the logger name as a <code>target</code>, and carries <code>fields=</code> data as native structured fields rather than eagerly flattening them into one string. The default executable bootstrap can install a conservative <code>tracing_subscriber</code> formatter at <code>WARNING</code> level so ordinary programs get visible warnings and errors without any manual setup.</p>
-<p>Where Rust dependencies still emit through the <code>log</code> facade, the runtime should bridge that ecosystem into the same output path so mixed Rust crates and Incan code do not produce two unrelated logging systems. The public contract should continue to present one <code>std.logging</code> surface even if the runtime needs adapters underneath.</p>
+<p><em>(Non-normative.)</em> A sensible Rust runtime implementation lowers ambient Incan events and spans into <code>tracing</code> events and spans and configures rendering through <code>tracing-subscriber</code>. Human renderers should operate over one canonical internal event/span model rather than each sink inventing its own interpretation. Project defaults should be loaded from <code>incan.toml</code> before CLI and environment overrides are applied. A follow-up RFC can then define how that canonical model maps onto OpenTelemetry export and propagation.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Stdlib / runtime (<code>incan_stdlib</code>)</strong>: new <code>std.logging</code> module, root configuration helpers, logger values, and structured field handling.</li>
-<li><strong>Compiler / stdlib handoff</strong>: if <code>get_logger()</code> without a name infers the current module path, the language/runtime boundary must preserve that metadata.</li>
-<li><strong>Emission</strong>: generated Rust output must map the stdlib logging surface onto the chosen runtime backend without losing levels, names, or structured fields.</li>
-<li><strong>LSP / Tooling</strong>: completions and hover docs for <code>std.logging</code>, especially around <code>Level</code>, <code>basic_config(...)</code>, and <code>Logger</code> methods.</li>
-<li><strong>Docs / examples</strong>: standard examples should stop teaching backend crate names for ordinary logging and instead center <code>std.logging</code>.</li>
+<li><strong>Language surface</strong>: ambient <code>log</code> availability and scoped <code>with log.span(...)</code> behavior.</li>
+<li><strong>Parser / AST</strong>: support for the chosen <code>with log.span(...)</code> scoped syntax and any structured field-passing syntax that the language standardizes.</li>
+<li><strong>Typechecker / Symbol resolution</strong>: resolving the ambient <code>log</code> surface, validating event/span call shapes, and enforcing any structured field contracts.</li>
+<li><strong>IR Lowering</strong>: preserving event/span structure, nesting, and metadata through lowering.</li>
+<li><strong>Emission</strong>: mapping the canonical diagnostics model onto the target runtime without losing hierarchy or structured data.</li>
+<li><strong>Stdlib / Runtime (<code>incan_stdlib</code>)</strong>: human renderers, JSON output, runtime policy loading, custom sink/renderer extension points, and a canonical internal event/span model that remains export-compatible.</li>
+<li><strong>Formatter</strong>: predictable formatting for scoped span blocks and any structured log field syntax.</li>
+<li><strong>LSP / Tooling</strong>: completions, hover docs, and diagnostics for the ambient <code>log</code> surface and runtime configuration.</li>
+<li><strong>Documentation</strong>: guides and references for emission, styles, policy, and runtime/export behavior.</li>
 </ul>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Should <code>get_logger()</code> with no explicit name infer the current module path in the first version, or should explicit names be required until module metadata is standardized more formally?</li>
-<li>Should the first version include a lazy-message helper beyond <code>is_enabled(level)</code> so Incan can capture more of Scala Logging's "simple call site, guarded expensive work" ergonomics?</li>
-<li>Should <code>basic_config(...)</code> in v1 include file output and JSON output, or should the committed surface stay even smaller and standardize only console behavior first?</li>
-<li>Should a future span or scope API live under <code>std.logging</code> as an additive extension, or should tracing-oriented scopes be a distinct follow-up RFC once plain event logging is implemented and used?</li>
+<li>How much theme/color customization should built-in human renderers expose beyond <code>auto</code>, <code>always</code>, and <code>never</code>?</li>
 </ul>
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
      An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
