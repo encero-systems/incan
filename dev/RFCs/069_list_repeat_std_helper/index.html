@@ -12,22 +12,20 @@
       
       
       
-        <link rel="next" href="start_here/">
       
-      
-      <link rel="icon" href="assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>Incan Documentation</title>
+        <title>RFC 069: list.repeat Helper for Fixed-Length Initialization - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -46,9 +44,9 @@
       
     
     
-      <link rel="stylesheet" href="stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../stylesheets/pygments.css">
     
-    <script>__md_scope=new URL(".",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -74,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#incan-documentation" class="md-skip">
+        <a href="#rfc-069-listrepeat-helper-for-fixed-length-initialization" class="md-skip">
           Skip to content
         </a>
       
@@ -94,7 +92,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -114,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Home
+              RFC 069: list.repeat Helper for Fixed-Length Initialization
             
           </span>
         </div>
@@ -237,7 +235,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -264,30 +262,10 @@
       
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  <span class="md-ellipsis">
-    Home
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="." class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -296,77 +274,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#tooling-setup" class="md-nav__link">
-    <span class="md-ellipsis">
-      Tooling &amp; Setup
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#language-guide" class="md-nav__link">
-    <span class="md-ellipsis">
-      Language Guide
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Language Guide">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#derives-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      Derives Reference
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#rfcs-request-for-comments" class="md-nav__link">
-    <span class="md-ellipsis">
-      RFCs (Request for Comments)
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#compiler-contributing" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compiler &amp; Contributing
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -409,7 +316,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="start_here/" class="md-nav__link ">
+            <a href="../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -442,7 +349,7 @@
   
   
     <li class="md-nav__item">
-      <a href="start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -463,7 +370,7 @@
   
   
     <li class="md-nav__item">
-      <a href="start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -484,7 +391,7 @@
   
   
     <li class="md-nav__item">
-      <a href="start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -505,7 +412,7 @@
   
   
     <li class="md-nav__item">
-      <a href="start_here/beginner/" class="md-nav__link">
+      <a href="../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -564,7 +471,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="language/" class="md-nav__link ">
+            <a href="../../language/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -688,7 +595,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="language/tutorials/book/" class="md-nav__link ">
+            <a href="../../language/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -721,7 +628,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -742,7 +649,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -763,7 +670,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -784,7 +691,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -805,7 +712,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -826,7 +733,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -847,7 +754,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -868,7 +775,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -889,7 +796,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -910,7 +817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -931,7 +838,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -952,7 +859,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -973,7 +880,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1002,7 +909,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1023,7 +930,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1117,7 +1024,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/async_programming/" class="md-nav__link">
+      <a href="../../language/how-to/async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1138,7 +1045,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1159,7 +1066,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1180,7 +1087,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/error_messages/" class="md-nav__link">
+      <a href="../../language/how-to/error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1201,7 +1108,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/file_io/" class="md-nav__link">
+      <a href="../../language/how-to/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1222,7 +1129,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1243,7 +1150,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/module_state/" class="md-nav__link">
+      <a href="../../language/how-to/module_state/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1264,7 +1171,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1285,7 +1192,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1306,7 +1213,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/string_processing/" class="md-nav__link">
+      <a href="../../language/how-to/string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1327,7 +1234,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/performance/" class="md-nav__link">
+      <a href="../../language/how-to/performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1348,7 +1255,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1369,7 +1276,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1442,7 +1349,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="language/reference/" class="md-nav__link ">
+            <a href="../../language/reference/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1475,7 +1382,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/language/" class="md-nav__link">
+      <a href="../../language/reference/language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1496,7 +1403,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/glossary/" class="md-nav__link">
+      <a href="../../language/reference/glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1517,7 +1424,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/file_io/" class="md-nav__link">
+      <a href="../../language/reference/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1538,7 +1445,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1559,7 +1466,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/static_storage/" class="md-nav__link">
+      <a href="../../language/reference/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1580,7 +1487,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1601,7 +1508,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/strings/" class="md-nav__link">
+      <a href="../../language/reference/strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1622,7 +1529,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/reflection/" class="md-nav__link">
+      <a href="../../language/reference/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1643,7 +1550,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1696,7 +1603,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="language/reference/stdlib/" class="md-nav__link ">
+            <a href="../../language/reference/stdlib/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1729,7 +1636,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib/async/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1750,7 +1657,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib/derives/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1771,7 +1678,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib/reflection/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1792,7 +1699,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib/traits/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1813,7 +1720,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib/testing/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1834,7 +1741,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib/math/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1895,7 +1802,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1928,7 +1835,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1949,7 +1856,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1970,7 +1877,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1991,7 +1898,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2012,7 +1919,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2033,7 +1940,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2113,7 +2020,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2134,7 +2041,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2155,7 +2062,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2176,7 +2083,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2197,7 +2104,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../language/reference/derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2218,7 +2125,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2326,7 +2233,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/why_incan/" class="md-nav__link">
+      <a href="../../language/explanation/why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2347,7 +2254,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2368,7 +2275,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2389,7 +2296,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/control_flow/" class="md-nav__link">
+      <a href="../../language/explanation/control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2410,7 +2317,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/closures/" class="md-nav__link">
+      <a href="../../language/explanation/closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2431,7 +2338,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/consts/" class="md-nav__link">
+      <a href="../../language/explanation/consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2452,7 +2359,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/static_storage/" class="md-nav__link">
+      <a href="../../language/explanation/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2473,7 +2380,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2494,7 +2401,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/call_site_type_arguments/" class="md-nav__link">
+      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2515,7 +2422,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2536,7 +2443,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/enums/" class="md-nav__link">
+      <a href="../../language/explanation/enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2557,7 +2464,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/error_handling/" class="md-nav__link">
+      <a href="../../language/explanation/error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2578,7 +2485,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2623,7 +2530,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2656,7 +2563,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2677,7 +2584,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2706,7 +2613,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2727,7 +2634,7 @@
   
   
     <li class="md-nav__item">
-      <a href="language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2794,7 +2701,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="tooling/" class="md-nav__link ">
+            <a href="../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2872,7 +2779,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2893,7 +2800,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2914,7 +2821,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2998,7 +2905,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3019,7 +2926,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3040,7 +2947,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3061,7 +2968,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3082,7 +2989,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3103,7 +3010,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3124,7 +3031,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3145,7 +3052,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3217,7 +3124,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3238,7 +3145,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3312,7 +3219,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3333,7 +3240,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3354,7 +3261,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3423,7 +3330,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="contributing/" class="md-nav__link ">
+            <a href="../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3533,7 +3440,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3566,7 +3473,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3587,7 +3494,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3608,7 +3515,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3629,7 +3536,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3650,7 +3557,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3671,7 +3578,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3692,7 +3599,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3713,7 +3620,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3799,7 +3706,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3820,7 +3727,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3841,7 +3748,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3862,7 +3769,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3883,7 +3790,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3959,7 +3866,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3980,7 +3887,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4001,7 +3908,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4022,7 +3929,7 @@
   
   
     <li class="md-nav__item">
-      <a href="contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4051,7 +3958,7 @@
   
   
     <li class="md-nav__item">
-      <a href="RFCs/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4106,7 +4013,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="release_notes/" class="md-nav__link ">
+            <a href="../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4139,7 +4046,7 @@
   
   
     <li class="md-nav__item">
-      <a href="release_notes/0_2/" class="md-nav__link">
+      <a href="../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4160,7 +4067,7 @@
   
   
     <li class="md-nav__item">
-      <a href="release_notes/0_1/" class="md-nav__link">
+      <a href="../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4188,7 +4095,7 @@
   
   
     <li class="md-nav__item">
-      <a href="roadmap/" class="md-nav__link">
+      <a href="../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4208,7 +4115,7 @@
   
   
     <li class="md-nav__item">
-      <a href="stability/" class="md-nav__link">
+      <a href="../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4248,28 +4155,100 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#tooling-setup" class="md-nav__link">
+  <a href="#summary" class="md-nav__link">
     <span class="md-ellipsis">
-      Tooling &amp; Setup
+      Summary
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#language-guide" class="md-nav__link">
+  <a href="#motivation" class="md-nav__link">
     <span class="md-ellipsis">
-      Language Guide
+      Motivation
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Language Guide">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reference-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reference-level explanation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#derives-reference" class="md-nav__link">
+  <a href="#api-location" class="md-nav__link">
     <span class="md-ellipsis">
-      Derives Reference
+      API location
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-helper-over-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why helper over syntax
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clone-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Clone semantics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#error-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      Error behavior
     </span>
   </a>
   
@@ -4281,18 +4260,45 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#rfcs-request-for-comments" class="md-nav__link">
+  <a href="#alternatives-considered" class="md-nav__link">
     <span class="md-ellipsis">
-      RFCs (Request for Comments)
+      Alternatives considered
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#compiler-contributing" class="md-nav__link">
+  <a href="#drawbacks" class="md-nav__link">
     <span class="md-ellipsis">
-      Compiler &amp; Contributing
+      Drawbacks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation architecture
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unresolved-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unresolved questions
     </span>
   </a>
   
@@ -4316,636 +4322,113 @@
   
 
 
-<h1 id="incan-documentation">Incan Documentation<a class="headerlink" href="#incan-documentation" title="Permanent link">&para;</a></h1>
-<p>New here? Start with: <a href="start_here/">Start here</a>.</p>
-<!-- top level sections -->
-<h2 id="tooling-setup">Tooling &amp; Setup<a class="headerlink" href="#tooling-setup" title="Permanent link">&para;</a></h2>
-<!-- Tooling sub-sections -->
-<p>How to install, configure, and use Incan <a href="tooling/">Tooling</a>.</p>
-<table>
-<thead>
-<tr>
-<th>Document</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><a href="tooling/tutorials/getting_started/">Getting Started</a></td>
-<td>Installation and first steps</td>
-</tr>
-<tr>
-<td><a href="tooling/how-to/editor_setup/">Editor Setup</a></td>
-<td>IDE configuration and syntax highlighting</td>
-</tr>
-<tr>
-<td><a href="tooling/how-to/lsp/">Language Server</a></td>
-<td>LSP for diagnostics, hover, and go-to-definition</td>
-</tr>
-<tr>
-<td><a href="tooling/how-to/formatting/">Formatting</a></td>
-<td>Code formatter (<code>incan fmt</code>)</td>
-</tr>
-<tr>
-<td><a href="tooling/how-to/testing/">Testing</a></td>
-<td>Test runner (<code>incan test</code>)</td>
-</tr>
-</tbody>
-</table>
-<h2 id="language-guide">Language Guide<a class="headerlink" href="#language-guide" title="Permanent link">&para;</a></h2>
-<!-- Language sub-sections -->
-<p>How to write Incan code: <a href="language/">Language</a>.</p>
-<table>
-<thead>
-<tr>
-<th>Document</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><a href="language/tutorials/book/">the Book</a></td>
-<td>The Incan Book (Walks you through the Basics from a-z)</td>
-</tr>
-<tr>
-<td><a href="language/how-to/error_messages/">Error Messages</a></td>
-<td>Understanding and fixing compiler errors</td>
-</tr>
-<tr>
-<td><a href="language/explanation/error_handling/">Error Handling</a></td>
-<td>Result, Option, and the <code>?</code> operator</td>
-</tr>
-<tr>
-<td><a href="language/how-to/file_io/">File I/O</a></td>
-<td>Reading, writing files and path handling</td>
-</tr>
-<tr>
-<td><a href="language/how-to/async_programming/">Async Programming</a></td>
-<td>Async/await with Tokio</td>
-</tr>
-<tr>
-<td><a href="language/reference/derives_and_traits/">Derives &amp; Traits</a></td>
-<td>Derive macros and trait system</td>
-</tr>
-<tr>
-<td><a href="language/explanation/scopes_and_name_resolution/">Scopes &amp; Name Resolution</a></td>
-<td>Block scoping, shadowing, and how names are resolved</td>
-</tr>
-<tr>
-<td><a href="language/explanation/imports_and_modules/">Imports &amp; Modules</a></td>
-<td>Module system, imports, and built-in functions</td>
-</tr>
-<tr>
-<td><a href="language/how-to/rust_interop/">Rust Interop</a></td>
-<td>Using Rust crates directly from Incan</td>
-</tr>
-<tr>
-<td><a href="language/tutorials/web_framework/">Web Framework</a></td>
-<td>Building web apps with Axum</td>
-</tr>
-</tbody>
-</table>
-<h3 id="derives-reference">Derives Reference<a class="headerlink" href="#derives-reference" title="Permanent link">&para;</a></h3>
-<!-- language/reference/derives sub-sections -->
-<table>
-<thead>
-<tr>
-<th>Document</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><a href="language/reference/derives/string_representation/">String Representation</a></td>
-<td>Debug and Display</td>
-</tr>
-<tr>
-<td><a href="language/reference/derives/comparison/">Comparison</a></td>
-<td>Eq, Ord, Hash</td>
-</tr>
-<tr>
-<td><a href="language/reference/derives/copying_default/">Copying &amp; Default</a></td>
-<td>Clone, Copy, Default</td>
-</tr>
-<tr>
-<td><a href="language/reference/derives/serialization/">Serialization</a></td>
-<td>Serialize, Deserialize</td>
-</tr>
-<tr>
-<td><a href="language/reference/derives/custom_behavior/">Custom Behavior</a></td>
-<td>Overriding derived behavior</td>
-</tr>
-</tbody>
-</table>
-<h2 id="rfcs-request-for-comments">RFCs (Request for Comments)<a class="headerlink" href="#rfcs-request-for-comments" title="Permanent link">&para;</a></h2>
-<p>Design proposals for upcoming features are recorded in the form of <a href="RFCs/">RFCs</a>.</p>
-<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
+<h1 id="rfc-069-listrepeat-helper-for-fixed-length-initialization">RFC 069: <code>list.repeat</code> Helper for Fixed-Length Initialization<a class="headerlink" href="#rfc-069-listrepeat-helper-for-fixed-length-initialization" title="Permanent link">&para;</a></h1>
+<ul>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2026-04-17</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong><ul>
+<li>RFC 030 (std collections baseline)</li>
+</ul>
+</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/385</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> —</li>
+</ul>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>This RFC proposes one standard-library helper, <code>list.repeat[T](value: T, count: int) -&gt; list[T]</code>, to create fixed-length lists initialized with the same value, so authors can express intent directly without manual append loops or sentinel-map boilerplate.</p>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>In current Incan code, fixed-length initialization often appears as repeated patterns like “create empty list, iterate N times, append default/sentinel value.” This is mechanically correct but noisy, harder to scan, and easy to get subtly wrong in graph and indexing code. Comprehensions reduce some noise, but the core intent is still “repeat this value N times,” and that intent deserves a dedicated API.</p>
+<p>This is also a practical interop concern: Incan lowers to Rust, where this operation is first-class and widely used (for example, <code>vec![-1_i64; nodes.len()]</code>).</p>
+<p>Python-first users are used to concise list initialization and should have an equally direct, explicit operation in Incan, without having to hand-write append loops for a common pattern. A standard helper keeps author intent clear while still matching Rust-side semantics (<code>Clone</code>-based element repetition).</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Add one canonical stdlib helper for repeated list initialization.</li>
+<li>Improve readability for sentinel maps and pre-sized working buffers.</li>
+<li>Keep rollout lightweight by avoiding parser syntax changes.</li>
+<li>Make semantics explicit for count validation and element cloning.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>This RFC does not introduce new list literal syntax (for example Rust-style <code>vec![x; n]</code> sugar).</li>
+<li>This RFC does not add capacity-only allocation APIs.</li>
+<li>This RFC does not change existing list comprehension semantics.</li>
+<li>This RFC does not introduce deep-copy semantics beyond existing <code>Clone</code> behavior.</li>
+</ul>
+<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
+<p>Use <code>list.repeat</code> when you want a list of length <code>N</code> where every element starts from the same value.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.collections</span><span class="w"> </span><span class="kn">import</span> <span class="nb">list</span>
 
-<!-- markdownlint-disable MD013 MD060 MD053 MD033 -->
-<!-- Include RFC reference links (DRY: reuse rfcs_refs.md) -->
-<!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
+<span class="n">ids</span> <span class="o">=</span> <span class="nb">list</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">8</span><span class="p">)</span>
+<span class="c1"># ids == [-1, -1, -1, -1, -1, -1, -1, -1]</span>
+</code></pre></div>
+<p>This is especially useful for id maps and temporary buffers:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.collections</span><span class="w"> </span><span class="kn">import</span> <span class="nb">list</span>
 
-<!-- RFC reference links for reuse: '[RFC 018]' or '[RFC 018: Title][RFC 018]' -->
-<!-- RFCs index table -->
-
-<!-- RFC index filter UI -->
-
-<div class="rfc-index-filter">
-  <label>
-    Filter RFCs: <input type="search" data-rfc-filter="rfcs-index" placeholder="e.g. 018, testing, superseded">
-  </label>
-  <p><small>Tip: press <code>Esc</code> to clear.</small></p>
-</div>
-
-<div data-rfc-table="rfcs-index">
-<table>
-<thead>
-<tr>
-<th style="text-align: right;">RFC</th>
-<th>Status</th>
-<th>Track</th>
-<th>Title</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/000_core_rfc">RFC 000</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Incan Core Language RFC (Phase 1)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/001_test_fixtures">RFC 001</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Test Fixtures</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/002_test_parametrize">RFC 002</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Parametrized Tests</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/003_frontend_wasm">RFC 003</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>frontend and WebAssembly support</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/004_async_fixtures">RFC 004</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>async fixtures</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/005_rust_interop">RFC 005</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Rust Interop</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/006_generators">RFC 006</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Python-style generators</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/007_inline_tests">RFC 007</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>Inline Tests</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/008_const_bindings">RFC 008</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Const Bindings</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/009_sized_integers">RFC 009</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Sized numeric types and builtin type registry</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/010_tempfile">RFC 010</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Python-style <code>tempfile</code> standard library</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/011_fstring_error_spans">RFC 011</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Precise Error Spans in F-Strings</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/012_json_value_enum_methods_and_trait_adoption">RFC 012</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td><code>JsonValue</code>, enum methods, and enum trait adoption</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Rust Crate Dependencies</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/014_generated_code_error_handling">RFC 014</a></td>
-<td>Rejected</td>
-<td>proposed / active</td>
-<td>user-facing runtime error behavior for generated code</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/015_hatch_like_tooling">RFC 015</a></td>
-<td>In Progress</td>
-<td>proposed / active</td>
-<td>hatch-like tooling (project lifecycle CLI)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/016_loop_and_break_value">RFC 016</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>loop</code> and <code>break &lt;value&gt;</code> (Loop Expressions)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/017_validated_newtypes_with_implicit_coercion">RFC 017</a></td>
-<td>In Progress</td>
-<td>proposed / active</td>
-<td>Validated newtypes with implicit coercion (pydantic-like feel)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/018_testing">RFC 018</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>language primitives for testing</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/019_runner_testing">RFC 019</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>test runner, CLI, and ecosystem</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/020_offline_locked_reproducible_builds">RFC 020</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>offline / locked / reproducible builds (Cargo policy + generated project contract)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/021_model_field_metadata_and_aliases">RFC 021</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Model field metadata and schema-safe aliases</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/022_stdlib_namespacing_and_compiler_handoff">RFC 022</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Namespaced stdlib modules and compiler→stdlib handoff</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/023_compilable_stdlib_and_rust_module_binding">RFC 023</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Compilable Stdlib &amp; Rust Module Binding</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/024_extensible_derive_protocol">RFC 024</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>extensible derive protocol</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/025_multi_instantiation_trait_dispatch">RFC 025</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>multi-instantiation trait dispatch</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/superseded/026_user_defined_trait_bridges">RFC 026</a></td>
-<td>Superseded</td>
-<td>closed / superseded</td>
-<td>User-Defined Trait Bridges</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/027_incan_vocab_crate">RFC 027</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td><code>incan-vocab</code> — Library Vocabulary Registration Crate</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/028_trait_based_operator_overloading">RFC 028</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>trait-based operator overloading</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/029_union_types">RFC 029</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>union types and type narrowing</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/030_std_collections">RFC 030</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.collections</code> — extended collection types</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/031_library_system_phase1">RFC 031</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Incan Library System — Phase 1 (Local Path Dependencies)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/032_value_enums">RFC 032</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>value enums — <code>StrEnum</code> and <code>IntEnum</code></td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/033_ctx_keyword">RFC 033</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>ctx</code> — typed configuration context</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/034_incan_pub_registry">RFC 034</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>incan.pub</code> — The Incan Package Registry</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/035_first_class_function_references">RFC 035</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>First-Class Named Function References</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/036_user_defined_decorators">RFC 036</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>user-defined decorators</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/037_native_web_stdlib_redesign">RFC 037</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>native web and HTTP stdlib redesign</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/038_variadic_positional_args_and_keyword_capture">RFC 038</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Variadic Positional Args and Keyword-Argument Capture (<code>*args</code> / <code>**kwargs</code>)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/039_race_for_awaitable_concurrency">RFC 039</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>race</code> for awaitable concurrency</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/040_scoped_dsl_glyph_surfaces">RFC 040</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Scoped DSL Glyph Surfaces</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>First-Class Rust Interop Authoring</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/042_traits_are_always_abstract">RFC 042</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Traits Are Always Abstract</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/043_rust_trait_impl_from_incan">RFC 043</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Rust Trait Implementation from Incan</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/044_open_ended_trait_methods">RFC 044</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Open-Ended Trait Methods</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/045_scoped_dsl_symbol_surfaces">RFC 045</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Scoped DSL symbol surfaces</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/046_computed_properties">RFC 046</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Computed properties (<code>property name -&gt; Type</code>)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/047_lightweight_directed_graph_stdlib">RFC 047</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Lightweight directed graph types (stdlib)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/048_contract_backed_models_emit_and_tooling">RFC 048</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Contract-backed models, Incan emit, and interrogation tooling</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/049_single_arm_conditional_match">RFC 049</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>if let</code> single-arm conditional match</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/050_enum_methods_and_trait_adoption">RFC 050</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td>Enum methods and enum trait adoption</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/051_json_value">RFC 051</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>JsonValue</code> for <code>std.json</code></td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/052_module_static_storage">RFC 052</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Module Static Storage</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/053_formatter_vertical_spacing_buckets">RFC 053</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Formatter vertical spacing (three blank-line buckets)</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/closed/implemented/054_explicit_call_site_generics">RFC 054</a></td>
-<td>Done</td>
-<td>closed / implemented</td>
-<td>Explicit call-site generic arguments for function and method calls</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/055_std_fs">RFC 055</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>std.fs</code> — pathlib-shaped filesystem APIs with chunked file I/O</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/056_std_io">RFC 056</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>std.io</code> — in-memory byte streams and binary parsing helpers</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/057_rust_allow_targeted_lint_suppression">RFC 057</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>@rust.allow(...)</code> — targeted Rust lint suppression for generated code</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/058_std_datetime">RFC 058</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>std.datetime</code> — temporal values, intervals, and runtime timing</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/059_std_regex">RFC 059</a></td>
-<td>Planned</td>
-<td>proposed / active</td>
-<td><code>std.regex</code> — regular expressions, matches, captures, and replacement</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/060_std_uuid">RFC 060</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.uuid</code> — UUID parsing, generation, and formatting</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/061_std_compression">RFC 061</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.compression</code> — codec-based compression and decompression</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/062_std_archive">RFC 062</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.archive</code> — archive container creation and extraction</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/063_std_process">RFC 063</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.process</code> — process spawning and command execution</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/064_std_encoding">RFC 064</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.encoding</code> — binary-text encoding and decoding utilities</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/065_std_hash">RFC 065</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.hash</code> — stable hashing primitives for data and integrity workflows</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/066_std_http">RFC 066</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.http</code> — Incan-first HTTP client and request/response surface</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/067_std_ci">RFC 067</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>std.ci</code> — deterministic CI and automation scripting primitives</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/068_protocol_hooks_for_core_language_syntax">RFC 068</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>protocol hooks for core language syntax</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/069_list_repeat_std_helper">RFC 069</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td><code>list.repeat</code> Helper for Fixed-Length Initialization</td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/070_result_combinators_for_result_types">RFC 070</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Result Combinators for <code>Result[T, E]</code></td>
-</tr>
-<tr>
-<td style="text-align: right;"><a href="/dev/RFCs/071_pattern_alternation_in_match_and_if_let">RFC 071</a></td>
-<td>Draft</td>
-<td>proposed / active</td>
-<td>Pattern alternation in <code>match</code> and <code>if let</code></td>
-</tr>
-</tbody>
-</table>
-</div>
-<!-- markdownlint-enable MD013 MD060 MD053 MD033 -->
-
-<h2 id="compiler-contributing">Compiler &amp; Contributing<a class="headerlink" href="#compiler-contributing" title="Permanent link">&para;</a></h2>
-<div class="admonition info">
-<p class="admonition-title">For contributors</p>
-<p>Architecture and compiler-internals docs are primarily for contributors. If you’re learning the language, start with
-the Book and the Language Guide instead of RFCs.</p>
-</div>
-<p>Docs for contributors working on the compiler and language evolution:</p>
-<table>
-<thead>
-<tr>
-<th>Document</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><a href="roadmap/">Roadmap</a></td>
-<td>Tracks implementation status and near-term planning</td>
-</tr>
-<tr>
-<td><a href="RFCs/">RFCs</a></td>
-<td>Design proposals for upcoming features are recorded in the form of RFCs</td>
-</tr>
-<tr>
-<td><a href="contributing/">Contributing</a></td>
-<td>Contributor documentation landing page</td>
-</tr>
-<tr>
-<td><a href="contributing/explanation/architecture/">Compiler Architecture</a></td>
-<td>Compilation pipeline, module layout, and internal stages</td>
-</tr>
-<tr>
-<td><a href="contributing/how-to/extending_language/">Extending the Language</a></td>
-<td>When to add builtins vs new syntax; end-to-end checklists</td>
-</tr>
-<tr>
-<td><a href="contributing/">Contributing Index</a></td>
-<td>Contributor documentation landing page</td>
-</tr>
-</tbody>
-</table>
+<span class="k">def</span><span class="w"> </span><span class="nf">unmapped_ids</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">T</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="nb">list</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">))</span>
+</code></pre></div>
+<p>For non-primitive values, the helper follows normal <code>Clone</code> semantics and requires cloneable element types.</p>
+<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
+<p>The standard library must provide:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">list</span><span class="o">.</span><span class="n">repeat</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">](</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="nb">count</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+</code></pre></div>
+<p>Normative behavior:</p>
+<ul>
+<li><code>count == 0</code> must return an empty list.</li>
+<li><code>count &gt; 0</code> must return a list of length <code>count</code>.</li>
+<li>Each returned element must be clone-derived from <code>value</code>.</li>
+<li>The function must not return aliased mutable storage that would violate normal value semantics expected from cloned elements.</li>
+<li><code>count &lt; 0</code> must raise a runtime <code>ValueError</code> with a stable message indicating <code>count</code> must be non-negative.</li>
+</ul>
+<p>Type rules:</p>
+<ul>
+<li><code>T</code> must satisfy <code>Clone</code>.</li>
+<li>The return type must be <code>list[T]</code> with no widening.</li>
+</ul>
+<p>Complexity:</p>
+<ul>
+<li>Time complexity should be linear in <code>count</code>.</li>
+<li>Space complexity should be linear in <code>count</code>.</li>
+</ul>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="api-location">API location<a class="headerlink" href="#api-location" title="Permanent link">&para;</a></h3>
+<p>The helper belongs in the std collections surface next to list operations.</p>
+<h3 id="why-helper-over-syntax">Why helper over syntax<a class="headerlink" href="#why-helper-over-syntax" title="Permanent link">&para;</a></h3>
+<p>This feature is a reusable collection operation, not a new language form. Keeping it in stdlib avoids parser/lowering churn and keeps behavior testable as a normal API.</p>
+<h3 id="clone-semantics">Clone semantics<a class="headerlink" href="#clone-semantics" title="Permanent link">&para;</a></h3>
+<p><code>repeat</code> should behave like repeated <code>append(value.clone())</code> for each element. This keeps behavior aligned with existing trait expectations and avoids introducing custom duplication semantics.</p>
+<h3 id="error-behavior">Error behavior<a class="headerlink" href="#error-behavior" title="Permanent link">&para;</a></h3>
+<p>Negative <code>count</code> is a caller error and should fail at runtime with <code>ValueError</code> instead of silently returning empty output.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Add list literal repetition syntax (for example <code>[value; count]</code>): rejected for now because it expands language grammar for a problem that a stdlib API can solve cleanly.</li>
+<li>Keep using comprehensions (<code>[x for _ in range(n)]</code>): acceptable but less direct when the intent is repeated initialization rather than transformation.</li>
+<li>Keep explicit loops with append: most verbose and least declarative for this use-case.</li>
+</ul>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Adds another API surface that overlaps with patterns already expressible via comprehensions and loops.</li>
+<li>Requires <code>Clone</code> for repeated values, which can reject some types that authors might expect to repeat.</li>
+<li>Introduces one more runtime error path (<code>count &lt; 0</code>) that callers must handle in dynamic inputs.</li>
+</ul>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
+<p>Recommended implementation is in stdlib collections as a straightforward loop that appends <code>value.clone()</code> <code>count</code> times after validating the <code>count</code> guard, with unit tests for zero, positive, negative, and non-primitive cloneable values.</p>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Stdlib / Runtime (<code>incan_stdlib</code>)</strong>: add <code>list.repeat</code> implementation and tests.</li>
+<li><strong>Typechecker / Symbol resolution</strong>: no new language rules; standard generic-bound checking for exported stdlib signatures.</li>
+<li><strong>LSP / Tooling</strong>: surface completion/hover docs for the new stdlib function.</li>
+<li><strong>Documentation</strong>: update collections reference/how-to examples.</li>
+</ul>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Should <code>list.repeat</code> live only under <code>std.collections.list</code>, or should there also be a top-level alias export for ergonomics?</li>
+<li>Should runtime diagnostics include the provided <code>count</code> value in the <code>ValueError</code> message, or keep a fixed message for snapshot stability?</li>
+<li>Should this RFC also define a companion API for repeated callable generation (for example <code>list.generate(count, fn(i) -&gt; T)</code>), or keep that as a separate follow-on RFC?</li>
+</ul>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
@@ -4994,18 +4477,18 @@ the Book and the Language Guide instead of RFCs.</p>
     </div>
     
     
-    <script id="__config" type="application/json">{"base": ".", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="_snippets/javascripts/mathjax.js"></script>
+        <script src="../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="_snippets/javascripts/tablesort.js"></script>
+        <script src="../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>
