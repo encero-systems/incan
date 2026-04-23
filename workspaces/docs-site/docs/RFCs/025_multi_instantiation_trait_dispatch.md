@@ -317,7 +317,7 @@ one-name-one-definition. The key teaching point is that these are *trait impleme
 - [ ] Update the symbol table to support multiple method entries per name (grouped by trait origin)
 - [ ] Update the typechecker to allow same-name methods when they correspond to different trait instantiations
 - [ ] Update call resolution to disambiguate based on argument types (and optionally return type context, see
-[deferred question #2](#deferred-questions))
+[deferred question #2](#unresolved-questions))
 - [ ] Update lowering to emit separate `impl Trait<T> for Type` blocks per instantiation
 - [ ] Add diagnostics:
     - Duplicate trait instantiation (`with Trait[A], Trait[A]`)

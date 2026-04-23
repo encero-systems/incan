@@ -219,7 +219,7 @@ impl Formatter {
 
     fn format_for(&mut self, for_stmt: &ForStmt) {
         self.writer.write("for ");
-        self.writer.write(&for_stmt.var);
+        self.format_for_pattern(&for_stmt.pattern.node);
         self.writer.write(" in ");
         self.format_expr(&for_stmt.iter.node);
         self.writer.writeln(":");
@@ -231,5 +231,18 @@ impl Formatter {
             self.writer.writeln("pass");
         }
         self.writer.dedent();
+    }
+
+    fn format_for_pattern(&mut self, pattern: &Pattern) {
+        if let Pattern::Tuple(items) = pattern {
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    self.writer.write(", ");
+                }
+                self.format_pattern(&item.node);
+            }
+        } else {
+            self.format_pattern(pattern);
+        }
     }
 }

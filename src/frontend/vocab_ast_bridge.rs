@@ -292,11 +292,18 @@ pub fn internal_statement_to_public(stmt: &ast::Statement) -> Result<incan_vocab
             condition: internal_expr_to_public(&while_stmt.condition.node)?,
             body: internal_statements_to_public(&while_stmt.body)?,
         }),
-        ast::Statement::For(for_stmt) => Ok(incan_vocab::IncanStatement::For {
-            binding: for_stmt.var.clone(),
-            iter: internal_expr_to_public(&for_stmt.iter.node)?,
-            body: internal_statements_to_public(&for_stmt.body)?,
-        }),
+        ast::Statement::For(for_stmt) => {
+            let ast::Pattern::Binding(binding) = &for_stmt.pattern.node else {
+                return Err(VocabAstBridgeError::UnsupportedInternalStatement(
+                    "tuple-pattern for statements are not yet supported by public vocab AST bridge",
+                ));
+            };
+            Ok(incan_vocab::IncanStatement::For {
+                binding: binding.clone(),
+                iter: internal_expr_to_public(&for_stmt.iter.node)?,
+                body: internal_statements_to_public(&for_stmt.body)?,
+            })
+        }
         ast::Statement::VocabBlock(_) => Err(VocabAstBridgeError::UnsupportedInternalStatement(
             "nested vocab blocks must be bridged through VocabBodyItem::Declaration",
         )),
@@ -381,7 +388,7 @@ pub fn public_statement_to_internal(stmt: &incan_vocab::IncanStatement) -> Resul
             body: public_statements_to_internal(body)?,
         })),
         incan_vocab::IncanStatement::For { binding, iter, body } => Ok(ast::Statement::For(ast::ForStmt {
-            var: binding.clone(),
+            pattern: ast::Spanned::new(ast::Pattern::Binding(binding.clone()), ast::Span::default()),
             iter: ast::Spanned::new(public_expr_to_internal(iter)?, ast::Span::default()),
             body: public_statements_to_internal(body)?,
         })),

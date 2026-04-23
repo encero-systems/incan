@@ -362,7 +362,7 @@ impl<'a> Parser<'a> {
 
     fn for_stmt(&mut self) -> Result<Statement, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::For), "Expected 'for'")?;
-        let var = self.identifier()?;
+        let pattern = self.for_binding_pattern()?;
         self.expect(&TokenKind::Keyword(KeywordId::In), "Expected 'in' after for variable")?;
         let iter = self.expression()?;
         self.expect(
@@ -374,7 +374,45 @@ impl<'a> Parser<'a> {
         let body = self.block()?;
         self.expect(&TokenKind::Dedent, "Expected dedent after for body")?;
 
-        Ok(Statement::For(ForStmt { var, iter, body }))
+        Ok(Statement::For(ForStmt { pattern, iter, body }))
+    }
+
+    /// Parse the restricted binding-pattern subset accepted in `for` headers.
+    ///
+    /// Match patterns stay broader; loop bindings only need identifiers, `_`, and comma-separated tuple bindings.
+    fn for_binding_pattern(&mut self) -> Result<Spanned<Pattern>, CompileError> {
+        let start = self.current_span().start;
+        let first = self.for_binding_pattern_item()?;
+
+        if !self.match_punct(PunctuationId::Comma) {
+            return Ok(first);
+        }
+
+        let mut items = vec![first];
+        loop {
+            items.push(self.for_binding_pattern_item()?);
+            if !self.match_punct(PunctuationId::Comma) {
+                break;
+            }
+        }
+
+        let end = items
+            .last()
+            .map(|item| item.span.end)
+            .unwrap_or(start);
+        Ok(Spanned::new(Pattern::Tuple(items), Span::new(start, end)))
+    }
+
+    /// Parse one loop-binding item in a `for` header.
+    fn for_binding_pattern_item(&mut self) -> Result<Spanned<Pattern>, CompileError> {
+        let span = self.current_span();
+        if matches!(&self.peek().kind, TokenKind::Ident(name) if name == "_") {
+            self.advance();
+            return Ok(Spanned::new(Pattern::Wildcard, span));
+        }
+
+        let name = self.identifier()?;
+        Ok(Spanned::new(Pattern::Binding(name), span))
     }
 
     /// Targeted soft-keyword diagnostic for `assert <expr>` when `std.testing` is not imported.

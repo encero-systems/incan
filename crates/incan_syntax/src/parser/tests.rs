@@ -2635,4 +2635,26 @@ def bad(f: Callable[int]) -> None:
         assert_eq!(context_block.keyword, "middleware");
         Ok(())
     }
+
+    #[test]
+    fn test_parse_for_tuple_unpack_binding() {
+        let source = "def bind(xs: list[str]) -> list[str]:\n  mut out: list[str] = []\n  for idx, name in enumerate(xs):\n    out.append(name)\n  return out\n";
+        let program = match parse_str(source) {
+            Ok(program) => program,
+            Err(errs) => panic!("for tuple-unpack binding should parse: {errs:?}"),
+        };
+        let Declaration::Function(function) = &program.declarations[0].node else {
+            panic!("expected function declaration");
+        };
+        let Statement::For(for_stmt) = &function.body[1].node else {
+            panic!("expected for statement");
+        };
+        let Pattern::Tuple(items) = &for_stmt.pattern.node else {
+            panic!("expected tuple binding pattern");
+        };
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].node, Pattern::Binding("idx".to_string()));
+        assert_eq!(items[1].node, Pattern::Binding("name".to_string()));
+    }
 }

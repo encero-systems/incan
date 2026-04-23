@@ -4380,6 +4380,34 @@ def main() -> None:\n  values = lengths([\"alice\", \"bob\"])\n  println(values[
     }
 
     #[test]
+    fn build_succeeds_for_for_tuple_unpack_enumerate() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path().join("for_tuple_unpack_enumerate_project");
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"for_tuple_unpack_enumerate\"\nversion = \"0.1.0\"\n",
+        )?;
+        let main_path = project_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            "pub def bind(xs: list[str]) -> list[str]:\n  mut out: list[str] = []\n  for idx, name in enumerate(xs):\n    out.append(name)\n  return out\n\n\
+def main() -> None:\n  bind([\"a\", \"bb\"])\n",
+        )?;
+
+        let out_dir = project_root.join("out");
+        let project_build = run_build(&main_path, &out_dir)?;
+        assert!(
+            project_build.status.success(),
+            "expected for-loop tuple unpacking with enumerate to build successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&project_build.stdout),
+            String::from_utf8_lossy(&project_build.stderr)
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn build_succeeds_for_imported_sum_helper_shadowing() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path().join("imported_sum_shadow_project");

@@ -1,0 +1,8 @@
+pub def bind(xs: list[str]) -> list[str]:
+    mut out: list[str] = []
+    for idx, name in enumerate(xs):
+        out.append(name)
+    return out
+
+def main() -> None:
+    bind(["a", "bb"])

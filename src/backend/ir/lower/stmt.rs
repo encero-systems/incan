@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use super::super::expr::{IrCallArg, IrExprKind, Pattern, VarAccess, VarRefKind};
+use super::super::expr::{IrCallArg, IrExprKind, VarAccess, VarRefKind};
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::IrType;
 use super::super::{IrSpan, Mutability, TypedExpr};
@@ -44,6 +44,25 @@ impl AstLowering {
 
     fn make_static_binding_expr(&self, name: String, ty: IrType) -> TypedExpr {
         TypedExpr::new(IrExprKind::StaticBinding { name }, ty)
+    }
+
+    /// Register all loop bindings before lowering the loop body so body reads resolve to local variables.
+    fn define_for_pattern_bindings(&mut self, pattern: &ast::Pattern, ty: &IrType) {
+        match pattern {
+            ast::Pattern::Binding(name) => self.define_local_binding(name.clone(), ty.clone(), false),
+            ast::Pattern::Wildcard => {}
+            ast::Pattern::Tuple(items) => {
+                let element_types = match ty {
+                    IrType::Tuple(items) => items.clone(),
+                    _ => vec![IrType::Unknown; items.len()],
+                };
+                for (i, item) in items.iter().enumerate() {
+                    let item_ty = element_types.get(i).cloned().unwrap_or(IrType::Unknown);
+                    self.define_for_pattern_bindings(&item.node, &item_ty);
+                }
+            }
+            ast::Pattern::Literal(_) | ast::Pattern::Constructor(_, _) => {}
+        }
     }
 
     /// Lower a list of statements to IR.
@@ -301,7 +320,7 @@ impl AstLowering {
                     IrType::String => IrType::String,
                     _ => IrType::Unknown,
                 };
-                self.define_local_binding(f.var.clone(), loop_var_ty, false);
+                self.define_for_pattern_bindings(&f.pattern.node, &loop_var_ty);
 
                 self.non_linear_context_depth += 1;
                 let body_result = self.lower_statements(&f.body);
@@ -311,7 +330,7 @@ impl AstLowering {
 
                 IrStmtKind::For {
                     label: None,
-                    pattern: Pattern::Var(f.var.clone()),
+                    pattern: self.lower_pattern(&f.pattern.node),
                     iterable,
                     body,
                 }
