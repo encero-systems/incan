@@ -4229,6 +4229,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#rfc-016-loop-expressions-and-break-value" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 016 loop expressions and break &lt;value&gt;
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfc-053-formatter-vertical-spacing-contract" class="md-nav__link">
     <span class="md-ellipsis">
       RFC 053 formatter vertical-spacing contract
@@ -4269,6 +4278,15 @@
   
     <nav class="md-nav" aria-label="Detailed inventory">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#control-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      Control flow
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#compiler-and-code-generation" class="md-nav__link">
@@ -4349,23 +4367,33 @@
 
 <h1 id="release-03">Release 0.3<a class="headerlink" href="#release-03" title="Permanent link">&para;</a></h1>
 <p>Incan 0.3 is the current development release. It picks up after the <code>0.2</code> line, which made the language surface more explicit around stdlib imports, Rust interop, library manifests, module state, and call-site generics.</p>
-<p>The first user-facing work in <code>0.3</code> now spans both language surface and tooling contracts. In particular, Incan adds RFC 049's <code>if let</code> / <code>while let</code> control flow together with a tighter formatter contract and a documented code-style guide, so both authored source and formatter output are becoming more explicit and predictable across CLI, editor, and library entry points.</p>
+<p><code>0.3</code> now includes both a new control-flow surface and tighter tooling contracts. RFC 016 adds <code>loop:</code> and <code>break &lt;value&gt;</code> so loops can produce values directly, while RFC 053 tightens the formatter contract so output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points.</p>
 <p>This page will grow as more <code>0.3</code> work lands. If you are looking for the shipped <code>0.2</code> story, start with <a href="../0_2/">Release 0.2</a>.</p>
-<p>For the current source-layout contract, start with the <a href="../../language/reference/code_style/">Incan Code Style Guide</a>. Use <a href="../../tooling/how-to/formatting/">Formatting with <code>incan fmt</code></a> for the tool behavior. <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a> records the design snapshot behind the vertical-spacing model.</p>
+<p>For the current control-flow guidance, start with <a href="../../language/explanation/control_flow/">Control Flow</a>. For the current source-layout contract, start with the <a href="../../language/reference/code_style/">Incan Code Style Guide</a>. Use <a href="../../tooling/how-to/formatting/">Formatting with <code>incan fmt</code></a> for the tool behavior. <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a> and <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a> record the design snapshots behind those behaviors.</p>
 <h2 id="what-03-is-about">What 0.3 is about<a class="headerlink" href="#what-03-is-about" title="Permanent link">&para;</a></h2>
 <p>The <code>0.2</code> line made Incan's module, stdlib, and Rust interop boundaries much clearer. <code>0.3</code> continues from that baseline with a stronger emphasis on predictable generated output, contributor ergonomics, and small but meaningful control-flow ergonomics that remove repetitive boilerplate without weakening the language's explicit pattern model.</p>
 <p>The release is still early, but the initial direction is already visible:</p>
 <ul>
+<li>expression-oriented control flow should stay explicit, so infinite loops that return values use <code>loop:</code> and <code>break &lt;value&gt;</code> rather than hidden accumulator patterns</li>
 <li>formatter output should be governed by explicit contracts, not scattered newline decisions</li>
 <li>common <code>Option</code> / <code>Result</code> destructuring should have a concise control-flow form when the non-match case is intentionally a no-op</li>
 <li>user-facing tooling behavior should match the docs closely enough that CI and editor integrations can rely on it</li>
 <li>ownership and generated-runtime ergonomics should improve structurally, not through one-off <code>.clone()</code> or <code>.as_ref()</code> patches</li>
 </ul>
 <h2 id="migrating-from-02">Migrating from 0.2<a class="headerlink" href="#migrating-from-02" title="Permanent link">&para;</a></h2>
-<p>There are no required source migrations for the current <code>0.3</code> work.</p>
+<p>There are no required source migrations for the current <code>0.3</code> work. <code>loop:</code> and <code>break &lt;value&gt;</code> are additive control-flow features; existing <code>while True:</code> code remains valid.</p>
 <p>Projects that gate on <code>incan fmt --check</code> should expect one-time vertical-spacing diffs when adopting a formatter that implements RFC 053. Those diffs are intentional: top-level <code>def</code> / <code>model</code> / <code>type</code>-like declarations get exactly two blank lines around them, following body-bearing members inside type bodies get exactly one blank line, and other same-scope transitions stay in the zero-or-one bucket.</p>
 <p><code>if let</code> and <code>while let</code> are additive. Existing <code>match</code> code keeps working unchanged; the new forms are available when a single successful pattern matters and the non-match path should do nothing.</p>
 <h2 id="major-additions">Major additions<a class="headerlink" href="#major-additions" title="Permanent link">&para;</a></h2>
+<h3 id="rfc-016-loop-expressions-and-break-value">RFC 016 loop expressions and <code>break &lt;value&gt;</code><a class="headerlink" href="#rfc-016-loop-expressions-and-break-value" title="Permanent link">&para;</a></h3>
+<p>Incan now has an explicit infinite-loop construct:</p>
+<ul>
+<li><code>loop:</code> for intentional infinite loops in statement position</li>
+<li><code>break &lt;value&gt;</code> to complete a <code>loop:</code> expression with a result</li>
+<li>ordinary <code>break</code> and <code>continue</code> continuing to work for <code>for</code>, <code>while</code>, and statement-form <code>loop:</code></li>
+</ul>
+<p>This makes "search until found", retry loops, and similar control-flow patterns expression-oriented without forcing a mutable accumulator outside the loop.</p>
+<p>See also: <a href="../../language/explanation/control_flow/">Control Flow</a>, <a href="../../language/tutorials/book/04_control_flow/">Book chapter 4</a>, <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a>.</p>
 <h3 id="rfc-053-formatter-vertical-spacing-contract">RFC 053 formatter vertical-spacing contract<a class="headerlink" href="#rfc-053-formatter-vertical-spacing-contract" title="Permanent link">&para;</a></h3>
 <p><code>incan fmt</code> now follows RFC 053's three-bucket vertical-spacing model:</p>
 <ul>
@@ -4386,6 +4414,10 @@
 <p>Practically, this reduces the need for users and library authors to add ownership-shaping workarounds such as <code>.clone()</code>, <code>.as_ref()</code>, <code>str(...)</code>, or <code>.into()</code> in ordinary Incan code just to satisfy generated Rust. The planner now covers more call arguments, collection and tuple literals, assignments, returns, match scrutinees, string lookup probes, tuple unpacking, and Rust interop boundaries.</p>
 <h2 id="detailed-inventory">Detailed inventory<a class="headerlink" href="#detailed-inventory" title="Permanent link">&para;</a></h2>
 <p>The sections above are the release story. The list below is the detailed inventory of language, compiler, runtime, tooling, and docs changes that have landed for <code>0.3</code>, grouped roughly by theme rather than by the order work happened to land.</p>
+<h3 id="control-flow">Control flow<a class="headerlink" href="#control-flow" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Language/Compiler</strong>: Incan now supports <code>loop:</code> as an explicit infinite-loop construct in both statement and expression position, with <code>break &lt;value&gt;</code> completing the surrounding <code>loop:</code> expression and plain <code>break</code> remaining valid for <code>for</code>, <code>while</code>, and statement-form <code>loop:</code> (#327, RFC 016).</li>
+</ul>
 <h3 id="compiler-and-code-generation">Compiler and code generation<a class="headerlink" href="#compiler-and-code-generation" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Compiler/Codegen</strong>: Duckborrowing ownership planning is now centralized around typed value-use sites, covering Incan call arguments, Rust interop arguments, struct fields, collection and tuple elements, assignments, returns, match scrutinees, mutable aggregate parameters, collection lookup probes, loop/comprehension traversal, and backend-inserted generic <code>Clone</code> bounds. This removes several classes of generated-Rust borrow/move failures and reduces the need for user-authored <code>.clone()</code>, <code>.as_ref()</code>, <code>str(...)</code>, and <code>.into()</code> workarounds (#121).</li>
@@ -4402,7 +4434,7 @@
 </ul>
 <h3 id="versioning-and-release-track">Versioning and release track<a class="headerlink" href="#versioning-and-release-track" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.3</code>.</li>
+<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.4</code>.</li>
 </ul>
 <h2 id="known-limitations-03">Known limitations (0.3)<a class="headerlink" href="#known-limitations-03" title="Permanent link">&para;</a></h2>
 <ul>
@@ -4411,6 +4443,7 @@
 </ul>
 <h2 id="rfcs-implemented">RFCs implemented<a class="headerlink" href="#rfcs-implemented" title="Permanent link">&para;</a></h2>
 <ul>
+<li>Loop expressions and break values: <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a></li>
 <li><code>if let</code> and <code>while let</code> pattern control flow: <a href="/dev/RFCs/closed/implemented/049_single_arm_conditional_match">RFC 049</a></li>
 <li>Formatter vertical spacing buckets: <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a></li>
 </ul>

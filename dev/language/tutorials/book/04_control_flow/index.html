@@ -792,6 +792,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#while-loops" class="md-nav__link">
+    <span class="md-ellipsis">
+      while loops
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#loop-and-break-value" class="md-nav__link">
+    <span class="md-ellipsis">
+      loop: and break &lt;value&gt;
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#try-it" class="md-nav__link">
     <span class="md-ellipsis">
       Try it
@@ -4368,6 +4386,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#while-loops" class="md-nav__link">
+    <span class="md-ellipsis">
+      while loops
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#loop-and-break-value" class="md-nav__link">
+    <span class="md-ellipsis">
+      loop: and break &lt;value&gt;
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#try-it" class="md-nav__link">
     <span class="md-ellipsis">
       Try it
@@ -4481,6 +4517,23 @@
     <span class="k">if</span> <span class="n">name</span> <span class="o">==</span> <span class="s2">&quot;Bob&quot;</span><span class="p">:</span>
         <span class="k">break</span>
 </code></pre></div>
+<h2 id="while-loops"><code>while</code> loops<a class="headerlink" href="#while-loops" title="Permanent link">&para;</a></h2>
+<p>Use <code>while</code> when the condition should be re-checked before each iteration:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">countdown</span><span class="p">(</span><span class="n">start</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">mut</span> <span class="n">current</span> <span class="o">=</span> <span class="n">start</span>
+    <span class="k">while</span> <span class="n">current</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="nb">println</span><span class="p">(</span><span class="n">current</span><span class="p">)</span>
+        <span class="n">current</span> <span class="o">-=</span> <span class="mi">1</span>
+</code></pre></div>
+<h2 id="loop-and-break-value"><code>loop:</code> and <code>break &lt;value&gt;</code><a class="headerlink" href="#loop-and-break-value" title="Permanent link">&para;</a></h2>
+<p>Use <code>loop:</code> for explicit infinite loops and for loops that need to return a value:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">find_value</span><span class="p">(</span><span class="n">flag</span><span class="p">:</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">loop</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">flag</span><span class="p">:</span>
+            <span class="k">break</span> <span class="mi">42</span>
+        <span class="k">break</span> <span class="mi">7</span>
+</code></pre></div>
+<p><code>break &lt;value&gt;</code> completes the surrounding <code>loop:</code> expression. For <code>for</code> and <code>while</code>, use plain <code>break</code>.</p>
 <h2 id="try-it">Try it<a class="headerlink" href="#try-it" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Write a function <code>classify(n: int) -&gt; str</code> using <code>if/elif/else</code>.</li>
@@ -4488,6 +4541,7 @@
 <li>Use <code>match</code> on a <code>Result</code> and print either the value or the error.</li>
 <li>Write a <code>while let</code> loop that consumes messages until a channel closes.</li>
 <li>Loop over a list and stop early with <code>break</code>.</li>
+<li>Write a <code>loop:</code> expression that returns an <code>int</code> with <code>break &lt;value&gt;</code>.</li>
 </ol>
 <details class="example">
 <summary>One possible solution</summary>
@@ -4533,6 +4587,13 @@
         <span class="k">if</span> <span class="n">name</span> <span class="o">==</span> <span class="s2">&quot;Bob&quot;</span><span class="p">:</span>
             <span class="k">break</span>
         <span class="nb">println</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+
+    <span class="c1"># 6) loop expression with break value</span>
+    <span class="n">value</span> <span class="o">=</span> <span class="n">loop</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">break</span> <span class="mi">42</span>
+        <span class="k">break</span> <span class="mi">0</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
 </code></pre></div>
 </details>
 <h2 id="where-to-learn-more">Where to learn more<a class="headerlink" href="#where-to-learn-more" title="Permanent link">&para;</a></h2>

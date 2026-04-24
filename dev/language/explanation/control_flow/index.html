@@ -2418,6 +2418,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#looping-with-while" class="md-nav__link">
+    <span class="md-ellipsis">
+      Looping with while
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#looping-with-loop" class="md-nav__link">
+    <span class="md-ellipsis">
+      Looping with loop
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       See also
@@ -4348,6 +4366,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#looping-with-while" class="md-nav__link">
+    <span class="md-ellipsis">
+      Looping with while
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#looping-with-loop" class="md-nav__link">
+    <span class="md-ellipsis">
+      Looping with loop
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       See also
@@ -4456,6 +4492,24 @@
     <span class="k">if</span> <span class="n">name</span> <span class="o">==</span> <span class="s2">&quot;Bob&quot;</span><span class="p">:</span>
         <span class="k">break</span>
 </code></pre></div>
+<h2 id="looping-with-while">Looping with <code>while</code><a class="headerlink" href="#looping-with-while" title="Permanent link">&para;</a></h2>
+<p>Use <code>while</code> when the loop condition should be checked before each iteration:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">countdown</span><span class="p">(</span><span class="n">start</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">mut</span> <span class="n">current</span> <span class="o">=</span> <span class="n">start</span>
+
+    <span class="k">while</span> <span class="n">current</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="nb">println</span><span class="p">(</span><span class="n">current</span><span class="p">)</span>
+        <span class="n">current</span> <span class="o">-=</span> <span class="mi">1</span>
+</code></pre></div>
+<h2 id="looping-with-loop">Looping with <code>loop</code><a class="headerlink" href="#looping-with-loop" title="Permanent link">&para;</a></h2>
+<p>Use <code>loop:</code> for explicit infinite loops and for loops that produce a value with <code>break &lt;expr&gt;</code>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">find_value</span><span class="p">(</span><span class="n">flag</span><span class="p">:</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">loop</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">flag</span><span class="p">:</span>
+            <span class="k">break</span> <span class="mi">42</span>
+        <span class="k">break</span> <span class="mi">7</span>
+</code></pre></div>
+<p><code>break &lt;expr&gt;</code> is only valid for <code>loop:</code>. Plain <code>break</code> remains valid for <code>for</code>, <code>while</code>, and <code>loop:</code>.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Book chapter: <a href="../../tutorials/book/04_control_flow/">4. Control flow</a></li>
