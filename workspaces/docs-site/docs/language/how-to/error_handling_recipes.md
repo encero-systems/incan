@@ -57,6 +57,18 @@ def require_user(id: int) -> Result[User, AppError]:
     return users.get(id).ok_or(AppError.NotFound(f"user {id}"))
 ```
 
+## Pattern: Do something only on success (`if let`)
+
+Use `if let` when you care about exactly one successful shape and want the non-match case to do nothing.
+
+```incan
+def maybe_log_user(id: int) -> None:
+    if let Some(user) = users.get(id):
+        println(f"loaded {user.name}")
+```
+
+This is usually clearer than spelling the same idea as a full `match` with an empty fallback arm.
+
 ## Pattern: Defaults (`unwrap_or` / `unwrap_or_else`)
 
 Use defaults only when there is a genuinely safe fallback.

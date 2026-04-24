@@ -537,15 +537,7 @@ impl TypeChecker {
     }
 
     fn check_if_stmt(&mut self, if_stmt: &IfStmt) {
-        let cond_ty = self.check_expr(&if_stmt.condition);
-        let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
-        ensure_bool_condition(&cond_ty, if_stmt.condition.span, is_compatible, &mut self.errors);
-
-        self.symbols.enter_scope(ScopeKind::Block);
-        for stmt in &if_stmt.then_body {
-            self.check_statement(stmt);
-        }
-        self.symbols.exit_scope();
+        self.check_condition_body(&if_stmt.condition, &if_stmt.then_body);
 
         for (elif_cond, elif_body) in &if_stmt.elif_branches {
             let elif_cond_ty = self.check_expr(elif_cond);
@@ -569,15 +561,7 @@ impl TypeChecker {
     }
 
     fn check_while_stmt(&mut self, while_stmt: &WhileStmt) {
-        let cond_ty = self.check_expr(&while_stmt.condition);
-        let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
-        ensure_bool_condition(&cond_ty, while_stmt.condition.span, is_compatible, &mut self.errors);
-
-        self.symbols.enter_scope(ScopeKind::Block);
-        for stmt in &while_stmt.body {
-            self.check_statement(stmt);
-        }
-        self.symbols.exit_scope();
+        self.check_condition_body(&while_stmt.condition, &while_stmt.body);
     }
 
     fn check_for_stmt(&mut self, for_stmt: &ForStmt) {
@@ -640,6 +624,31 @@ impl TypeChecker {
                     &format!("{:?}", pattern.node),
                     pattern.span,
                 ));
+            }
+        }
+    }
+
+    fn check_condition_body(&mut self, condition: &Condition, body: &[Spanned<Statement>]) {
+        match condition {
+            Condition::Expr(expr) => {
+                let cond_ty = self.check_expr(expr);
+                let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
+                ensure_bool_condition(&cond_ty, expr.span, is_compatible, &mut self.errors);
+
+                self.symbols.enter_scope(ScopeKind::Block);
+                for stmt in body {
+                    self.check_statement(stmt);
+                }
+                self.symbols.exit_scope();
+            }
+            Condition::Let { pattern, value } => {
+                let value_ty = self.check_expr(value);
+                self.symbols.enter_scope(ScopeKind::Block);
+                self.check_pattern(pattern, &value_ty);
+                for stmt in body {
+                    self.check_statement(stmt);
+                }
+                self.symbols.exit_scope();
             }
         }
     }

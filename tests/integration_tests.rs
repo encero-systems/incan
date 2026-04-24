@@ -4937,6 +4937,44 @@ def main() -> None:\n  columns([\"orders_total\"])\n",
     }
 
     #[test]
+    fn build_and_run_rfc049_if_let_while_let() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"rfc049_if_let_while_let\"\nversion = \"0.1.0\"\n",
+            "def maybe_double(opt: Option[int]) -> int:\n  if let Some(value) = opt:\n    return value * 2\n  return 0\n\n\
+def next_value(values: list[Option[int]], idx: int) -> Option[int]:\n  if idx < len(values):\n    return values[idx]\n  return None\n\n\
+def sum_values(values: list[Option[int]]) -> int:\n  mut idx = 0\n  mut total = 0\n  while let Some(value) = next_value(values, idx):\n    total = total + value\n    idx = idx + 1\n  return total\n\n\
+def main() -> None:\n  println(maybe_double(Some(21)))\n  println(maybe_double(None))\n  println(sum_values([Some(1), Some(2), None, Some(99)]))\n",
+        )?;
+
+        let out_dir = tmp.path().join("out");
+        let build_output = run_build(&main_path, &out_dir)?;
+        assert!(
+            build_output.status.success(),
+            "expected RFC 049 sample project to build successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
+
+        let run_output = Command::new(incan_bin_path())
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            run_output.status.success(),
+            "expected RFC 049 sample project to run successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&run_output.stdout),
+            String::from_utf8_lossy(&run_output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&run_output.stdout);
+        assert_eq!(stdout.lines().collect::<Vec<_>>(), vec!["42", "0", "3"]);
+
+        Ok(())
+    }
+
+    #[test]
     fn build_lib_with_vocab_companion_embeds_vocab_payload() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let producer_root = tmp.path().join("widgets_vocab_project");

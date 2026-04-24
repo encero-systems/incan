@@ -27,6 +27,7 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 ## Testing strategy
 
 - **Always test both typechecker and codegen.** Typechecker unit tests validate semantics; codegen snapshot tests verify end-to-end output. Neither alone is sufficient.
+- **Review closeout requires repo gates**: do not declare a review or implementation loop complete on targeted parser/typechecker/codegen checks alone; run `make pre-commit` (or the repo’s full gate) before closeout, because formatter/clippy/all-targets failures can still surface missing imports, feature-gated compile errors, or drift outside the exercised feature slice. (RFC 049 / issue #333)
 - **Conformance fixtures belong in tests**: production conformance modules should define scenario contracts and validators only; synthetic fixture plans and hardcoded sample literals belong in test-local builders so contract APIs stay clean and reusable.
 - **Extern fixture coverage must stay real**: when removing or renaming a Rust host-boundary symbol, update generic extern-delegation fixtures/snapshots (for example `rust_extern_delegation`) alongside feature-specific snapshots; otherwise test coverage keeps validating dead runtime paths instead of the current boundary shape. (Issues #301/#302)
 - **Snapshot tests must exercise features in expressions**, not just declarations. A model that declares an alias but never uses it in an expression won't catch lowering bugs.
