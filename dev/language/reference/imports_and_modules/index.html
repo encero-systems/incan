@@ -1343,6 +1343,8 @@
       
         
       
+        
+      
     
     
       
@@ -1395,6 +1397,27 @@
   
   <span class="md-ellipsis">
     Language reference (generated)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../code_style/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Code style guide
   </span>
   
 
@@ -1949,7 +1972,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_11" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_12" >
         
           
           
@@ -1965,14 +1988,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_11" id="__nav_3_4_11_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_12" id="__nav_3_4_12_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_11_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_11">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_12">
             <span class="md-nav__icon md-icon"></span>
             Standard library
           </label>
@@ -2148,7 +2171,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_13" >
         
           
           
@@ -2164,14 +2187,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_12" id="__nav_3_4_12_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_13" id="__nav_3_4_13_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_12_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_12">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_13">
             <span class="md-nav__icon md-icon"></span>
             Stdlib traits
           </label>
@@ -2343,10 +2366,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_13" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_14" >
         
           
-          <label class="md-nav__link" for="__nav_3_4_13" id="__nav_3_4_13_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4_14" id="__nav_3_4_14_label" tabindex="0">
             
   
   <span class="md-ellipsis">
@@ -2357,8 +2380,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_13_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_13">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_14">
             <span class="md-nav__icon md-icon"></span>
             Derives
           </label>
@@ -3386,7 +3409,7 @@
         
   
   <span class="md-ellipsis">
-    Formatting
+    Formatting with incan fmt
   </span>
   
 
@@ -5044,6 +5067,19 @@
 <p><code>import this</code> is always available and prints the Incan “Zen” design principles when imported:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import this&quot;</span>
 </code></pre></div>
+<div class="language-text highlight"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────┐
+│  The Zen of Incan                                                    │
+│  by Danny Meijer (inspired by Tim Peters&#39; &quot;The Zen of Python&quot;)       │
+└──────────────────────────────────────────────────────────────────────┘
+
+  › Readability counts          ─  clarity over cleverness
+  › Safety over silence         ─  errors surface as Result, not hide
+  › Explicit over implicit      ─  magic is opt-in and marked
+  › Fast is better than slow    ─  performance costs must be visible
+  › Namespaces are great        ─  keep modules and traits explicit
+  › One obvious way             ─  conventions beat novelty,
+                                   with escape hatches documented
+</code></pre></div>
 <h2 id="incan-standard-library-std">Incan standard library (<code>std.*</code>)<a class="headerlink" href="#incan-standard-library-std" title="Permanent link">&para;</a></h2>
 <!-- TODO: move this to its own section -->
 
@@ -5103,8 +5139,7 @@ import — no manual feature flags needed.</p>
 </tbody>
 </table>
 <h3 id="soft-keywords">Soft keywords<a class="headerlink" href="#soft-keywords" title="Permanent link">&para;</a></h3>
-<p>Some language keywords are <strong>import-activated</strong> (soft keywords). They behave like identifiers by default and only become
-reserved keywords after importing a particular <code>std.*</code> namespace.</p>
+<p>Some language keywords are <strong>import-activated</strong> (soft keywords). They behave like identifiers by default and only become reserved keywords after importing a particular <code>std.*</code> namespace.</p>
 <p>Currently:</p>
 <ul>
 <li><code>async</code> and <code>await</code> are activated by importing <code>std.async</code> (for example <code>import std.async</code> or
@@ -5321,11 +5356,8 @@ Always use the <code>rust::std::</code> prefix when you need Rust’s stdlib.</p
 etc.) where available.</p>
 <h2 id="rust-crates-vs-incan-modules-important">Rust crates vs Incan modules (important)<a class="headerlink" href="#rust-crates-vs-incan-modules-important" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>External crates</strong>: Prefer <code>rust::...</code> imports (e.g. <code>import rust::serde_json</code>), which also enables automatic
-  dependency management for generated <code>Cargo.toml</code>.</li>
-<li><strong>Incan project modules</strong> (multi-file projects): imports like <code>from db.schema import Database</code> refer to modules in
-  the current crate and are emitted as <code>crate::db::schema::Database</code> in generated Rust so they compile reliably from
-  submodules.</li>
+<li><strong>External crates</strong>: Prefer <code>rust::...</code> imports (e.g. <code>import rust::serde_json</code>), which also enables automatic dependency management for generated <code>Cargo.toml</code>.</li>
+<li><strong>Incan project modules</strong> (multi-file projects): imports like <code>from db.schema import Database</code> refer to modules in the current crate and are emitted as <code>crate::db::schema::Database</code> in generated Rust so they compile reliably from submodules.</li>
 </ul>
 <h3 id="version-and-feature-annotations-rust-crates-only">Version and feature annotations (Rust crates only)<a class="headerlink" href="#version-and-feature-annotations-rust-crates-only" title="Permanent link">&para;</a></h3>
 <p>Rust crate imports support optional version and feature annotations using <code>@</code> and <code>with</code>:</p>
@@ -5347,8 +5379,7 @@ from rust::CRATE [@ &quot;VERSION&quot;] [with [&quot;FEATURE&quot;, ...]] impor
 <li>If the crate is configured in <code>incan.toml</code>, inline annotations are <strong>not allowed</strong>.</li>
 <li>When the same crate is imported in multiple files, versions must match and features are unioned.</li>
 </ul>
-<p>These annotations only apply to <code>rust::</code> imports. Incan module imports (<code>from models import User</code>) do not support version
-or feature annotations.</p>
+<p>These annotations only apply to <code>rust::</code> imports. Incan module imports (<code>from models import User</code>) do not support version or feature annotations.</p>
 <p>See: <a href="../../how-to/rust_interop/">Rust interop</a> for practical guidance and examples.</p>
 <h2 id="current-status-and-limitations">Current status and limitations<a class="headerlink" href="#current-status-and-limitations" title="Permanent link">&para;</a></h2>
 <p>Supported:</p>
