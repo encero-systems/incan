@@ -1,6 +1,6 @@
 # RFC 049: `if let` and `while let` pattern control flow
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-04-02
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -8,8 +8,8 @@
     - RFC 018 (testing)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/333
 - **RFC PR:** —
-- **Written against:** v0.3.0-dev.4
-- **Shipped in:** —
+- **Written against:** v0.3.0-dev.1
+- **Shipped in:** v0.3.0-dev.1
 
 ## Summary
 
@@ -386,7 +386,7 @@ This section is non-normative. Any implementation strategy is acceptable if it p
 - Add parser, typechecker, codegen snapshot, formatter, and integration coverage for both constructs.
 - Update user-facing docs and release notes for the new control-flow surface.
 
-## Progress Checklist
+## Implementation log
 
 ### Spec / design
 
@@ -395,44 +395,44 @@ This section is non-normative. Any implementation strategy is acceptable if it p
 
 ### Parser / AST
 
-- [ ] Parser: accept `let PATTERN = VALUE` tests in `if` statements.
-- [ ] Parser: accept `let PATTERN = VALUE` tests in `while` statements.
-- [ ] AST: represent `if let` with span-precise structure.
-- [ ] AST: represent `while let` with span-precise structure.
-- [ ] Formatter: round-trip both constructs stably.
+- [x] Parser: accept `let PATTERN = VALUE` tests in `if` statements.
+- [x] Parser: accept `let PATTERN = VALUE` tests in `while` statements.
+- [x] AST: represent `if let` with span-precise structure.
+- [x] AST: represent `while let` with span-precise structure.
+- [x] Formatter: round-trip both constructs stably.
 
 ### Typechecker
 
-- [ ] Validate `if let` patterns with `match`-equivalent checking.
-- [ ] Validate `while let` patterns with `match`-equivalent checking.
-- [ ] Scope bound names to the success branch or successful loop iteration body only.
-- [ ] Emit clear diagnostics for invalid pattern usage in these positions.
+- [x] Validate `if let` patterns with `match`-equivalent checking.
+- [x] Validate `while let` patterns with `match`-equivalent checking.
+- [x] Scope bound names to the success branch or successful loop iteration body only.
+- [x] Emit clear diagnostics for invalid pattern usage in these positions.
 
 ### Lowering / emission
 
-- [ ] Lower `if let` to the existing control-flow core.
-- [ ] Lower `while let` to the existing control-flow core.
-- [ ] Emit correct Rust for both constructs.
+- [x] Lower `if let` to the existing control-flow core.
+- [x] Lower `while let` to the existing control-flow core.
+- [x] Emit correct Rust for both constructs.
 
 ### Tooling
 
-- [ ] Keep diagnostics wording aligned with pattern-matching semantics rather than assignment.
-- [ ] Preserve LSP behavior for pattern bindings inside `if let` and `while let`.
+- [x] Keep diagnostics wording aligned with pattern-matching semantics rather than assignment.
+- [x] Preserve LSP behavior for pattern bindings inside `if let` and `while let`.
 
 ### Tests
 
-- [ ] Parser unit tests for `if let`.
-- [ ] Parser unit tests for `while let`.
-- [ ] Typechecker unit tests for valid and invalid `if let`.
-- [ ] Typechecker unit tests for valid and invalid `while let`.
-- [ ] Codegen snapshot tests for `if let`.
-- [ ] Codegen snapshot tests for `while let`.
-- [ ] Integration coverage for end-to-end behavior.
+- [x] Parser unit tests for `if let`.
+- [x] Parser unit tests for `while let`.
+- [x] Typechecker unit tests for valid and invalid `if let`.
+- [x] Typechecker unit tests for valid and invalid `while let`.
+- [x] Codegen snapshot tests for `if let`.
+- [x] Codegen snapshot tests for `while let`.
+- [x] Integration coverage for end-to-end behavior.
 
 ### Docs
 
-- [ ] Update docs-site pages that describe control flow or pattern matching.
-- [ ] Add a release-notes entry for RFC 049 / issue #333.
+- [x] Update docs-site pages that describe control flow or pattern matching.
+- [x] Add a release-notes entry for RFC 049 / issue #333.
 
 ## Design Decisions
 
