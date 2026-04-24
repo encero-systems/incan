@@ -15,7 +15,7 @@ exclude = ["target/incan"]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0-dev.0"
+version = "0.3.0-dev.4"
 description = "The Incan programming language compiler"
 edition = "2024"
 rust-version = "1.91"

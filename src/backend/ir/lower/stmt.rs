@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use super::super::expr::{IrCallArg, IrExprKind, VarAccess, VarRefKind};
+use super::super::expr::{IrCallArg, IrExprKind, MatchArm, Pattern as IrPattern, VarAccess, VarRefKind};
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::IrType;
 use super::super::{IrSpan, Mutability, TypedExpr};
@@ -63,6 +63,56 @@ impl AstLowering {
             }
             ast::Pattern::Literal(_) | ast::Pattern::Constructor(_, _) => {}
         }
+    }
+
+    fn lower_block_expr(
+        &mut self,
+        stmts: &[Spanned<ast::Statement>],
+        scoped: bool,
+    ) -> Result<TypedExpr, LoweringError> {
+        if scoped {
+            self.push_scope();
+        }
+        let lowered = self.lower_statements(stmts);
+        if scoped {
+            self.pop_scope();
+        }
+        Ok(TypedExpr::new(
+            IrExprKind::Block {
+                stmts: lowered?,
+                value: None,
+            },
+            IrType::Unit,
+        ))
+    }
+
+    fn lower_if_else_chain(
+        &mut self,
+        elif_branches: &[(Spanned<ast::Expr>, Vec<Spanned<ast::Statement>>)],
+        else_body: Option<&[Spanned<ast::Statement>]>,
+    ) -> Result<Option<Vec<IrStmt>>, LoweringError> {
+        let mut else_branch = else_body
+            .map(|body| {
+                self.push_scope();
+                let result = self.lower_statements(body);
+                self.pop_scope();
+                result
+            })
+            .transpose()?;
+
+        for (elif_cond, elif_body) in elif_branches.iter().rev() {
+            self.push_scope();
+            let elif_then = self.lower_statements(elif_body)?;
+            self.pop_scope();
+            let elif_stmt = IrStmtKind::If {
+                condition: self.lower_expr_spanned(elif_cond)?,
+                then_branch: elif_then,
+                else_branch,
+            };
+            else_branch = Some(vec![IrStmt::new(elif_stmt)]);
+        }
+
+        Ok(else_branch)
     }
 
     /// Lower a list of statements to IR.
@@ -247,63 +297,106 @@ impl AstLowering {
 
             ast::Statement::If(i) => {
                 let lowered_if = (|| -> Result<IrStmtKind, LoweringError> {
-                    // Lower elif branches as nested if-else in the else branch.
-                    // Each branch gets its own scope.
-                    let mut else_branch = i
-                        .else_body
-                        .as_ref()
-                        .map(|b| {
+                    let else_branch = self.lower_if_else_chain(&i.elif_branches, i.else_body.as_deref())?;
+
+                    match &i.condition {
+                        ast::Condition::Expr(condition) => {
+                            let condition = self.lower_expr_spanned(condition)?;
                             self.push_scope();
-                            let result = self.lower_statements(b);
+                            let then_branch = self.lower_statements(&i.then_body)?;
                             self.pop_scope();
-                            result
-                        })
-                        .transpose()?;
 
-                    // Build elif chain from end to start.
-                    for (elif_cond, elif_body) in i.elif_branches.iter().rev() {
-                        self.push_scope();
-                        let elif_then = self.lower_statements(elif_body)?;
-                        self.pop_scope();
-                        let elif_stmt = IrStmtKind::If {
-                            condition: self.lower_expr_spanned(elif_cond)?,
-                            then_branch: elif_then,
-                            else_branch,
-                        };
-                        else_branch = Some(vec![IrStmt::new(elif_stmt)]);
+                            Ok(IrStmtKind::If {
+                                condition,
+                                then_branch,
+                                else_branch,
+                            })
+                        }
+                        ast::Condition::Let { pattern, value } => {
+                            let scrutinee = self.lower_expr_spanned(value)?;
+                            let then_body = self.lower_block_expr(&i.then_body, true)?;
+                            let fallback_body = TypedExpr::new(
+                                IrExprKind::Block {
+                                    stmts: else_branch.unwrap_or_default(),
+                                    value: None,
+                                },
+                                IrType::Unit,
+                            );
+
+                            Ok(IrStmtKind::Match {
+                                scrutinee,
+                                arms: vec![
+                                    MatchArm {
+                                        pattern: self.lower_pattern(&pattern.node),
+                                        guard: None,
+                                        body: then_body,
+                                    },
+                                    MatchArm {
+                                        pattern: IrPattern::Wildcard,
+                                        guard: None,
+                                        body: fallback_body,
+                                    },
+                                ],
+                            })
+                        }
                     }
-
-                    let condition = self.lower_expr_spanned(&i.condition)?;
-                    self.push_scope();
-                    let then_branch = self.lower_statements(&i.then_body)?;
-                    self.pop_scope();
-
-                    Ok(IrStmtKind::If {
-                        condition,
-                        then_branch,
-                        else_branch,
-                    })
                 })();
                 lowered_if?
             }
 
             ast::Statement::While(w) => {
-                // Push a new scope for the while-loop body
-                self.push_scope();
                 self.non_linear_context_depth += 1;
-                let loop_parts = (|| -> Result<(TypedExpr, Vec<IrStmt>), LoweringError> {
-                    let condition = self.lower_expr_spanned(&w.condition)?;
-                    let body = self.lower_statements(&w.body)?;
-                    Ok((condition, body))
+                let loop_stmt = (|| -> Result<IrStmtKind, LoweringError> {
+                    match &w.condition {
+                        ast::Condition::Expr(condition) => {
+                            self.push_scope();
+                            let loop_parts = (|| -> Result<(TypedExpr, Vec<IrStmt>), LoweringError> {
+                                let condition = self.lower_expr_spanned(condition)?;
+                                let body = self.lower_statements(&w.body)?;
+                                Ok((condition, body))
+                            })();
+                            self.pop_scope();
+                            let (condition, body) = loop_parts?;
+                            Ok(IrStmtKind::While {
+                                label: None,
+                                condition,
+                                body,
+                            })
+                        }
+                        ast::Condition::Let { pattern, value } => {
+                            let scrutinee = self.lower_expr_spanned(value)?;
+                            let body_expr = self.lower_block_expr(&w.body, true)?;
+                            let break_expr = TypedExpr::new(
+                                IrExprKind::Block {
+                                    stmts: vec![IrStmt::new(IrStmtKind::Break(None))],
+                                    value: None,
+                                },
+                                IrType::Unit,
+                            );
+
+                            Ok(IrStmtKind::Loop {
+                                label: None,
+                                body: vec![IrStmt::new(IrStmtKind::Match {
+                                    scrutinee,
+                                    arms: vec![
+                                        MatchArm {
+                                            pattern: self.lower_pattern(&pattern.node),
+                                            guard: None,
+                                            body: body_expr,
+                                        },
+                                        MatchArm {
+                                            pattern: IrPattern::Wildcard,
+                                            guard: None,
+                                            body: break_expr,
+                                        },
+                                    ],
+                                })],
+                            })
+                        }
+                    }
                 })();
                 self.non_linear_context_depth -= 1;
-                self.pop_scope();
-                let (condition, body) = loop_parts?;
-                IrStmtKind::While {
-                    label: None,
-                    condition,
-                    body,
-                }
+                loop_stmt?
             }
 
             ast::Statement::For(f) => {
@@ -638,7 +731,7 @@ impl AstLowering {
                 }
             }
             ast::Statement::If(i) => {
-                self.count_expr_ident_reads(&i.condition.node, counts);
+                self.count_condition_ident_reads(&i.condition, counts);
                 for stmt in &i.then_body {
                     self.count_statement_ident_reads(&stmt.node, counts);
                 }
@@ -655,7 +748,7 @@ impl AstLowering {
                 }
             }
             ast::Statement::While(w) => {
-                self.count_expr_ident_reads(&w.condition.node, counts);
+                self.count_condition_ident_reads(&w.condition, counts);
                 for stmt in &w.body {
                     self.count_statement_ident_reads(&stmt.node, counts);
                 }
@@ -695,6 +788,13 @@ impl AstLowering {
                 self.count_expr_ident_reads(&ta.value.node, counts);
             }
             ast::Statement::ChainedAssignment(ca) => self.count_expr_ident_reads(&ca.value.node, counts),
+        }
+    }
+
+    fn count_condition_ident_reads(&self, condition: &ast::Condition, counts: &mut HashMap<String, usize>) {
+        match condition {
+            ast::Condition::Expr(expr) => self.count_expr_ident_reads(&expr.node, counts),
+            ast::Condition::Let { value, .. } => self.count_expr_ident_reads(&value.node, counts),
         }
     }
 

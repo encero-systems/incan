@@ -263,7 +263,7 @@ fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Ty
             .or_else(|| call_site_type_in_expr(&i.value, offset)),
         Statement::Return(Some(e)) => call_site_type_in_expr(e, offset),
         Statement::Return(None) => None,
-        Statement::If(i) => call_site_type_in_expr(&i.condition, offset)
+        Statement::If(i) => call_site_type_in_condition(&i.condition, offset)
             .or_else(|| call_site_types_in_stmts(&i.then_body, offset))
             .or_else(|| {
                 i.elif_branches.iter().find_map(|(c, b)| {
@@ -271,9 +271,8 @@ fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Ty
                 })
             })
             .or_else(|| i.else_body.as_ref().and_then(|b| call_site_types_in_stmts(b, offset))),
-        Statement::While(w) => {
-            call_site_type_in_expr(&w.condition, offset).or_else(|| call_site_types_in_stmts(&w.body, offset))
-        }
+        Statement::While(w) => call_site_type_in_condition(&w.condition, offset)
+            .or_else(|| call_site_types_in_stmts(&w.body, offset)),
         Statement::For(f) => {
             call_site_type_in_expr(&f.iter, offset).or_else(|| call_site_types_in_stmts(&f.body, offset))
         }
@@ -293,6 +292,13 @@ fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Ty
         },
         Statement::Pass | Statement::Break | Statement::Continue => None,
         Statement::VocabBlock(_) => None,
+    }
+}
+
+fn call_site_type_in_condition(condition: &Condition, offset: usize) -> Option<&Spanned<Type>> {
+    match condition {
+        Condition::Expr(expr) => call_site_type_in_expr(expr, offset),
+        Condition::Let { value, .. } => call_site_type_in_expr(value, offset),
     }
 }
 

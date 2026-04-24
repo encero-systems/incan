@@ -71,7 +71,11 @@ impl TypeChecker {
     }
 
     /// Type-check a pattern against an expected type, defining bindings in the current scope.
-    fn check_pattern(&mut self, pattern: &Spanned<Pattern>, expected_ty: &ResolvedType) {
+    pub(in crate::frontend::typechecker) fn check_pattern(
+        &mut self,
+        pattern: &Spanned<Pattern>,
+        expected_ty: &ResolvedType,
+    ) {
         match &pattern.node {
             Pattern::Wildcard => {}
             Pattern::Binding(name) => {

@@ -872,6 +872,39 @@ def test_session_backend_datafusion__session_write_csv_routes_through_execution_
     }
 
     #[test]
+    fn test_format_source_if_let_round_trip() -> Result<(), FormatError> {
+        let source = r#"def first(opt: Option[int]) -> int:
+    if let Some(value) = opt:
+        return value
+    return 0
+"#;
+        let formatted = assert_format_round_trip_lex_parse(source)?;
+        assert!(
+            formatted.contains("if let Some(value) = opt:"),
+            "expected formatter to preserve if-let header; got: {formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_while_let_round_trip() -> Result<(), FormatError> {
+        let source = r#"def sum_once(opt: Option[int]) -> int:
+    mut total = 0
+    mut current = opt
+    while let Some(value) = current:
+        total = total + value
+        current = None
+    return total
+"#;
+        let formatted = assert_format_round_trip_lex_parse(source)?;
+        assert!(
+            formatted.contains("while let Some(value) = current:"),
+            "expected formatter to preserve while-let header; got: {formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_generic_method_round_trip() -> Result<(), FormatError> {
         let source = r#"class Box:
     def get[T with Clone](self, value: T) -> T:

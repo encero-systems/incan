@@ -510,6 +510,89 @@ def f(x: int) -> int:
     }
 
     #[test]
+    fn test_parse_if_let_condition() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(opt: Option[int]) -> int:
+  if let Some(value) = opt:
+    return value
+  return 0
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let stmt = &func.body[0].node;
+        let Statement::If(if_stmt) = stmt else {
+            panic!("Expected if statement");
+        };
+        match &if_stmt.condition {
+            Condition::Let { pattern, value } => {
+                assert!(matches!(&value.node, Expr::Ident(name) if name == "opt"));
+                match &pattern.node {
+                    Pattern::Constructor(name, args) => {
+                        assert_eq!(name, "Some");
+                        assert!(matches!(
+                            &args[0],
+                            PatternArg::Positional(pat)
+                                if matches!(&pat.node, Pattern::Binding(binding) if binding == "value")
+                        ));
+                    }
+                    _ => panic!("Expected constructor pattern"),
+                }
+            }
+            Condition::Expr(_) => panic!("Expected let condition"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_while_let_condition() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def drain(current: Option[int]) -> int:
+  while let Some(value) = current:
+    return value
+  return 0
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let stmt = &func.body[0].node;
+        let Statement::While(while_stmt) = stmt else {
+            panic!("Expected while statement");
+        };
+        match &while_stmt.condition {
+            Condition::Let { pattern, value } => {
+                assert!(matches!(&value.node, Expr::Ident(name) if name == "current"));
+                assert!(matches!(
+                    &pattern.node,
+                    Pattern::Constructor(name, args)
+                        if name == "Some"
+                            && matches!(
+                                &args[0],
+                                PatternArg::Positional(pat)
+                                    if matches!(&pat.node, Pattern::Binding(binding) if binding == "value")
+                            )
+                ));
+            }
+            Condition::Expr(_) => panic!("Expected let condition"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_if_let_rejects_else_branch() {
+        let source = r#"
+def f(opt: Option[int]) -> int:
+  if let Some(value) = opt:
+    return value
+  else:
+    return 0
+"#;
+        let errors = parse_str_err(source, "`if let` with else should fail");
+        assert!(
+            errors.iter().any(|err| err.message.contains("`if let` does not support `else` branches")),
+            "expected `if let` else rejection, got: {errors:?}"
+        );
+    }
+
+    #[test]
     fn test_parse_decorator_paths() -> Result<(), Vec<CompileError>> {
         let source = r#"
 import std.web as web

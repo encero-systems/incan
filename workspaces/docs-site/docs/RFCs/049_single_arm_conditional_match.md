@@ -1,6 +1,6 @@
-# RFC 049: `if let` single-arm conditional match
+# RFC 049: `if let` and `while let` pattern control flow
 
-- **Status:** Draft
+- **Status:** In Progress
 - **Created:** 2026-04-02
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -8,19 +8,20 @@
     - RFC 018 (testing)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/333
 - **RFC PR:** —
-- **Written against:** v0.2
+- **Written against:** v0.3.0-dev.4
 - **Shipped in:** —
 
 ## Summary
 
-This RFC introduces `if let` as a first-class Incan control-flow construct for single-arm conditional pattern matching. It is intended for cases where authors care about exactly one successful pattern and want the non-match case to do nothing, such as replacing boilerplate like `Some(x) => ...` paired with `None => pass` with `if let Some(child) = filter.input:`. This RFC does not replace full `match`; full `match` remains the canonical construct for multi-arm branching, exhaustive reasoning, and cases where the non-match path is semantically meaningful. The design is intentionally closer to Rust than Python because the motivating cases in Incan are primarily explicit `Option` and `Result` management, so Rust-style destructuring control flow is a better fit than Python-style truthiness.
+This RFC introduces `if let` and `while let` as first-class Incan control-flow constructs for pattern-oriented destructuring. `if let` is intended for cases where authors care about exactly one successful pattern and want the non-match case to do nothing, such as replacing boilerplate like `Some(x) => ...` paired with `None => pass` with `if let Some(child) = filter.input:`. `while let` covers the looping counterpart: continue iterating while a pattern keeps matching, then stop when it no longer does. This RFC does not replace full `match`; full `match` remains the canonical construct for multi-arm branching, exhaustive reasoning, and cases where the non-match path is semantically meaningful. The design is intentionally closer to Rust than Python because the motivating cases in Incan are primarily explicit `Option`, `Result`, and enum destructuring, so Rust-style pattern control flow is a better fit than Python-style truthiness.
 
 ## Core model
 
-1. `if let PATTERN = VALUE:` attempts to match `VALUE` against `PATTERN`.
-2. If the match succeeds, the body executes and any names bound by the pattern are available inside that body.
-3. If the match fails, the body is skipped and no names are bound.
-4. Full `match` remains the preferred construct when more than one arm matters.
+1. `if let PATTERN = VALUE:` attempts to match `VALUE` against `PATTERN` once.
+2. If that match succeeds, the body executes and any names bound by the pattern are available inside that body.
+3. If that match fails, the body is skipped and no names are bound.
+4. `while let PATTERN = VALUE:` attempts the same match on each loop condition check and continues iterating while it succeeds.
+5. Full `match` remains the preferred construct when more than one arm matters.
 
 ## Motivation
 
@@ -44,15 +45,15 @@ match result:
 
 These are explicit, but they are also repetitive. The unmatched arm often adds no meaning beyond "do nothing."
 
-This RFC introduces a surface that says exactly that: perform one pattern match, execute one body on success, and implicitly skip the non-match path.
+This RFC introduces surfaces that say exactly that: perform one pattern match and execute one body on success, or keep looping while one pattern keeps matching.
 
 That choice is deliberate. Incan's problem here is not "how do we make conditionals feel more Pythonic." It is "how do we reduce boilerplate around explicit `Option` and `Result` handling without weakening the language's pattern-matching model." Rust has already established that `if let` is an effective answer for that specific problem shape, and this RFC follows that direction.
 
 ## Goals
 
-- Add a concise, explicit single-arm conditional pattern-match form.
+- Add concise, explicit pattern-oriented control-flow forms for one-arm extraction and loop-while-match cases.
 - Reuse existing pattern semantics rather than introducing truthiness-based control flow.
-- Allow successful matches to bind names with normal lexical scope inside the success branch.
+- Allow successful matches to bind names with normal lexical scope inside the success branch or loop body.
 - Keep full `match` as the primary construct for multi-arm or exhaustive branching.
 - Align the surface with a familiar and proven construct where that improves readability.
 
@@ -97,6 +98,12 @@ def first_join_child(rel: Rel) -> List[Rel]:
         if let Some(left) = join.left:
             return [left]
     return []
+
+def drain(queue: Queue[Option[int]]) -> List[int]:
+    values = []
+    while let Some(value) = queue.pop_front():
+        values.append(value)
+    return values
 ```
 
 ### What this is for
@@ -106,6 +113,12 @@ Use `if let` when:
 - exactly one pattern matters;
 - the non-match case should do nothing;
 - the code reads more clearly as opportunistic extraction than as branching.
+
+Use `while let` when:
+
+- each iteration should continue only while one pattern keeps matching;
+- the loop naturally ends on first non-match;
+- writing the same destructuring `match` or `while true` + `break` pattern would be noisier.
 
 ### What this is not for
 
@@ -129,17 +142,20 @@ if child:
 
 ### Syntax
 
-This RFC introduces an `if let` statement form:
+This RFC introduces `if let` and `while let` statement forms:
 
 ```text
 if_stmt ::= "if" if_test ":" block
+while_stmt ::= "while" while_test ":" block
 if_test ::= expr | if_let_test
+while_test ::= expr | while_let_test
 if_let_test ::= "let" pattern "=" expr
+while_let_test ::= "let" pattern "=" expr
 ```
 
 The `pattern` grammar is the same pattern grammar already used by `match` arms.
 
-This RFC only introduces `if let` in statement position. It does not introduce `let` patterns in arbitrary boolean expression positions.
+This RFC introduces `if let` and `while let` in statement position. It does not introduce `let` patterns in arbitrary boolean expression positions.
 
 ### Semantics
 
@@ -148,6 +164,9 @@ This RFC only introduces `if let` in statement position. It does not introduce `
 - If the pattern matches, the `if let` body executes.
 - If the pattern does not match, the body is skipped.
 - A failed match must not bind any names.
+- In `while let`, the condition expression must be re-evaluated on each iteration, just as an ordinary `while` condition is re-checked on each iteration.
+- In `while let`, the loop body executes only for iterations whose condition pattern matched successfully.
+- In `while let`, the first non-match exits the loop without binding names for that failed attempt.
 
 The following:
 
@@ -164,11 +183,29 @@ match VALUE:
     _ => pass
 ```
 
+The following:
+
+```incan
+while let PATTERN = VALUE:
+    BODY
+```
+
+is semantically equivalent to:
+
+```incan
+while true:
+    match VALUE:
+        PATTERN => BODY
+        _ => break
+```
+
 ### Scope and binding
 
 - Names bound by the pattern are in scope only within the `if let` success branch.
-- Those names are not in scope after the `if let` completes.
+- Names bound by a `while let` condition are in scope only within the loop body for the successful iteration that produced them.
+- Those names are not in scope after the `if let` or `while let` completes.
 - Shadowing behavior follows the same rules as bindings introduced by `match` arms.
+- In v1, `if let` remains single-arm only: it does not accept `elif` or `else` branches. When the non-match path matters, use `match`.
 
 ### Typing
 
@@ -184,16 +221,17 @@ match VALUE:
 
 ## Design details
 
-### Why `if let`
+### Why `if let` and `while let`
 
-This RFC deliberately chooses `if let` as the primary surface instead of `PATTERN match VALUE`, `value is Pattern`, or walrus-style syntax.
+This RFC deliberately chooses `if let` and `while let` as the primary surfaces instead of `PATTERN match VALUE`, `value is Pattern`, or walrus-style syntax.
 
 The reasons are:
 
 - it is immediately recognizable to users familiar with Rust-style destructuring control flow;
 - it clearly communicates that the construct is pattern-matching-oriented;
 - it reads naturally in single-arm extraction cases;
-- it scales cleanly from `Option` and `Result` to enum payloads and other destructuring patterns.
+- it scales cleanly from `Option` and `Result` to enum payloads and other destructuring patterns;
+- it covers both the one-shot and looping variants of the same pattern-control-flow idea instead of standardizing an asymmetrical surface.
 
 Most importantly, it does not require inventing a new control-flow spelling for a problem already well served by an established shape.
 
@@ -201,19 +239,19 @@ It is also a better fit for Incan than a Python-flavored shorthand such as `if c
 
 ### Why this is not "raw Rust passthrough"
 
-The syntax is Rust-aligned, but this RFC does **not** define `if let` as "whatever Rust accepts."
+The syntax is Rust-aligned, but this RFC does **not** define `if let` / `while let` as "whatever Rust accepts."
 
 Incan owns the construct. That means:
 
 - the grammar is specified in Incan terms;
 - the semantics are specified in Incan terms;
-- lowering to Rust `if let` is an implementation strategy, not the language definition.
+- lowering to Rust `if let` / `while let` is an implementation strategy, not the language definition.
 
 That distinction matters because Incan should remain free to evolve its own pattern grammar, diagnostics, and lowering strategy without accidentally turning backend quirks into language law.
 
 ### Why not general `let` inside any `if`
 
-This RFC does not propose a general rule like "if the parser sees `let` in an `if` condition, forward it to Rust."
+This RFC does not propose a general rule like "if the parser sees `let` in an `if` or `while` condition, forward it to Rust."
 
 That approach is too broad for a young language because it:
 
@@ -221,7 +259,7 @@ That approach is too broad for a young language because it:
 - risks surprising edge cases if Rust accepts shapes Incan does not want to standardize;
 - makes future non-Rust lowering harder.
 
-This RFC instead standardizes one narrow construct: `if let PATTERN = VALUE:`.
+This RFC instead standardizes two narrow constructs: `if let PATTERN = VALUE:` and `while let PATTERN = VALUE:`.
 
 ### Supported usage
 
@@ -236,6 +274,9 @@ if let Ok(value) = result:
 
 if let RelType.Cross(cross) = rel.rel_type:
     process(cross)
+
+while let Some(token) = stream.next():
+    process(token)
 ```
 
 ### Interaction with full `match`
@@ -247,30 +288,31 @@ Use full `match` when:
 - exhaustiveness matters;
 - nesting would make `if let` chains harder to read than a single `match`.
 
-This RFC therefore reinforces a style rule:
+This RFC therefore reinforces style rules:
 
 - use `if let` for opportunistic extraction with implicit no-op on failure;
+- use `while let` for repeated extraction that should stop on first non-match;
 - use `match` for true branching.
 
 ### Interaction with `Option` and `Result`
 
-`if let` is especially useful for:
+`if let` and `while let` are especially useful for:
 
 - `Option[T]` via `Some(...)`;
 - `Result[T, E]` via `Ok(...)` and `Err(...)`.
 
-This RFC does not change the meaning of `?`. The `?` operator remains the preferred construct for propagation. `if let` is for side effects, local extraction, and control flow that intentionally continues after non-match.
+This RFC does not change the meaning of `?`. The `?` operator remains the preferred construct for propagation. `if let` is for side effects, local extraction, and control flow that intentionally continues after non-match, while `while let` is for repeated extraction that naturally stops on first non-match.
 
 ### Interaction with RFC 018 `is`
 
 RFC 018 already uses `is` in pattern-oriented assertions. That remains valid and useful in assertion contexts.
 
-This RFC does not extend `is` into single-arm conditional control flow. The reason is conceptual clarity:
+This RFC does not extend `is` into destructuring conditional or loop control flow. The reason is conceptual clarity:
 
 - `is` reads as a boolean pattern test;
-- `if let` reads as a destructuring control-flow construct.
+- `if let` / `while let` read as destructuring control-flow constructs.
 
-For this RFC's narrow goal, `if let` is the better fit.
+For this RFC's narrow goal, `if let` / `while let` are the better fit.
 
 ## Alternatives considered
 
@@ -286,36 +328,114 @@ This is plausible, especially given RFC 018, but it frames the feature more as a
 4. Walrus-style binding.
 This is awkward for pattern-matching constructs, especially around `Some(...)`, `Ok(...)`, and other constructors. It obscures the fact that the operation is a pattern match rather than assignment.
 
-5. General Rust passthrough for `let` inside `if`.
+5. General Rust passthrough for `let` inside `if` / `while`.
 This was rejected because it weakens Incan's ownership of its own syntax and semantics.
+
+6. Ship only `if let` now and defer `while let`.
+This was rejected because the two constructs share the same mental model, pattern semantics, and implementation machinery. Deferring `while let` would force users back into `while true` plus `match` / `break` boilerplate for the looping form of the exact same problem.
 
 ## Drawbacks
 
-- The language gains another control-flow surface.
-- Users must learn when to prefer `if let` over full `match`.
-- Formatter and linter guidance will matter to prevent overly dense nested `if let` chains.
+- The language gains additional control-flow surface area.
+- Users must learn when to prefer `if let` / `while let` over full `match`.
+- Formatter and linter guidance will matter to prevent overly dense nested `if let` or `while let` chains.
 
 ## Implementation architecture
 
-The preferred implementation strategy is to express `if let` through the same semantic core already used by full `match`.
+The preferred implementation strategy is to express `if let` and `while let` through the same semantic core already used by full `match`.
 
 That can be done either by:
 
 - interpreting `if let` as a single-arm `match` plus implicit `_ => pass`, or
-- representing it separately while preserving the same pattern-matching semantics.
+- interpreting `while let` as repeated single-arm matching plus implicit loop exit on non-match, or
+- representing them separately while preserving the same pattern-matching semantics.
 
 This section is non-normative. Any implementation strategy is acceptable if it preserves the semantics above.
 
 ## Layers affected
 
-- **Language surface**: `if let PATTERN = VALUE:` must be accepted in `if` statement position.
-- **Type system**: the pattern must type-check exactly like a `match` arm, and bindings must stay scoped to the success branch.
-- **Execution handoff**: implementations may realize `if let` through the existing pattern-match machinery as long as the observable semantics match this RFC.
-- **Formatter**: `if let` should format predictably and avoid unreadable nested chains.
-- **LSP / tooling**: hover, completion, and diagnostics should respect branch-local pattern bindings.
+- **Language surface**: `if let PATTERN = VALUE:` must be accepted in `if` statement position, and `while let PATTERN = VALUE:` must be accepted in `while` statement position.
+- **Type system**: the pattern must type-check exactly like a `match` arm, and bindings must stay scoped to the success branch or successful loop iteration body.
+- **Execution handoff**: implementations may realize `if let` / `while let` through the existing pattern-match machinery as long as the observable semantics match this RFC.
+- **Formatter**: `if let` / `while let` should format predictably and avoid unreadable nested chains.
+- **LSP / tooling**: hover, completion, and diagnostics should respect branch-local and loop-body-local pattern bindings.
 
-## Unresolved questions
+## Implementation Plan
 
-- Should RFC 049 be limited to `if let` in statement position for v1, or should `while let` be considered in a follow-up RFC once the core shape lands?
+### Phase 1: Parser, AST, and formatter
 
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Extend the statement grammar so `if` and `while` conditions can carry `let PATTERN = VALUE` tests in statement position.
+- Represent `if let` and `while let` explicitly in the frontend AST, preserving spans for the pattern, value, and body.
+- Teach the formatter to print both constructs predictably and keep nested pattern-control-flow readable.
+
+### Phase 2: Typechecker and scope
+
+- Validate `if let` / `while let` patterns under the same rules as `match` arms.
+- Bind names only within the success branch or successful loop iteration body.
+- Emit span-precise diagnostics for impossible or otherwise invalid patterns in these positions.
+
+### Phase 3: Lowering and emission
+
+- Lower `if let` to the existing conditional/match machinery while preserving single-evaluation semantics.
+- Lower `while let` to repeated pattern checking with loop exit on first non-match.
+- Emit correct Rust for both constructs without broadening the accepted Incan surface beyond this RFC.
+
+### Phase 4: Tooling, tests, and docs
+
+- Preserve hover, completion, and diagnostics behavior for pattern bindings inside `if let` and `while let`.
+- Add parser, typechecker, codegen snapshot, formatter, and integration coverage for both constructs.
+- Update user-facing docs and release notes for the new control-flow surface.
+
+## Progress Checklist
+
+### Spec / design
+
+- [x] Settle RFC 049 as `if let` plus `while let`, both in statement position only.
+- [x] Record the binding, scope, and non-goal rules in the RFC body.
+
+### Parser / AST
+
+- [ ] Parser: accept `let PATTERN = VALUE` tests in `if` statements.
+- [ ] Parser: accept `let PATTERN = VALUE` tests in `while` statements.
+- [ ] AST: represent `if let` with span-precise structure.
+- [ ] AST: represent `while let` with span-precise structure.
+- [ ] Formatter: round-trip both constructs stably.
+
+### Typechecker
+
+- [ ] Validate `if let` patterns with `match`-equivalent checking.
+- [ ] Validate `while let` patterns with `match`-equivalent checking.
+- [ ] Scope bound names to the success branch or successful loop iteration body only.
+- [ ] Emit clear diagnostics for invalid pattern usage in these positions.
+
+### Lowering / emission
+
+- [ ] Lower `if let` to the existing control-flow core.
+- [ ] Lower `while let` to the existing control-flow core.
+- [ ] Emit correct Rust for both constructs.
+
+### Tooling
+
+- [ ] Keep diagnostics wording aligned with pattern-matching semantics rather than assignment.
+- [ ] Preserve LSP behavior for pattern bindings inside `if let` and `while let`.
+
+### Tests
+
+- [ ] Parser unit tests for `if let`.
+- [ ] Parser unit tests for `while let`.
+- [ ] Typechecker unit tests for valid and invalid `if let`.
+- [ ] Typechecker unit tests for valid and invalid `while let`.
+- [ ] Codegen snapshot tests for `if let`.
+- [ ] Codegen snapshot tests for `while let`.
+- [ ] Integration coverage for end-to-end behavior.
+
+### Docs
+
+- [ ] Update docs-site pages that describe control flow or pattern matching.
+- [ ] Add a release-notes entry for RFC 049 / issue #333.
+
+## Design Decisions
+
+- RFC 049 includes both `if let` and `while let`; `while let` is not deferred to a follow-up RFC.
+- Both constructs are statement-position control-flow forms only in v1. This RFC does not introduce general `let` patterns in arbitrary boolean expressions.
+- Both constructs inherit the same pattern semantics and diagnostics contract as `match` arms rather than creating a separate matching model.

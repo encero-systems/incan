@@ -208,14 +208,23 @@ let user = find_user(id)
 if user:  # ❌ Can't use Option as bool
     ...
 
-# Right - use pattern matching
-if user is Some(u):  # ✅
+# Right - use pattern matching control flow
+if let Some(u) = user:  # ✅
     println(u.name)
 
 # Or check explicitly
 if user.is_some():
     let u = user.unwrap()
     println(u.name)
+```
+
+When you need to keep iterating while a pattern keeps matching, use `while let` instead of a `while true` plus `match` / `break` ladder:
+
+```incan
+mut current = find_user(id)
+while let Some(user) = current:
+    println(user.name)
+    current = next_user(user)
 ```
 
 ## Philosophy: Explicit is Better

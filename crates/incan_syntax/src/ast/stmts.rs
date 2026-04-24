@@ -124,8 +124,29 @@ pub enum CompoundOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum Condition {
+    /// Ordinary boolean condition: `if expr:` / `while expr:`
+    Expr(Spanned<Expr>),
+    /// Pattern condition: `if let PATTERN = VALUE:` / `while let PATTERN = VALUE:`
+    Let {
+        pattern: Spanned<Pattern>,
+        value: Spanned<Expr>,
+    },
+}
+
+impl Condition {
+    #[must_use]
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Expr(expr) => expr.span,
+            Self::Let { pattern, value } => Span::new(pattern.span.start, value.span.end),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct IfStmt {
-    pub condition: Spanned<Expr>,
+    pub condition: Condition,
     pub then_body: Vec<Spanned<Statement>>,
     pub elif_branches: Vec<(Spanned<Expr>, Vec<Spanned<Statement>>)>,
     pub else_body: Option<Vec<Spanned<Statement>>>,
@@ -133,7 +154,7 @@ pub struct IfStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WhileStmt {
-    pub condition: Spanned<Expr>,
+    pub condition: Condition,
     pub body: Vec<Spanned<Statement>>,
 }
 
