@@ -344,7 +344,6 @@ model User:
     """
     First paragraph.
 
-
     Second paragraph.
     """
 

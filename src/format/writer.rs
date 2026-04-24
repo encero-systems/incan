@@ -77,6 +77,11 @@ impl FormatWriter {
         self.current_line_length > self.config.line_length
     }
 
+    /// Return whether the next write will start a fresh line.
+    pub fn is_at_line_start(&self) -> bool {
+        self.at_line_start
+    }
+
     /// Increase indentation level
     pub fn indent(&mut self) {
         self.indent_level += 1;

@@ -279,17 +279,36 @@ impl<'a> Parser<'a> {
         while self.match_token(&TokenKind::Newline) {}
     }
 
+    /// Expect a suite body after a header newline, allowing blank physical lines before the required indent.
+    ///
+    /// This keeps the parser tolerant of source that the formatter will normalize, such as:
+    /// `elif cond:` followed by one blank line before the first body statement.
+    ///
+    /// Any pending blank-line intent carried out of a previously closed inner block is cleared here. That carry-over
+    /// belongs to the next statement in the enclosing block, not to the first statement inside a newly opened suite.
+    fn expect_suite_indent(&mut self, msg: &str) -> Result<&Token, CompileError> {
+        self.pending_dedent_blank_lines = 0;
+        self.skip_newlines();
+        self.expect(&TokenKind::Indent, msg)
+    }
+
     /// Consume `Newline` tokens between statements in an indented block (or before the first statement).
     ///
     /// Returns how many **extra** blank lines to preserve before the next statement when formatting:
     /// - One newline (end of previous line only) → `0`
     /// - Two or more newlines → `1` (at least one empty line; further empties are collapsed)
     fn consume_inter_statement_blank_prefix(&mut self) -> u8 {
+        let pending_blank_lines = std::mem::take(&mut self.pending_dedent_blank_lines);
+        let previous_was_dedent = self
+            .pos
+            .checked_sub(1)
+            .and_then(|idx| self.tokens.get(idx))
+            .is_some_and(|token| matches!(token.kind, TokenKind::Dedent));
         let mut count = 0u8;
         while self.match_token(&TokenKind::Newline) {
             count = count.saturating_add(1);
         }
-        if count >= 2 {
+        if pending_blank_lines > 0 || count >= 2 || (previous_was_dedent && count >= 1) {
             1
         } else {
             0

@@ -26,7 +26,7 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 ## Reference (look up)
 
 - Generated language reference: [Language reference (generated)](reference/language.md)
-- Formatting / style (canonical `incan fmt` guide): [Code formatting](../tooling/how-to/formatting.md)
+- Code style (canonical source layout guide): [Incan Code Style Guide](reference/code_style.md)
 - Static storage: [Static storage](reference/static_storage.md)
 - Numeric semantics: [Numeric Semantics](reference/numeric_semantics.md)
 - Strings: [Strings](reference/strings.md)

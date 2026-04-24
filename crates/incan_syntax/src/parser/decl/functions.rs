@@ -25,7 +25,7 @@ impl<'a> Parser<'a> {
         let return_type = self.type_expr()?;
         self.expect_punct(PunctuationId::Colon, "Expected ':' after return type")?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        self.expect_suite_indent("Expected indented block")?;
 
         let body = self.block()?;
 
@@ -77,7 +77,7 @@ impl<'a> Parser<'a> {
                 None
             } else {
                 self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-                self.expect(&TokenKind::Indent, "Expected indented block")?;
+                self.expect_suite_indent("Expected indented block")?;
                 let b = self.block()?;
                 self.expect(&TokenKind::Dedent, "Expected dedent after method body")?;
                 Some(b)

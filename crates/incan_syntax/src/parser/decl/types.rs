@@ -56,7 +56,7 @@ impl<'a> Parser<'a> {
 
         let methods = if self.match_punct(PunctuationId::Colon) {
             self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-            self.expect(&TokenKind::Indent, "Expected indented block")?;
+            self.expect_suite_indent("Expected indented block")?;
 
             let mut methods = Vec::new();
             self.skip_newlines();
@@ -84,7 +84,7 @@ impl<'a> Parser<'a> {
                     self.advance(); // `interop`
                     self.expect_punct(PunctuationId::Colon, "Expected ':' after `interop`")?;
                     self.expect(&TokenKind::Newline, "Expected newline after `interop:`")?;
-                    self.expect(&TokenKind::Indent, "Expected indented block for `interop:`")?;
+                    self.expect_suite_indent("Expected indented block for `interop:`")?;
                     self.skip_newlines();
                     while !self.check(&TokenKind::Dedent) && !self.is_at_end() {
                         interop_edges.push(self.interop_edge_decl()?);

@@ -71,7 +71,8 @@ For the full walkthrough — adding modules, Rust crate dependencies, and lock f
 
 - [Your first project](your_first_project.md) - Set up a real project with modules, dependencies, tests, and
   lock files
-- [Formatting Guide](../how-to/formatting.md) - Code style and `incan fmt`
+- [Incan Code Style Guide](../../language/reference/code_style.md) - Canonical source layout rules
+- [Formatting with `incan fmt`](../how-to/formatting.md) - Formatter command usage
 - [CLI Reference](../reference/cli_reference.md) - Commands, flags, and environment variables
 - [Projects today](../explanation/projects_today.md) - Where builds go, what is regenerated, and what’s planned
 - [Troubleshooting](../how-to/troubleshooting.md) - Common setup and “it didn’t work” fixes

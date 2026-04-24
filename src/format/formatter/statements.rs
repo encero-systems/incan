@@ -12,7 +12,9 @@ impl Formatter {
         match &stmt.node {
             Statement::Expr(expr) => {
                 self.format_expr(&expr.node);
-                self.writer.newline();
+                if !self.writer.is_at_line_start() {
+                    self.writer.newline();
+                }
             }
             Statement::Assignment(assign) => {
                 self.format_assignment(assign);

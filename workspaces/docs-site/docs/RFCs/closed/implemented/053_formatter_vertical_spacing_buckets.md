@@ -1,17 +1,17 @@
 # RFC 053: Formatter vertical spacing (three blank-line buckets)
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-04-08
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 027 (incan vocab crate)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/336
-- **RFC PR:** —
+- **RFC PR:** https://github.com/dannys-code-corner/incan/pull/393
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
-This RFC defines **normative vertical spacing rules** for Incan’s **source formatter** (`incan fmt` and equivalent editor actions). Spacing is described with **three blank-line buckets**: (1) **exactly two** empty lines, (2) **exactly one** empty line, and (3) **at most one** empty line (zero or one) — plus **end-of-file** and **docstring-interior** caps. Stand-alone comments are handled through explicit placement rules; they do **not** themselves satisfy blank-line quotas. The goal is a **stable, citeable contract** (Python's PEP 8–like in spirit) so formatted output is predictable, diffs stay readable, and companion repos can align CI and review expectations without reverse-engineering formatter internals.
+This RFC records the implemented **vertical spacing model** for Incan’s **source formatter** (`incan fmt` and equivalent editor actions). Spacing is described with **three blank-line buckets**: (1) **exactly two** empty lines, (2) **exactly one** empty line, and (3) **at most one** empty line (zero or one) — plus **end-of-file** and **docstring-interior** caps. Stand-alone comments are handled through explicit placement rules; they do **not** themselves satisfy blank-line quotas. The live user-facing contract now lives in the formatting docs; this RFC remains the historical design record behind that behavior.
 
 ## Core model
 
@@ -381,7 +381,7 @@ flowchart TB
 - **Formatter:** the reference formatter **must** enforce the bucket rules, docstring-interior cap, and EOF rule described in this RFC.
 - **LSP / Tooling:** format-on-save and format-range **should** apply the same spacing contract so editor actions do not diverge from `incan fmt`.
 - **Parser / AST:** implementations **may** require richer classification signals (for example single-line vs body-bearing declarations) if those are not already explicit in the formatting input.
-- **Documentation:** contributor-facing formatter docs **should** link to this RFC as the vertical-spacing contract.
+- **Documentation:** contributor-facing formatter docs **should** present the live formatting rules directly; this RFC remains the historical design snapshot behind that contract.
 
 ## Implementation Plan
 
@@ -400,10 +400,10 @@ flowchart TB
 ### Phase 3: Regression coverage and docs
 
 - Add formatter regression tests for top-level spacing, trait/member spacing, docstring interiors, and comment placement.
-- Update contributor-facing formatter docs to point at RFC 053 as the vertical-spacing contract.
+- Update contributor-facing formatter docs so the formatting page is the live contract and RFC 053 remains the design record.
 - Update release notes for the formatter contract change.
 
-## Progress Checklist
+## Implementation Log
 
 ### Spec / design
 
@@ -438,4 +438,4 @@ flowchart TB
 
 - The formatter contract is intentionally expressed through three blank-line buckets rather than ad hoc formatter heuristics.
 - Stand-alone comments do not satisfy blank-line quotas by themselves; placement rules govern how they interact with spacing.
-- The RFC is intended as the normative vertical-spacing contract for both `incan fmt` and editor-integrated formatting surfaces.
+- The formatter how-to carries the live user-facing contract, while this RFC remains the settled design record behind that behavior.

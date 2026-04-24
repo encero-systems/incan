@@ -16,7 +16,7 @@ impl<'a> Parser<'a> {
         };
         self.expect_punct(PunctuationId::Colon, "Expected ':' after model name")?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        self.expect_suite_indent("Expected indented block")?;
 
         let docstring = self.optional_leading_block_docstring();
 
@@ -67,7 +67,7 @@ impl<'a> Parser<'a> {
 
         self.expect_punct(PunctuationId::Colon, "Expected ':' after class header")?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        self.expect_suite_indent("Expected indented block")?;
 
         let docstring = self.optional_leading_block_docstring();
 
@@ -111,7 +111,7 @@ impl<'a> Parser<'a> {
         };
         self.expect_punct(PunctuationId::Colon, "Expected ':' after trait header")?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        self.expect_suite_indent("Expected indented block")?;
 
         let docstring = self.optional_leading_block_docstring();
 

@@ -138,7 +138,7 @@ impl Formatter {
                 self.writer.writeln(":");
                 self.writer.indent();
                 for arm in arms {
-                    self.format_match_arm(&arm.node);
+                    self.format_match_arm(arm);
                 }
                 self.writer.dedent();
             }
@@ -355,19 +355,28 @@ impl Formatter {
         }
     }
 
-    fn format_match_arm(&mut self, arm: &MatchArm) {
+    fn format_match_arm(&mut self, arm: &Spanned<MatchArm>) {
+        self.writer.blank_lines(arm.leading_blank_lines as usize);
+        let arm = &arm.node;
         self.format_pattern(&arm.pattern.node);
         if let Some(guard) = &arm.guard {
             self.writer.write(" if ");
             self.format_expr(&guard.node);
         }
-        self.writer.write(" => ");
         match &arm.body {
             MatchBody::Expr(expr) => {
+                self.writer.write(" => ");
                 self.format_expr(&expr.node);
                 self.writer.newline();
             }
             MatchBody::Block(stmts) => {
+                let checkpoint = self.writer.checkpoint();
+                self.writer.write(" => ");
+                if self.try_format_inline_match_statement(stmts) {
+                    return;
+                }
+                self.writer.restore(checkpoint);
+                self.writer.write(" =>");
                 self.writer.newline();
                 self.writer.indent();
                 for stmt in stmts {
@@ -376,6 +385,45 @@ impl Formatter {
                 self.writer.dedent();
             }
         }
+    }
+
+    fn try_format_inline_match_statement(&mut self, stmts: &[Spanned<Statement>]) -> bool {
+        let [stmt] = stmts else {
+            return false;
+        };
+        if stmt.leading_blank_lines > 0 {
+            return false;
+        }
+
+        let checkpoint = self.writer.checkpoint();
+        if !self.format_statement_inline(&stmt.node)
+            || self.writer.output_since_contains_newline(checkpoint)
+            || self.writer.line_length_exceeded()
+        {
+            self.writer.restore(checkpoint);
+            return false;
+        }
+
+        self.writer.newline();
+        true
+    }
+
+    fn format_statement_inline(&mut self, stmt: &Statement) -> bool {
+        match stmt {
+            Statement::Expr(expr) => self.format_expr(&expr.node),
+            Statement::Return(expr) => {
+                self.writer.write("return");
+                if let Some(e) = expr {
+                    self.writer.write(" ");
+                    self.format_expr(&e.node);
+                }
+            }
+            Statement::Pass => self.writer.write("pass"),
+            Statement::Break => self.writer.write("break"),
+            Statement::Continue => self.writer.write("continue"),
+            _ => return false,
+        }
+        true
     }
 
     pub(super) fn format_pattern(&mut self, pattern: &Pattern) {

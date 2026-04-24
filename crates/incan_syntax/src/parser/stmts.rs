@@ -18,8 +18,44 @@ impl<'a> Parser<'a> {
             stmt.leading_blank_lines = next_leading;
             stmts.push(stmt);
             next_leading = self.consume_inter_statement_blank_prefix();
+            if next_leading > 0
+                && self.check(&TokenKind::Dedent)
+                && self.dedent_is_followed_by_outer_statement()
+            {
+                self.pending_dedent_blank_lines = self.pending_dedent_blank_lines.max(next_leading);
+                next_leading = 0;
+            }
         }
         Ok(stmts)
+    }
+
+    /// Return whether the current `Dedent` leads back to an outer statement, not a declaration/member boundary.
+    fn dedent_is_followed_by_outer_statement(&self) -> bool {
+        let mut idx = self.pos;
+        while matches!(self.tokens.get(idx).map(|token| &token.kind), Some(TokenKind::Dedent)) {
+            idx += 1;
+        }
+
+        !matches!(
+            self.tokens.get(idx).map(|token| &token.kind),
+            None | Some(TokenKind::Eof)
+                | Some(TokenKind::Keyword(
+                    KeywordId::Async
+                        | KeywordId::Class
+                        | KeywordId::Const
+                        | KeywordId::Def
+                        | KeywordId::Enum
+                        | KeywordId::From
+                        | KeywordId::Import
+                        | KeywordId::Model
+                        | KeywordId::Newtype
+                        | KeywordId::Pub
+                        | KeywordId::Rust
+                        | KeywordId::Static
+                        | KeywordId::Trait
+                        | KeywordId::Type
+                ))
+        )
     }
 
     fn statement(&mut self) -> Result<Spanned<Statement>, CompileError> {
@@ -161,7 +197,7 @@ impl<'a> Parser<'a> {
         }
         self.expect_punct(PunctuationId::Colon, "Expected ':' after vocab block header")?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect(&TokenKind::Indent, "Expected indented block after vocab keyword")?;
+        self.expect_suite_indent("Expected indented block after vocab keyword")?;
 
         if !spec_valid_decorators.is_empty() {
             for decorator in &decorators {
@@ -308,7 +344,7 @@ impl<'a> Parser<'a> {
             "Expected ':' after if condition",
         )?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        self.expect_suite_indent("Expected indented block")?;
         let then_body = self.block()?;
         self.expect(&TokenKind::Dedent, "Expected dedent after if body")?;
 
@@ -320,7 +356,7 @@ impl<'a> Parser<'a> {
                 "Expected ':' after elif condition",
             )?;
             self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-            self.expect(&TokenKind::Indent, "Expected indented block")?;
+            self.expect_suite_indent("Expected indented block")?;
             let elif_body = self.block()?;
             self.expect(&TokenKind::Dedent, "Expected dedent after elif body")?;
             elif_branches.push((elif_condition, elif_body));
@@ -329,7 +365,7 @@ impl<'a> Parser<'a> {
         let else_body = if self.match_token(&TokenKind::Keyword(KeywordId::Else)) {
             self.expect(&TokenKind::Punctuation(PunctuationId::Colon), "Expected ':' after else")?;
             self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-            self.expect(&TokenKind::Indent, "Expected indented block")?;
+            self.expect_suite_indent("Expected indented block")?;
             let body = self.block()?;
             self.expect(&TokenKind::Dedent, "Expected dedent after else body")?;
             Some(body)
@@ -353,7 +389,7 @@ impl<'a> Parser<'a> {
             "Expected ':' after while condition",
         )?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        self.expect_suite_indent("Expected indented block")?;
         let body = self.block()?;
         self.expect(&TokenKind::Dedent, "Expected dedent after while body")?;
 
@@ -370,7 +406,7 @@ impl<'a> Parser<'a> {
             "Expected ':' after for expression",
         )?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        self.expect_suite_indent("Expected indented block")?;
         let body = self.block()?;
         self.expect(&TokenKind::Dedent, "Expected dedent after for body")?;
 

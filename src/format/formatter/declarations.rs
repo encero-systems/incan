@@ -67,24 +67,15 @@ impl Formatter {
         if trimmed.is_empty() {
             self.writer.writeln("\"\"\"\"\"\"");
         } else if trimmed.contains('\n') {
-            let lines: Vec<&str> = trimmed.lines().collect();
-            let first = lines[0].trim();
-            let rest = &lines[1..];
-            let common_indent = rest
-                .iter()
-                .filter(|line| !line.trim().is_empty())
-                .map(|line| line.chars().take_while(|ch| ch.is_whitespace()).count())
-                .min()
-                .unwrap_or(0);
+            let lines = normalized_docstring_lines(trimmed);
 
             // Multi-line docstring
             self.writer.writeln("\"\"\"");
-            self.writer.writeln(first);
-            for line in rest {
-                if line.trim().is_empty() {
+            for line in lines {
+                if line.is_empty() {
                     self.writer.newline();
                 } else {
-                    self.writer.writeln(strip_common_indent(line, common_indent).trim_end());
+                    self.writer.writeln(&line);
                 }
             }
             self.writer.writeln("\"\"\"");
@@ -863,4 +854,32 @@ fn strip_common_indent(line: &str, indent: usize) -> &str {
     }
 
     &line[start..]
+}
+
+fn normalized_docstring_lines(doc: &str) -> Vec<String> {
+    let lines: Vec<&str> = doc.lines().collect();
+    let first = lines.first().map(|line| line.trim()).unwrap_or_default();
+    let rest = lines.get(1..).unwrap_or_default();
+    let common_indent = rest
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.chars().take_while(|ch| ch.is_whitespace()).count())
+        .min()
+        .unwrap_or(0);
+
+    let mut normalized = Vec::new();
+    normalized.push(first.to_string());
+    let mut previous_blank = false;
+    for line in rest {
+        if line.trim().is_empty() {
+            if !previous_blank {
+                normalized.push(String::new());
+                previous_blank = true;
+            }
+        } else {
+            normalized.push(strip_common_indent(line, common_indent).trim_end().to_string());
+            previous_blank = false;
+        }
+    }
+    normalized
 }

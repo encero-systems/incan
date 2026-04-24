@@ -12,15 +12,18 @@
 //! The formatter operates on the parsed AST, so it **requires valid syntax**.
 //! Files with lexer or parser errors cannot be formatted.
 
+mod comments;
 mod config;
 mod formatter;
 mod writer;
 
+#[cfg(test)]
+use comments::buffer::NormalizedLineBuffer;
+use comments::{count_line_comments, reattach_comments};
 pub use config::{FormatConfig, QuoteStyle};
 pub use formatter::Formatter;
 
 use crate::frontend::{diagnostics, lexer, parser};
-use std::collections::{HashMap, VecDeque};
 use thiserror::Error;
 
 /// Errors that occur during formatting
@@ -62,7 +65,7 @@ pub fn format_source(source: &str) -> Result<String, FormatError> {
 
 /// Format Incan source code with custom configuration.
 ///
-/// Vertical spacing follows RFC 053 and is not configurable through [`FormatConfig`].
+/// Vertical spacing follows the documented formatter contract and is not configurable through [`FormatConfig`].
 ///
 /// Returns an error if the source has syntax errors (formatting requires parsing).
 ///
@@ -112,497 +115,6 @@ pub fn format_source_with_config(source: &str, config: FormatConfig) -> Result<S
     }
 
     Ok(formatted)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StringState {
-    None,
-    SingleQuoted,
-    DoubleQuoted,
-    TripleSingleQuoted,
-    TripleDoubleQuoted,
-}
-
-/// Count `#...` comments outside string literals.
-///
-/// This supports a strict safety check for formatter output:
-/// if formatting would reduce comment count, we refuse to rewrite.
-fn count_line_comments(source: &str) -> usize {
-    let mut state = StringState::None;
-    let mut count = 0usize;
-
-    for line in source.lines() {
-        if comment_start_index(line, &mut state).is_some() {
-            count += 1;
-        }
-        // Single-quoted strings are line-local; triple-quoted strings can span lines.
-        if matches!(state, StringState::SingleQuoted | StringState::DoubleQuoted) {
-            state = StringState::None;
-        }
-    }
-
-    count
-}
-
-fn comment_start_index(line: &str, state: &mut StringState) -> Option<usize> {
-    let mut i = 0usize;
-    while i < line.len() {
-        let rest = &line[i..];
-        let mut chars = rest.chars();
-        let ch = chars.next()?;
-        let ch_len = ch.len_utf8();
-
-        match state {
-            StringState::None => {
-                if rest.starts_with("'''") {
-                    *state = StringState::TripleSingleQuoted;
-                    i += 3;
-                    continue;
-                }
-                if rest.starts_with("\"\"\"") {
-                    *state = StringState::TripleDoubleQuoted;
-                    i += 3;
-                    continue;
-                }
-                if ch == '\'' {
-                    *state = StringState::SingleQuoted;
-                    i += ch_len;
-                    continue;
-                }
-                if ch == '"' {
-                    *state = StringState::DoubleQuoted;
-                    i += ch_len;
-                    continue;
-                }
-                if ch == '#' {
-                    return Some(i);
-                }
-                i += ch_len;
-            }
-            StringState::SingleQuoted => {
-                if ch == '\\' {
-                    if let Some(next) = chars.next() {
-                        i += ch_len + next.len_utf8();
-                    } else {
-                        i += ch_len;
-                    }
-                    continue;
-                }
-                if ch == '\'' {
-                    *state = StringState::None;
-                }
-                i += ch_len;
-            }
-            StringState::DoubleQuoted => {
-                if ch == '\\' {
-                    if let Some(next) = chars.next() {
-                        i += ch_len + next.len_utf8();
-                    } else {
-                        i += ch_len;
-                    }
-                    continue;
-                }
-                if ch == '"' {
-                    *state = StringState::None;
-                }
-                i += ch_len;
-            }
-            StringState::TripleSingleQuoted => {
-                if rest.starts_with("'''") {
-                    *state = StringState::None;
-                    i += 3;
-                } else {
-                    i += ch_len;
-                }
-            }
-            StringState::TripleDoubleQuoted => {
-                if rest.starts_with("\"\"\"") {
-                    *state = StringState::None;
-                    i += 3;
-                } else {
-                    i += ch_len;
-                }
-            }
-        }
-    }
-
-    None
-}
-
-fn normalize_code_for_match(code: &str) -> String {
-    code.chars().filter(|c| !c.is_whitespace()).collect()
-}
-
-/// Leave triple-quoted string state intact while clearing one-line quote state at line boundaries.
-fn reset_single_line_string_state(state: &mut StringState) {
-    if matches!(state, StringState::SingleQuoted | StringState::DoubleQuoted) {
-        *state = StringState::None;
-    }
-}
-
-/// Line sink that enforces formatter-wide blank-line normalization as lines are emitted.
-///
-/// Blank runs are capped in ordinary code, but blank lines inside triple-quoted strings are preserved verbatim. This
-/// keeps newline policy in the comment reattachment output path instead of requiring a second cleanup pass afterward.
-struct NormalizedLineBuffer {
-    lines: Vec<String>,
-    state: StringState,
-    consecutive_blank_lines: usize,
-    max_blank_lines: usize,
-}
-
-impl NormalizedLineBuffer {
-    /// Create a buffer that permits at most `max_blank_lines` consecutive blank lines outside multiline strings.
-    fn new(max_blank_lines: usize) -> Self {
-        Self {
-            lines: Vec::new(),
-            state: StringState::None,
-            consecutive_blank_lines: 0,
-            max_blank_lines,
-        }
-    }
-
-    /// Push one already-formatted line, dropping excess blank lines outside triple-quoted strings.
-    fn push_line(&mut self, line: String) {
-        let inside_multiline_string = matches!(
-            self.state,
-            StringState::TripleSingleQuoted | StringState::TripleDoubleQuoted
-        );
-        let is_blank = line.trim().is_empty();
-
-        if is_blank && !inside_multiline_string {
-            if self.consecutive_blank_lines >= self.max_blank_lines {
-                return;
-            }
-            self.consecutive_blank_lines += 1;
-        } else if !inside_multiline_string {
-            self.consecutive_blank_lines = 0;
-        }
-
-        let _ = comment_start_index(&line, &mut self.state);
-        reset_single_line_string_state(&mut self.state);
-        self.lines.push(line);
-    }
-
-    /// Preserve a user-authored readability gap before an indented comment block.
-    fn ensure_blank_line_before(&mut self, indent: usize) {
-        if indent > 0 && self.lines.last().is_some_and(|line| !line.is_empty()) {
-            self.push_line(String::new());
-        }
-    }
-
-    /// Join buffered lines and restore the final newline when the source or AST formatter had one.
-    fn finish(self, trailing_newline: bool) -> String {
-        let mut out = self.lines.join("\n");
-        if trailing_newline {
-            out.push('\n');
-        }
-        out
-    }
-}
-
-/// Stand-alone comment lines that are anchored to a nearby formatted code line.
-#[derive(Clone)]
-struct AnchoredStandaloneBlock {
-    anchor: String,
-    occurrence: usize,
-    indent: usize,
-    lines: Vec<String>,
-    blank_line_before: bool,
-}
-
-/// Stand-alone comment lines collected while scanning the source before their anchor is known.
-struct PendingStandaloneBlock {
-    indent: usize,
-    lines: Vec<String>,
-    saw_blank_after: bool,
-    saw_blank_before: bool,
-}
-
-/// Count leading indentation using source whitespace width rather than byte length.
-fn leading_indent_width(line: &str) -> usize {
-    line.chars().take_while(|ch| ch.is_whitespace()).count()
-}
-
-/// Emit a source comment block at its formatted anchor, including its preserved leading readability gap.
-fn emit_anchored_block(out_lines: &mut NormalizedLineBuffer, block: &AnchoredStandaloneBlock) {
-    if block.blank_line_before {
-        out_lines.ensure_blank_line_before(block.indent);
-    }
-    for line in &block.lines {
-        out_lines.push_line(line.clone());
-    }
-}
-
-/// Attach a pending source comment block to its nearest stable formatted location.
-///
-/// Blocks that are immediately followed by same-indent code become leading comments for that next code line. Blocks
-/// separated by a blank line, or followed by different indentation, attach to the previous code line at the same
-/// indentation. Blocks without a stable leading or trailing anchor use the EOF fallback path.
-fn finalize_pending_standalone_block(
-    block: PendingStandaloneBlock,
-    next_anchor: Option<(String, usize, usize)>,
-    last_code_at_indent: &HashMap<usize, (String, usize)>,
-    leading_standalone: &mut Vec<AnchoredStandaloneBlock>,
-    trailing_standalone: &mut Vec<AnchoredStandaloneBlock>,
-    eof_standalone: &mut Vec<String>,
-) {
-    let lines = trim_trailing_blank_comment_lines(&block.lines);
-    match next_anchor {
-        Some((anchor, occurrence, next_indent)) if !block.saw_blank_after && next_indent == block.indent => {
-            leading_standalone.push(AnchoredStandaloneBlock {
-                anchor,
-                occurrence,
-                indent: block.indent,
-                lines,
-                blank_line_before: block.saw_blank_before,
-            });
-        }
-        _ => {
-            if let Some((prev_anchor, prev_occurrence)) = last_code_at_indent.get(&block.indent) {
-                trailing_standalone.push(AnchoredStandaloneBlock {
-                    anchor: prev_anchor.clone(),
-                    occurrence: *prev_occurrence,
-                    indent: block.indent,
-                    lines,
-                    blank_line_before: block.saw_blank_before,
-                });
-            } else {
-                eof_standalone.extend(lines);
-            }
-        }
-    }
-}
-
-/// Flush trailing comment blocks once the formatted stream has moved out of their indentation scope.
-fn flush_ready_trailing_blocks(
-    out_lines: &mut NormalizedLineBuffer,
-    pending_trailing: &mut VecDeque<AnchoredStandaloneBlock>,
-    line_trimmed: &str,
-    current_indent: usize,
-) {
-    while let Some(block) = pending_trailing.front() {
-        let ready = line_trimmed.is_empty() || (!line_trimmed.is_empty() && current_indent <= block.indent);
-        if !ready {
-            break;
-        }
-        if let Some(block) = pending_trailing.pop_front() {
-            emit_anchored_block(out_lines, &block);
-        }
-    }
-}
-
-/// Reattach preserved source comments onto the formatter's AST-shaped output.
-///
-/// The formatter itself only emits comments that are represented in the AST. This pass preserves stand-alone and
-/// inline `# ...` comments from the original source by anchoring them to nearby formatted code lines while respecting
-/// indentation scope, blank-line separation, and string-literal boundaries.
-fn reattach_comments(source: &str, formatted: &str) -> String {
-    let mut state = StringState::None;
-    let mut pending_standalone: Option<PendingStandaloneBlock> = None;
-    let mut leading_standalone: Vec<AnchoredStandaloneBlock> = Vec::new();
-    let mut trailing_standalone: Vec<AnchoredStandaloneBlock> = Vec::new();
-    let mut eof_standalone: Vec<String> = Vec::new();
-    let mut inline_comments: Vec<(String, usize, String)> = Vec::new();
-    let mut source_anchor_occurrences: HashMap<String, usize> = HashMap::new();
-    let mut last_code_at_indent: HashMap<usize, (String, usize)> = HashMap::new();
-    let mut last_source_line_was_blank = false;
-
-    // ---- Extract comments from source and anchor them to code lines ----
-    for line in source.lines() {
-        let comment_idx = comment_start_index(line, &mut state);
-        reset_single_line_string_state(&mut state);
-
-        let Some(idx) = comment_idx else {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                if let Some(block) = &mut pending_standalone {
-                    block.saw_blank_after = true;
-                }
-                last_source_line_was_blank = true;
-                continue;
-            }
-
-            let anchor = normalize_code_for_match(trimmed);
-            let occurrence = source_anchor_occurrences.get(&anchor).copied().unwrap_or(0) + 1;
-            let indent = leading_indent_width(line);
-            if let Some(block) = pending_standalone.take() {
-                finalize_pending_standalone_block(
-                    block,
-                    Some((anchor.clone(), occurrence, indent)),
-                    &last_code_at_indent,
-                    &mut leading_standalone,
-                    &mut trailing_standalone,
-                    &mut eof_standalone,
-                );
-            }
-            last_code_at_indent.insert(indent, (anchor.clone(), occurrence));
-            source_anchor_occurrences.insert(anchor, occurrence);
-            last_source_line_was_blank = false;
-            continue;
-        };
-
-        let code_prefix = &line[..idx];
-        let comment_text = line[idx..].trim_end().to_string();
-        if code_prefix.trim().is_empty() {
-            let indent = leading_indent_width(line);
-            if let Some(block) = &mut pending_standalone {
-                if !block.saw_blank_after && block.indent == indent {
-                    block.lines.push(line.trim_end().to_string());
-                } else {
-                    let old_block = std::mem::replace(
-                        block,
-                        PendingStandaloneBlock {
-                            indent,
-                            lines: vec![line.trim_end().to_string()],
-                            saw_blank_after: false,
-                            saw_blank_before: last_source_line_was_blank,
-                        },
-                    );
-                    finalize_pending_standalone_block(
-                        old_block,
-                        None,
-                        &last_code_at_indent,
-                        &mut leading_standalone,
-                        &mut trailing_standalone,
-                        &mut eof_standalone,
-                    );
-                }
-            } else {
-                pending_standalone = Some(PendingStandaloneBlock {
-                    indent,
-                    lines: vec![line.trim_end().to_string()],
-                    saw_blank_after: false,
-                    saw_blank_before: last_source_line_was_blank,
-                });
-            }
-            last_source_line_was_blank = false;
-            continue;
-        }
-
-        let anchor = normalize_code_for_match(code_prefix.trim_end());
-        let occurrence = source_anchor_occurrences.get(&anchor).copied().unwrap_or(0) + 1;
-        let indent = leading_indent_width(line);
-        if let Some(block) = pending_standalone.take() {
-            finalize_pending_standalone_block(
-                block,
-                Some((anchor.clone(), occurrence, indent)),
-                &last_code_at_indent,
-                &mut leading_standalone,
-                &mut trailing_standalone,
-                &mut eof_standalone,
-            );
-        }
-
-        inline_comments.push((anchor.clone(), occurrence, comment_text));
-        last_code_at_indent.insert(indent, (anchor.clone(), occurrence));
-        source_anchor_occurrences.insert(anchor, occurrence);
-        last_source_line_was_blank = false;
-    }
-
-    if let Some(block) = pending_standalone.take() {
-        finalize_pending_standalone_block(
-            block,
-            None,
-            &last_code_at_indent,
-            &mut leading_standalone,
-            &mut trailing_standalone,
-            &mut eof_standalone,
-        );
-    }
-
-    // ---- Reattach comments into formatted output ----
-    let mut out_lines = NormalizedLineBuffer::new(2);
-    let mut leading_idx = 0usize;
-    let mut trailing_idx = 0usize;
-    let mut inline_idx = 0usize;
-    let mut formatted_state = StringState::None;
-    let mut formatted_anchor_occurrences: HashMap<String, usize> = HashMap::new();
-    let mut pending_trailing: VecDeque<AnchoredStandaloneBlock> = VecDeque::new();
-
-    for line in formatted.lines() {
-        let line_trimmed = line.trim();
-        let current_indent = leading_indent_width(line);
-        flush_ready_trailing_blocks(&mut out_lines, &mut pending_trailing, line_trimmed, current_indent);
-        let normalized = if line_trimmed.is_empty() {
-            None
-        } else {
-            Some(normalize_code_for_match(line_trimmed))
-        };
-        let occurrence = normalized.as_ref().map(|n| {
-            let next = formatted_anchor_occurrences.get(n).copied().unwrap_or(0) + 1;
-            formatted_anchor_occurrences.insert(n.clone(), next);
-            next
-        });
-
-        while leading_idx < leading_standalone.len()
-            && normalized
-                .as_ref()
-                .is_some_and(|n| n == &leading_standalone[leading_idx].anchor)
-            && occurrence.is_some_and(|occ| occ == leading_standalone[leading_idx].occurrence)
-        {
-            emit_anchored_block(&mut out_lines, &leading_standalone[leading_idx]);
-            leading_idx += 1;
-        }
-
-        let mut out_line = line.to_string();
-        let has_existing_comment = comment_start_index(line, &mut formatted_state).is_some();
-        reset_single_line_string_state(&mut formatted_state);
-
-        if !has_existing_comment
-            && inline_idx < inline_comments.len()
-            && let Some(n) = &normalized
-            && n == &inline_comments[inline_idx].0
-            && occurrence.is_some_and(|occ| occ == inline_comments[inline_idx].1)
-        {
-            out_line.push_str("  ");
-            out_line.push_str(&inline_comments[inline_idx].2);
-            inline_idx += 1;
-        }
-
-        out_lines.push_line(out_line);
-
-        while trailing_idx < trailing_standalone.len()
-            && normalized
-                .as_ref()
-                .is_some_and(|n| n == &trailing_standalone[trailing_idx].anchor)
-            && occurrence.is_some_and(|occ| occ == trailing_standalone[trailing_idx].occurrence)
-        {
-            pending_trailing.push_back(trailing_standalone[trailing_idx].clone());
-            trailing_idx += 1;
-        }
-    }
-
-    while leading_idx < leading_standalone.len() {
-        emit_anchored_block(&mut out_lines, &leading_standalone[leading_idx]);
-        leading_idx += 1;
-    }
-
-    while trailing_idx < trailing_standalone.len() {
-        pending_trailing.push_back(trailing_standalone[trailing_idx].clone());
-        trailing_idx += 1;
-    }
-
-    flush_ready_trailing_blocks(&mut out_lines, &mut pending_trailing, "", 0);
-
-    if !eof_standalone.is_empty() {
-        if out_lines.lines.last().is_some_and(|l| !l.is_empty()) {
-            out_lines.push_line(String::new());
-        }
-        for line in eof_standalone {
-            out_lines.push_line(line);
-        }
-    }
-
-    out_lines.finish(formatted.ends_with('\n') || source.ends_with('\n'))
-}
-
-fn trim_trailing_blank_comment_lines(lines: &[String]) -> Vec<String> {
-    let mut out = lines.to_vec();
-    while out.last().is_some_and(|l| l.trim().is_empty()) {
-        out.pop();
-    }
-    out
 }
 
 /// Check if source code is already formatted.
@@ -851,6 +363,8 @@ mod tests {
     fn test_format_source_eof_has_single_trailing_newline_only() -> Result<(), FormatError> {
         let source = r#"def f() -> int:
     return 1
+
+
 "#;
         let formatted = format_source(source)?;
         let trailing_nl = formatted.chars().rev().take_while(|c| *c == '\n').count();
@@ -859,6 +373,175 @@ mod tests {
             "expected exactly one trailing newline at EOF; got {trailing_nl}: {formatted:?}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn test_format_source_preserves_short_match_arm_blocks_inline() -> Result<(), FormatError> {
+        let source = r#"def authored_node_kind_name(node: PrismNode) -> str:
+    match node.kind:
+        PrismNodeKind.ReadNamedTable => return str("ReadNamedTable")
+        PrismNodeKind.Filter => return str("Filter")
+"#;
+        let formatted = format_source(source)?;
+        assert!(
+            formatted.contains(r#"        PrismNodeKind.ReadNamedTable => return str("ReadNamedTable")"#),
+            "expected short return arm to stay inline; got:\n{formatted}"
+        );
+        assert!(
+            !formatted.contains("PrismNodeKind.ReadNamedTable => \n"),
+            "formatter should not split short return arm after fat arrow; got:\n{formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_normalizes_blank_after_match_arm_arrow() -> Result<(), FormatError> {
+        let source = r#"def f(result: Result[int, str]) -> int:
+    match result:
+        Ok(value) =>
+            value = value + 1
+            return value
+        Err(err) =>
+
+            message = err
+            return 0
+"#;
+        let formatted = format_source(source)?;
+        assert!(
+            formatted.contains("        Err(err) =>\n            message = err\n            return 0"),
+            "expected blank after match arm arrow to be removed; got:\n{formatted}"
+        );
+        assert!(
+            !formatted.contains("=> \n"),
+            "block match arms should not carry trailing whitespace after the arrow; got:\n{formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_normalizes_blank_after_match_arm_arrow_before_statement() -> Result<(), FormatError> {
+        let source = r#"def f(result: Result[int, str]) -> None:
+    match result:
+        Ok(_) => pass
+        Err(err) =>
+
+            message = err
+"#;
+        let formatted = format_source(source)?;
+        assert!(
+            formatted.contains("        Err(err) =>\n            message = err"),
+            "expected blank after match arm arrow before statement to be removed; got:\n{formatted}"
+        );
+        assert!(
+            !formatted.contains("        Err(err) =>\n\n            message = err"),
+            "formatter left an empty line between match arm arrow and statement body; got:\n{formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_match_arm_body_does_not_inherit_blank_line_after_nested_arm() -> Result<(), FormatError> {
+        let source = r#"def f(result: Result[int, str]) -> int:
+    match result:
+        Ok(value) => match value:
+            Ready(x) => return x
+
+            Failed(err) => return 0
+
+        Err(err) =>
+            return Err(problem.report_with_context())
+"#;
+        let formatted = format_source(source)?;
+        assert!(
+            formatted.contains("        Err(err) => return Err(problem.report_with_context())")
+                || formatted.contains("        Err(err) =>\n            return Err(problem.report_with_context())"),
+            "expected outer Err arm body to stay tight after nested-arm spacing; got:\n{formatted}"
+        );
+        assert!(
+            !formatted.contains("        Err(err) =>\n\n            return Err(problem.report_with_context())"),
+            "formatter leaked a preserved outer blank line into the Err arm body; got:\n{formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_normalizes_blank_after_elif_and_else_headers() -> Result<(), FormatError> {
+        let source = r#"def f(kind: str) -> int:
+    if kind == "a":
+        return 1
+    elif kind == "b":
+
+        return 2
+    else:
+
+        return 3
+"#;
+        let formatted = format_source(source)?;
+        assert!(
+            formatted.contains("    elif kind == \"b\":\n        return 2"),
+            "expected blank after elif header to be removed; got:\n{formatted}"
+        );
+        assert!(
+            formatted.contains("    else:\n        return 3"),
+            "expected blank after else header to be removed; got:\n{formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_does_not_double_space_after_multiline_match_statement() -> Result<(), FormatError> {
+        let source = r#"def f(first: Result[int, str], second: Result[int, str]) -> None:
+    match first:
+        Ok(_) => pass
+        Err(err) =>
+            message = err
+
+
+    match second:
+        Ok(_) => pass
+        Err(err) =>
+            message = err
+"#;
+        let formatted = format_source(source)?;
+        assert!(
+            formatted.contains("            message = err\n\n    match second:"),
+            "expected exactly one blank line after multiline match statement; got:\n{formatted}"
+        );
+        assert!(
+            !formatted.contains("            message = err\n\n\n    match second:"),
+            "formatter emitted two blank lines after multiline match statement; got:\n{formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_normalized_line_buffer_allows_double_blanks_only_at_root() {
+        let mut buffer = NormalizedLineBuffer::new();
+        buffer.push_line("def first() -> None:".to_string());
+        buffer.push_line("    pass".to_string());
+        buffer.push_line(String::new());
+        buffer.push_line(String::new());
+        buffer.push_line(String::new());
+        buffer.push_line("    still_in_first = true".to_string());
+        buffer.push_line(String::new());
+        buffer.push_line(String::new());
+        buffer.push_line(String::new());
+        buffer.push_line("def second() -> None:".to_string());
+        buffer.push_line("    pass".to_string());
+
+        let formatted = buffer.finish(true);
+        assert!(
+            formatted.contains("    pass\n\n    still_in_first = true"),
+            "expected one blank line inside indented code; got:\n{formatted}"
+        );
+        assert!(
+            !formatted.contains("    pass\n\n\n    still_in_first = true"),
+            "expected indented blank run to collapse below two visible blanks; got:\n{formatted}"
+        );
+        assert!(
+            formatted.contains("    still_in_first = true\n\n\ndef second() -> None:"),
+            "expected root-level blank run to allow two visible blanks; got:\n{formatted}"
+        );
     }
 
     /// Single empty line between statements in a block must round-trip through the formatter.
@@ -898,6 +581,51 @@ def function() -> int:
         assert!(
             formatted.contains("foo = 1\n\n    bar"),
             "expected one blank line between statements; got:\n{formatted}"
+        );
+        Ok(())
+    }
+
+    /// Single empty line after a nested suite belongs to the next outer statement.
+    #[test]
+    fn test_format_source_preserves_single_blank_line_after_nested_suite() -> Result<(), FormatError> {
+        let source = r#"def f(items: list[int]) -> int:
+    for item in items:
+        value = item
+
+    result = 1
+    return result
+"#;
+        let formatted = format_source(source)?;
+        assert!(
+            formatted.contains("        value = item\n\n    result = 1"),
+            "expected one blank line after nested suite; got:\n{formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_preserves_single_blank_line_between_if_blocks_ending_in_match() -> Result<(), FormatError> {
+        let source = r#"def f(a: bool, b: bool, result: Result[int, str]) -> None:
+    if a:
+        match result:
+            Ok(_) => return
+            Err(err) => return
+
+    if b:
+        match result:
+            Ok(_) => return
+            Err(err) => return
+
+    z = 3
+"#;
+        let formatted = format_source(source)?;
+        assert!(
+            formatted.contains("            Err(err) => return\n\n    if b:"),
+            "expected one blank line between sibling if blocks after inner match; got:\n{formatted}"
+        );
+        assert!(
+            formatted.contains("            Err(err) => return\n\n    z = 3"),
+            "expected one blank line before the trailing outer statement; got:\n{formatted}"
         );
         Ok(())
     }
@@ -961,6 +689,117 @@ def helper() -> None:
     bar = 2
 "#;
         assert_eq!(formatted, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_keeps_leading_comments_before_wrapped_statements() -> Result<(), FormatError> {
+        let source = r#"def test_case() -> None:
+    # -- Arrange --
+    scenario = SubstraitConformanceScenario(scenario_id="test.multi.required.rels", title="test", status=ConformanceStatus.Core, profile_tags=[ConformanceProfileTag.ReadQueryCore], capability_tags=_test_tags(["named-table"]), root_rel=ConformanceRel.Filter, required_rels=[ConformanceRel.Read, ConformanceRel.Filter], portability=ConformancePortability.Portable, intent="test", required_rel_shape="test", expected_constraints="test", references=_test_refs(["docs/rfcs/002_apache_substrait_integration.md"]))
+
+    # -- Act --
+    named_only_plan = plan_from_named_table("orders")
+
+    # -- Assert --
+    assert_eq(scenario_matches_root_shape(scenario, named_only_plan), false, "shape validation should fail when the root relation does not match the declared root contract")
+"#;
+        let formatted = format_source(source)?;
+        assert!(
+            formatted.contains("    # -- Arrange --\n    scenario = SubstraitConformanceScenario("),
+            "expected arrange comment to stay attached to wrapped constructor; got:\n{formatted}"
+        );
+        assert!(
+            formatted.contains("    # -- Act --\n    named_only_plan = plan_from_named_table(\"orders\")"),
+            "expected act comment to stay attached after preceding wrapped constructor; got:\n{formatted}"
+        );
+        assert!(
+            formatted.contains("    # -- Assert --\n    assert_eq("),
+            "expected assert comment to stay attached to wrapped assertion; got:\n{formatted}"
+        );
+        assert!(
+            !formatted.contains("    )\n\n    named_only_plan = plan_from_named_table(\"orders\")\n\n    assert_eq("),
+            "formatter stranded phase comments after wrapped anchors; got:\n{formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_keeps_phase_comments_attached_inside_nested_match_blocks() -> Result<(), FormatError> {
+        let source = r#"def test_session_backend_datafusion__registered_named_table_executes_via_substrait() -> None:
+    # -- Arrange --
+    mut session = Session.default()
+    fixture_uri = "../../../tests/fixtures/orders.csv"
+    match session.register("orders", csv_source(fixture_uri)):
+        Ok(_) =>
+            pass
+        Err(err) => assert_eq(true, false, err.error_message())
+
+    # -- Act --
+    match session.table[Order]("orders"):
+        Ok(lazy) =>
+            match session.execute(lazy):
+                Ok(_) =>
+                    # -- Assert --
+                    pass
+                Err(err) => assert_eq(true, false, err.error_message())
+
+        Err(err) => assert_eq(true, false, err.error_message())
+
+
+def test_session_backend_datafusion__session_write_csv_routes_through_execution_path() -> None:
+    # -- Arrange --
+    mut session = Session.default()
+    output_uri = "../../../tests/target/session_backend_datafusion_output.csv"
+    fixture_uri = "../../../tests/fixtures/orders.csv"
+    match session.register("orders", csv_source(fixture_uri)):
+        Ok(_) =>
+            pass
+        Err(err) => assert_eq(true, false, err.error_message())
+
+    # -- Act --
+    match session.table[Order]("orders"):
+        Ok(lazy) =>
+            match session.write_csv(lazy, output_uri):
+                Ok(_) =>
+                    # -- Assert --
+                    assert_eq(Path.new(output_uri).exists(), true, "session.write_csv should produce an output artifact")
+                Err(err) => assert_eq(true, false, err.error_message())
+
+        Err(err) => assert_eq(true, false, err.error_message())
+"#;
+
+        let formatted = format_source(source)?;
+        assert!(
+            formatted.contains("    # -- Arrange --\n    mut session = Session.default()"),
+            "expected arrange comment to stay attached to the outer setup statement; got:\n{formatted}"
+        );
+        assert!(
+            formatted.contains("    # -- Act --\n    match session.table[Order](\"orders\"):"),
+            "expected act comment to stay attached to the outer action match; got:\n{formatted}"
+        );
+        assert!(
+            formatted.contains(
+                "                Ok(_) =>\n                    # -- Assert --\n                    assert_eq("
+            ),
+            "expected assert comment to stay attached inside the nested Ok arm; got:\n{formatted}"
+        );
+        assert!(
+            !formatted.contains(
+                "        Err(err) => assert_eq(true, false, err.error_message())\n                    # -- Assert --"
+            ),
+            "formatter stranded assert comment after the outer Err arm; got:\n{formatted}"
+        );
+        assert!(
+            !formatted.contains("    # -- Arrange --\n\n    # -- Act --\n                    # -- Assert --"),
+            "formatter floated phase comments to the end of the function; got:\n{formatted}"
+        );
+
+        let reformatted = format_source(&formatted)?;
+        assert_eq!(
+            reformatted, formatted,
+            "formatter must stay idempotent for nested match phase comments"
+        );
         Ok(())
     }
 
@@ -1226,7 +1065,7 @@ const B: int = 2
     }
 
     #[test]
-    fn test_format_source_preserves_docstring_interior_blank_runs() -> Result<(), FormatError> {
+    fn test_format_source_collapses_docstring_interior_blank_runs() -> Result<(), FormatError> {
         let source = r#"def explain() -> str:
     """
     First paragraph.
@@ -1237,15 +1076,23 @@ const B: int = 2
     return "ok"
 "#;
         let formatted = format_source(source)?;
-        assert_eq!(formatted, source);
+        let expected = r#"def explain() -> str:
+    """
+    First paragraph.
+
+    Second paragraph.
+    """
+    return "ok"
+"#;
+        assert_eq!(formatted, expected);
         Ok(())
     }
 
     #[test]
-    fn test_format_source_preserves_many_docstring_blank_lines() -> Result<(), FormatError> {
+    fn test_format_source_collapses_many_docstring_blank_lines_but_preserves_slash_n_text() -> Result<(), FormatError> {
         let source = r#"def explain() -> str:
     """
-    some docstring with a bunch of blank lines
+    some docstring with a bunch of /n/n/n/ text
 
 
 
@@ -1256,7 +1103,15 @@ const B: int = 2
     return "ok"
 "#;
         let formatted = format_source(source)?;
-        assert_eq!(formatted, source);
+        let expected = r#"def explain() -> str:
+    """
+    some docstring with a bunch of /n/n/n/ text
+
+    inside it
+    """
+    return "ok"
+"#;
+        assert_eq!(formatted, expected);
         Ok(())
     }
 
