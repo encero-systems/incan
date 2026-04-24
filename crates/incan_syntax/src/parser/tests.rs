@@ -163,6 +163,25 @@ class Box:
     }
 
     #[test]
+    fn test_parse_method_multiline_receiver_allows_trailing_comma() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+class Box:
+  def get(
+    self,
+  ) -> int:
+    return 1
+"#;
+        let program = parse_str(source)?;
+        let class = require_class_decl(&program.declarations[0])?;
+        assert_eq!(class.methods.len(), 1);
+        let method = &class.methods[0].node;
+        assert_eq!(method.name, "get");
+        assert!(matches!(method.receiver, Some(Receiver::Immutable)));
+        assert!(method.params.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_class_docstring() -> Result<(), Vec<CompileError>> {
         let source = r#"
 class FieldInfo:
@@ -1039,6 +1058,27 @@ def add(a: int, b: int) -> int:
             Declaration::Function(f) => {
                 assert_eq!(f.name, "add");
                 assert_eq!(f.params.len(), 2);
+            }
+            _ => panic!("Expected function"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_function_multiline_params_allow_trailing_comma() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def identity(
+  value: int,
+) -> int:
+  return value
+"#;
+        let program = parse_str(source)?;
+        assert_eq!(program.declarations.len(), 1);
+        match &program.declarations[0].node {
+            Declaration::Function(f) => {
+                assert_eq!(f.name, "identity");
+                assert_eq!(f.params.len(), 1);
+                assert_eq!(f.params[0].node.name, "value");
             }
             _ => panic!("Expected function"),
         }

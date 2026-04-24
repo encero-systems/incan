@@ -7,6 +7,42 @@ use incan_semantics_core::SurfaceFeatureKey;
 use super::Formatter;
 
 impl Formatter {
+    fn write_call_arg(&mut self, arg: &CallArg) {
+        match arg {
+            CallArg::Positional(expr) => self.format_expr(&expr.node),
+            CallArg::Named(name, expr) => {
+                self.writer.write(name);
+                self.writer.write("=");
+                self.format_expr(&expr.node);
+            }
+        }
+    }
+
+    fn format_call_args_with_wrapping(&mut self, args: &[CallArg]) {
+        if args.is_empty() {
+            return;
+        }
+
+        let checkpoint = self.writer.checkpoint();
+        self.format_call_args(args);
+        if !(self.writer.output_since_contains_newline(checkpoint) || self.writer.line_length_exceeded()) {
+            return;
+        }
+        self.writer.restore(checkpoint);
+
+        let trailing_commas = self.writer.config().trailing_commas;
+        self.writer.newline();
+        self.writer.indent();
+        for (i, arg) in args.iter().enumerate() {
+            self.write_call_arg(arg);
+            if trailing_commas || i + 1 < args.len() {
+                self.writer.write(",");
+            }
+            self.writer.newline();
+        }
+        self.writer.dedent();
+    }
+
     pub(super) fn format_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Ident(name) => self.writer.write(name),
@@ -36,7 +72,7 @@ impl Formatter {
                     self.writer.write("]");
                 }
                 self.writer.write("(");
-                self.format_call_args(args);
+                self.format_call_args_with_wrapping(args);
                 self.writer.write(")");
             }
             Expr::Index(base, index) => {
@@ -81,7 +117,7 @@ impl Formatter {
                     self.writer.write("]");
                 }
                 self.writer.write("(");
-                self.format_call_args(args);
+                self.format_call_args_with_wrapping(args);
                 self.writer.write(")");
             }
             Expr::Surface(surface_expr) => match (&surface_expr.key, &surface_expr.payload) {
@@ -170,7 +206,7 @@ impl Formatter {
             Expr::Constructor(name, args) => {
                 self.writer.write(name);
                 self.writer.write("(");
-                self.format_call_args(args);
+                self.format_call_args_with_wrapping(args);
                 self.writer.write(")");
             }
             Expr::FString(parts) => {
@@ -301,14 +337,7 @@ impl Formatter {
             if i > 0 {
                 self.writer.write(", ");
             }
-            match arg {
-                CallArg::Positional(expr) => self.format_expr(&expr.node),
-                CallArg::Named(name, expr) => {
-                    self.writer.write(name);
-                    self.writer.write("=");
-                    self.format_expr(&expr.node);
-                }
-            }
+            self.write_call_arg(arg);
         }
     }
 

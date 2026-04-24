@@ -80,16 +80,11 @@ impl Formatter {
             // Multi-line docstring
             self.writer.writeln("\"\"\"");
             self.writer.writeln(first);
-            let mut last_was_blank = false;
             for line in rest {
                 if line.trim().is_empty() {
-                    if !last_was_blank {
-                        self.writer.newline();
-                        last_was_blank = true;
-                    }
+                    self.writer.newline();
                 } else {
                     self.writer.writeln(strip_common_indent(line, common_indent).trim_end());
-                    last_was_blank = false;
                 }
             }
             self.writer.writeln("\"\"\"");

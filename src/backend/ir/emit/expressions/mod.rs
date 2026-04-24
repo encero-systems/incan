@@ -17,7 +17,7 @@
 //! - [`indexing`]: Index, slice, and field access expressions
 //! - [`comprehensions`]: List and dict comprehensions
 //! - [`structs_enums`]: Struct constructor expressions
-//! - [`format`]: Format strings and range expressions
+//! - [`mod@format`]: Format strings and range expressions
 //! - [`lvalue`]: Assignment target expressions
 //!
 //! ## Notes

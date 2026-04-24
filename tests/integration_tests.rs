@@ -344,6 +344,7 @@ model User:
     """
     First paragraph.
 
+
     Second paragraph.
     """
 
@@ -429,6 +430,34 @@ fn test_cli_fmt_keeps_trailing_comment_after_multiline_function() -> Result<(), 
         .map_err(|errs| std::io::Error::other(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n")))?;
     parser::parse(&tokens)
         .map_err(|errs| std::io::Error::other(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n")))?;
+
+    Ok(())
+}
+
+/// Regression (GitHub #394): multiline function parameter lists must accept a trailing comma.
+#[test]
+fn test_cli_check_accepts_trailing_comma_in_multiline_function_params() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = make_temp_test_dir();
+    let path = dir.join("trailing_param_comma.incn");
+    fs::write(
+        &path,
+        r#"def identity(
+    value: int,
+) -> int:
+    return value
+
+
+def main() -> None:
+    println(identity(1))
+"#,
+    )?;
+
+    let output = Command::new(incan_debug_binary()).arg("--check").arg(&path).output()?;
+    assert!(
+        output.status.success(),
+        "expected multiline trailing parameter comma to parse/typecheck; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     Ok(())
 }

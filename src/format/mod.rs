@@ -20,7 +20,7 @@ pub use config::{FormatConfig, QuoteStyle};
 pub use formatter::Formatter;
 
 use crate::frontend::{diagnostics, lexer, parser};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use thiserror::Error;
 
 /// Errors that occur during formatting
@@ -99,8 +99,7 @@ pub fn format_source_with_config(source: &str, config: FormatConfig) -> Result<S
 
     // Format the AST
     let formatter = Formatter::new(config);
-    let formatted = formatter.format(&ast);
-    let formatted = reattach_comments(source, &formatted);
+    let formatted = reattach_comments(source, &formatter.format(&ast));
 
     // Safety guard: never allow the formatter to silently drop comments.
     let source_comments = count_line_comments(source);
@@ -234,6 +233,74 @@ fn normalize_code_for_match(code: &str) -> String {
     code.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
+/// Leave triple-quoted string state intact while clearing one-line quote state at line boundaries.
+fn reset_single_line_string_state(state: &mut StringState) {
+    if matches!(state, StringState::SingleQuoted | StringState::DoubleQuoted) {
+        *state = StringState::None;
+    }
+}
+
+/// Line sink that enforces formatter-wide blank-line normalization as lines are emitted.
+///
+/// Blank runs are capped in ordinary code, but blank lines inside triple-quoted strings are preserved verbatim. This
+/// keeps newline policy in the comment reattachment output path instead of requiring a second cleanup pass afterward.
+struct NormalizedLineBuffer {
+    lines: Vec<String>,
+    state: StringState,
+    consecutive_blank_lines: usize,
+    max_blank_lines: usize,
+}
+
+impl NormalizedLineBuffer {
+    /// Create a buffer that permits at most `max_blank_lines` consecutive blank lines outside multiline strings.
+    fn new(max_blank_lines: usize) -> Self {
+        Self {
+            lines: Vec::new(),
+            state: StringState::None,
+            consecutive_blank_lines: 0,
+            max_blank_lines,
+        }
+    }
+
+    /// Push one already-formatted line, dropping excess blank lines outside triple-quoted strings.
+    fn push_line(&mut self, line: String) {
+        let inside_multiline_string = matches!(
+            self.state,
+            StringState::TripleSingleQuoted | StringState::TripleDoubleQuoted
+        );
+        let is_blank = line.trim().is_empty();
+
+        if is_blank && !inside_multiline_string {
+            if self.consecutive_blank_lines >= self.max_blank_lines {
+                return;
+            }
+            self.consecutive_blank_lines += 1;
+        } else if !inside_multiline_string {
+            self.consecutive_blank_lines = 0;
+        }
+
+        let _ = comment_start_index(&line, &mut self.state);
+        reset_single_line_string_state(&mut self.state);
+        self.lines.push(line);
+    }
+
+    /// Preserve a user-authored readability gap before an indented comment block.
+    fn ensure_blank_line_before(&mut self, indent: usize) {
+        if indent > 0 && self.lines.last().is_some_and(|line| !line.is_empty()) {
+            self.push_line(String::new());
+        }
+    }
+
+    /// Join buffered lines and restore the final newline when the source or AST formatter had one.
+    fn finish(self, trailing_newline: bool) -> String {
+        let mut out = self.lines.join("\n");
+        if trailing_newline {
+            out.push('\n');
+        }
+        out
+    }
+}
+
 /// Stand-alone comment lines that are anchored to a nearby formatted code line.
 #[derive(Clone)]
 struct AnchoredStandaloneBlock {
@@ -241,6 +308,7 @@ struct AnchoredStandaloneBlock {
     occurrence: usize,
     indent: usize,
     lines: Vec<String>,
+    blank_line_before: bool,
 }
 
 /// Stand-alone comment lines collected while scanning the source before their anchor is known.
@@ -248,11 +316,80 @@ struct PendingStandaloneBlock {
     indent: usize,
     lines: Vec<String>,
     saw_blank_after: bool,
+    saw_blank_before: bool,
 }
 
 /// Count leading indentation using source whitespace width rather than byte length.
 fn leading_indent_width(line: &str) -> usize {
     line.chars().take_while(|ch| ch.is_whitespace()).count()
+}
+
+/// Emit a source comment block at its formatted anchor, including its preserved leading readability gap.
+fn emit_anchored_block(out_lines: &mut NormalizedLineBuffer, block: &AnchoredStandaloneBlock) {
+    if block.blank_line_before {
+        out_lines.ensure_blank_line_before(block.indent);
+    }
+    for line in &block.lines {
+        out_lines.push_line(line.clone());
+    }
+}
+
+/// Attach a pending source comment block to its nearest stable formatted location.
+///
+/// Blocks that are immediately followed by same-indent code become leading comments for that next code line. Blocks
+/// separated by a blank line, or followed by different indentation, attach to the previous code line at the same
+/// indentation. Blocks without a stable leading or trailing anchor use the EOF fallback path.
+fn finalize_pending_standalone_block(
+    block: PendingStandaloneBlock,
+    next_anchor: Option<(String, usize, usize)>,
+    last_code_at_indent: &HashMap<usize, (String, usize)>,
+    leading_standalone: &mut Vec<AnchoredStandaloneBlock>,
+    trailing_standalone: &mut Vec<AnchoredStandaloneBlock>,
+    eof_standalone: &mut Vec<String>,
+) {
+    let lines = trim_trailing_blank_comment_lines(&block.lines);
+    match next_anchor {
+        Some((anchor, occurrence, next_indent)) if !block.saw_blank_after && next_indent == block.indent => {
+            leading_standalone.push(AnchoredStandaloneBlock {
+                anchor,
+                occurrence,
+                indent: block.indent,
+                lines,
+                blank_line_before: block.saw_blank_before,
+            });
+        }
+        _ => {
+            if let Some((prev_anchor, prev_occurrence)) = last_code_at_indent.get(&block.indent) {
+                trailing_standalone.push(AnchoredStandaloneBlock {
+                    anchor: prev_anchor.clone(),
+                    occurrence: *prev_occurrence,
+                    indent: block.indent,
+                    lines,
+                    blank_line_before: block.saw_blank_before,
+                });
+            } else {
+                eof_standalone.extend(lines);
+            }
+        }
+    }
+}
+
+/// Flush trailing comment blocks once the formatted stream has moved out of their indentation scope.
+fn flush_ready_trailing_blocks(
+    out_lines: &mut NormalizedLineBuffer,
+    pending_trailing: &mut VecDeque<AnchoredStandaloneBlock>,
+    line_trimmed: &str,
+    current_indent: usize,
+) {
+    while let Some(block) = pending_trailing.front() {
+        let ready = line_trimmed.is_empty() || (!line_trimmed.is_empty() && current_indent <= block.indent);
+        if !ready {
+            break;
+        }
+        if let Some(block) = pending_trailing.pop_front() {
+            emit_anchored_block(out_lines, &block);
+        }
+    }
 }
 
 /// Reattach preserved source comments onto the formatter's AST-shaped output.
@@ -269,13 +406,12 @@ fn reattach_comments(source: &str, formatted: &str) -> String {
     let mut inline_comments: Vec<(String, usize, String)> = Vec::new();
     let mut source_anchor_occurrences: HashMap<String, usize> = HashMap::new();
     let mut last_code_at_indent: HashMap<usize, (String, usize)> = HashMap::new();
+    let mut last_source_line_was_blank = false;
 
     // ---- Extract comments from source and anchor them to code lines ----
     for line in source.lines() {
         let comment_idx = comment_start_index(line, &mut state);
-        if matches!(state, StringState::SingleQuoted | StringState::DoubleQuoted) {
-            state = StringState::None;
-        }
+        reset_single_line_string_state(&mut state);
 
         let Some(idx) = comment_idx else {
             let trimmed = line.trim();
@@ -283,6 +419,7 @@ fn reattach_comments(source: &str, formatted: &str) -> String {
                 if let Some(block) = &mut pending_standalone {
                     block.saw_blank_after = true;
                 }
+                last_source_line_was_blank = true;
                 continue;
             }
 
@@ -290,33 +427,18 @@ fn reattach_comments(source: &str, formatted: &str) -> String {
             let occurrence = source_anchor_occurrences.get(&anchor).copied().unwrap_or(0) + 1;
             let indent = leading_indent_width(line);
             if let Some(block) = pending_standalone.take() {
-                let lines = trim_trailing_blank_comment_lines(&block.lines);
-                let next_same_scope = indent == block.indent;
-                if !block.saw_blank_after && next_same_scope {
-                    leading_standalone.push(AnchoredStandaloneBlock {
-                        anchor: anchor.clone(),
-                        occurrence,
-                        indent: block.indent,
-                        lines,
-                    });
-                } else if let Some((prev_anchor, prev_occurrence)) = last_code_at_indent.get(&block.indent) {
-                    trailing_standalone.push(AnchoredStandaloneBlock {
-                        anchor: prev_anchor.clone(),
-                        occurrence: *prev_occurrence,
-                        indent: block.indent,
-                        lines,
-                    });
-                } else {
-                    leading_standalone.push(AnchoredStandaloneBlock {
-                        anchor: anchor.clone(),
-                        occurrence,
-                        indent: block.indent,
-                        lines,
-                    });
-                }
+                finalize_pending_standalone_block(
+                    block,
+                    Some((anchor.clone(), occurrence, indent)),
+                    &last_code_at_indent,
+                    &mut leading_standalone,
+                    &mut trailing_standalone,
+                    &mut eof_standalone,
+                );
             }
             last_code_at_indent.insert(indent, (anchor.clone(), occurrence));
             source_anchor_occurrences.insert(anchor, occurrence);
+            last_source_line_was_blank = false;
             continue;
         };
 
@@ -328,30 +450,33 @@ fn reattach_comments(source: &str, formatted: &str) -> String {
                 if !block.saw_blank_after && block.indent == indent {
                     block.lines.push(line.trim_end().to_string());
                 } else {
-                    let lines = trim_trailing_blank_comment_lines(&block.lines);
-                    if let Some((prev_anchor, prev_occurrence)) = last_code_at_indent.get(&block.indent) {
-                        trailing_standalone.push(AnchoredStandaloneBlock {
-                            anchor: prev_anchor.clone(),
-                            occurrence: *prev_occurrence,
-                            indent: block.indent,
-                            lines,
-                        });
-                    } else {
-                        eof_standalone.extend(lines);
-                    }
-                    *block = PendingStandaloneBlock {
-                        indent,
-                        lines: vec![line.trim_end().to_string()],
-                        saw_blank_after: false,
-                    };
+                    let old_block = std::mem::replace(
+                        block,
+                        PendingStandaloneBlock {
+                            indent,
+                            lines: vec![line.trim_end().to_string()],
+                            saw_blank_after: false,
+                            saw_blank_before: last_source_line_was_blank,
+                        },
+                    );
+                    finalize_pending_standalone_block(
+                        old_block,
+                        None,
+                        &last_code_at_indent,
+                        &mut leading_standalone,
+                        &mut trailing_standalone,
+                        &mut eof_standalone,
+                    );
                 }
             } else {
                 pending_standalone = Some(PendingStandaloneBlock {
                     indent,
                     lines: vec![line.trim_end().to_string()],
                     saw_blank_after: false,
+                    saw_blank_before: last_source_line_was_blank,
                 });
             }
+            last_source_line_was_blank = false;
             continue;
         }
 
@@ -359,69 +484,46 @@ fn reattach_comments(source: &str, formatted: &str) -> String {
         let occurrence = source_anchor_occurrences.get(&anchor).copied().unwrap_or(0) + 1;
         let indent = leading_indent_width(line);
         if let Some(block) = pending_standalone.take() {
-            let lines = trim_trailing_blank_comment_lines(&block.lines);
-            let next_same_scope = indent == block.indent;
-            if !block.saw_blank_after && next_same_scope {
-                leading_standalone.push(AnchoredStandaloneBlock {
-                    anchor: anchor.clone(),
-                    occurrence,
-                    indent: block.indent,
-                    lines,
-                });
-            } else if let Some((prev_anchor, prev_occurrence)) = last_code_at_indent.get(&block.indent) {
-                trailing_standalone.push(AnchoredStandaloneBlock {
-                    anchor: prev_anchor.clone(),
-                    occurrence: *prev_occurrence,
-                    indent: block.indent,
-                    lines,
-                });
-            } else {
-                leading_standalone.push(AnchoredStandaloneBlock {
-                    anchor: anchor.clone(),
-                    occurrence,
-                    indent: block.indent,
-                    lines,
-                });
-            }
+            finalize_pending_standalone_block(
+                block,
+                Some((anchor.clone(), occurrence, indent)),
+                &last_code_at_indent,
+                &mut leading_standalone,
+                &mut trailing_standalone,
+                &mut eof_standalone,
+            );
         }
 
         inline_comments.push((anchor.clone(), occurrence, comment_text));
         last_code_at_indent.insert(indent, (anchor.clone(), occurrence));
         source_anchor_occurrences.insert(anchor, occurrence);
+        last_source_line_was_blank = false;
     }
 
     if let Some(block) = pending_standalone.take() {
-        let lines = trim_trailing_blank_comment_lines(&block.lines);
-        if let Some((prev_anchor, prev_occurrence)) = last_code_at_indent.get(&block.indent) {
-            trailing_standalone.push(AnchoredStandaloneBlock {
-                anchor: prev_anchor.clone(),
-                occurrence: *prev_occurrence,
-                indent: block.indent,
-                lines,
-            });
-        } else {
-            eof_standalone = lines;
-        }
+        finalize_pending_standalone_block(
+            block,
+            None,
+            &last_code_at_indent,
+            &mut leading_standalone,
+            &mut trailing_standalone,
+            &mut eof_standalone,
+        );
     }
 
     // ---- Reattach comments into formatted output ----
-    let mut out_lines: Vec<String> = Vec::new();
+    let mut out_lines = NormalizedLineBuffer::new(2);
     let mut leading_idx = 0usize;
     let mut trailing_idx = 0usize;
     let mut inline_idx = 0usize;
     let mut formatted_state = StringState::None;
     let mut formatted_anchor_occurrences: HashMap<String, usize> = HashMap::new();
-    let mut pending_trailing: Vec<AnchoredStandaloneBlock> = Vec::new();
+    let mut pending_trailing: VecDeque<AnchoredStandaloneBlock> = VecDeque::new();
 
     for line in formatted.lines() {
         let line_trimmed = line.trim();
         let current_indent = leading_indent_width(line);
-        while !pending_trailing.is_empty()
-            && (line_trimmed.is_empty() || (!line_trimmed.is_empty() && current_indent <= pending_trailing[0].indent))
-        {
-            let block = pending_trailing.remove(0);
-            out_lines.extend(block.lines);
-        }
+        flush_ready_trailing_blocks(&mut out_lines, &mut pending_trailing, line_trimmed, current_indent);
         let normalized = if line_trimmed.is_empty() {
             None
         } else {
@@ -439,15 +541,13 @@ fn reattach_comments(source: &str, formatted: &str) -> String {
                 .is_some_and(|n| n == &leading_standalone[leading_idx].anchor)
             && occurrence.is_some_and(|occ| occ == leading_standalone[leading_idx].occurrence)
         {
-            out_lines.extend(leading_standalone[leading_idx].lines.iter().cloned());
+            emit_anchored_block(&mut out_lines, &leading_standalone[leading_idx]);
             leading_idx += 1;
         }
 
         let mut out_line = line.to_string();
         let has_existing_comment = comment_start_index(line, &mut formatted_state).is_some();
-        if matches!(formatted_state, StringState::SingleQuoted | StringState::DoubleQuoted) {
-            formatted_state = StringState::None;
-        }
+        reset_single_line_string_state(&mut formatted_state);
 
         if !has_existing_comment
             && inline_idx < inline_comments.len()
@@ -460,7 +560,7 @@ fn reattach_comments(source: &str, formatted: &str) -> String {
             inline_idx += 1;
         }
 
-        out_lines.push(out_line);
+        out_lines.push_line(out_line);
 
         while trailing_idx < trailing_standalone.len()
             && normalized
@@ -468,38 +568,33 @@ fn reattach_comments(source: &str, formatted: &str) -> String {
                 .is_some_and(|n| n == &trailing_standalone[trailing_idx].anchor)
             && occurrence.is_some_and(|occ| occ == trailing_standalone[trailing_idx].occurrence)
         {
-            pending_trailing.push(trailing_standalone[trailing_idx].clone());
+            pending_trailing.push_back(trailing_standalone[trailing_idx].clone());
             trailing_idx += 1;
         }
     }
 
     while leading_idx < leading_standalone.len() {
-        out_lines.extend(leading_standalone[leading_idx].lines.iter().cloned());
+        emit_anchored_block(&mut out_lines, &leading_standalone[leading_idx]);
         leading_idx += 1;
     }
 
     while trailing_idx < trailing_standalone.len() {
-        pending_trailing.push(trailing_standalone[trailing_idx].clone());
+        pending_trailing.push_back(trailing_standalone[trailing_idx].clone());
         trailing_idx += 1;
     }
 
-    while !pending_trailing.is_empty() {
-        let block = pending_trailing.remove(0);
-        out_lines.extend(block.lines);
-    }
+    flush_ready_trailing_blocks(&mut out_lines, &mut pending_trailing, "", 0);
 
     if !eof_standalone.is_empty() {
-        if out_lines.last().is_some_and(|l| !l.is_empty()) {
-            out_lines.push(String::new());
+        if out_lines.lines.last().is_some_and(|l| !l.is_empty()) {
+            out_lines.push_line(String::new());
         }
-        out_lines.extend(eof_standalone);
+        for line in eof_standalone {
+            out_lines.push_line(line);
+        }
     }
 
-    let mut out = out_lines.join("\n");
-    if formatted.ends_with('\n') || source.ends_with('\n') {
-        out.push('\n');
-    }
-    out
+    out_lines.finish(formatted.ends_with('\n') || source.ends_with('\n'))
 }
 
 fn trim_trailing_blank_comment_lines(lines: &[String]) -> Vec<String> {
@@ -807,6 +902,68 @@ def function() -> int:
         Ok(())
     }
 
+    #[test]
+    fn test_format_source_clamps_blank_line_runs_to_two() -> Result<(), FormatError> {
+        let source = r#"def main() -> None:
+    pass
+
+
+
+def helper() -> None:
+    pass
+"#;
+        let formatted = format_source(source)?;
+        let expected = r#"def main() -> None:
+    pass
+
+
+def helper() -> None:
+    pass
+"#;
+        assert_eq!(formatted, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_preserves_single_blank_line_before_comment_led_logic_block() -> Result<(), FormatError> {
+        let source = r#"def f() -> int:
+    foo = 1
+
+    # logic block
+    bar = 2
+"#;
+        let formatted = format_source(source)?;
+        let expected = r#"def f() -> int:
+    foo = 1
+
+    # logic block
+    bar = 2
+"#;
+        assert_eq!(formatted, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_collapses_multiple_blank_lines_before_comment_led_logic_block() -> Result<(), FormatError> {
+        let source = r#"def f() -> int:
+    foo = 1
+
+
+
+    # logic block
+    bar = 2
+"#;
+        let formatted = format_source(source)?;
+        let expected = r#"def f() -> int:
+    foo = 1
+
+    # logic block
+    bar = 2
+"#;
+        assert_eq!(formatted, expected);
+        Ok(())
+    }
+
     /// Formats `source` and checks the result lexes and parses (regression harness for formatter output validity).
     fn assert_format_round_trip_lex_parse(source: &str) -> Result<String, FormatError> {
         let formatted = format_source(source)?;
@@ -1069,7 +1226,7 @@ const B: int = 2
     }
 
     #[test]
-    fn test_format_source_collapses_docstring_interior_blank_runs() -> Result<(), FormatError> {
+    fn test_format_source_preserves_docstring_interior_blank_runs() -> Result<(), FormatError> {
         let source = r#"def explain() -> str:
     """
     First paragraph.
@@ -1080,15 +1237,38 @@ const B: int = 2
     return "ok"
 "#;
         let formatted = format_source(source)?;
-        let expected = r#"def explain() -> str:
-    """
-    First paragraph.
+        assert_eq!(formatted, source);
+        Ok(())
+    }
 
-    Second paragraph.
+    #[test]
+    fn test_format_source_preserves_many_docstring_blank_lines() -> Result<(), FormatError> {
+        let source = r#"def explain() -> str:
+    """
+    some docstring with a bunch of blank lines
+
+
+
+
+
+    inside it
     """
     return "ok"
 "#;
-        assert_eq!(formatted, expected);
+        let formatted = format_source(source)?;
+        assert_eq!(formatted, source);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_preserves_literal_slash_n_sequences() -> Result<(), FormatError> {
+        let source = r#"def explain() -> str:
+    # /n/n/n/n this is valid
+    value = "/n/n/n/n and so is this"
+    return value
+"#;
+        let formatted = format_source(source)?;
+        assert_eq!(formatted, source);
         Ok(())
     }
 
@@ -1554,6 +1734,42 @@ def load_user(id: UserId) -> User:
             result.contains("OtherId\n"),
             "expected last item without comma; got: {result}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_long_constructor_call_wraps_args() -> Result<(), FormatError> {
+        let source = r#"def build_schema() -> Schema:
+    return CarrierSchema(declared_columns=declared_columns(), planned_columns=planned_columns(), resolved_columns=resolved_columns())
+"#;
+        let config = FormatConfig::new().with_line_length(60).with_trailing_commas(true);
+        let result = format_source_with_config(source, config)?;
+        let expected = r#"def build_schema() -> Schema:
+    return CarrierSchema(
+        declared_columns=declared_columns(),
+        planned_columns=planned_columns(),
+        resolved_columns=resolved_columns(),
+    )
+"#;
+        assert_eq!(result, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_long_constructor_call_wraps_without_trailing_comma_when_disabled() -> Result<(), FormatError> {
+        let source = r#"def build_schema() -> Schema:
+    return CarrierSchema(declared_columns=declared_columns(), planned_columns=planned_columns(), resolved_columns=resolved_columns())
+"#;
+        let config = FormatConfig::new().with_line_length(60).with_trailing_commas(false);
+        let result = format_source_with_config(source, config)?;
+        let expected = r#"def build_schema() -> Schema:
+    return CarrierSchema(
+        declared_columns=declared_columns(),
+        planned_columns=planned_columns(),
+        resolved_columns=resolved_columns()
+    )
+"#;
+        assert_eq!(result, expected);
         Ok(())
     }
 
