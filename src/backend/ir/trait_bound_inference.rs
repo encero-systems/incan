@@ -30,7 +30,7 @@ use incan_core::lang::trait_bounds::rust as tb;
 
 use super::IrProgram;
 use super::decl::{FunctionParam, IrDeclKind, IrFunction, IrTraitBound, IrTypeParam};
-use super::expr::{BinOp, FormatPart, IrExpr, IrExprKind};
+use super::expr::{BinOp, FormatPart, IrExpr, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind};
 use super::stmt::{IrStmt, IrStmtKind};
 use super::types::IrType;
 
@@ -189,6 +189,568 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
             }
             _ => {}
         }
+    }
+
+    // ---- Pass 4: backend-synthesized clone bounds ----
+    //
+    // Ownership planning can introduce `.clone()` at emission time (for example `return self.value` from `&self` or
+    // `return self` for `-> Self`). Those clones are invisible to the earlier IR-body scan, so generic impl/function
+    // headers need a final pass that mirrors the backend's return-value ownership rules.
+    infer_backend_clone_bounds(program);
+}
+
+/// Infer `Clone` bounds required by backend-inserted ownership materialization.
+///
+/// Today this mirrors `ConversionContext::ReturnValue`: non-`Copy` vars returned without a move and non-`Copy` field
+/// reads returned from a borrowed context materialize owned values via `.clone()`. It also mirrors ordinary
+/// Incan-owned method-call argument lowering, where non-`Copy` vars/field reads are cloned at by-value call
+/// boundaries.
+fn infer_backend_clone_bounds(program: &mut IrProgram) {
+    let clone_derived_self_params = collect_clone_derived_self_params(program);
+
+    for decl in &mut program.declarations {
+        match &mut decl.kind {
+            IrDeclKind::Function(func) => {
+                augment_callable_type_params_for_backend_return_clones(&mut func.type_params, &func.body, None)
+            }
+            IrDeclKind::Impl(impl_block) => {
+                let self_clone_params = clone_derived_self_params.get(&impl_block.target_type);
+                for method in &impl_block.methods {
+                    augment_callable_type_params_for_backend_return_clones(
+                        &mut impl_block.type_params,
+                        &method.body,
+                        self_clone_params,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Collect owner type parameters that participate in a derived `Clone` implementation.
+///
+/// `return self` lowers to `self.clone()`, which is only available when the owner type itself implements `Clone`.
+/// Rust's derive machinery adds those bounds based on field/variant payload usage, so we mirror that dependency here
+/// for impl headers that call `self.clone()`.
+fn collect_clone_derived_self_params(program: &IrProgram) -> HashMap<String, HashSet<String>> {
+    let mut result = HashMap::new();
+
+    for decl in &program.declarations {
+        match &decl.kind {
+            IrDeclKind::Struct(s) if s.derives.iter().any(|derive| derive == tb::CLONE) => {
+                let type_param_names: HashSet<&str> = s.type_params.iter().map(|tp| tp.name.as_str()).collect();
+                let mut used = HashSet::new();
+                for field in &s.fields {
+                    collect_generic_type_param_names(&field.ty, &type_param_names, &mut used);
+                }
+                result.insert(s.name.clone(), used);
+            }
+            IrDeclKind::Enum(e) if e.derives.iter().any(|derive| derive == tb::CLONE) => {
+                let type_param_names: HashSet<&str> = e.type_params.iter().map(|tp| tp.name.as_str()).collect();
+                let mut used = HashSet::new();
+                for variant in &e.variants {
+                    match &variant.fields {
+                        super::decl::VariantFields::Unit => {}
+                        super::decl::VariantFields::Tuple(items) => {
+                            for item in items {
+                                collect_generic_type_param_names(item, &type_param_names, &mut used);
+                            }
+                        }
+                        super::decl::VariantFields::Struct(fields) => {
+                            for field in fields {
+                                collect_generic_type_param_names(&field.ty, &type_param_names, &mut used);
+                            }
+                        }
+                    }
+                }
+                result.insert(e.name.clone(), used);
+            }
+            _ => {}
+        }
+    }
+
+    result
+}
+
+fn augment_callable_type_params_for_backend_return_clones(
+    type_params: &mut [IrTypeParam],
+    body: &[IrStmt],
+    self_clone_params: Option<&HashSet<String>>,
+) {
+    if type_params.is_empty() {
+        return;
+    }
+
+    let type_param_names: HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
+    let mut clone_params = HashSet::new();
+    for stmt in body {
+        collect_backend_clone_bounds_in_stmt(stmt, &type_param_names, self_clone_params, &mut clone_params);
+    }
+
+    for tp in type_params {
+        if clone_params.contains(&tp.name) && !tp.bounds.iter().any(|bound| bound.trait_path == tb::CLONE) {
+            tp.bounds.push(IrTraitBound::simple(tb::CLONE));
+        }
+        tp.bounds = deduplicate_bounds(std::mem::take(&mut tp.bounds));
+    }
+}
+
+fn collect_backend_clone_bounds_in_stmt(
+    stmt: &IrStmt,
+    type_param_names: &HashSet<&str>,
+    self_clone_params: Option<&HashSet<String>>,
+    clone_params: &mut HashSet<String>,
+) {
+    match &stmt.kind {
+        IrStmtKind::Return(Some(expr)) => {
+            if return_self_requires_backend_clone(expr, self_clone_params) || return_value_requires_backend_clone(expr)
+            {
+                add_backend_clone_bounds_for_cloned_expr(expr, type_param_names, self_clone_params, clone_params);
+            }
+            collect_owned_sink_clone_bounds_in_expr(expr, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(expr, type_param_names, self_clone_params, clone_params);
+        }
+        IrStmtKind::Expr(expr) => {
+            collect_backend_clone_bounds_in_expr(expr, type_param_names, self_clone_params, clone_params);
+        }
+        IrStmtKind::Let { value, .. } | IrStmtKind::Assign { value, .. } | IrStmtKind::CompoundAssign { value, .. } => {
+            collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+        }
+        IrStmtKind::While { body, .. } | IrStmtKind::Loop { body, .. } => {
+            for stmt in body {
+                collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        IrStmtKind::For { body, .. } => {
+            for stmt in body {
+                collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        IrStmtKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            for stmt in then_branch {
+                collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
+            }
+            if let Some(else_branch) = else_branch {
+                for stmt in else_branch {
+                    collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
+                }
+            }
+        }
+        IrStmtKind::Match { arms, .. } => {
+            for arm in arms {
+                if let IrExprKind::Block { stmts, .. } = &arm.body.kind {
+                    for stmt in stmts {
+                        collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
+                    }
+                }
+                collect_backend_clone_bounds_in_expr(&arm.body, type_param_names, self_clone_params, clone_params);
+                if let Some(guard) = &arm.guard {
+                    collect_backend_clone_bounds_in_expr(guard, type_param_names, self_clone_params, clone_params);
+                }
+            }
+        }
+        IrStmtKind::Block(stmts) => {
+            for stmt in stmts {
+                collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        IrStmtKind::Return(None) | IrStmtKind::Break(_) | IrStmtKind::Continue(_) => {}
+    }
+}
+
+fn collect_owned_sink_clone_bounds_in_expr(
+    expr: &IrExpr,
+    type_param_names: &HashSet<&str>,
+    self_clone_params: Option<&HashSet<String>>,
+    clone_params: &mut HashSet<String>,
+) {
+    match &expr.kind {
+        IrExprKind::Tuple(items) | IrExprKind::List(items) | IrExprKind::Set(items) => {
+            for item in items {
+                if return_self_requires_backend_clone(item, self_clone_params)
+                    || incan_call_arg_requires_backend_clone(item)
+                {
+                    add_backend_clone_bounds_for_cloned_expr(item, type_param_names, self_clone_params, clone_params);
+                }
+                collect_owned_sink_clone_bounds_in_expr(item, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        IrExprKind::Dict(entries) => {
+            for (key, value) in entries {
+                for expr in [key, value] {
+                    if return_self_requires_backend_clone(expr, self_clone_params)
+                        || incan_call_arg_requires_backend_clone(expr)
+                    {
+                        add_backend_clone_bounds_for_cloned_expr(
+                            expr,
+                            type_param_names,
+                            self_clone_params,
+                            clone_params,
+                        );
+                    }
+                    collect_owned_sink_clone_bounds_in_expr(expr, type_param_names, self_clone_params, clone_params);
+                }
+            }
+        }
+        IrExprKind::Struct { fields, .. } => {
+            for (_, value) in fields {
+                if return_self_requires_backend_clone(value, self_clone_params)
+                    || incan_call_arg_requires_backend_clone(value)
+                {
+                    add_backend_clone_bounds_for_cloned_expr(value, type_param_names, self_clone_params, clone_params);
+                }
+                collect_owned_sink_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_backend_clone_bounds_in_expr(
+    expr: &IrExpr,
+    type_param_names: &HashSet<&str>,
+    self_clone_params: Option<&HashSet<String>>,
+    clone_params: &mut HashSet<String>,
+) {
+    match &expr.kind {
+        IrExprKind::MethodCall {
+            receiver,
+            args,
+            arg_policy,
+            ..
+        } => {
+            if method_call_args_use_incan_clone_policy(receiver, *arg_policy) {
+                for arg in args {
+                    if incan_call_arg_requires_backend_clone(&arg.expr) {
+                        add_backend_clone_bounds_for_cloned_expr(
+                            &arg.expr,
+                            type_param_names,
+                            self_clone_params,
+                            clone_params,
+                        );
+                    }
+                    collect_backend_clone_bounds_in_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
+                }
+            } else {
+                for arg in args {
+                    collect_backend_clone_bounds_in_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
+                }
+            }
+            collect_backend_clone_bounds_in_expr(receiver, type_param_names, self_clone_params, clone_params);
+        }
+        IrExprKind::KnownMethodCall { receiver, args, .. } => {
+            collect_backend_clone_bounds_in_expr(receiver, type_param_names, self_clone_params, clone_params);
+            for arg in args {
+                collect_backend_clone_bounds_in_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        IrExprKind::Call { func, args, .. } => {
+            if call_args_use_incan_clone_policy(func) {
+                for arg in args {
+                    if incan_call_arg_requires_backend_clone(&arg.expr) {
+                        add_backend_clone_bounds_for_cloned_expr(
+                            &arg.expr,
+                            type_param_names,
+                            self_clone_params,
+                            clone_params,
+                        );
+                    }
+                    collect_backend_clone_bounds_in_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
+                }
+            } else {
+                for arg in args {
+                    collect_backend_clone_bounds_in_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
+                }
+            }
+            collect_backend_clone_bounds_in_expr(func, type_param_names, self_clone_params, clone_params);
+        }
+        IrExprKind::BuiltinCall { args, .. } | IrExprKind::List(args) | IrExprKind::Tuple(args) => {
+            for arg in args {
+                collect_backend_clone_bounds_in_expr(arg, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        IrExprKind::Dict(entries) => {
+            for (key, value) in entries {
+                collect_backend_clone_bounds_in_expr(key, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        IrExprKind::Set(items) => {
+            for item in items {
+                collect_backend_clone_bounds_in_expr(item, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        IrExprKind::Struct { fields, .. } => {
+            for (_, value) in fields {
+                collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        IrExprKind::Field { object, .. }
+        | IrExprKind::Await(object)
+        | IrExprKind::Try(object)
+        | IrExprKind::Cast { expr: object, .. }
+        | IrExprKind::InteropCoerce { expr: object, .. }
+        | IrExprKind::UnaryOp { operand: object, .. } => {
+            collect_backend_clone_bounds_in_expr(object, type_param_names, self_clone_params, clone_params);
+        }
+        IrExprKind::BinOp { left, right, .. }
+        | IrExprKind::Index {
+            object: left,
+            index: right,
+        } => {
+            collect_backend_clone_bounds_in_expr(left, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(right, type_param_names, self_clone_params, clone_params);
+        }
+        IrExprKind::Slice {
+            target,
+            start,
+            end,
+            step,
+        } => {
+            collect_backend_clone_bounds_in_expr(target, type_param_names, self_clone_params, clone_params);
+            if let Some(start) = start {
+                collect_backend_clone_bounds_in_expr(start, type_param_names, self_clone_params, clone_params);
+            }
+            if let Some(end) = end {
+                collect_backend_clone_bounds_in_expr(end, type_param_names, self_clone_params, clone_params);
+            }
+            if let Some(step) = step {
+                collect_backend_clone_bounds_in_expr(step, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        IrExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_backend_clone_bounds_in_expr(condition, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(then_branch, type_param_names, self_clone_params, clone_params);
+            if let Some(else_branch) = else_branch {
+                collect_backend_clone_bounds_in_expr(else_branch, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        IrExprKind::Block { stmts, value } => {
+            for stmt in stmts {
+                collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
+            }
+            if let Some(value) = value {
+                collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        IrExprKind::Match { scrutinee, arms } => {
+            collect_backend_clone_bounds_in_expr(scrutinee, type_param_names, self_clone_params, clone_params);
+            for arm in arms {
+                collect_backend_clone_bounds_in_expr(&arm.body, type_param_names, self_clone_params, clone_params);
+                if let Some(guard) = &arm.guard {
+                    collect_backend_clone_bounds_in_expr(guard, type_param_names, self_clone_params, clone_params);
+                }
+            }
+        }
+        IrExprKind::Closure { body, .. } => {
+            collect_backend_clone_bounds_in_expr(body, type_param_names, self_clone_params, clone_params);
+        }
+        IrExprKind::ListComp {
+            element,
+            iterable,
+            filter,
+            ..
+        } => {
+            collect_backend_clone_bounds_in_expr(element, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(iterable, type_param_names, self_clone_params, clone_params);
+            if let Some(filter) = filter {
+                collect_backend_clone_bounds_in_expr(filter, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        IrExprKind::DictComp {
+            key,
+            value,
+            iterable,
+            filter,
+            ..
+        } => {
+            collect_backend_clone_bounds_in_expr(key, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(iterable, type_param_names, self_clone_params, clone_params);
+            if let Some(filter) = filter {
+                collect_backend_clone_bounds_in_expr(filter, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        IrExprKind::Range { start, end, .. } => {
+            if let Some(start) = start {
+                collect_backend_clone_bounds_in_expr(start, type_param_names, self_clone_params, clone_params);
+            }
+            if let Some(end) = end {
+                collect_backend_clone_bounds_in_expr(end, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        IrExprKind::Format { parts } => {
+            for part in parts {
+                if let FormatPart::Expr(expr) = part {
+                    collect_backend_clone_bounds_in_expr(expr, type_param_names, self_clone_params, clone_params);
+                }
+            }
+        }
+        IrExprKind::Var { .. }
+        | IrExprKind::StaticRead { .. }
+        | IrExprKind::StaticBinding { .. }
+        | IrExprKind::Unit
+        | IrExprKind::None
+        | IrExprKind::Bool(_)
+        | IrExprKind::Int(_)
+        | IrExprKind::Float(_)
+        | IrExprKind::String(_)
+        | IrExprKind::Bytes(_)
+        | IrExprKind::Literal(_)
+        | IrExprKind::FieldsList(_)
+        | IrExprKind::SerdeToJson
+        | IrExprKind::SerdeFromJson(_) => {}
+    }
+}
+
+fn return_self_requires_backend_clone(expr: &IrExpr, self_clone_params: Option<&HashSet<String>>) -> bool {
+    self_clone_params.is_some() && matches!(&expr.kind, IrExprKind::Var { name, .. } if name == "self")
+}
+
+fn return_value_requires_backend_clone(expr: &IrExpr) -> bool {
+    match &expr.kind {
+        IrExprKind::Var { access, .. } if !expr.ty.is_copy() => !matches!(access, VarAccess::Move),
+        IrExprKind::Field { .. } if !expr.ty.is_copy() => true,
+        _ => false,
+    }
+}
+
+fn method_call_args_use_incan_clone_policy(receiver: &IrExpr, arg_policy: MethodCallArgPolicy) -> bool {
+    !matches!(arg_policy, MethodCallArgPolicy::PreserveShape)
+        && !matches!(
+            &receiver.kind,
+            IrExprKind::Var {
+                ref_kind: VarRefKind::ExternalRustName,
+                ..
+            }
+        )
+}
+
+fn call_args_use_incan_clone_policy(func: &IrExpr) -> bool {
+    !matches!(
+        &func.kind,
+        IrExprKind::Var {
+            ref_kind: VarRefKind::ExternalRustName,
+            ..
+        }
+    )
+}
+
+fn borrowed_method_inner_ty(expr: &IrExpr) -> Option<&IrType> {
+    match &expr.kind {
+        IrExprKind::MethodCall { receiver, method, .. } if method == "as_ref" => match &receiver.ty {
+            IrType::NamedGeneric(_, args) if args.len() == 1 => args.first(),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn incan_call_arg_requires_backend_clone(expr: &IrExpr) -> bool {
+    match &expr.kind {
+        IrExprKind::Var { access, .. } if !expr.ty.is_copy() => !matches!(access, VarAccess::Move),
+        IrExprKind::Field { .. } if !expr.ty.is_copy() => true,
+        _ if matches!(&expr.ty, IrType::Ref(inner) | IrType::RefMut(inner) if !inner.as_ref().is_copy()) => true,
+        _ if borrowed_method_inner_ty(expr).is_some_and(|inner| !inner.is_copy()) => true,
+        _ => false,
+    }
+}
+
+fn add_backend_clone_bounds_for_cloned_expr(
+    expr: &IrExpr,
+    type_param_names: &HashSet<&str>,
+    self_clone_params: Option<&HashSet<String>>,
+    clone_params: &mut HashSet<String>,
+) {
+    if matches!(&expr.kind, IrExprKind::Var { name, .. } if name == "self") {
+        if let Some(self_clone_params) = self_clone_params {
+            if self_clone_params.is_empty() {
+                clone_params.extend(type_param_names.iter().map(|name| (*name).to_string()));
+            } else {
+                clone_params.extend(self_clone_params.iter().cloned());
+            }
+        } else {
+            clone_params.extend(type_param_names.iter().map(|name| (*name).to_string()));
+        }
+        if matches!(expr.ty, IrType::SelfType) {
+            return;
+        }
+    }
+
+    let before = clone_params.len();
+    if let Some(inner_ty) = borrowed_method_inner_ty(expr) {
+        collect_generic_type_param_names(inner_ty, type_param_names, clone_params);
+    }
+    collect_generic_type_param_names(&expr.ty, type_param_names, clone_params);
+    if clone_params.len() == before
+        && matches!(&expr.kind, IrExprKind::Var { .. } | IrExprKind::Field { .. })
+        && !type_param_names.is_empty()
+    {
+        clone_params.extend(type_param_names.iter().map(|name| (*name).to_string()));
+    }
+}
+
+fn collect_generic_type_param_names(ty: &IrType, type_param_names: &HashSet<&str>, out: &mut HashSet<String>) {
+    match ty {
+        IrType::Generic(name) => {
+            if type_param_names.contains(name.as_str()) {
+                out.insert(name.clone());
+            }
+        }
+        IrType::List(inner)
+        | IrType::Set(inner)
+        | IrType::Option(inner)
+        | IrType::Ref(inner)
+        | IrType::RefMut(inner) => {
+            collect_generic_type_param_names(inner, type_param_names, out);
+        }
+        IrType::Dict(key, value) | IrType::Result(key, value) => {
+            collect_generic_type_param_names(key, type_param_names, out);
+            collect_generic_type_param_names(value, type_param_names, out);
+        }
+        IrType::Tuple(items) | IrType::NamedGeneric(_, items) => {
+            for item in items {
+                collect_generic_type_param_names(item, type_param_names, out);
+            }
+        }
+        IrType::Function { params, ret } => {
+            for param in params {
+                collect_generic_type_param_names(param, type_param_names, out);
+            }
+            collect_generic_type_param_names(ret, type_param_names, out);
+        }
+        IrType::ImplTrait(bound) => {
+            for arg in &bound.type_args {
+                collect_generic_type_param_names(arg, type_param_names, out);
+            }
+            for (_, ty) in &bound.assoc_types {
+                collect_generic_type_param_names(ty, type_param_names, out);
+            }
+        }
+        IrType::Struct(_)
+        | IrType::Enum(_)
+        | IrType::Trait(_)
+        | IrType::Unit
+        | IrType::Bool
+        | IrType::Int
+        | IrType::Float
+        | IrType::String
+        | IrType::StaticStr
+        | IrType::StaticBytes
+        | IrType::FrozenStr
+        | IrType::FrozenBytes
+        | IrType::StrRef
+        | IrType::SelfType
+        | IrType::Unknown => {}
     }
 }
 

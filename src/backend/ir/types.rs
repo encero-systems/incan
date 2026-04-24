@@ -121,6 +121,19 @@ impl IrType {
         matches!(self, IrType::Ref(_) | IrType::RefMut(_))
     }
 
+    /// Return the nominal type constructor name for user-defined or imported nominal types.
+    ///
+    /// This treats `Foo` and `Foo[T]` as the same nominal family while preserving generic
+    /// arguments elsewhere in the IR.
+    pub fn nominal_type_name(&self) -> Option<&str> {
+        match self {
+            IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) | IrType::NamedGeneric(name, _) => {
+                Some(name.as_str())
+            }
+            _ => None,
+        }
+    }
+
     /// Get the Incan-style type name (for reflection/display to users).
     ///
     /// RFC 021: This is used for `FieldInfo.type_name` to show the Incan type, not the Rust representation.

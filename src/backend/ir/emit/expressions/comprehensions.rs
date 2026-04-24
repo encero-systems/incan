@@ -8,6 +8,10 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use super::super::super::expr::{IrExprKind, TypedExpr};
+use super::super::super::ownership::{
+    ComprehensionIterationPlan, dict_comprehension_key_needs_clone, plan_dict_comprehension_iteration,
+    plan_list_comprehension_iteration,
+};
 use super::super::{EmitError, IrEmitter};
 
 impl<'a> IrEmitter<'a> {
@@ -35,14 +39,18 @@ impl<'a> IrEmitter<'a> {
         let is_range = self.is_range_iterable(iterable);
         let iter_wrapped = quote! { (#iter) };
 
-        // ---- Context: filtered comprehensions ----
-        if let Some(filter_expr) = filter {
-            let filter_tokens = self.emit_expr(filter_expr)?;
-            if is_range {
+        match plan_list_comprehension_iteration(is_range, filter.is_some()) {
+            ComprehensionIterationPlan::RangeFilter => {
+                let filter_tokens = self.emit_expr(filter.expect("range filter plan requires filter"))?;
                 Ok(quote! {
                     #iter_wrapped.filter(|&#var_ident| #filter_tokens).map(|#var_ident| #elem).collect::<Vec<_>>()
                 })
-            } else {
+            }
+            ComprehensionIterationPlan::RangeDirect => Ok(quote! {
+                #iter_wrapped.map(|#var_ident| #elem).collect::<Vec<_>>()
+            }),
+            ComprehensionIterationPlan::FilterMapCloneBinding => {
+                let filter_tokens = self.emit_expr(filter.expect("filter_map plan requires filter"))?;
                 Ok(quote! {
                     #iter_wrapped
                         .iter()
@@ -57,15 +65,9 @@ impl<'a> IrEmitter<'a> {
                         .collect::<Vec<_>>()
                 })
             }
-        // ---- Context: unfiltered comprehensions ----
-        } else if is_range {
-            Ok(quote! {
-                #iter_wrapped.map(|#var_ident| #elem).collect::<Vec<_>>()
-            })
-        } else {
-            Ok(quote! {
+            ComprehensionIterationPlan::IterCloned => Ok(quote! {
                 #iter_wrapped.iter().cloned().map(|#var_ident| #elem).collect::<Vec<_>>()
-            })
+            }),
         }
     }
 
@@ -93,33 +95,36 @@ impl<'a> IrEmitter<'a> {
         // Dict comprehensions build `(key, value)` tuples left-to-right. For non-Copy keys we clone before the tuple so
         // the value expression can still read the loop variable afterward (for example `{name: len(name) for name in
         // names}`).
-        let needs_clone = !key.ty.is_copy();
+        let needs_clone = dict_comprehension_key_needs_clone(&key.ty);
         let cloned_key = if needs_clone {
             quote! { #key_tokens.clone() }
         } else {
             quote! { #key_tokens }
         };
 
-        // ---- Context: filtered vs unfiltered comprehensions ----
-        if let Some(filter_expr) = filter {
-            let filter_tokens = self.emit_expr(filter_expr)?;
-            Ok(quote! {
-                #iter
-                    .iter()
-                    .filter_map(|#var_ident| {
-                        let #var_ident = (*#var_ident).clone();
-                        if #filter_tokens {
-                            Some((#cloned_key, #value_tokens))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<std::collections::HashMap<_, _>>()
-            })
-        } else {
-            Ok(quote! {
+        match plan_dict_comprehension_iteration(filter.is_some()) {
+            ComprehensionIterationPlan::FilterMapCloneBinding => {
+                let filter_tokens = self.emit_expr(filter.expect("filtered dict plan requires filter"))?;
+                Ok(quote! {
+                    #iter
+                        .iter()
+                        .filter_map(|#var_ident| {
+                            let #var_ident = (*#var_ident).clone();
+                            if #filter_tokens {
+                                Some((#cloned_key, #value_tokens))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<std::collections::HashMap<_, _>>()
+                })
+            }
+            ComprehensionIterationPlan::IterCloned => Ok(quote! {
                 #iter.iter().cloned().map(|#var_ident| (#cloned_key, #value_tokens)).collect::<std::collections::HashMap<_, _>>()
-            })
+            }),
+            ComprehensionIterationPlan::RangeDirect | ComprehensionIterationPlan::RangeFilter => {
+                unreachable!("dict comprehensions do not use range-specific iteration plans")
+            }
         }
     }
 

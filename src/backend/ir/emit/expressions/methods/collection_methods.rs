@@ -1,65 +1,19 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use crate::backend::ir::conversions::{ConversionContext, determine_conversion};
 use crate::backend::ir::emit::expressions::methods::ReceiverInfo;
 use crate::backend::ir::emit::{EmitError, IrEmitter};
 use crate::backend::ir::expr::{CollectionMethodKind, TypedExpr};
+use crate::backend::ir::ownership::{ValueUseSite, plan_collection_receiver, plan_dict_lookup_key};
 use crate::backend::ir::types::IrType;
-
-/// Borrow a list-like receiver immutably unless emission is already operating on a reference-typed value.
-///
-/// Known collection helpers such as `list_count` and `list_index` take shared borrows; this keeps emitted Rust
-/// aligned with the receiver's existing reference shape instead of manufacturing `&&T`.
-fn emit_list_shared_receiver(receiver: &TypedExpr, r: &TokenStream) -> TokenStream {
-    match &receiver.ty {
-        IrType::Ref(_) | IrType::RefMut(_) => quote! { #r },
-        _ => quote! { &#r },
-    }
-}
-
-/// Borrow a list-like receiver mutably unless emission is already operating on a mutable reference.
-///
-/// This is used for strict mutating helpers such as `list_remove` and `list_swap` so known-method emission can route
-/// through stdlib helpers without double-borrowing the receiver.
-fn emit_list_mut_receiver(receiver: &TypedExpr, r: &TokenStream) -> TokenStream {
-    match &receiver.ty {
-        IrType::RefMut(_) => quote! { #r },
-        _ => quote! { &mut #r },
-    }
-}
-
-/// Emit a dictionary key argument with the borrow shape expected by Rust map APIs.
-///
-/// Borrowed/string-slice-like probes are passed through unchanged; owned probes are borrowed once so lookup-style
-/// methods such as `get` and `contains_key` receive `&Q` rather than moving the key.
-fn emit_dict_key_arg(arg: &TypedExpr, emitted: TokenStream) -> TokenStream {
-    match &arg.ty {
-        IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::StaticStr => emitted,
-        _ => quote! { &#emitted },
-    }
-}
 
 /// Emit a dictionary lookup key, normalizing string-key probes to `AsRef<str>` when appropriate.
 ///
 /// For `Dict[str, V]`-like receivers, owned string probes are lowered through `AsRef<str>` so emitted Rust matches the
-/// standard library's borrowed lookup surface without adding an extra `&str` layer. Non-string-key dictionaries fall
-/// back to [`emit_dict_key_arg`].
+/// standard library's borrowed lookup surface without adding an extra `&str` layer. Other key families use the shared
+/// ownership planner's borrowed probe rules.
 pub(super) fn emit_dict_lookup_key(receiver: &TypedExpr, arg: &TypedExpr, emitted: TokenStream) -> TokenStream {
-    match &receiver.ty {
-        IrType::Dict(key_ty, _)
-            if matches!(
-                key_ty.as_ref(),
-                IrType::String | IrType::StrRef | IrType::StaticStr | IrType::FrozenStr
-            ) =>
-        {
-            match &arg.ty {
-                IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::StaticStr => emitted,
-                _ => quote! { <_ as AsRef<str>>::as_ref(&#emitted) },
-            }
-        }
-        _ => emit_dict_key_arg(arg, emitted),
-    }
+    plan_dict_lookup_key(&receiver.ty, &arg.ty).apply(emitted)
 }
 
 /// Emit collection-related known methods (list/dict/set).
@@ -88,8 +42,26 @@ pub(super) fn emit_collection_method(
         }
         CollectionMethodKind::Insert => {
             if args.len() >= 2 {
-                let k = emitter.emit_expr(&args[0])?;
-                let v = emitter.emit_expr(&args[1])?;
+                let (key_target_ty, value_target_ty) = match &receiver.ty {
+                    IrType::Dict(key_ty, value_ty) => (Some(key_ty.as_ref()), Some(value_ty.as_ref())),
+                    IrType::Ref(inner) | IrType::RefMut(inner) => match inner.as_ref() {
+                        IrType::Dict(key_ty, value_ty) => (Some(key_ty.as_ref()), Some(value_ty.as_ref())),
+                        _ => (None, None),
+                    },
+                    _ => (None, None),
+                };
+                let k = emitter.emit_expr_for_use(
+                    &args[0],
+                    ValueUseSite::CollectionElement {
+                        target_ty: key_target_ty,
+                    },
+                )?;
+                let v = emitter.emit_expr_for_use(
+                    &args[1],
+                    ValueUseSite::CollectionElement {
+                        target_ty: value_target_ty,
+                    },
+                )?;
                 return Ok(quote! { #r.insert(#k, #v) });
             }
             Ok(quote! { () })
@@ -97,14 +69,13 @@ pub(super) fn emit_collection_method(
         CollectionMethodKind::Remove => {
             if let Some(arg) = args.first() {
                 let a = emitter.emit_expr(arg)?;
-                let list_mut = emit_list_mut_receiver(receiver, r);
+                let list_mut = plan_collection_receiver(&receiver.ty, true).apply(r.clone());
                 return Ok(quote! { incan_stdlib::collections::list_remove(#list_mut, (#a) as i64) });
             }
             Ok(quote! { () })
         }
         CollectionMethodKind::Append => {
             if let Some(arg) = args.first() {
-                let a = emitter.emit_expr(arg)?;
                 let elem_ty = match &receiver.ty {
                     IrType::List(elem) => Some(elem.as_ref()),
                     IrType::Ref(inner) | IrType::RefMut(inner) => match inner.as_ref() {
@@ -113,8 +84,8 @@ pub(super) fn emit_collection_method(
                     },
                     _ => None,
                 };
-                let conversion = determine_conversion(arg, elem_ty, ConversionContext::CollectionElement);
-                let converted = conversion.apply(a);
+                let converted =
+                    emitter.emit_expr_for_use(arg, ValueUseSite::CollectionElement { target_ty: elem_ty })?;
                 return Ok(quote! { #r.push(#converted) });
             }
             Ok(quote! { () })
@@ -122,7 +93,7 @@ pub(super) fn emit_collection_method(
         CollectionMethodKind::Extend => {
             if let Some(arg) = args.first() {
                 let a = emitter.emit_expr(arg)?;
-                let list_mut = emit_list_mut_receiver(receiver, r);
+                let list_mut = plan_collection_receiver(&receiver.ty, true).apply(r.clone());
                 return Ok(quote! { incan_stdlib::collections::list_extend(#list_mut, &#a) });
             }
             Ok(quote! { () })
@@ -137,7 +108,7 @@ pub(super) fn emit_collection_method(
             if args.len() >= 2 {
                 let a1 = emitter.emit_expr(&args[0])?;
                 let a2 = emitter.emit_expr(&args[1])?;
-                let list_mut = emit_list_mut_receiver(receiver, r);
+                let list_mut = plan_collection_receiver(&receiver.ty, true).apply(r.clone());
                 return Ok(quote! { incan_stdlib::collections::list_swap(#list_mut, (#a1) as i64, (#a2) as i64) });
             }
             Ok(quote! { () })
@@ -145,7 +116,7 @@ pub(super) fn emit_collection_method(
         CollectionMethodKind::Count => {
             if let Some(arg) = args.first() {
                 let a = emitter.emit_expr(arg)?;
-                let list = emit_list_shared_receiver(receiver, r);
+                let list = plan_collection_receiver(&receiver.ty, false).apply(r.clone());
                 return Ok(quote! { incan_stdlib::collections::list_count(#list, &#a) });
             }
             Ok(quote! { 0i64 })
@@ -153,7 +124,7 @@ pub(super) fn emit_collection_method(
         CollectionMethodKind::Index => {
             if let Some(arg) = args.first() {
                 let a = emitter.emit_expr(arg)?;
-                let list = emit_list_shared_receiver(receiver, r);
+                let list = plan_collection_receiver(&receiver.ty, false).apply(r.clone());
                 return Ok(quote! { incan_stdlib::collections::list_index(#list, &#a) });
             }
             Ok(quote! { incan_stdlib::errors::raise_list_value_not_found() })

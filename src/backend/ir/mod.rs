@@ -21,6 +21,7 @@
 //! 4. Potential future backends (LLVM, WASM, etc.) can target IR instead of AST
 
 pub mod conversions;
+pub mod ownership;
 pub mod prelude;
 
 pub mod codegen;

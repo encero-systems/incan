@@ -477,6 +477,7 @@ fn determine_owned_storage_conversion(expr: &IrExpr, target_ty: Option<&IrType>)
         (_, Some(IrType::Generic(_))) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
         (IrExprKind::String(_), None) => Conversion::ToString,
         (_, None) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+        _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
         (IrExprKind::Var { access, .. }, Some(IrType::String)) if matches!(expr.ty, IrType::String) => match access {
             VarAccess::Move => Conversion::None,
             _ => Conversion::ToString,
@@ -489,6 +490,29 @@ fn determine_owned_storage_conversion(expr: &IrExpr, target_ty: Option<&IrType>)
         (IrExprKind::Field { .. }, _) if !expr.ty.is_copy() => Conversion::Clone,
         _ => Conversion::None,
     }
+}
+
+fn borrowed_expr_needs_owned_materialization(expr: &IrExpr, target_ty: Option<&IrType>) -> bool {
+    let Some(target_ty) = target_ty else {
+        return false;
+    };
+    let borrowed_inner = match &expr.ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => inner.as_ref(),
+        _ => match &expr.kind {
+            IrExprKind::MethodCall { receiver, method, .. } if method == "as_ref" => match &receiver.ty {
+                IrType::NamedGeneric(_, args) if args.len() == 1 => &args[0],
+                _ => return false,
+            },
+            _ => return false,
+        },
+    };
+    if matches!(target_ty, IrType::Ref(_) | IrType::RefMut(_)) {
+        return false;
+    }
+    if borrowed_inner.is_copy() {
+        return false;
+    }
+    borrowed_inner == target_ty || matches!(target_ty, IrType::Generic(_))
 }
 
 /// Determines what conversion (if any) is needed for a value
@@ -539,6 +563,9 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 (IrExprKind::String(_), None) => Conversion::ToString,
                 // Const `str` values need the same owned-string materialization when the target is inferred.
                 (_, None) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+                // Borrowed method-chain results such as `box.as_ref()` must materialize owned values at Incan call
+                // boundaries.
+                _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
 
                 // String variable to String param:
                 // - last-use read can move ownership directly
@@ -574,6 +601,7 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 (IrExprKind::StaticRead { .. }, _) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
                 // Const `str` values remain owned `str` at the Incan surface even inside return-context calls.
                 (_, _) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+                _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
 
                 // String variable to String param:
                 // - last-use read can move ownership directly
@@ -645,6 +673,7 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                     Conversion::ToString
                 }
                 (_, Some(IrType::String)) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+                _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
                 _ => Conversion::None,
             }
         }
@@ -658,6 +687,14 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                     Conversion::ToString
                 }
                 (_, Some(IrType::String)) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+                _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
+                // Non-Copy vars can move on last use; otherwise materialize an owned return value.
+                (IrExprKind::Var { access, .. }, _) if !expr.ty.is_copy() => match access {
+                    VarAccess::Move => Conversion::None,
+                    _ => Conversion::Clone,
+                },
+                // Field access returns borrowed data from the parent object; clone to satisfy owned return semantics.
+                (IrExprKind::Field { .. }, _) if !expr.ty.is_copy() => Conversion::Clone,
                 // Other cases: as-is
                 _ => Conversion::None,
             }
@@ -1158,6 +1195,31 @@ mod tests {
 
         let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArgInReturn);
         assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_incan_call_clones_borrowed_as_ref_result_for_owned_nominal_target() {
+        let expr = IrExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "child".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::NamedGeneric("Box".to_string(), vec![IrType::Struct("Node".to_string())]),
+                )),
+                method: "as_ref".to_string(),
+                type_args: Vec::new(),
+                args: Vec::new(),
+                arg_policy: crate::backend::ir::expr::MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        );
+        let target = IrType::Struct("Node".to_string());
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::Clone);
     }
 
     // === MethodArg Tests ===

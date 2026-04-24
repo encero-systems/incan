@@ -850,6 +850,23 @@ fn test_issue244_mut_str_param_codegen() {
     insta::assert_snapshot!("issue244_mut_str_param", rust_code);
 }
 
+/// Issue #241: field-backed values passed to by-value methods must clone via the ownership planner.
+#[test]
+fn test_issue241_field_backed_method_arg_clone_codegen() {
+    let source = load_test_file("issue241_field_backed_method_arg_clone");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("self._cursor.join(other._cursor.clone(),true)"),
+        "expected field-backed by-value method arg to clone through planner-owned call lowering; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("self._cursor.join(&other._cursor,true)"),
+        "unexpected borrowed field-backed method arg for by-value call; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("issue241_field_backed_method_arg_clone", rust_code);
+}
+
 /// Issue #364: filtered list comprehensions over non-Copy values must not destructure `&item` in `filter(...)`.
 #[test]
 fn test_issue364_filtered_list_comp_borrow_codegen() {
@@ -1138,6 +1155,27 @@ fn test_traits_codegen() {
 fn test_trait_supertraits_codegen() {
     let source = load_test_file("trait_supertraits");
     let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("impl<T:Clone>BoxedValue<T>{"),
+        "expected generic inherent impl to inherit Clone bound for backend-owned returns; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("impl<T:Clone>OrderedCollection<T>forBoxedValue<T>{"),
+        "expected generic trait impl to inherit Clone bound for backend-owned Self returns; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("impl<T:Clone>Collection<T>forBoxedValue<T>{"),
+        "expected generic trait impl to inherit Clone bound for backend-owned field returns; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("returnself.value.clone();"),
+        "expected trait-supertrait field return to materialize ownership via clone; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("returnself.clone();"),
+        "expected trait-supertrait Self return to materialize ownership via clone; generated:\n{rust_code}"
+    );
     insta::assert_snapshot!("trait_supertraits", rust_code);
 }
 

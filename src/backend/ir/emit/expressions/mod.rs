@@ -24,8 +24,8 @@
 //!
 //! - **Not lexer tokens**: [`TokenStream`] here is `proc_macro2::TokenStream` used for Rust codegen. Lexer output is a
 //!   separate token type in the frontend.
-//! - **Conversions are centralized**: Ownership/borrow/copy/string adjustments should go through
-//!   [`determine_conversion`] using a [`ConversionContext`] instead of being hand-coded inline.
+//! - **Ownership planning is centralized**: Ownership/borrow/copy/string adjustments should go through
+//!   `backend::ir::ownership` instead of being hand-coded inline.
 //! - **Side-effect free**: Emission is pure codegen; it does not touch the filesystem.
 //!
 //! ## Examples
@@ -37,7 +37,7 @@
 //!
 //! ## See also
 //!
-//! - `src/backend/ir/conversions.rs`: conversion policy and ownership rules
+//! - `src/backend/ir/ownership.rs`: ownership/coercion planner for emitted Rust boundaries
 //! - `src/backend/ir/emit/mod.rs`: higher-level emission (items/statements) that calls into this module
 
 mod builtins;
@@ -59,7 +59,7 @@ use super::super::expr::{
 };
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
-use crate::backend::ir::conversions::{ConversionContext, determine_conversion};
+use crate::backend::ir::ownership::{ValueUseSite, plan_value_use};
 
 #[derive(Debug, Clone)]
 pub(super) enum StorageRoot {
@@ -99,9 +99,145 @@ impl<'a> IrEmitter<'a> {
         item: &TypedExpr,
         item_target_ty: Option<&IrType>,
     ) -> Result<TokenStream, EmitError> {
-        let emitted = self.emit_expr(item)?;
-        let conversion = determine_conversion(item, item_target_ty, ConversionContext::CollectionElement);
-        Ok(conversion.apply(emitted))
+        self.emit_expr_for_use(
+            item,
+            ValueUseSite::CollectionElement {
+                target_ty: item_target_ty,
+            },
+        )
+    }
+
+    fn use_site_target_ty<'b>(site: ValueUseSite<'b>) -> Option<&'b IrType> {
+        match site {
+            ValueUseSite::IncanCallArg { target_ty, .. }
+            | ValueUseSite::ExternalCallArg { target_ty }
+            | ValueUseSite::StructField { target_ty }
+            | ValueUseSite::CollectionElement { target_ty }
+            | ValueUseSite::Assignment { target_ty }
+            | ValueUseSite::ReturnValue { target_ty } => target_ty,
+            ValueUseSite::MethodArg => None,
+        }
+    }
+
+    fn tuple_item_use_site<'b>(site: ValueUseSite<'b>, target_ty: Option<&'b IrType>) -> ValueUseSite<'b> {
+        match site {
+            ValueUseSite::IncanCallArg { in_return, .. } => ValueUseSite::IncanCallArg {
+                target_ty,
+                callee_param: None,
+                in_return,
+            },
+            ValueUseSite::ExternalCallArg { .. } => ValueUseSite::ExternalCallArg { target_ty },
+            ValueUseSite::StructField { .. } => ValueUseSite::StructField { target_ty },
+            ValueUseSite::CollectionElement { .. } => ValueUseSite::CollectionElement { target_ty },
+            ValueUseSite::Assignment { .. } => ValueUseSite::Assignment { target_ty },
+            ValueUseSite::ReturnValue { .. } => ValueUseSite::ReturnValue { target_ty },
+            ValueUseSite::MethodArg => ValueUseSite::MethodArg,
+        }
+    }
+
+    /// Emit an expression directly against an ownership-planned sink/source boundary.
+    pub(super) fn emit_expr_for_use(&self, expr: &TypedExpr, site: ValueUseSite<'_>) -> Result<TokenStream, EmitError> {
+        match &expr.kind {
+            IrExprKind::List(items) => {
+                let item_target_ty = match Self::use_site_target_ty(site) {
+                    Some(IrType::List(elem)) => Some(elem.as_ref()),
+                    _ => match &expr.ty {
+                        IrType::List(elem) => Some(elem.as_ref()),
+                        _ => None,
+                    },
+                };
+                let item_tokens: Vec<TokenStream> = items
+                    .iter()
+                    .map(|item| {
+                        self.emit_expr_for_use(
+                            item,
+                            ValueUseSite::CollectionElement {
+                                target_ty: item_target_ty,
+                            },
+                        )
+                    })
+                    .collect::<Result<_, _>>()?;
+                return Ok(quote! { vec![#(#item_tokens),*] });
+            }
+            IrExprKind::Dict(pairs) => {
+                if pairs.is_empty() {
+                    return Ok(quote! { HashMap::new() });
+                }
+                let (key_target_ty, value_target_ty) = match Self::use_site_target_ty(site) {
+                    Some(IrType::Dict(key, value)) => (Some(key.as_ref()), Some(value.as_ref())),
+                    _ => match &expr.ty {
+                        IrType::Dict(key, value) => (Some(key.as_ref()), Some(value.as_ref())),
+                        _ => (None, None),
+                    },
+                };
+                let pair_tokens: Vec<TokenStream> = pairs
+                    .iter()
+                    .map(|(key, value)| {
+                        let key_tokens = self.emit_expr_for_use(
+                            key,
+                            ValueUseSite::CollectionElement {
+                                target_ty: key_target_ty,
+                            },
+                        )?;
+                        let value_tokens = self.emit_expr_for_use(
+                            value,
+                            ValueUseSite::CollectionElement {
+                                target_ty: value_target_ty,
+                            },
+                        )?;
+                        Ok(quote! { (#key_tokens, #value_tokens) })
+                    })
+                    .collect::<Result<_, EmitError>>()?;
+                return Ok(quote! { [#(#pair_tokens),*].into_iter().collect::<HashMap<_, _>>() });
+            }
+            IrExprKind::Set(items) => {
+                if items.is_empty() {
+                    return Ok(quote! { HashSet::new() });
+                }
+                let item_target_ty = match Self::use_site_target_ty(site) {
+                    Some(IrType::Set(elem)) => Some(elem.as_ref()),
+                    _ => match &expr.ty {
+                        IrType::Set(elem) => Some(elem.as_ref()),
+                        _ => None,
+                    },
+                };
+                let item_tokens: Vec<TokenStream> = items
+                    .iter()
+                    .map(|item| {
+                        self.emit_expr_for_use(
+                            item,
+                            ValueUseSite::CollectionElement {
+                                target_ty: item_target_ty,
+                            },
+                        )
+                    })
+                    .collect::<Result<_, _>>()?;
+                return Ok(quote! { [#(#item_tokens),*].into_iter().collect::<HashSet<_>>() });
+            }
+            IrExprKind::Tuple(items) => {
+                let tuple_target_items = match Self::use_site_target_ty(site) {
+                    Some(IrType::Tuple(items)) => Some(items.as_slice()),
+                    _ => match &expr.ty {
+                        IrType::Tuple(items) => Some(items.as_slice()),
+                        _ => None,
+                    },
+                };
+                let item_tokens: Vec<TokenStream> = items
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, item)| {
+                        let item_target_ty = tuple_target_items.and_then(|items| items.get(idx));
+                        self.emit_expr_for_use(item, Self::tuple_item_use_site(site, item_target_ty))
+                    })
+                    .collect::<Result<_, _>>()?;
+                return Ok(quote! { (#(#item_tokens),*) });
+            }
+            _ => {}
+        }
+
+        let emitted = self.emit_expr(expr)?;
+        let plan = plan_value_use(expr, site);
+        Ok(plan.apply(emitted))
     }
 
     /// Check whether an expression is a type-like identifier that should use Rust path syntax.
