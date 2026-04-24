@@ -13,19 +13,19 @@
       
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+      <link rel="icon" href="../../../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>RFC 049: if let single-arm conditional match - Incan Documentation</title>
+        <title>RFC 049: if let and while let pattern control flow - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,9 +44,9 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../../../stylesheets/pygments.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-049-if-let-single-arm-conditional-match" class="md-skip">
+        <a href="#rfc-049-if-let-and-while-let-pattern-control-flow" class="md-skip">
           Skip to content
         </a>
       
@@ -92,7 +92,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 049: if let single-arm conditional match
+              RFC 049: if let and while let pattern control flow
             
           </span>
         </div>
@@ -235,7 +235,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -265,7 +265,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href="../../../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -316,7 +316,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../start_here/" class="md-nav__link ">
+            <a href="../../../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -349,7 +349,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -370,7 +370,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -391,7 +391,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -412,7 +412,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/beginner/" class="md-nav__link">
+      <a href="../../../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -471,7 +471,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/" class="md-nav__link ">
+            <a href="../../../../language/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -595,7 +595,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/tutorials/book/" class="md-nav__link ">
+            <a href="../../../../language/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -628,7 +628,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../../../language/tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -649,7 +649,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -670,7 +670,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../../../language/tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -691,7 +691,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../../../language/tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -712,7 +712,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -733,7 +733,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../../../language/tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -754,7 +754,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -775,7 +775,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -796,7 +796,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../../../language/tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -817,7 +817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -838,7 +838,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -859,7 +859,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../../../language/tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -880,7 +880,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -909,7 +909,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../../../language/tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -930,7 +930,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../../../language/tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1024,7 +1024,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/async_programming/" class="md-nav__link">
+      <a href="../../../../language/how-to/async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1045,7 +1045,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../../../language/how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1066,7 +1066,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../../../language/how-to/error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1087,7 +1087,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_messages/" class="md-nav__link">
+      <a href="../../../../language/how-to/error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1108,7 +1108,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/file_io/" class="md-nav__link">
+      <a href="../../../../language/how-to/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1129,7 +1129,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../../../language/how-to/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1150,7 +1150,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/module_state/" class="md-nav__link">
+      <a href="../../../../language/how-to/module_state/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1171,7 +1171,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../../../language/how-to/modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1192,7 +1192,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../../../language/how-to/testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1213,7 +1213,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/string_processing/" class="md-nav__link">
+      <a href="../../../../language/how-to/string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1234,7 +1234,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/performance/" class="md-nav__link">
+      <a href="../../../../language/how-to/performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1255,7 +1255,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../../../../language/how-to/rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1276,7 +1276,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1351,7 +1351,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/" class="md-nav__link ">
+            <a href="../../../../language/reference/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1384,7 +1384,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/language/" class="md-nav__link">
+      <a href="../../../../language/reference/language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1405,7 +1405,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/code_style/" class="md-nav__link">
+      <a href="../../../../language/reference/code_style/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1426,7 +1426,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/glossary/" class="md-nav__link">
+      <a href="../../../../language/reference/glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1447,7 +1447,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/file_io/" class="md-nav__link">
+      <a href="../../../../language/reference/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1468,7 +1468,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../../../language/reference/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1489,7 +1489,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/static_storage/" class="md-nav__link">
+      <a href="../../../../language/reference/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1510,7 +1510,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../../../language/reference/numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1531,7 +1531,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/strings/" class="md-nav__link">
+      <a href="../../../../language/reference/strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1552,7 +1552,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/reflection/" class="md-nav__link">
+      <a href="../../../../language/reference/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1573,7 +1573,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../../../language/reference/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1626,7 +1626,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib/" class="md-nav__link ">
+            <a href="../../../../language/reference/stdlib/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1659,7 +1659,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
+      <a href="../../../../language/reference/stdlib/async/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1680,7 +1680,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
+      <a href="../../../../language/reference/stdlib/derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1701,7 +1701,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
+      <a href="../../../../language/reference/stdlib/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1722,7 +1722,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
+      <a href="../../../../language/reference/stdlib/traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1743,7 +1743,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
+      <a href="../../../../language/reference/stdlib/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1764,7 +1764,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
+      <a href="../../../../language/reference/stdlib/math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1825,7 +1825,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../../../language/reference/stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1858,7 +1858,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1879,7 +1879,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1900,7 +1900,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../../../language/reference/stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1921,7 +1921,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../../../language/reference/stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1942,7 +1942,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../../../language/reference/stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1963,7 +1963,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2043,7 +2043,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../../../language/reference/derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2064,7 +2064,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../../../language/reference/derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2085,7 +2085,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../../../language/reference/derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2106,7 +2106,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../../../language/reference/derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2127,7 +2127,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../../../language/reference/derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2148,7 +2148,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../../../language/reference/derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2256,7 +2256,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_incan/" class="md-nav__link">
+      <a href="../../../../language/explanation/why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2277,7 +2277,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../../../../language/explanation/why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2298,7 +2298,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../../../../language/explanation/how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2319,7 +2319,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/control_flow/" class="md-nav__link">
+      <a href="../../../../language/explanation/control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2340,7 +2340,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/closures/" class="md-nav__link">
+      <a href="../../../../language/explanation/closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2361,7 +2361,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/consts/" class="md-nav__link">
+      <a href="../../../../language/explanation/consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2382,7 +2382,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/static_storage/" class="md-nav__link">
+      <a href="../../../../language/explanation/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2403,7 +2403,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2424,7 +2424,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+      <a href="../../../../language/explanation/call_site_type_arguments/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2445,7 +2445,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../../../../language/explanation/how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2466,7 +2466,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/enums/" class="md-nav__link">
+      <a href="../../../../language/explanation/enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2487,7 +2487,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/error_handling/" class="md-nav__link">
+      <a href="../../../../language/explanation/error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2508,7 +2508,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../../../../language/explanation/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2553,7 +2553,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../../../../language/explanation/models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2586,7 +2586,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../../../../language/explanation/models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2607,7 +2607,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../../../../language/explanation/models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2636,7 +2636,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../../../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2657,7 +2657,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../../../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2724,7 +2724,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../tooling/" class="md-nav__link ">
+            <a href="../../../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2802,7 +2802,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2823,7 +2823,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2844,7 +2844,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2928,7 +2928,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2949,7 +2949,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2970,7 +2970,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2991,7 +2991,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3012,7 +3012,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3033,7 +3033,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3054,7 +3054,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3075,7 +3075,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3147,7 +3147,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3168,7 +3168,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3242,7 +3242,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3263,7 +3263,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3284,7 +3284,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3353,7 +3353,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/" class="md-nav__link ">
+            <a href="../../../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3463,7 +3463,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3496,7 +3496,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3517,7 +3517,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3538,7 +3538,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3559,7 +3559,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3580,7 +3580,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3601,7 +3601,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3622,7 +3622,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3643,7 +3643,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3729,7 +3729,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3750,7 +3750,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3771,7 +3771,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3792,7 +3792,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3813,7 +3813,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3889,7 +3889,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3910,7 +3910,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3931,7 +3931,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3952,7 +3952,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3981,7 +3981,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../../" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4036,7 +4036,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../release_notes/" class="md-nav__link ">
+            <a href="../../../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4069,7 +4069,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_2/" class="md-nav__link">
+      <a href="../../../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4090,7 +4090,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_1/" class="md-nav__link">
+      <a href="../../../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4118,7 +4118,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../roadmap/" class="md-nav__link">
+      <a href="../../../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4138,7 +4138,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../stability/" class="md-nav__link">
+      <a href="../../../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4344,9 +4344,9 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#why-if-let" class="md-nav__link">
+  <a href="#why-if-let-and-while-let" class="md-nav__link">
     <span class="md-ellipsis">
-      Why if let
+      Why if let and while let
     </span>
   </a>
   
@@ -4448,9 +4448,138 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#implementation-plan" class="md-nav__link">
     <span class="md-ellipsis">
-      Unresolved questions
+      Implementation Plan
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-parser-ast-and-formatter" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 1: Parser, AST, and formatter
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-typechecker-and-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 2: Typechecker and scope
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-lowering-and-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 3: Lowering and emission
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-tooling-tests-and-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 4: Tooling, tests, and docs
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-log" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation log
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation log">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#spec-design" class="md-nav__link">
+    <span class="md-ellipsis">
+      Spec / design
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parser-ast" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parser / AST
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#typechecker" class="md-nav__link">
+    <span class="md-ellipsis">
+      Typechecker
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lowering-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lowering / emission
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tooling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Tooling
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Tests
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Docs
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design Decisions
     </span>
   </a>
   
@@ -4474,9 +4603,9 @@
   
 
 
-<h1 id="rfc-049-if-let-single-arm-conditional-match">RFC 049: <code>if let</code> single-arm conditional match<a class="headerlink" href="#rfc-049-if-let-single-arm-conditional-match" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-049-if-let-and-while-let-pattern-control-flow">RFC 049: <code>if let</code> and <code>while let</code> pattern control flow<a class="headerlink" href="#rfc-049-if-let-and-while-let-pattern-control-flow" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Implemented</li>
 <li><strong>Created:</strong> 2026-04-02</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -4486,16 +4615,17 @@
 </li>
 <li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/333</li>
 <li><strong>RFC PR:</strong> —</li>
-<li><strong>Written against:</strong> v0.2</li>
-<li><strong>Shipped in:</strong> —</li>
+<li><strong>Written against:</strong> v0.3.0-dev.1</li>
+<li><strong>Shipped in:</strong> v0.3.0-dev.1</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC introduces <code>if let</code> as a first-class Incan control-flow construct for single-arm conditional pattern matching. It is intended for cases where authors care about exactly one successful pattern and want the non-match case to do nothing, such as replacing boilerplate like <code>Some(x) =&gt; ...</code> paired with <code>None =&gt; pass</code> with <code>if let Some(child) = filter.input:</code>. This RFC does not replace full <code>match</code>; full <code>match</code> remains the canonical construct for multi-arm branching, exhaustive reasoning, and cases where the non-match path is semantically meaningful. The design is intentionally closer to Rust than Python because the motivating cases in Incan are primarily explicit <code>Option</code> and <code>Result</code> management, so Rust-style destructuring control flow is a better fit than Python-style truthiness.</p>
+<p>This RFC introduces <code>if let</code> and <code>while let</code> as first-class Incan control-flow constructs for pattern-oriented destructuring. <code>if let</code> is intended for cases where authors care about exactly one successful pattern and want the non-match case to do nothing, such as replacing boilerplate like <code>Some(x) =&gt; ...</code> paired with <code>None =&gt; pass</code> with <code>if let Some(child) = filter.input:</code>. <code>while let</code> covers the looping counterpart: continue iterating while a pattern keeps matching, then stop when it no longer does. This RFC does not replace full <code>match</code>; full <code>match</code> remains the canonical construct for multi-arm branching, exhaustive reasoning, and cases where the non-match path is semantically meaningful. The design is intentionally closer to Rust than Python because the motivating cases in Incan are primarily explicit <code>Option</code>, <code>Result</code>, and enum destructuring, so Rust-style pattern control flow is a better fit than Python-style truthiness.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <ol>
-<li><code>if let PATTERN = VALUE:</code> attempts to match <code>VALUE</code> against <code>PATTERN</code>.</li>
-<li>If the match succeeds, the body executes and any names bound by the pattern are available inside that body.</li>
-<li>If the match fails, the body is skipped and no names are bound.</li>
+<li><code>if let PATTERN = VALUE:</code> attempts to match <code>VALUE</code> against <code>PATTERN</code> once.</li>
+<li>If that match succeeds, the body executes and any names bound by the pattern are available inside that body.</li>
+<li>If that match fails, the body is skipped and no names are bound.</li>
+<li><code>while let PATTERN = VALUE:</code> attempts the same match on each loop condition check and continues iterating while it succeeds.</li>
 <li>Full <code>match</code> remains the preferred construct when more than one arm matters.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
@@ -4511,13 +4641,13 @@
     <span class="nb">Ok</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">pass</span>
 </code></pre></div>
 <p>These are explicit, but they are also repetitive. The unmatched arm often adds no meaning beyond "do nothing."</p>
-<p>This RFC introduces a surface that says exactly that: perform one pattern match, execute one body on success, and implicitly skip the non-match path.</p>
+<p>This RFC introduces surfaces that say exactly that: perform one pattern match and execute one body on success, or keep looping while one pattern keeps matching.</p>
 <p>That choice is deliberate. Incan's problem here is not "how do we make conditionals feel more Pythonic." It is "how do we reduce boilerplate around explicit <code>Option</code> and <code>Result</code> handling without weakening the language's pattern-matching model." Rust has already established that <code>if let</code> is an effective answer for that specific problem shape, and this RFC follows that direction.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Add a concise, explicit single-arm conditional pattern-match form.</li>
+<li>Add concise, explicit pattern-oriented control-flow forms for one-arm extraction and loop-while-match cases.</li>
 <li>Reuse existing pattern semantics rather than introducing truthiness-based control flow.</li>
-<li>Allow successful matches to bind names with normal lexical scope inside the success branch.</li>
+<li>Allow successful matches to bind names with normal lexical scope inside the success branch or loop body.</li>
 <li>Keep full <code>match</code> as the primary construct for multi-arm or exhaustive branching.</li>
 <li>Align the surface with a familiar and proven construct where that improves readability.</li>
 </ul>
@@ -4553,6 +4683,12 @@
         <span class="k">if</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">left</span><span class="p">)</span> <span class="o">=</span> <span class="nb">join</span><span class="o">.</span><span class="n">left</span><span class="p">:</span>
             <span class="k">return</span> <span class="p">[</span><span class="n">left</span><span class="p">]</span>
     <span class="k">return</span> <span class="p">[]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">drain</span><span class="p">(</span><span class="n">queue</span><span class="p">:</span> <span class="nc">Queue</span><span class="p">[</span><span class="kt">Option</span><span class="p">[</span><span class="nb">int</span><span class="p">]])</span> <span class="o">-&gt;</span> <span class="kt">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+    <span class="nb">values</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">while</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=</span> <span class="n">queue</span><span class="o">.</span><span class="n">pop_front</span><span class="p">():</span>
+        <span class="nb">values</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">values</span>
 </code></pre></div>
 <h3 id="what-this-is-for">What this is for<a class="headerlink" href="#what-this-is-for" title="Permanent link">&para;</a></h3>
 <p>Use <code>if let</code> when:</p>
@@ -4560,6 +4696,12 @@
 <li>exactly one pattern matters;</li>
 <li>the non-match case should do nothing;</li>
 <li>the code reads more clearly as opportunistic extraction than as branching.</li>
+</ul>
+<p>Use <code>while let</code> when:</p>
+<ul>
+<li>each iteration should continue only while one pattern keeps matching;</li>
+<li>the loop naturally ends on first non-match;</li>
+<li>writing the same destructuring <code>match</code> or <code>while true</code> + <code>break</code> pattern would be noisier.</li>
 </ul>
 <h3 id="what-this-is-not-for">What this is not for<a class="headerlink" href="#what-this-is-not-for" title="Permanent link">&para;</a></h3>
 <p>When both outcomes matter, use full <code>match</code>:</p>
@@ -4574,13 +4716,16 @@
 </code></pre></div>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
-<p>This RFC introduces an <code>if let</code> statement form:</p>
+<p>This RFC introduces <code>if let</code> and <code>while let</code> statement forms:</p>
 <div class="language-text highlight"><pre><span></span><code>if_stmt ::= &quot;if&quot; if_test &quot;:&quot; block
+while_stmt ::= &quot;while&quot; while_test &quot;:&quot; block
 if_test ::= expr | if_let_test
+while_test ::= expr | while_let_test
 if_let_test ::= &quot;let&quot; pattern &quot;=&quot; expr
+while_let_test ::= &quot;let&quot; pattern &quot;=&quot; expr
 </code></pre></div>
 <p>The <code>pattern</code> grammar is the same pattern grammar already used by <code>match</code> arms.</p>
-<p>This RFC only introduces <code>if let</code> in statement position. It does not introduce <code>let</code> patterns in arbitrary boolean expression positions.</p>
+<p>This RFC introduces <code>if let</code> and <code>while let</code> in statement position. It does not introduce <code>let</code> patterns in arbitrary boolean expression positions.</p>
 <h3 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>VALUE</code> must be evaluated exactly once.</li>
@@ -4588,6 +4733,9 @@ if_let_test ::= &quot;let&quot; pattern &quot;=&quot; expr
 <li>If the pattern matches, the <code>if let</code> body executes.</li>
 <li>If the pattern does not match, the body is skipped.</li>
 <li>A failed match must not bind any names.</li>
+<li>In <code>while let</code>, the condition expression must be re-evaluated on each iteration, just as an ordinary <code>while</code> condition is re-checked on each iteration.</li>
+<li>In <code>while let</code>, the loop body executes only for iterations whose condition pattern matched successfully.</li>
+<li>In <code>while let</code>, the first non-match exits the loop without binding names for that failed attempt.</li>
 </ul>
 <p>The following:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">if</span> <span class="k">let</span> <span class="nc">PATTERN</span> <span class="o">=</span> <span class="nc">VALUE</span><span class="p">:</span>
@@ -4598,11 +4746,23 @@ if_let_test ::= &quot;let&quot; pattern &quot;=&quot; expr
     <span class="nc">PATTERN</span> <span class="o">=&gt;</span> <span class="nc">BODY</span>
     <span class="n">_</span> <span class="o">=&gt;</span> <span class="k">pass</span>
 </code></pre></div>
+<p>The following:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">while</span> <span class="k">let</span> <span class="nc">PATTERN</span> <span class="o">=</span> <span class="nc">VALUE</span><span class="p">:</span>
+    <span class="nc">BODY</span>
+</code></pre></div>
+<p>is semantically equivalent to:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">while</span> <span class="k">true</span><span class="p">:</span>
+    <span class="k">match</span> <span class="nc">VALUE</span><span class="p">:</span>
+        <span class="nc">PATTERN</span> <span class="o">=&gt;</span> <span class="nc">BODY</span>
+        <span class="n">_</span> <span class="o">=&gt;</span> <span class="k">break</span>
+</code></pre></div>
 <h3 id="scope-and-binding">Scope and binding<a class="headerlink" href="#scope-and-binding" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Names bound by the pattern are in scope only within the <code>if let</code> success branch.</li>
-<li>Those names are not in scope after the <code>if let</code> completes.</li>
+<li>Names bound by a <code>while let</code> condition are in scope only within the loop body for the successful iteration that produced them.</li>
+<li>Those names are not in scope after the <code>if let</code> or <code>while let</code> completes.</li>
 <li>Shadowing behavior follows the same rules as bindings introduced by <code>match</code> arms.</li>
+<li>In v1, <code>if let</code> remains single-arm only: it does not accept <code>elif</code> or <code>else</code> branches. When the non-match path matters, use <code>match</code>.</li>
 </ul>
 <h3 id="typing">Typing<a class="headerlink" href="#typing" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4617,35 +4777,36 @@ if_let_test ::= &quot;let&quot; pattern &quot;=&quot; expr
 <li>Tooling should explain <code>if let</code> in terms of its equivalent single-arm <code>match</code> when helpful.</li>
 </ul>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="why-if-let">Why <code>if let</code><a class="headerlink" href="#why-if-let" title="Permanent link">&para;</a></h3>
-<p>This RFC deliberately chooses <code>if let</code> as the primary surface instead of <code>PATTERN match VALUE</code>, <code>value is Pattern</code>, or walrus-style syntax.</p>
+<h3 id="why-if-let-and-while-let">Why <code>if let</code> and <code>while let</code><a class="headerlink" href="#why-if-let-and-while-let" title="Permanent link">&para;</a></h3>
+<p>This RFC deliberately chooses <code>if let</code> and <code>while let</code> as the primary surfaces instead of <code>PATTERN match VALUE</code>, <code>value is Pattern</code>, or walrus-style syntax.</p>
 <p>The reasons are:</p>
 <ul>
 <li>it is immediately recognizable to users familiar with Rust-style destructuring control flow;</li>
 <li>it clearly communicates that the construct is pattern-matching-oriented;</li>
 <li>it reads naturally in single-arm extraction cases;</li>
-<li>it scales cleanly from <code>Option</code> and <code>Result</code> to enum payloads and other destructuring patterns.</li>
+<li>it scales cleanly from <code>Option</code> and <code>Result</code> to enum payloads and other destructuring patterns;</li>
+<li>it covers both the one-shot and looping variants of the same pattern-control-flow idea instead of standardizing an asymmetrical surface.</li>
 </ul>
 <p>Most importantly, it does not require inventing a new control-flow spelling for a problem already well served by an established shape.</p>
 <p>It is also a better fit for Incan than a Python-flavored shorthand such as <code>if child:</code>. Incan's motivating examples are about matching structured values like <code>Some(...)</code>, <code>Ok(...)</code>, and <code>Err(...)</code>, not about truthiness. Choosing a Rust-aligned surface keeps the semantics explicit and keeps the feature centered on shape-based control flow.</p>
 <h3 id="why-this-is-not-raw-rust-passthrough">Why this is not "raw Rust passthrough"<a class="headerlink" href="#why-this-is-not-raw-rust-passthrough" title="Permanent link">&para;</a></h3>
-<p>The syntax is Rust-aligned, but this RFC does <strong>not</strong> define <code>if let</code> as "whatever Rust accepts."</p>
+<p>The syntax is Rust-aligned, but this RFC does <strong>not</strong> define <code>if let</code> / <code>while let</code> as "whatever Rust accepts."</p>
 <p>Incan owns the construct. That means:</p>
 <ul>
 <li>the grammar is specified in Incan terms;</li>
 <li>the semantics are specified in Incan terms;</li>
-<li>lowering to Rust <code>if let</code> is an implementation strategy, not the language definition.</li>
+<li>lowering to Rust <code>if let</code> / <code>while let</code> is an implementation strategy, not the language definition.</li>
 </ul>
 <p>That distinction matters because Incan should remain free to evolve its own pattern grammar, diagnostics, and lowering strategy without accidentally turning backend quirks into language law.</p>
 <h3 id="why-not-general-let-inside-any-if">Why not general <code>let</code> inside any <code>if</code><a class="headerlink" href="#why-not-general-let-inside-any-if" title="Permanent link">&para;</a></h3>
-<p>This RFC does not propose a general rule like "if the parser sees <code>let</code> in an <code>if</code> condition, forward it to Rust."</p>
+<p>This RFC does not propose a general rule like "if the parser sees <code>let</code> in an <code>if</code> or <code>while</code> condition, forward it to Rust."</p>
 <p>That approach is too broad for a young language because it:</p>
 <ul>
 <li>blurs the boundary between Incan syntax and backend syntax;</li>
 <li>risks surprising edge cases if Rust accepts shapes Incan does not want to standardize;</li>
 <li>makes future non-Rust lowering harder.</li>
 </ul>
-<p>This RFC instead standardizes one narrow construct: <code>if let PATTERN = VALUE:</code>.</p>
+<p>This RFC instead standardizes two narrow constructs: <code>if let PATTERN = VALUE:</code> and <code>while let PATTERN = VALUE:</code>.</p>
 <h3 id="supported-usage">Supported usage<a class="headerlink" href="#supported-usage" title="Permanent link">&para;</a></h3>
 <p>The intended sweet spot is shallow, single-arm extraction:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">if</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">child</span><span class="p">)</span> <span class="o">=</span> <span class="nb">filter</span><span class="o">.</span><span class="n">input</span><span class="p">:</span>
@@ -4656,6 +4817,9 @@ if_let_test ::= &quot;let&quot; pattern &quot;=&quot; expr
 
 <span class="k">if</span> <span class="k">let</span> <span class="nc">RelType</span><span class="o">.</span><span class="nc">Cross</span><span class="p">(</span><span class="n">cross</span><span class="p">)</span> <span class="o">=</span> <span class="n">rel</span><span class="o">.</span><span class="n">rel_type</span><span class="p">:</span>
     <span class="n">process</span><span class="p">(</span><span class="n">cross</span><span class="p">)</span>
+
+<span class="k">while</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">token</span><span class="p">)</span> <span class="o">=</span> <span class="n">stream</span><span class="o">.</span><span class="n">next</span><span class="p">():</span>
+    <span class="n">process</span><span class="p">(</span><span class="n">token</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="interaction-with-full-match">Interaction with full <code>match</code><a class="headerlink" href="#interaction-with-full-match" title="Permanent link">&para;</a></h3>
 <p>Use full <code>match</code> when:</p>
@@ -4665,26 +4829,27 @@ if_let_test ::= &quot;let&quot; pattern &quot;=&quot; expr
 <li>exhaustiveness matters;</li>
 <li>nesting would make <code>if let</code> chains harder to read than a single <code>match</code>.</li>
 </ul>
-<p>This RFC therefore reinforces a style rule:</p>
+<p>This RFC therefore reinforces style rules:</p>
 <ul>
 <li>use <code>if let</code> for opportunistic extraction with implicit no-op on failure;</li>
+<li>use <code>while let</code> for repeated extraction that should stop on first non-match;</li>
 <li>use <code>match</code> for true branching.</li>
 </ul>
 <h3 id="interaction-with-option-and-result">Interaction with <code>Option</code> and <code>Result</code><a class="headerlink" href="#interaction-with-option-and-result" title="Permanent link">&para;</a></h3>
-<p><code>if let</code> is especially useful for:</p>
+<p><code>if let</code> and <code>while let</code> are especially useful for:</p>
 <ul>
 <li><code>Option[T]</code> via <code>Some(...)</code>;</li>
 <li><code>Result[T, E]</code> via <code>Ok(...)</code> and <code>Err(...)</code>.</li>
 </ul>
-<p>This RFC does not change the meaning of <code>?</code>. The <code>?</code> operator remains the preferred construct for propagation. <code>if let</code> is for side effects, local extraction, and control flow that intentionally continues after non-match.</p>
+<p>This RFC does not change the meaning of <code>?</code>. The <code>?</code> operator remains the preferred construct for propagation. <code>if let</code> is for side effects, local extraction, and control flow that intentionally continues after non-match, while <code>while let</code> is for repeated extraction that naturally stops on first non-match.</p>
 <h3 id="interaction-with-rfc-018-is">Interaction with RFC 018 <code>is</code><a class="headerlink" href="#interaction-with-rfc-018-is" title="Permanent link">&para;</a></h3>
 <p>RFC 018 already uses <code>is</code> in pattern-oriented assertions. That remains valid and useful in assertion contexts.</p>
-<p>This RFC does not extend <code>is</code> into single-arm conditional control flow. The reason is conceptual clarity:</p>
+<p>This RFC does not extend <code>is</code> into destructuring conditional or loop control flow. The reason is conceptual clarity:</p>
 <ul>
 <li><code>is</code> reads as a boolean pattern test;</li>
-<li><code>if let</code> reads as a destructuring control-flow construct.</li>
+<li><code>if let</code> / <code>while let</code> read as destructuring control-flow constructs.</li>
 </ul>
-<p>For this RFC's narrow goal, <code>if let</code> is the better fit.</p>
+<p>For this RFC's narrow goal, <code>if let</code> / <code>while let</code> are the better fit.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
 <li>
@@ -4704,37 +4869,115 @@ This is plausible, especially given RFC 018, but it frames the feature more as a
 This is awkward for pattern-matching constructs, especially around <code>Some(...)</code>, <code>Ok(...)</code>, and other constructors. It obscures the fact that the operation is a pattern match rather than assignment.</p>
 </li>
 <li>
-<p>General Rust passthrough for <code>let</code> inside <code>if</code>.
+<p>General Rust passthrough for <code>let</code> inside <code>if</code> / <code>while</code>.
 This was rejected because it weakens Incan's ownership of its own syntax and semantics.</p>
+</li>
+<li>
+<p>Ship only <code>if let</code> now and defer <code>while let</code>.
+This was rejected because the two constructs share the same mental model, pattern semantics, and implementation machinery. Deferring <code>while let</code> would force users back into <code>while true</code> plus <code>match</code> / <code>break</code> boilerplate for the looping form of the exact same problem.</p>
 </li>
 </ol>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>The language gains another control-flow surface.</li>
-<li>Users must learn when to prefer <code>if let</code> over full <code>match</code>.</li>
-<li>Formatter and linter guidance will matter to prevent overly dense nested <code>if let</code> chains.</li>
+<li>The language gains additional control-flow surface area.</li>
+<li>Users must learn when to prefer <code>if let</code> / <code>while let</code> over full <code>match</code>.</li>
+<li>Formatter and linter guidance will matter to prevent overly dense nested <code>if let</code> or <code>while let</code> chains.</li>
 </ul>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p>The preferred implementation strategy is to express <code>if let</code> through the same semantic core already used by full <code>match</code>.</p>
+<p>The preferred implementation strategy is to express <code>if let</code> and <code>while let</code> through the same semantic core already used by full <code>match</code>.</p>
 <p>That can be done either by:</p>
 <ul>
 <li>interpreting <code>if let</code> as a single-arm <code>match</code> plus implicit <code>_ =&gt; pass</code>, or</li>
-<li>representing it separately while preserving the same pattern-matching semantics.</li>
+<li>interpreting <code>while let</code> as repeated single-arm matching plus implicit loop exit on non-match, or</li>
+<li>representing them separately while preserving the same pattern-matching semantics.</li>
 </ul>
 <p>This section is non-normative. Any implementation strategy is acceptable if it preserves the semantics above.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Language surface</strong>: <code>if let PATTERN = VALUE:</code> must be accepted in <code>if</code> statement position.</li>
-<li><strong>Type system</strong>: the pattern must type-check exactly like a <code>match</code> arm, and bindings must stay scoped to the success branch.</li>
-<li><strong>Execution handoff</strong>: implementations may realize <code>if let</code> through the existing pattern-match machinery as long as the observable semantics match this RFC.</li>
-<li><strong>Formatter</strong>: <code>if let</code> should format predictably and avoid unreadable nested chains.</li>
-<li><strong>LSP / tooling</strong>: hover, completion, and diagnostics should respect branch-local pattern bindings.</li>
+<li><strong>Language surface</strong>: <code>if let PATTERN = VALUE:</code> must be accepted in <code>if</code> statement position, and <code>while let PATTERN = VALUE:</code> must be accepted in <code>while</code> statement position.</li>
+<li><strong>Type system</strong>: the pattern must type-check exactly like a <code>match</code> arm, and bindings must stay scoped to the success branch or successful loop iteration body.</li>
+<li><strong>Execution handoff</strong>: implementations may realize <code>if let</code> / <code>while let</code> through the existing pattern-match machinery as long as the observable semantics match this RFC.</li>
+<li><strong>Formatter</strong>: <code>if let</code> / <code>while let</code> should format predictably and avoid unreadable nested chains.</li>
+<li><strong>LSP / tooling</strong>: hover, completion, and diagnostics should respect branch-local and loop-body-local pattern bindings.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-parser-ast-and-formatter">Phase 1: Parser, AST, and formatter<a class="headerlink" href="#phase-1-parser-ast-and-formatter" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Should RFC 049 be limited to <code>if let</code> in statement position for v1, or should <code>while let</code> be considered in a follow-up RFC once the core shape lands?</li>
+<li>Extend the statement grammar so <code>if</code> and <code>while</code> conditions can carry <code>let PATTERN = VALUE</code> tests in statement position.</li>
+<li>Represent <code>if let</code> and <code>while let</code> explicitly in the frontend AST, preserving spans for the pattern, value, and body.</li>
+<li>Teach the formatter to print both constructs predictably and keep nested pattern-control-flow readable.</li>
 </ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+<h3 id="phase-2-typechecker-and-scope">Phase 2: Typechecker and scope<a class="headerlink" href="#phase-2-typechecker-and-scope" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Validate <code>if let</code> / <code>while let</code> patterns under the same rules as <code>match</code> arms.</li>
+<li>Bind names only within the success branch or successful loop iteration body.</li>
+<li>Emit span-precise diagnostics for impossible or otherwise invalid patterns in these positions.</li>
+</ul>
+<h3 id="phase-3-lowering-and-emission">Phase 3: Lowering and emission<a class="headerlink" href="#phase-3-lowering-and-emission" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Lower <code>if let</code> to the existing conditional/match machinery while preserving single-evaluation semantics.</li>
+<li>Lower <code>while let</code> to repeated pattern checking with loop exit on first non-match.</li>
+<li>Emit correct Rust for both constructs without broadening the accepted Incan surface beyond this RFC.</li>
+</ul>
+<h3 id="phase-4-tooling-tests-and-docs">Phase 4: Tooling, tests, and docs<a class="headerlink" href="#phase-4-tooling-tests-and-docs" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Preserve hover, completion, and diagnostics behavior for pattern bindings inside <code>if let</code> and <code>while let</code>.</li>
+<li>Add parser, typechecker, codegen snapshot, formatter, and integration coverage for both constructs.</li>
+<li>Update user-facing docs and release notes for the new control-flow surface.</li>
+</ul>
+<h2 id="implementation-log">Implementation log<a class="headerlink" href="#implementation-log" title="Permanent link">&para;</a></h2>
+<h3 id="spec-design">Spec / design<a class="headerlink" href="#spec-design" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Settle RFC 049 as <code>if let</code> plus <code>while let</code>, both in statement position only.</li>
+<li>[x] Record the binding, scope, and non-goal rules in the RFC body.</li>
+</ul>
+<h3 id="parser-ast">Parser / AST<a class="headerlink" href="#parser-ast" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Parser: accept <code>let PATTERN = VALUE</code> tests in <code>if</code> statements.</li>
+<li>[x] Parser: accept <code>let PATTERN = VALUE</code> tests in <code>while</code> statements.</li>
+<li>[x] AST: represent <code>if let</code> with span-precise structure.</li>
+<li>[x] AST: represent <code>while let</code> with span-precise structure.</li>
+<li>[x] Formatter: round-trip both constructs stably.</li>
+</ul>
+<h3 id="typechecker">Typechecker<a class="headerlink" href="#typechecker" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Validate <code>if let</code> patterns with <code>match</code>-equivalent checking.</li>
+<li>[x] Validate <code>while let</code> patterns with <code>match</code>-equivalent checking.</li>
+<li>[x] Scope bound names to the success branch or successful loop iteration body only.</li>
+<li>[x] Emit clear diagnostics for invalid pattern usage in these positions.</li>
+</ul>
+<h3 id="lowering-emission">Lowering / emission<a class="headerlink" href="#lowering-emission" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Lower <code>if let</code> to the existing control-flow core.</li>
+<li>[x] Lower <code>while let</code> to the existing control-flow core.</li>
+<li>[x] Emit correct Rust for both constructs.</li>
+</ul>
+<h3 id="tooling">Tooling<a class="headerlink" href="#tooling" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Keep diagnostics wording aligned with pattern-matching semantics rather than assignment.</li>
+<li>[x] Preserve LSP behavior for pattern bindings inside <code>if let</code> and <code>while let</code>.</li>
+</ul>
+<h3 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Parser unit tests for <code>if let</code>.</li>
+<li>[x] Parser unit tests for <code>while let</code>.</li>
+<li>[x] Typechecker unit tests for valid and invalid <code>if let</code>.</li>
+<li>[x] Typechecker unit tests for valid and invalid <code>while let</code>.</li>
+<li>[x] Codegen snapshot tests for <code>if let</code>.</li>
+<li>[x] Codegen snapshot tests for <code>while let</code>.</li>
+<li>[x] Integration coverage for end-to-end behavior.</li>
+</ul>
+<h3 id="docs">Docs<a class="headerlink" href="#docs" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Update docs-site pages that describe control flow or pattern matching.</li>
+<li>[x] Add a release-notes entry for RFC 049 / issue #333.</li>
+</ul>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>RFC 049 includes both <code>if let</code> and <code>while let</code>; <code>while let</code> is not deferred to a follow-up RFC.</li>
+<li>Both constructs are statement-position control-flow forms only in v1. This RFC does not introduce general <code>let</code> patterns in arbitrary boolean expressions.</li>
+<li>Both constructs inherit the same pattern semantics and diagnostics contract as <code>match</code> arms rather than creating a separate matching model.</li>
+</ul>
 
 
 
@@ -4783,18 +5026,18 @@ This was rejected because it weakens Incan's ownership of its own syntax and sem
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="../../_snippets/javascripts/mathjax.js"></script>
+        <script src="../../../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../../_snippets/javascripts/tablesort.js"></script>
+        <script src="../../../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>

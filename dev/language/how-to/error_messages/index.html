@@ -4623,14 +4623,20 @@ where it happened, and what to do next.</p>
 <span class="hll"><span class="k">if</span> <span class="n">user</span><span class="p">:</span>  <span class="c1"># ❌ Can&#39;t use Option as bool</span>
 </span>    <span class="o">...</span>
 
-<span class="c1"># Right - use pattern matching</span>
-<span class="hll"><span class="k">if</span> <span class="n">user</span> <span class="ow">is</span> <span class="nb">Some</span><span class="p">(</span><span class="n">u</span><span class="p">):</span>  <span class="c1"># ✅</span>
+<span class="c1"># Right - use pattern matching control flow</span>
+<span class="hll"><span class="k">if</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">u</span><span class="p">)</span> <span class="o">=</span> <span class="n">user</span><span class="p">:</span>  <span class="c1"># ✅</span>
 </span>    <span class="nb">println</span><span class="p">(</span><span class="n">u</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
 
 <span class="c1"># Or check explicitly</span>
 <span class="k">if</span> <span class="n">user</span><span class="o">.</span><span class="n">is_some</span><span class="p">():</span>
 <span class="hll">    <span class="k">let</span> <span class="n">u</span> <span class="o">=</span> <span class="n">user</span><span class="o">.</span><span class="nb">unwrap</span><span class="p">()</span>
 </span>    <span class="nb">println</span><span class="p">(</span><span class="n">u</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+</code></pre></div>
+<p>When you need to keep iterating while a pattern keeps matching, use <code>while let</code> instead of a <code>while true</code> plus <code>match</code> / <code>break</code> ladder:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">mut</span> <span class="n">current</span> <span class="o">=</span> <span class="n">find_user</span><span class="p">(</span><span class="nb">id</span><span class="p">)</span>
+<span class="k">while</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">user</span><span class="p">)</span> <span class="o">=</span> <span class="n">current</span><span class="p">:</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+    <span class="n">current</span> <span class="o">=</span> <span class="n">next_user</span><span class="p">(</span><span class="n">user</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="philosophy-explicit-is-better">Philosophy: Explicit is Better<a class="headerlink" href="#philosophy-explicit-is-better" title="Permanent link">&para;</a></h2>
 <p>Incan intentionally requires explicit handling of:</p>

@@ -5208,10 +5208,8 @@ They're the primary way to communicate between async tasks without shared mutabl
 
 <span class="c1"># Receiver - blocks until message available</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">consumer</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
-        <span class="k">match</span> <span class="k">await</span> <span class="n">rx</span><span class="o">.</span><span class="n">recv</span><span class="p">():</span>
-            <span class="k">case</span> <span class="nb">Some</span><span class="p">(</span><span class="n">msg</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Got: </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-            <span class="k">case</span> <span class="kc">None</span><span class="p">:</span> <span class="k">break</span>  <span class="c1"># All senders dropped, channel closed</span>
+    <span class="k">while</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span> <span class="o">=</span> <span class="k">await</span> <span class="n">rx</span><span class="o">.</span><span class="n">recv</span><span class="p">():</span>
+        <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Got: </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
 <p><strong>Multiple producers</strong> (clone the sender):</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="nb">channel</span>
@@ -5235,10 +5233,8 @@ They're the primary way to communicate between async tasks without shared mutabl
 
 <span class="c1"># Single consumer receives from all producers</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">consume</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
-        <span class="k">match</span> <span class="k">await</span> <span class="n">rx</span><span class="o">.</span><span class="n">recv</span><span class="p">():</span>
-            <span class="k">case</span> <span class="nb">Some</span><span class="p">(</span><span class="n">n</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Received: </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-            <span class="k">case</span> <span class="kc">None</span><span class="p">:</span> <span class="k">break</span>
+    <span class="k">while</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="o">=</span> <span class="k">await</span> <span class="n">rx</span><span class="o">.</span><span class="n">recv</span><span class="p">():</span>
+        <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Received: </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
 <div class="admonition note">
 <p class="admonition-title">Coming from Python?</p>

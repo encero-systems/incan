@@ -756,9 +756,27 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#if-let-do-something-only-when-one-pattern-matches" class="md-nav__link">
+    <span class="md-ellipsis">
+      if let (do something only when one pattern matches)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#match-pattern-matching" class="md-nav__link">
     <span class="md-ellipsis">
       match (pattern matching)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#while-let-loop-while-one-pattern-keeps-matching" class="md-nav__link">
+    <span class="md-ellipsis">
+      while let (loop while one pattern keeps matching)
     </span>
   </a>
   
@@ -4291,9 +4309,27 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#if-let-do-something-only-when-one-pattern-matches" class="md-nav__link">
+    <span class="md-ellipsis">
+      if let (do something only when one pattern matches)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#match-pattern-matching" class="md-nav__link">
     <span class="md-ellipsis">
       match (pattern matching)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#while-let-loop-while-one-pattern-keeps-matching" class="md-nav__link">
+    <span class="md-ellipsis">
+      while let (loop while one pattern keeps matching)
     </span>
   </a>
   
@@ -4364,6 +4400,20 @@
     <span class="k">else</span><span class="p">:</span>
         <span class="k">return</span> <span class="s2">&quot;positive&quot;</span>
 </code></pre></div>
+<p>Use ordinary <code>if</code> when the condition is a boolean expression.</p>
+<h2 id="if-let-do-something-only-when-one-pattern-matches"><code>if let</code> (do something only when one pattern matches)<a class="headerlink" href="#if-let-do-something-only-when-one-pattern-matches" title="Permanent link">&para;</a></h2>
+<p>Use <code>if let</code> when you care about exactly one successful pattern and want the non-match case to do nothing.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">greet</span><span class="p">(</span><span class="n">user</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">User</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">if</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">u</span><span class="p">)</span> <span class="o">=</span> <span class="n">user</span><span class="p">:</span>
+        <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;hello </span><span class="si">{</span><span class="n">u</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>This is shorter than a full <code>match</code> when the only interesting case is the successful one.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">greet</span><span class="p">(</span><span class="n">user</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">User</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">match</span> <span class="n">user</span><span class="p">:</span>
+        <span class="k">case</span> <span class="nb">Some</span><span class="p">(</span><span class="n">u</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;hello </span><span class="si">{</span><span class="n">u</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">case</span> <span class="kc">None</span><span class="p">:</span> <span class="k">pass</span>
+</code></pre></div>
+<p>Use <code>match</code> instead when both branches matter. In v1, <code>if let</code> is single-arm only and does not accept <code>elif</code> or <code>else</code>.</p>
 <h2 id="match-pattern-matching"><code>match</code> (pattern matching)<a class="headerlink" href="#match-pattern-matching" title="Permanent link">&para;</a></h2>
 <p><code>match</code> is the main way to branch on enums like <code>Result</code> and <code>Option</code>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -4383,6 +4433,19 @@
 </code></pre></div>
 <p>This is equivalent to the <code>case ...:</code> form; pick whichever reads best to you.</p>
 </div>
+<h2 id="while-let-loop-while-one-pattern-keeps-matching"><code>while let</code> (loop while one pattern keeps matching)<a class="headerlink" href="#while-let-loop-while-one-pattern-keeps-matching" title="Permanent link">&para;</a></h2>
+<p>Use <code>while let</code> when the loop should continue only while one pattern keeps matching.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">consume</span><span class="p">(</span><span class="n">rx</span><span class="p">:</span> <span class="kt">Receiver</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">while</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span> <span class="o">=</span> <span class="k">await</span> <span class="n">rx</span><span class="o">.</span><span class="n">recv</span><span class="p">():</span>
+        <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;received </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>This is the compact form of:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">consume</span><span class="p">(</span><span class="n">rx</span><span class="p">:</span> <span class="kt">Receiver</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+        <span class="k">match</span> <span class="k">await</span> <span class="n">rx</span><span class="o">.</span><span class="n">recv</span><span class="p">():</span>
+            <span class="k">case</span> <span class="nb">Some</span><span class="p">(</span><span class="n">msg</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;received </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">case</span> <span class="kc">None</span><span class="p">:</span> <span class="k">break</span>
+</code></pre></div>
 <h2 id="for-loops"><code>for</code> loops<a class="headerlink" href="#for-loops" title="Permanent link">&para;</a></h2>
 <p>Incan supports Python-like <code>for</code> loops:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -4398,7 +4461,9 @@
 <h2 id="try-it">Try it<a class="headerlink" href="#try-it" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Write a function <code>classify(n: int) -&gt; str</code> using <code>if/elif/else</code>.</li>
+<li>Use <code>if let</code> on an <code>Option[User]</code> and print the user's name only when present.</li>
 <li>Use <code>match</code> on a <code>Result</code> and print either the value or the error.</li>
+<li>Write a <code>while let</code> loop that consumes messages until a channel closes.</li>
 <li>Loop over a list and stop early with <code>break</code>.</li>
 </ol>
 <details class="example">
@@ -4417,12 +4482,29 @@
     <span class="nb">println</span><span class="p">(</span><span class="n">classify</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>   <span class="c1"># zero</span>
     <span class="nb">println</span><span class="p">(</span><span class="n">classify</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span>   <span class="c1"># positive</span>
 
-    <span class="c1"># 2) match on Result</span>
+    <span class="c1"># 2) if let on Option</span>
+    <span class="n">maybe_name</span> <span class="o">=</span> <span class="nb">Some</span><span class="p">(</span><span class="s2">&quot;Danny&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">name</span><span class="p">)</span> <span class="o">=</span> <span class="n">maybe_name</span><span class="p">:</span>
+        <span class="nb">println</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+
+    <span class="c1"># 3) match on Result</span>
     <span class="k">match</span> <span class="n">parse_port</span><span class="p">(</span><span class="s2">&quot;8080&quot;</span><span class="p">):</span>
         <span class="nb">Ok</span><span class="p">(</span><span class="n">port</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;port=</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;error=</span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
-    <span class="c1"># 3) loop over a list and stop early with break</span>
+    <span class="c1"># 4) while let on a sequence of optional values</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">next_value</span><span class="p">(</span><span class="nb">values</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="kt">Option</span><span class="p">[</span><span class="nb">int</span><span class="p">]],</span> <span class="n">idx</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+        <span class="k">if</span> <span class="n">idx</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="nb">values</span><span class="p">):</span>
+            <span class="k">return</span> <span class="nb">values</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="nb">values</span> <span class="o">=</span> <span class="p">[</span><span class="nb">Some</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span> <span class="nb">Some</span><span class="p">(</span><span class="mi">2</span><span class="p">),</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="n">idx</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">while</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=</span> <span class="n">next_value</span><span class="p">(</span><span class="nb">values</span><span class="p">,</span> <span class="n">idx</span><span class="p">):</span>
+        <span class="nb">println</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+        <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="c1"># 5) loop over a list and stop early with break</span>
     <span class="n">items</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;Bob&quot;</span><span class="p">,</span> <span class="s2">&quot;Cara&quot;</span><span class="p">]</span>
     <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">items</span><span class="p">:</span>
         <span class="k">if</span> <span class="n">name</span> <span class="o">==</span> <span class="s2">&quot;Bob&quot;</span><span class="p">:</span>

@@ -4214,6 +4214,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#rfc-049-if-let-and-while-let-control-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 049 if let and while let control flow
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4299,20 +4308,22 @@
 
 <h1 id="release-03">Release 0.3<a class="headerlink" href="#release-03" title="Permanent link">&para;</a></h1>
 <p>Incan 0.3 is the current development release. It picks up after the <code>0.2</code> line, which made the language surface more explicit around stdlib imports, Rust interop, library manifests, module state, and call-site generics.</p>
-<p>The first user-facing work in <code>0.3</code> is about tightening tooling contracts rather than adding a new language surface. In particular, Incan now has a documented code-style guide together with a tighter formatter contract, with RFC 053 preserved as the design snapshot behind the vertical-spacing model, so formatter output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points.</p>
+<p>The first user-facing work in <code>0.3</code> now spans both language surface and tooling contracts. In particular, Incan adds RFC 049's <code>if let</code> / <code>while let</code> control flow together with a tighter formatter contract and a documented code-style guide, so both authored source and formatter output are becoming more explicit and predictable across CLI, editor, and library entry points.</p>
 <p>This page will grow as more <code>0.3</code> work lands. If you are looking for the shipped <code>0.2</code> story, start with <a href="../0_2/">Release 0.2</a>.</p>
 <p>For the current source-layout contract, start with the <a href="../../language/reference/code_style/">Incan Code Style Guide</a>. Use <a href="../../tooling/how-to/formatting/">Formatting with <code>incan fmt</code></a> for the tool behavior. <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a> records the design snapshot behind the vertical-spacing model.</p>
 <h2 id="what-03-is-about">What 0.3 is about<a class="headerlink" href="#what-03-is-about" title="Permanent link">&para;</a></h2>
-<p>The <code>0.2</code> line made Incan's module, stdlib, and Rust interop boundaries much clearer. <code>0.3</code> continues from that baseline with a stronger emphasis on predictable generated output, contributor ergonomics, and the gaps that remain visible when real projects keep using the compiler day to day.</p>
+<p>The <code>0.2</code> line made Incan's module, stdlib, and Rust interop boundaries much clearer. <code>0.3</code> continues from that baseline with a stronger emphasis on predictable generated output, contributor ergonomics, and small but meaningful control-flow ergonomics that remove repetitive boilerplate without weakening the language's explicit pattern model.</p>
 <p>The release is still early, but the initial direction is already visible:</p>
 <ul>
 <li>formatter output should be governed by explicit contracts, not scattered newline decisions</li>
+<li>common <code>Option</code> / <code>Result</code> destructuring should have a concise control-flow form when the non-match case is intentionally a no-op</li>
 <li>user-facing tooling behavior should match the docs closely enough that CI and editor integrations can rely on it</li>
 <li>work that was intentionally deferred from <code>0.2</code>, especially broader ownership and generated-runtime ergonomics, remains the main follow-up area</li>
 </ul>
 <h2 id="migrating-from-02">Migrating from 0.2<a class="headerlink" href="#migrating-from-02" title="Permanent link">&para;</a></h2>
-<p>There are no required source migrations for the first <code>0.3</code> formatter work.</p>
+<p>There are no required source migrations for the current <code>0.3</code> work.</p>
 <p>Projects that gate on <code>incan fmt --check</code> should expect one-time vertical-spacing diffs when adopting a formatter that implements RFC 053. Those diffs are intentional: top-level <code>def</code> / <code>model</code> / <code>type</code>-like declarations get exactly two blank lines around them, following body-bearing members inside type bodies get exactly one blank line, and other same-scope transitions stay in the zero-or-one bucket.</p>
+<p><code>if let</code> and <code>while let</code> are additive. Existing <code>match</code> code keeps working unchanged; the new forms are available when a single successful pattern matters and the non-match path should do nothing.</p>
 <h2 id="major-additions">Major additions<a class="headerlink" href="#major-additions" title="Permanent link">&para;</a></h2>
 <h3 id="rfc-053-formatter-vertical-spacing-contract">RFC 053 formatter vertical-spacing contract<a class="headerlink" href="#rfc-053-formatter-vertical-spacing-contract" title="Permanent link">&para;</a></h3>
 <p><code>incan fmt</code> now follows RFC 053's three-bucket vertical-spacing model:</p>
@@ -4325,6 +4336,10 @@
 <p>Long constructor and call expressions now participate in formatter wrapping: calls that overflow the configured line-length target are rewritten with one argument per line and respect the existing trailing-comma setting.</p>
 <p>The same spacing contract applies through the CLI and the library formatter API. <code>FormatConfig</code> still controls ordinary formatting options such as indentation and line length, but vertical-spacing buckets and comment placement are not configurable.</p>
 <p>See also: <a href="../../language/reference/code_style/">Incan Code Style Guide</a>, <a href="../../tooling/how-to/formatting/">Formatting with <code>incan fmt</code></a>, <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a>.</p>
+<h3 id="rfc-049-if-let-and-while-let-control-flow">RFC 049 <code>if let</code> and <code>while let</code> control flow<a class="headerlink" href="#rfc-049-if-let-and-while-let-control-flow" title="Permanent link">&para;</a></h3>
+<p>Incan now supports <code>if let PATTERN = VALUE:</code> and <code>while let PATTERN = VALUE:</code> in statement position.</p>
+<p>Use <code>if let</code> when exactly one successful pattern matters and the non-match path should do nothing. Use <code>while let</code> when a loop should keep iterating only while one pattern keeps matching. Both forms reuse the same pattern semantics as <code>match</code>, keep bindings scoped to the successful branch or loop body, and leave full <code>match</code> as the right tool when multiple arms or explicit non-match behavior matter.</p>
+<p>In v1, <code>if let</code> remains intentionally single-arm only and rejects <code>else</code> / <code>elif</code>. When the non-match path is semantically important, keep using <code>match</code>.</p>
 <h2 id="detailed-inventory">Detailed inventory<a class="headerlink" href="#detailed-inventory" title="Permanent link">&para;</a></h2>
 <p>The sections above are the release story. The list below is the detailed inventory of language, compiler, runtime, tooling, and docs changes that have landed for <code>0.3</code>, grouped roughly by theme rather than by the order work happened to land.</p>
 <h3 id="tooling-and-formatter">Tooling and formatter<a class="headerlink" href="#tooling-and-formatter" title="Permanent link">&para;</a></h3>
@@ -4334,11 +4349,12 @@
 </ul>
 <h3 id="parser-and-syntax">Parser and syntax<a class="headerlink" href="#parser-and-syntax" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>Language/Compiler</strong>: Incan now supports <code>if let PATTERN = VALUE:</code> and <code>while let PATTERN = VALUE:</code> for single-pattern control flow. Parsing, formatter round-trips, typechecking, scoping, lowering, and Rust emission now follow the same pattern semantics as <code>match</code>, while <code>if let</code> stays single-arm only and rejects <code>else</code> / <code>elif</code> branches in v1 (<a href="/dev/RFCs/closed/implemented/049_single_arm_conditional_match">RFC 049</a>, #333).</li>
 <li><strong>Compiler/Parser</strong>: Multiline function and method parameter lists now accept a trailing comma before <code>)</code>, including receiver-only method signatures such as <code>def get(self,) -&gt; int</code> when written across lines (#394).</li>
 </ul>
 <h3 id="versioning-and-release-track">Versioning and release track<a class="headerlink" href="#versioning-and-release-track" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.0</code>.</li>
+<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.1</code>.</li>
 </ul>
 <h2 id="known-limitations-03">Known limitations (0.3)<a class="headerlink" href="#known-limitations-03" title="Permanent link">&para;</a></h2>
 <ul>
@@ -4347,6 +4363,7 @@
 </ul>
 <h2 id="rfcs-implemented">RFCs implemented<a class="headerlink" href="#rfcs-implemented" title="Permanent link">&para;</a></h2>
 <ul>
+<li><code>if let</code> and <code>while let</code> pattern control flow: <a href="/dev/RFCs/closed/implemented/049_single_arm_conditional_match">RFC 049</a></li>
 <li>Formatter vertical spacing buckets: <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a></li>
 </ul>
 <!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->

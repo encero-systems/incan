@@ -2382,9 +2382,27 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#pattern-oriented-branching-with-if-let" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pattern-oriented branching with if let
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#pattern-matching-with-match" class="md-nav__link">
     <span class="md-ellipsis">
       Pattern matching with match
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#looping-while-a-pattern-keeps-matching-with-while-let" class="md-nav__link">
+    <span class="md-ellipsis">
+      Looping while a pattern keeps matching with while let
     </span>
   </a>
   
@@ -4271,9 +4289,27 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#pattern-oriented-branching-with-if-let" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pattern-oriented branching with if let
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#pattern-matching-with-match" class="md-nav__link">
     <span class="md-ellipsis">
       Pattern matching with match
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#looping-while-a-pattern-keeps-matching-with-while-let" class="md-nav__link">
+    <span class="md-ellipsis">
+      Looping while a pattern keeps matching with while let
     </span>
   </a>
   
@@ -4326,6 +4362,30 @@
     <span class="k">else</span><span class="p">:</span>
         <span class="k">return</span> <span class="s2">&quot;positive&quot;</span>
 </code></pre></div>
+<p>Use ordinary <code>if</code> when the condition is a boolean expression and both the true/false shape of the branch matters.</p>
+<h2 id="pattern-oriented-branching-with-if-let">Pattern-oriented branching with <code>if let</code><a class="headerlink" href="#pattern-oriented-branching-with-if-let" title="Permanent link">&para;</a></h2>
+<p>Use <code>if let</code> when you want to try one pattern match and do something only on success.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">print_primary_email</span><span class="p">(</span><span class="n">user</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">User</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">if</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">u</span><span class="p">)</span> <span class="o">=</span> <span class="n">user</span><span class="p">:</span>
+        <span class="nb">println</span><span class="p">(</span><span class="n">u</span><span class="o">.</span><span class="n">email</span><span class="p">)</span>
+</code></pre></div>
+<p>This is the concise form of “match one successful shape, otherwise do nothing.” It is most useful with <code>Option</code>, <code>Result</code>, and enum payloads.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">log_port</span><span class="p">(</span><span class="n">raw</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">if</span> <span class="k">let</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">port</span><span class="p">)</span> <span class="o">=</span> <span class="n">parse_port</span><span class="p">(</span><span class="n">raw</span><span class="p">):</span>
+        <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;listening on </span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Prefer <code>if let</code> when:</p>
+<ul>
+<li>exactly one successful pattern matters;</li>
+<li>the non-match path should do nothing;</li>
+<li>the code reads more naturally as opportunistic extraction than as full branching.</li>
+</ul>
+<p>Use <code>match</code> instead when the non-match path matters, when you need more than one arm, or when you want exhaustiveness to stay explicit.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">match</span> <span class="n">parse_port</span><span class="p">(</span><span class="n">raw</span><span class="p">):</span>
+    <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">port</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;listening on </span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;invalid port: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><code>if let</code> bindings exist only inside the body. In v1, <code>if let</code> is intentionally single-arm only and does not accept <code>elif</code> or <code>else</code>.</p>
 <h2 id="pattern-matching-with-match">Pattern matching with <code>match</code><a class="headerlink" href="#pattern-matching-with-match" title="Permanent link">&para;</a></h2>
 <p>Use <code>match</code> to branch on enum values like <code>Result</code> and <code>Option</code>.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -4335,6 +4395,31 @@
         <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">port</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;port=</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;error: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
+<p>Use <code>match</code> when:</p>
+<ul>
+<li>both success and failure paths matter;</li>
+<li>more than one variant needs its own behavior;</li>
+<li>you want the full branching structure to stay visible.</li>
+</ul>
+<h2 id="looping-while-a-pattern-keeps-matching-with-while-let">Looping while a pattern keeps matching with <code>while let</code><a class="headerlink" href="#looping-while-a-pattern-keeps-matching-with-while-let" title="Permanent link">&para;</a></h2>
+<p>Use <code>while let</code> when a loop should continue only while one pattern keeps matching.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">drain</span><span class="p">(</span><span class="n">rx</span><span class="p">:</span> <span class="kt">Receiver</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">while</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span> <span class="o">=</span> <span class="k">await</span> <span class="n">rx</span><span class="o">.</span><span class="n">recv</span><span class="p">():</span>
+        <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Got: </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>This replaces the more repetitive shape:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+    <span class="k">match</span> <span class="k">await</span> <span class="n">rx</span><span class="o">.</span><span class="n">recv</span><span class="p">():</span>
+        <span class="k">case</span> <span class="nb">Some</span><span class="p">(</span><span class="n">msg</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Got: </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">case</span> <span class="kc">None</span><span class="p">:</span> <span class="k">break</span>
+</code></pre></div>
+<p>Prefer <code>while let</code> when:</p>
+<ul>
+<li>each iteration destructures the same success case;</li>
+<li>the loop naturally ends on the first non-match;</li>
+<li><code>while True</code> plus <code>match</code> plus <code>break</code> adds noise rather than meaning.</li>
+</ul>
+<p>Like <code>if let</code>, names bound by the pattern exist only inside the successful body of that iteration.</p>
 <h2 id="looping-with-for">Looping with <code>for</code><a class="headerlink" href="#looping-with-for" title="Permanent link">&para;</a></h2>
 <p>Incan supports Python-like <code>for</code> loops:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>

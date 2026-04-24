@@ -1147,6 +1147,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#pattern-do-something-only-on-success-if-let" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pattern: Do something only on success (if let)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#pattern-defaults-unwrap_or-unwrap_or_else" class="md-nav__link">
     <span class="md-ellipsis">
       Pattern: Defaults (unwrap_or / unwrap_or_else)
@@ -4325,6 +4334,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#pattern-do-something-only-on-success-if-let" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pattern: Do something only on success (if let)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#pattern-defaults-unwrap_or-unwrap_or_else" class="md-nav__link">
     <span class="md-ellipsis">
       Pattern: Defaults (unwrap_or / unwrap_or_else)
@@ -4431,6 +4449,13 @@ and “what to do when…”.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">require_user</span><span class="p">(</span><span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">User</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
     <span class="k">return</span> <span class="n">users</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="nb">id</span><span class="p">)</span><span class="o">.</span><span class="n">ok_or</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">NotFound</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;user </span><span class="si">{</span><span class="nb">id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">))</span>
 </code></pre></div>
+<h2 id="pattern-do-something-only-on-success-if-let">Pattern: Do something only on success (<code>if let</code>)<a class="headerlink" href="#pattern-do-something-only-on-success-if-let" title="Permanent link">&para;</a></h2>
+<p>Use <code>if let</code> when you care about exactly one successful shape and want the non-match case to do nothing.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">maybe_log_user</span><span class="p">(</span><span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">if</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">user</span><span class="p">)</span> <span class="o">=</span> <span class="n">users</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="nb">id</span><span class="p">):</span>
+        <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;loaded </span><span class="si">{</span><span class="n">user</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>This is usually clearer than spelling the same idea as a full <code>match</code> with an empty fallback arm.</p>
 <h2 id="pattern-defaults-unwrap_or-unwrap_or_else">Pattern: Defaults (<code>unwrap_or</code> / <code>unwrap_or_else</code>)<a class="headerlink" href="#pattern-defaults-unwrap_or-unwrap_or_else" title="Permanent link">&para;</a></h2>
 <p>Use defaults only when there is a genuinely safe fallback.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nb">timeout</span> <span class="o">=</span> <span class="n">settings</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;timeout_secs&quot;</span><span class="p">)</span><span class="o">.</span><span class="nb">unwrap_or</span><span class="p">(</span><span class="s2">&quot;2.0&quot;</span><span class="p">)</span>
