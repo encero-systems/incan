@@ -271,8 +271,9 @@ fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Ty
                 })
             })
             .or_else(|| i.else_body.as_ref().and_then(|b| call_site_types_in_stmts(b, offset))),
-        Statement::While(w) => call_site_type_in_condition(&w.condition, offset)
-            .or_else(|| call_site_types_in_stmts(&w.body, offset)),
+        Statement::While(w) => {
+            call_site_type_in_condition(&w.condition, offset).or_else(|| call_site_types_in_stmts(&w.body, offset))
+        }
         Statement::For(f) => {
             call_site_type_in_expr(&f.iter, offset).or_else(|| call_site_types_in_stmts(&f.body, offset))
         }
