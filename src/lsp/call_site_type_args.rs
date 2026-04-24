@@ -2,7 +2,9 @@
 
 use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind};
 
-use crate::frontend::ast::{CallArg, Declaration, Expr, MatchBody, Program, SliceExpr, Spanned, Statement, Type};
+use crate::frontend::ast::{
+    CallArg, Condition, Declaration, Expr, MatchBody, Program, SliceExpr, Spanned, Statement, Type,
+};
 use incan_core::lang::conventions;
 use incan_core::lang::types::{collections, numerics, stringlike};
 
@@ -264,7 +266,7 @@ fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Ty
             .or_else(|| call_site_type_in_expr(&i.value, offset)),
         Statement::Return(Some(e)) => call_site_type_in_expr(e, offset),
         Statement::Return(None) => None,
-        Statement::If(i) => call_site_type_in_expr(&i.condition, offset)
+        Statement::If(i) => call_site_type_in_condition(&i.condition, offset)
             .or_else(|| call_site_types_in_stmts(&i.then_body, offset))
             .or_else(|| {
                 i.elif_branches.iter().find_map(|(c, b)| {
@@ -274,7 +276,7 @@ fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Ty
             .or_else(|| i.else_body.as_ref().and_then(|b| call_site_types_in_stmts(b, offset))),
         Statement::Loop(l) => call_site_types_in_stmts(&l.body, offset),
         Statement::While(w) => {
-            call_site_type_in_expr(&w.condition, offset).or_else(|| call_site_types_in_stmts(&w.body, offset))
+            call_site_type_in_condition(&w.condition, offset).or_else(|| call_site_types_in_stmts(&w.body, offset))
         }
         Statement::For(f) => {
             call_site_type_in_expr(&f.iter, offset).or_else(|| call_site_types_in_stmts(&f.body, offset))
@@ -296,6 +298,19 @@ fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Ty
         Statement::Break(Some(value)) => call_site_type_in_expr(value, offset),
         Statement::Pass | Statement::Break(None) | Statement::Continue => None,
         Statement::VocabBlock(_) => None,
+    }
+}
+
+/// Search a control-flow condition for explicit call-site type arguments at the
+/// requested offset.
+///
+/// Let-pattern conditions only expose type arguments from the scrutinee
+/// expression; pattern nodes themselves do not currently carry call-site type
+/// argument syntax.
+fn call_site_type_in_condition(condition: &Condition, offset: usize) -> Option<&Spanned<Type>> {
+    match condition {
+        Condition::Expr(expr) => call_site_type_in_expr(expr, offset),
+        Condition::Let { value, .. } => call_site_type_in_expr(value, offset),
     }
 }
 

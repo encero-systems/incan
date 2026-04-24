@@ -279,7 +279,7 @@ pub fn internal_statement_to_public(stmt: &ast::Statement) -> Result<incan_vocab
             value: internal_expr_to_public(&assign.value.node)?,
         }),
         ast::Statement::If(if_stmt) => Ok(incan_vocab::IncanStatement::If {
-            condition: internal_expr_to_public(&if_stmt.condition.node)?,
+            condition: internal_condition_expr_to_public(&if_stmt.condition)?,
             then_body: internal_statements_to_public(&if_stmt.then_body)?,
             else_body: if_stmt
                 .else_body
@@ -289,7 +289,7 @@ pub fn internal_statement_to_public(stmt: &ast::Statement) -> Result<incan_vocab
                 .unwrap_or_default(),
         }),
         ast::Statement::While(while_stmt) => Ok(incan_vocab::IncanStatement::While {
-            condition: internal_expr_to_public(&while_stmt.condition.node)?,
+            condition: internal_condition_expr_to_public(&while_stmt.condition)?,
             body: internal_statements_to_public(&while_stmt.body)?,
         }),
         ast::Statement::For(for_stmt) => {
@@ -374,7 +374,10 @@ pub fn public_statement_to_internal(stmt: &incan_vocab::IncanStatement) -> Resul
             then_body,
             else_body,
         } => Ok(ast::Statement::If(ast::IfStmt {
-            condition: ast::Spanned::new(public_expr_to_internal(condition)?, ast::Span::default()),
+            condition: ast::Condition::Expr(ast::Spanned::new(
+                public_expr_to_internal(condition)?,
+                ast::Span::default(),
+            )),
             then_body: public_statements_to_internal(then_body)?,
             elif_branches: Vec::new(),
             else_body: if else_body.is_empty() {
@@ -384,7 +387,10 @@ pub fn public_statement_to_internal(stmt: &incan_vocab::IncanStatement) -> Resul
             },
         })),
         incan_vocab::IncanStatement::While { condition, body } => Ok(ast::Statement::While(ast::WhileStmt {
-            condition: ast::Spanned::new(public_expr_to_internal(condition)?, ast::Span::default()),
+            condition: ast::Condition::Expr(ast::Spanned::new(
+                public_expr_to_internal(condition)?,
+                ast::Span::default(),
+            )),
             body: public_statements_to_internal(body)?,
         })),
         incan_vocab::IncanStatement::For { binding, iter, body } => Ok(ast::Statement::For(ast::ForStmt {
@@ -406,6 +412,17 @@ pub fn public_statement_to_internal(stmt: &incan_vocab::IncanStatement) -> Resul
 /// currently represented in the internal bridge mapping.
 pub fn public_expression_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, VocabAstBridgeError> {
     public_expr_to_internal(expr)
+}
+
+fn internal_condition_expr_to_public(
+    condition: &ast::Condition,
+) -> Result<incan_vocab::IncanExpr, VocabAstBridgeError> {
+    match condition {
+        ast::Condition::Expr(expr) => internal_expr_to_public(&expr.node),
+        ast::Condition::Let { .. } => Err(VocabAstBridgeError::UnsupportedInternalStatement(
+            "`if let` / `while let` conditions are not yet supported by the public vocab AST bridge",
+        )),
+    }
 }
 
 /// Convert a list of internal spanned statements to public statements.

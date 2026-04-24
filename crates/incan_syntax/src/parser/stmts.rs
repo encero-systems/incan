@@ -352,9 +352,28 @@ impl<'a> Parser<'a> {
         Ok(Statement::Break(value))
     }
 
+    /// Parse an `if` / `while` condition, including RFC 049 let-pattern forms.
+    ///
+    /// Ordinary boolean conditions stay as expression-backed conditions, while
+    /// `let PATTERN = VALUE` is captured explicitly so later stages can apply
+    /// match-equivalent semantics without reparsing the surface spelling.
+    fn control_flow_condition(&mut self) -> Result<Condition, CompileError> {
+        if self.match_token(&TokenKind::Keyword(KeywordId::Let)) {
+            let pattern = self.pattern()?;
+            self.expect(
+                &TokenKind::Operator(OperatorId::Eq),
+                "Expected '=' after let pattern in control-flow condition",
+            )?;
+            let value = self.expression()?;
+            Ok(Condition::Let { pattern, value })
+        } else {
+            Ok(Condition::Expr(self.expression()?))
+        }
+    }
+
     fn if_stmt(&mut self) -> Result<Statement, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::If), "Expected 'if'")?;
-        let condition = self.expression()?;
+        let condition = self.control_flow_condition()?;
         self.expect(
             &TokenKind::Punctuation(PunctuationId::Colon),
             "Expected ':' after if condition",
@@ -363,6 +382,21 @@ impl<'a> Parser<'a> {
         self.expect_suite_indent("Expected indented block")?;
         let then_body = self.block()?;
         self.expect(&TokenKind::Dedent, "Expected dedent after if body")?;
+
+        if matches!(condition, Condition::Let { .. })
+            && (self.check_keyword(KeywordId::Elif) || self.check_keyword(KeywordId::Else))
+        {
+            let branch = if self.check_keyword(KeywordId::Elif) {
+                "`elif`"
+            } else {
+                "`else`"
+            };
+            return Err(CompileError::syntax(
+                format!("`if let` does not support {branch} branches"),
+                self.current_span(),
+            )
+            .with_hint("Use `match` when the non-match case matters"));
+        }
 
         let mut elif_branches = vec![];
         while self.match_token(&TokenKind::Keyword(KeywordId::Elif)) {
@@ -399,7 +433,7 @@ impl<'a> Parser<'a> {
 
     fn while_stmt(&mut self) -> Result<Statement, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::While), "Expected 'while'")?;
-        let condition = self.expression()?;
+        let condition = self.control_flow_condition()?;
         self.expect(
             &TokenKind::Punctuation(PunctuationId::Colon),
             "Expected ':' after while condition",

@@ -6,11 +6,11 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use super::super::super::conversions::{ConversionContext, determine_conversion};
 use super::super::super::expr::{
     CollectionMethodKind, InternalMethodKind, IrCallArg, IrExprKind, MethodCallArgPolicy, MethodKind, TypedExpr,
     VarAccess, VarRefKind,
 };
+use super::super::super::ownership::ValueUseSite;
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 
@@ -98,7 +98,7 @@ impl<'a> IrEmitter<'a> {
     /// semantics instead.
     fn is_incan_owned_nominal_receiver(&self, receiver_ty: &IrType) -> bool {
         match Self::receiver_type_for_method_dispatch(receiver_ty) {
-            IrType::Struct(name) => {
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) => {
                 self.struct_field_names.contains_key(name)
                     || self.rusttype_alias_names.contains(name)
                     || self.type_module_paths.contains_key(name)
@@ -244,45 +244,27 @@ impl<'a> IrEmitter<'a> {
                 // For external Rust types (VarRefKind::ExternalRustName), use ExternalFunctionArg conversions so that
                 // string literals get `.into()` — this lets the Rust compiler resolve the target type via the Into
                 // trait (e.g., Polars' PlSmallStr, sqlx identifiers, etc.).
-                let conversion_context = if receiver_ref_kind != Some(VarRefKind::ExternalRustName)
+                let use_site = if receiver_ref_kind != Some(VarRefKind::ExternalRustName)
                     && self.is_incan_owned_nominal_receiver(&receiver.ty)
                 {
-                    ConversionContext::IncanFunctionArg
+                    ValueUseSite::IncanCallArg {
+                        target_ty: None,
+                        callee_param: None,
+                        in_return: false,
+                    }
                 } else if matches!(receiver_ref_kind, Some(VarRefKind::ExternalName | VarRefKind::TypeName)) {
-                    if in_return {
-                        ConversionContext::IncanFunctionArgInReturn
-                    } else {
-                        ConversionContext::IncanFunctionArg
+                    ValueUseSite::IncanCallArg {
+                        target_ty: None,
+                        callee_param: None,
+                        in_return,
                     }
                 } else {
-                    ConversionContext::ExternalFunctionArg
+                    ValueUseSite::ExternalCallArg { target_ty: None }
                 };
-
-                let arg_tokens: Vec<TokenStream> = if matches!(
-                    conversion_context,
-                    ConversionContext::IncanFunctionArg | ConversionContext::IncanFunctionArgInReturn
-                ) {
-                    arg_exprs
-                        .iter()
-                        .map(|a| {
-                            let emitted = self.emit_expr(a)?;
-                            let conv = determine_conversion(a, None, conversion_context);
-                            Ok(conv.apply(emitted))
-                        })
-                        .collect::<Result<_, _>>()?
-                } else {
-                    // External types: apply ExternalFunctionArg conversions so that string literals get `.into()`
-                    // (resolves to the correct target type via Rust's Into trait — e.g., Polars' PlSmallStr, sqlx
-                    // identifiers, etc.)
-                    arg_exprs
-                        .iter()
-                        .map(|a| {
-                            let emitted = self.emit_expr(a)?;
-                            let conv = determine_conversion(a, None, conversion_context);
-                            Ok(conv.apply(emitted))
-                        })
-                        .collect::<Result<_, _>>()?
-                };
+                let arg_tokens: Vec<TokenStream> = arg_exprs
+                    .iter()
+                    .map(|a| self.emit_expr_for_use(a, use_site))
+                    .collect::<Result<_, _>>()?;
                 return Ok(quote! { #type_ident::#m #method_turbofish (#(#arg_tokens),*) });
             }
         }
@@ -300,32 +282,32 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::Var { ref_kind, .. } => Some(*ref_kind),
             _ => None,
         };
-        let conversion_context = if receiver_ref_kind != Some(VarRefKind::ExternalRustName)
+        let use_site = if receiver_ref_kind != Some(VarRefKind::ExternalRustName)
             && self.is_incan_owned_nominal_receiver(&receiver.ty)
         {
-            ConversionContext::IncanFunctionArg
+            ValueUseSite::IncanCallArg {
+                target_ty: None,
+                callee_param: None,
+                in_return: false,
+            }
         } else if receiver_ref_kind == Some(VarRefKind::ExternalName) {
             // Module-qualified calls like `widgets.make_widget(...)` are function namespace lookups, not external Rust
             // methods. They should keep ordinary Incan/public-function conversions instead of Rust interop coercions.
-            if in_return {
-                ConversionContext::IncanFunctionArgInReturn
-            } else {
-                ConversionContext::IncanFunctionArg
+            ValueUseSite::IncanCallArg {
+                target_ty: None,
+                callee_param: None,
+                in_return,
             }
         } else if matches!(arg_policy, MethodCallArgPolicy::PreserveShape) {
             // Lowering recorded that this ordinary Rust method call must keep borrow-sensitive lookup semantics, so do
             // not apply function-style coercions such as `.to_string()` / `.into()`.
-            ConversionContext::MethodArg
+            ValueUseSite::MethodArg
         } else {
-            ConversionContext::ExternalFunctionArg
+            ValueUseSite::ExternalCallArg { target_ty: None }
         };
         let arg_tokens: Vec<TokenStream> = arg_exprs
             .iter()
-            .map(|a| {
-                let emitted = self.emit_expr(a)?;
-                let conv = determine_conversion(a, None, conversion_context);
-                Ok(conv.apply(emitted))
-            })
+            .map(|a| self.emit_expr_for_use(a, use_site))
             .collect::<Result<_, _>>()?;
         Ok(quote! { #r.#m #method_turbofish (#(#arg_tokens),*) })
     }
@@ -399,26 +381,41 @@ impl<'a> IrEmitter<'a> {
                     .iter()
                     .zip(field_tys.iter())
                     .map(|(a, ty)| {
-                        let emitted = self.emit_expr(a)?;
-                        let conv = determine_conversion(a, Some(ty), ConversionContext::IncanFunctionArg);
-                        Ok(conv.apply(emitted))
+                        self.emit_expr_for_use(
+                            a,
+                            ValueUseSite::IncanCallArg {
+                                target_ty: Some(ty),
+                                callee_param: None,
+                                in_return: false,
+                            },
+                        )
                     })
                     .collect::<Result<_, _>>()?,
                 super::super::super::decl::VariantFields::Struct(_) => args
                     .iter()
                     .map(|a| {
-                        let emitted = self.emit_expr(a)?;
-                        let conv = determine_conversion(a, None, ConversionContext::IncanFunctionArg);
-                        Ok(conv.apply(emitted))
+                        self.emit_expr_for_use(
+                            a,
+                            ValueUseSite::IncanCallArg {
+                                target_ty: None,
+                                callee_param: None,
+                                in_return: false,
+                            },
+                        )
                     })
                     .collect::<Result<_, _>>()?,
             }
         } else {
             args.iter()
                 .map(|a| {
-                    let emitted = self.emit_expr(a)?;
-                    let conv = determine_conversion(a, Some(&IrType::String), ConversionContext::IncanFunctionArg);
-                    Ok(conv.apply(emitted))
+                    self.emit_expr_for_use(
+                        a,
+                        ValueUseSite::IncanCallArg {
+                            target_ty: Some(&IrType::String),
+                            callee_param: None,
+                            in_return: false,
+                        },
+                    )
                 })
                 .collect::<Result<_, _>>()?
         };

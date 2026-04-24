@@ -7,7 +7,7 @@
 //! This module prevents that by providing a macro that the compiler emits into every generated `main.rs`:
 //!
 //! ```rust,ignore
-//! incan_stdlib::__incan_stdlib_version_check!("0.2.0");
+//! incan_stdlib::__incan_stdlib_version_check!("0.3.0-dev.3");
 //! ```
 //!
 //! The macro expands into a `const` assertion that compares the compiler version (baked in as a string literal) against
@@ -16,14 +16,14 @@
 
 /// The version of this stdlib crate, read from `Cargo.toml` at compile time.
 ///
-/// The compiler embeds its own version as a literal in the generated code, and the [`__incan_stdlib_version_check`]
-/// macro compares the two.
+/// The compiler embeds its own version as a literal in the generated code, and the
+/// `__incan_stdlib_version_check!` macro compares the two.
 pub const INCAN_STDLIB_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Byte-level string equality usable in `const` contexts.
 ///
 /// Rust nightly currently does not stabilise `PartialEq` as a const trait, so `a == b` on `&str` inside a `const` block
-/// is a compiler error. This unction works around that by comparing raw `&[u8]` slices element by element — primitive
+/// is a compiler error. This function works around that by comparing raw `&[u8]` slices element by element — primitive
 /// `u8` equality is always const-stable.
 #[doc(hidden)]
 pub const fn const_str_eq(a: &[u8], b: &[u8]) -> bool {
@@ -46,7 +46,7 @@ pub const fn const_str_eq(a: &[u8], b: &[u8]) -> bool {
 /// (= compile error) when the versions differ. Example output on mismatch:
 ///
 /// ```text
-/// Incan compiler/std lib version mismatch: compiler 0.2.1, stdlib 0.2.0
+/// Incan compiler/std lib version mismatch: compiler 0.3.0-dev.4, stdlib 0.3.0-dev.3
 /// ```
 #[doc(hidden)]
 #[macro_export]

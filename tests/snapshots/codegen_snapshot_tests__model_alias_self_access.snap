@@ -21,7 +21,7 @@ fn Account(type_: String) -> Account {
 }
 impl Account {
     pub fn get_type(&self) -> String {
-        return self.type_;
+        return self.type_.clone();
     }
     /// Returns field metadata for this type.
     pub fn __fields__(

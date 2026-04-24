@@ -37,7 +37,9 @@ fn main() {
     );
     let maybe_count = Some(42);
     let names = vec!["alice".to_string(), "bob".to_string()];
-    let scores = [("latency", 1.5f64)].into_iter().collect::<HashMap<_, _>>();
+    let scores = [("latency".to_string(), 1.5f64)]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
     accept_option(maybe_count);
     accept_names(names);
     accept_scores(scores);

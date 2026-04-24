@@ -1367,6 +1367,420 @@ def main() -> None:
     }
 
     #[test]
+    fn test_field_backed_by_value_method_args_do_not_require_user_clone_issue241()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+class Cursor:
+    def join(self, other: Self, on: bool) -> Self:
+        return Cursor()
+
+@derive(Clone)
+class Wrapper:
+    _cursor: Cursor
+
+    def merge(self, other: Self) -> Self:
+        return Wrapper(_cursor=self._cursor.join(other._cursor, true))
+
+def main() -> None:
+    left = Wrapper(_cursor=Cursor())
+    right = Wrapper(_cursor=Cursor())
+    _ = left.merge(right)
+    println("ok")
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "field-backed by-value method arg regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["ok"], "unexpected issue241 output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_issue241_generic_field_backed_method_args_infer_clone_bounds() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+class Cursor[T]:
+    value: T
+
+    def join(self, other: Self, on: bool) -> Self:
+        return self
+
+@derive(Clone)
+class Wrapper[T]:
+    _cursor: Cursor[T]
+
+    def merge(self, other: Self) -> Self:
+        return Wrapper(_cursor=self._cursor.join(other._cursor, true))
+
+def main() -> None:
+    left = Wrapper(_cursor=Cursor(value=1))
+    right = Wrapper(_cursor=Cursor(value=2))
+    println(left.merge(right)._cursor.value)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "generic issue241 regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["1"], "unexpected generic issue241 output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_returning_tuple_with_reused_field_materializes_owned_items() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+class Pred:
+    name: str
+
+@derive(Clone)
+class Node:
+    filter_predicate: Pred
+
+def pair(node: Node) -> tuple[Pred, Pred]:
+    return (node.filter_predicate, node.filter_predicate)
+
+def main() -> None:
+    left, right = pair(Node(filter_predicate=Pred(name="x")))
+    println(left.name)
+    println(right.name)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "tuple field reuse ownership regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["x", "x"], "unexpected tuple field reuse output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_generic_tuple_return_with_reused_field_infers_clone_bound() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+class Node[T]:
+    value: T
+
+def pair[T](node: Node[T]) -> tuple[T, T]:
+    return (node.value, node.value)
+
+def main() -> None:
+    left, right = pair(Node(value=1))
+    println(left)
+    println(right)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "generic tuple field reuse regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["1", "1"],
+            "unexpected generic tuple field reuse output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_incan_call_materializes_owned_value_from_box_as_ref() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from rust::std::boxed import Box
+
+@derive(Clone)
+class Node:
+    value: int
+
+def take(node: Node) -> int:
+    return node.value
+
+def from_box(child: Box[Node]) -> int:
+    return take(child.as_ref())
+
+def main() -> None:
+    println(from_box(Box.new(Node(value=4))))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "borrowed box as_ref call regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["4"], "unexpected box as_ref output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_generic_incan_call_materializes_owned_value_from_box_as_ref() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from rust::std::boxed import Box
+
+@derive(Clone)
+class Node[T]:
+    value: T
+
+def take[T](node: Node[T]) -> T:
+    return node.value
+
+def from_box[T](child: Box[Node[T]]) -> T:
+    return take(child.as_ref())
+
+def main() -> None:
+    println(from_box(Box.new(Node(value=4))))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "generic borrowed box as_ref call regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["4"], "unexpected generic box as_ref output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_match_on_shared_self_option_field_materializes_owned_scrutinee() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+pub class Node:
+    value: int
+
+@derive(Clone)
+pub class Wrapper:
+    child: Option[Node]
+
+    def read(self) -> int:
+        match self.child:
+            Some(child) => return child.value
+            None => return 0
+
+def main() -> None:
+    println(Wrapper(child=Some(Node(value=4))).read())
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "shared self option-field match regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["4"],
+            "unexpected shared self option-field match output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_match_on_shared_self_option_box_field_materializes_owned_scrutinee()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from rust::std::boxed import Box
+
+@derive(Clone)
+pub class Node:
+    value: int
+
+@derive(Clone)
+pub class Wrapper:
+    child: Option[Box[Node]]
+
+    def read(self) -> int:
+        match self.child:
+            Some(child) => return child.as_ref().value
+            None => return 0
+
+def main() -> None:
+    println(Wrapper(child=Some(Box.new(Node(value=4)))).read())
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "shared self option-box-field match regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["4"],
+            "unexpected shared self option-box-field match output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_generic_match_on_shared_self_option_field_infers_clone_bound() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+pub class Wrapper[T]:
+    child: Option[T]
+
+    def read_or(self, fallback: T) -> T:
+        match self.child:
+            Some(child) => return child
+            None => return fallback
+
+def main() -> None:
+    println(Wrapper(child=Some(4)).read_or(0))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "generic shared self option-field match regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["4"],
+            "unexpected generic shared self option-field match output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_trait_supertraits_runtime_with_backend_clone_bounds() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+trait Collection[T]:
+    def first(self) -> T: ...
+
+trait OrderedCollection[T] with Collection[T]:
+    def sorted(self) -> Self: ...
+
+model BoxedValue[T] with OrderedCollection:
+    value: T
+
+    def first(self) -> T:
+        return self.value
+
+    def sorted(self) -> Self:
+        return self
+
+def take_first(values: Collection[int]) -> int:
+    return values.first()
+
+def take_sorted(values: OrderedCollection[int]) -> OrderedCollection[int]:
+    return values.sorted()
+
+def main() -> None:
+    println(take_first(BoxedValue(value=1)))
+    println(take_sorted(BoxedValue(value=2)).first())
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "trait-supertrait ownership regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["1", "2"], "unexpected trait-supertrait output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
     fn test_result_ok_string_literals_run_without_manual_str_wrapping() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([
@@ -4682,6 +5096,44 @@ def main() -> None:\n  columns([\"orders_total\"])\n",
             String::from_utf8_lossy(&project_build.stdout),
             String::from_utf8_lossy(&project_build.stderr)
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_and_run_rfc049_if_let_while_let() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"rfc049_if_let_while_let\"\nversion = \"0.1.0\"\n",
+            "def maybe_double(opt: Option[int]) -> int:\n  if let Some(value) = opt:\n    return value * 2\n  return 0\n\n\
+def next_value(values: list[Option[int]], idx: int) -> Option[int]:\n  if idx < len(values):\n    return values[idx]\n  return None\n\n\
+def sum_values(values: list[Option[int]]) -> int:\n  mut idx = 0\n  mut total = 0\n  while let Some(value) = next_value(values, idx):\n    total = total + value\n    idx = idx + 1\n  return total\n\n\
+def main() -> None:\n  println(maybe_double(Some(21)))\n  println(maybe_double(None))\n  println(sum_values([Some(1), Some(2), None, Some(99)]))\n",
+        )?;
+
+        let out_dir = tmp.path().join("out");
+        let build_output = run_build(&main_path, &out_dir)?;
+        assert!(
+            build_output.status.success(),
+            "expected RFC 049 sample project to build successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
+
+        let run_output = Command::new(incan_bin_path())
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            run_output.status.success(),
+            "expected RFC 049 sample project to run successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&run_output.stdout),
+            String::from_utf8_lossy(&run_output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&run_output.stdout);
+        assert_eq!(stdout.lines().collect::<Vec<_>>(), vec!["42", "0", "3"]);
 
         Ok(())
     }

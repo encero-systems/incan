@@ -21,7 +21,9 @@ fn test_explicit_types() {
 fn test_collection_types() {
     let numbers = vec![1, 2, 3];
     let words = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-    let mapping = [("a", 1), ("b", 2)].into_iter().collect::<HashMap<_, _>>();
+    let mapping = [("a".to_string(), 1), ("b".to_string(), 2)]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
 }
 fn test_option_types() {
     let maybe_num = Some(42);
@@ -29,7 +31,9 @@ fn test_option_types() {
 }
 fn test_nested_collections() {
     let matrix = vec![vec![1, 2], vec![3, 4]];
-    let dict_of_lists = [("nums", vec![1, 2, 3])].into_iter().collect::<HashMap<_, _>>();
+    let dict_of_lists = [("nums".to_string(), vec![1, 2, 3])]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
 }
 fn test_function_with_return_type() -> i64 {
     return 42;

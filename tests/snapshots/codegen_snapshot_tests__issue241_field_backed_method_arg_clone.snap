@@ -11,14 +11,33 @@ expression: rust_code
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
-#[derive(Debug)]
-struct Box<T>(pub T);
-impl<T: Clone> Box<T> {
-    pub fn wrap(value: T) -> Self {
-        return Box(value);
+#[derive(Clone, Debug, FieldInfo, IncanClass)]
+struct Cursor {}
+impl Cursor {
+    pub fn join(&self, other: Self, on: bool) -> Self {
+        return Cursor {};
     }
-    pub fn duplicate(&self) -> (T, T) {
-        return (self.0.clone(), self.0.clone());
+    /// Returns field metadata for this type.
+    pub fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+#[derive(Clone, Debug, FieldInfo, IncanClass)]
+struct Wrapper {
+    _cursor: Cursor,
+}
+#[allow(non_snake_case, clippy::too_many_arguments)]
+fn Wrapper(_cursor: Cursor) -> Wrapper {
+    Wrapper { _cursor }
+}
+impl Wrapper {
+    pub fn merge(&self, other: Self) -> Self {
+        return Wrapper {
+            _cursor: self._cursor.join(other._cursor.clone(), true),
+        };
     }
     /// Returns field metadata for this type.
     pub fn __fields__(
@@ -26,11 +45,11 @@ impl<T: Clone> Box<T> {
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
             incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("0"),
+                name: incan_stdlib::frozen::FrozenStr::new("_cursor"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("0"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("T"),
+                wire_name: incan_stdlib::frozen::FrozenStr::new("_cursor"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("Cursor"),
                 has_default: false,
                 extra: incan_stdlib::frozen::FrozenDict::new(&[]),
             },
@@ -50,6 +69,7 @@ fn main() {
             }
         }),
     );
-    let boxed = Box::wrap(42);
-    println!("{}", boxed.duplicate());
+    let left = Wrapper { _cursor: Cursor {} };
+    let right = Wrapper { _cursor: Cursor {} };
+    let _ = left.merge(right);
 }

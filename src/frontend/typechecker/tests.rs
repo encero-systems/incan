@@ -4140,6 +4140,47 @@ def foo() -> int:
 }
 
 #[test]
+fn test_if_let_statement_typechecks() {
+    let source = r#"
+def first(opt: Option[int]) -> int:
+  if let Some(value) = opt:
+    return value
+  return 0
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_while_let_statement_typechecks() {
+    let source = r#"
+def sum_once(opt: Option[int]) -> int:
+  mut total = 0
+  mut current = opt
+  while let Some(value) = current:
+    total = total + value
+    current = None
+  return total
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_if_let_rejects_impossible_pattern() {
+    let source = r#"
+def first(count: int) -> int:
+  if let Some(value) = count:
+    return value
+  return 0
+"#;
+    let errs = check_str_err(source, "expected impossible `if let` pattern to fail");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Constructor pattern 'Some' does not resolve")),
+        "unexpected errors: {errs:?}"
+    );
+}
+
+#[test]
 fn test_for_loop() {
     let source = r#"
 def foo() -> int:

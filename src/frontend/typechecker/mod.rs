@@ -1874,7 +1874,7 @@ impl TypeChecker {
                 self.collect_static_initializer_static_writes_from_expr(expr, current_static, visiting_functions);
             }
             Statement::If(if_stmt) => {
-                self.collect_static_initializer_static_writes_from_expr(
+                self.collect_static_initializer_static_writes_from_condition(
                     &if_stmt.condition,
                     current_static,
                     visiting_functions,
@@ -1912,7 +1912,7 @@ impl TypeChecker {
                 }
             }
             Statement::While(while_stmt) => {
-                self.collect_static_initializer_static_writes_from_expr(
+                self.collect_static_initializer_static_writes_from_condition(
                     &while_stmt.condition,
                     current_static,
                     visiting_functions,
@@ -1940,6 +1940,22 @@ impl TypeChecker {
             | Statement::Continue
             | Statement::Surface(_)
             | Statement::VocabBlock(_) => {}
+        }
+    }
+
+    fn collect_static_initializer_static_writes_from_condition(
+        &mut self,
+        condition: &Condition,
+        current_static: &str,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        match condition {
+            Condition::Expr(expr) => {
+                self.collect_static_initializer_static_writes_from_expr(expr, current_static, visiting_functions);
+            }
+            Condition::Let { value, .. } => {
+                self.collect_static_initializer_static_writes_from_expr(value, current_static, visiting_functions);
+            }
         }
     }
 
@@ -1982,7 +1998,7 @@ impl TypeChecker {
             }
             Statement::Return(None) | Statement::Pass | Statement::Break(None) | Statement::Continue => {}
             Statement::If(if_stmt) => {
-                self.collect_static_dependencies_from_expr(&if_stmt.condition.node, deps, visiting_functions);
+                self.collect_static_dependencies_from_condition(&if_stmt.condition, deps, visiting_functions);
                 for stmt in &if_stmt.then_body {
                     self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
                 }
@@ -2004,7 +2020,7 @@ impl TypeChecker {
                 }
             }
             Statement::While(while_stmt) => {
-                self.collect_static_dependencies_from_expr(&while_stmt.condition.node, deps, visiting_functions);
+                self.collect_static_dependencies_from_condition(&while_stmt.condition, deps, visiting_functions);
                 for stmt in &while_stmt.body {
                     self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
                 }
@@ -2031,6 +2047,20 @@ impl TypeChecker {
                 self.collect_static_dependencies_from_expr(&assign.value.node, deps, visiting_functions);
             }
             Statement::Surface(_) | Statement::VocabBlock(_) => {}
+        }
+    }
+
+    fn collect_static_dependencies_from_condition(
+        &self,
+        condition: &Condition,
+        deps: &mut HashSet<String>,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        match condition {
+            Condition::Expr(expr) => self.collect_static_dependencies_from_expr(&expr.node, deps, visiting_functions),
+            Condition::Let { value, .. } => {
+                self.collect_static_dependencies_from_expr(&value.node, deps, visiting_functions);
+            }
         }
     }
 

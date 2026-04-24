@@ -50,7 +50,7 @@ impl AstLowering {
         arg_ty: &IrType,
         target_ty: &IrType,
     ) -> Result<Option<(TypedExpr, super::super::super::decl::IrInteropAdapterKind)>, LoweringError> {
-        if let IrType::Struct(type_name) = arg_ty
+        if let Some(type_name) = arg_ty.nominal_type_name()
             && let Some(edges) = self.rusttype_interop_edges.get(type_name).cloned()
         {
             for edge in edges {
@@ -66,7 +66,7 @@ impl AstLowering {
             }
         }
 
-        if let IrType::Struct(type_name) = target_ty
+        if let Some(type_name) = target_ty.nominal_type_name()
             && let Some(edges) = self.rusttype_interop_edges.get(type_name).cloned()
         {
             for edge in edges {
@@ -666,6 +666,77 @@ def f(uri: str) -> None:
                 }
                 other => return Err(format!("expected nested MethodCall in InteropCoerce, got {other:?}")),
             },
+            other => return Err(format!("expected nested MethodCall arg, got {other:?}")),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn lower_generic_box_as_ref_preserves_nominal_generic_receiver_args() -> Result<(), String> {
+        use crate::backend::ir::decl::IrDeclKind;
+        use crate::backend::ir::stmt::IrStmtKind;
+        use crate::frontend::{lexer, parser, typechecker::TypeChecker};
+
+        let source = r#"
+from rust::std::boxed import Box
+
+@derive(Clone)
+class Node[T]:
+  value: T
+
+def take[T](node: Node[T]) -> T:
+  return node.value
+
+def from_box[T](child: Box[Node[T]]) -> T:
+  return take(child.as_ref())
+"#;
+        let tokens = lexer::lex(source).map_err(|errs| format!("lex failed: {errs:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errs| format!("parse failed: {errs:?}"))?;
+
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&ast)
+            .map_err(|errs| format!("typecheck failed: {errs:?}"))?;
+
+        let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
+        let program = lowering
+            .lower_program(&ast)
+            .map_err(|err| format!("lowering failed: {err:?}"))?;
+
+        let function = program
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.kind {
+                IrDeclKind::Function(function) if function.name == "from_box" => Some(function),
+                _ => None,
+            })
+            .ok_or_else(|| "expected lowered function `from_box`".to_string())?;
+        let Some(stmt) = function.body.first() else {
+            return Err("expected return statement body".to_string());
+        };
+        let IrStmtKind::Return(Some(expr)) = &stmt.kind else {
+            return Err(format!("expected return statement body, got {:?}", function.body));
+        };
+        let IrExprKind::Call { args, .. } = &expr.kind else {
+            return Err(format!("expected call expression, got {:?}", expr.kind));
+        };
+        let arg = args.first().ok_or_else(|| "expected call arg".to_string())?;
+
+        match &arg.expr.kind {
+            IrExprKind::MethodCall { receiver, method, .. } => {
+                assert_eq!(method, "as_ref");
+                assert_eq!(
+                    receiver.ty,
+                    IrType::NamedGeneric(
+                        "Box".to_string(),
+                        vec![IrType::NamedGeneric(
+                            "Node".to_string(),
+                            vec![IrType::Generic("T".to_string())]
+                        )]
+                    )
+                );
+            }
             other => return Err(format!("expected nested MethodCall arg, got {other:?}")),
         }
 

@@ -175,7 +175,7 @@ impl Formatter {
 
     fn format_if(&mut self, if_stmt: &IfStmt) {
         self.writer.write("if ");
-        self.format_expr(&if_stmt.condition.node);
+        self.format_condition(&if_stmt.condition);
         self.writer.writeln(":");
         self.writer.indent();
         for stmt in &if_stmt.then_body {
@@ -227,7 +227,7 @@ impl Formatter {
 
     fn format_while(&mut self, while_stmt: &WhileStmt) {
         self.writer.write("while ");
-        self.format_expr(&while_stmt.condition.node);
+        self.format_condition(&while_stmt.condition);
         self.writer.writeln(":");
         self.writer.indent();
         for stmt in &while_stmt.body {
@@ -265,6 +265,18 @@ impl Formatter {
             }
         } else {
             self.format_pattern(pattern);
+        }
+    }
+
+    fn format_condition(&mut self, condition: &Condition) {
+        match condition {
+            Condition::Expr(expr) => self.format_expr(&expr.node),
+            Condition::Let { pattern, value } => {
+                self.writer.write("let ");
+                self.format_pattern(&pattern.node);
+                self.writer.write(" = ");
+                self.format_expr(&value.node);
+            }
         }
     }
 }

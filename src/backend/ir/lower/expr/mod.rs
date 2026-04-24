@@ -74,13 +74,17 @@ impl AstLowering {
                 // Likewise, RFC-008 const lowering may have already refined `str`/`bytes` to their static IR forms.
                 // Keep those backend-specific const representations intact so later emission can materialize owned
                 // values only when required.
-                let inner = self.lower_resolved_type(res_ty);
+                let inferred = self.lower_resolved_type(res_ty);
                 lowered.ty = match &lowered.ty {
-                    IrType::Ref(_) => IrType::Ref(Box::new(inner)),
-                    IrType::RefMut(_) => IrType::RefMut(Box::new(inner)),
+                    IrType::Ref(existing_inner) => {
+                        IrType::Ref(Box::new(Self::merge_inferred_ir_type(existing_inner, inferred)))
+                    }
+                    IrType::RefMut(existing_inner) => {
+                        IrType::RefMut(Box::new(Self::merge_inferred_ir_type(existing_inner, inferred)))
+                    }
                     IrType::StaticStr => IrType::StaticStr,
                     IrType::StaticBytes => IrType::StaticBytes,
-                    _ => inner,
+                    existing => Self::merge_inferred_ir_type(existing, inferred),
                 };
             }
             if let Some(kind) = info.ident_kind(expr.span) {
@@ -326,13 +330,10 @@ impl AstLowering {
                 // This is important for RFC 021 alias-aware field access, especially for `self.<alias>`.
                 let obj = self.lower_expr_spanned(o)?;
                 // RFC 021: resolve field alias to canonical name if object is a known struct type
-                let struct_name = match &obj.ty {
-                    IrType::Struct(struct_name) => Some(struct_name.as_str()),
-                    _ => match &obj.kind {
-                        IrExprKind::Var { name, .. } if name == "self" => self.current_impl_type.as_deref(),
-                        _ => None,
-                    },
-                };
+                let struct_name = obj.ty.nominal_type_name().or_else(|| match &obj.kind {
+                    IrExprKind::Var { name, .. } if name == "self" => self.current_impl_type.as_deref(),
+                    _ => None,
+                });
                 let field = match struct_name {
                     Some(struct_name) => self.resolve_field_alias(struct_name, f),
                     None => f.clone(),

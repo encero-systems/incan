@@ -368,7 +368,7 @@ impl AstLowering {
 
     /// Resolve a method name through per-type rebinding aliases.
     pub(super) fn resolve_method_rebinding(&self, receiver_ty: &IrType, method_name: &str) -> String {
-        let IrType::Struct(type_name) = receiver_ty else {
+        let Some(type_name) = receiver_ty.nominal_type_name() else {
             return method_name.to_string();
         };
         self.type_method_rebindings

@@ -872,6 +872,68 @@ def test_session_backend_datafusion__session_write_csv_routes_through_execution_
     }
 
     #[test]
+    fn test_format_source_if_let_round_trip() -> Result<(), FormatError> {
+        let source = r#"def first(opt: Option[int]) -> int:
+    if let Some(value) = opt:
+        return value
+    return 0
+"#;
+        let formatted = assert_format_round_trip_lex_parse(source)?;
+        assert!(
+            formatted.contains("if let Some(value) = opt:"),
+            "expected formatter to preserve if-let header; got: {formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_while_let_round_trip() -> Result<(), FormatError> {
+        let source = r#"def sum_once(opt: Option[int]) -> int:
+    mut total = 0
+    mut current = opt
+    while let Some(value) = current:
+        total = total + value
+        current = None
+    return total
+"#;
+        let formatted = assert_format_round_trip_lex_parse(source)?;
+        assert!(
+            formatted.contains("while let Some(value) = current:"),
+            "expected formatter to preserve while-let header; got: {formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_if_let_normalizes_header_and_body_indentation() -> Result<(), FormatError> {
+        let source = "def first(opt: Option[int]) -> int:\n  if let Some(value)=opt:\n   return value\n  return 0\n";
+        let formatted = format_source(source)?;
+        let expected = r#"def first(opt: Option[int]) -> int:
+    if let Some(value) = opt:
+        return value
+    return 0
+"#;
+        assert_eq!(formatted, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_while_let_normalizes_header_and_body_indentation() -> Result<(), FormatError> {
+        let source = "def sum_once(opt: Option[int]) -> int:\n  mut total=0\n  mut current=opt\n  while let Some(value)=current:\n   total=total+value\n   current=None\n  return total\n";
+        let formatted = format_source(source)?;
+        let expected = r#"def sum_once(opt: Option[int]) -> int:
+    mut total = 0
+    mut current = opt
+    while let Some(value) = current:
+        total = total + value
+        current = None
+    return total
+"#;
+        assert_eq!(formatted, expected);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_generic_method_round_trip() -> Result<(), FormatError> {
         let source = r#"class Box:
     def get[T with Clone](self, value: T) -> T:

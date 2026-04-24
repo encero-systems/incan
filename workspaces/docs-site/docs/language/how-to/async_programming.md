@@ -181,10 +181,8 @@ async def producer() -> None:
 
 # Receiver - blocks until message available
 async def consumer() -> None:
-    while True:
-        match await rx.recv():
-            case Some(msg): println(f"Got: {msg}")
-            case None: break  # All senders dropped, channel closed
+    while let Some(msg) = await rx.recv():
+        println(f"Got: {msg}")
 ```
 
 **Multiple producers** (clone the sender):
@@ -211,10 +209,8 @@ spawn(async () -> None:
 
 # Single consumer receives from all producers
 async def consume() -> None:
-    while True:
-        match await rx.recv():
-            case Some(n): println(f"Received: {n}")
-            case None: break
+    while let Some(n) = await rx.recv():
+        println(f"Received: {n}")
 ```
 
 !!! note "Coming from Python?"

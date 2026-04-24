@@ -120,7 +120,7 @@ fn test_pattern_nested_option() {
     };
 }
 fn test_pattern_tuple() {
-    let pair = (42, "answer");
+    let pair = (42, "answer".to_string());
     match pair {
         (0, _) => {
             println!("{}", "first is zero");

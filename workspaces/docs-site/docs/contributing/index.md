@@ -18,6 +18,7 @@ If you’re new, start with:
 ## Explanation (understand)
 
 - [Architecture](explanation/architecture.md) — compilation pipeline, module layout, internal stages
+- [Duckborrowing](explanation/duckborrowing.md) — backend ownership planning for generated Rust
 - [Readable, maintainable Rust](explanation/readable-maintainable-rust.md) — team conventions and engineering practices
 
 ## Reference (look up)
