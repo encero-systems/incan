@@ -306,6 +306,98 @@ fn test_cli_fmt_preserves_fstring_escaped_newline_roundtrip() -> Result<(), Box<
     Ok(())
 }
 
+/// Regression (GitHub #336 / RFC 053): the CLI formatter must apply the vertical-spacing contract on disk.
+#[test]
+fn test_cli_fmt_applies_rfc053_vertical_spacing_contract() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = make_temp_test_dir();
+    let path = dir.join("rfc053_vertical_spacing.incn");
+    fs::write(
+        &path,
+        r#"type UserId = str
+# comment about the alias
+
+model User:
+  """
+  First paragraph.
+
+
+  Second paragraph.
+  """
+  id: UserId
+
+trait Service:
+  def connect(self) -> None: ...
+  def reset(self) -> None:
+    pass
+"#,
+    )?;
+
+    let status = Command::new(incan_debug_binary()).arg("fmt").arg(&path).status()?;
+    assert!(status.success(), "incan fmt failed");
+
+    let formatted = fs::read_to_string(&path)?;
+    let expected = r#"type UserId = str
+# comment about the alias
+
+model User:
+    """
+    First paragraph.
+
+    Second paragraph.
+    """
+
+    id: UserId
+
+
+trait Service:
+    def connect(self) -> None: ...
+
+    def reset(self) -> None:
+        pass
+"#;
+    assert_eq!(formatted, expected);
+
+    let tokens = lexer::lex(&formatted)
+        .map_err(|errs| std::io::Error::other(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n")))?;
+    parser::parse(&tokens)
+        .map_err(|errs| std::io::Error::other(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n")))?;
+
+    Ok(())
+}
+
+/// Regression (GitHub #336 / RFC 053): a trailing own-line comment after a multi-line construct must stay after the
+/// full suite, not get reinserted after the construct header.
+#[test]
+fn test_cli_fmt_keeps_trailing_comment_after_multiline_function() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = make_temp_test_dir();
+    let path = dir.join("rfc053_trailing_comment_after_function.incn");
+    fs::write(
+        &path,
+        r#"def load_user(id: str) -> str:
+    return id
+
+# TODO: split retries
+"#,
+    )?;
+
+    let status = Command::new(incan_debug_binary()).arg("fmt").arg(&path).status()?;
+    assert!(status.success(), "incan fmt failed");
+
+    let formatted = fs::read_to_string(&path)?;
+    let expected = r#"def load_user(id: str) -> str:
+    return id
+# TODO: split retries
+"#;
+    assert_eq!(formatted, expected);
+
+    let tokens = lexer::lex(&formatted)
+        .map_err(|errs| std::io::Error::other(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n")))?;
+    parser::parse(&tokens)
+        .map_err(|errs| std::io::Error::other(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n")))?;
+
+    Ok(())
+}
+
 /// Regression: float compound-assign with int RHS should typecheck (Python-like / promotion).
 #[test]
 fn test_compound_assign_float_with_int_rhs() {

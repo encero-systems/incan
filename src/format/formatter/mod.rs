@@ -15,6 +15,9 @@ use super::config::FormatConfig;
 use super::writer::FormatWriter;
 use crate::frontend::ast::*;
 
+pub(super) const RFC053_TOP_LEVEL_BLANK_LINES: usize = 2;
+pub(super) const RFC053_METHOD_BLANK_LINES: usize = 1;
+
 /// Formatter that transforms AST back to formatted source code.
 pub struct Formatter {
     writer: FormatWriter,
@@ -151,37 +154,47 @@ impl Formatter {
             return 1;
         }
 
-        match (Self::decl_group(prev), Self::decl_group(next)) {
-            (DeclGroup::Import, DeclGroup::Import) => 0,
-            (DeclGroup::Import, _) | (_, DeclGroup::Import) => 1,
-            (DeclGroup::Const, DeclGroup::Const) => 0,
-            (DeclGroup::BlockLike, DeclGroup::BlockLike)
-            | (DeclGroup::Const, DeclGroup::BlockLike)
-            | (DeclGroup::BlockLike, DeclGroup::Const) => self.writer.config().blank_lines_top_level,
-            (DeclGroup::Docstring, _) | (_, DeclGroup::Docstring) => 1,
+        match (Self::decl_spacing_class(prev), Self::decl_spacing_class(next)) {
+            (DeclSpacingClass::Docstring, _) | (_, DeclSpacingClass::Docstring) => 1,
+            (DeclSpacingClass::Import, DeclSpacingClass::Import)
+            | (DeclSpacingClass::ConstLike, DeclSpacingClass::ConstLike)
+            | (DeclSpacingClass::SingleLineType, DeclSpacingClass::SingleLineType) => 0,
+            (DeclSpacingClass::BodyBearing, DeclSpacingClass::BodyBearing) => RFC053_TOP_LEVEL_BLANK_LINES,
+            _ => 1,
         }
     }
 
-    fn decl_group(decl: &Declaration) -> DeclGroup {
+    fn decl_spacing_class(decl: &Declaration) -> DeclSpacingClass {
         match decl {
-            Declaration::Import(_) => DeclGroup::Import,
-            Declaration::Const(_) | Declaration::Static(_) => DeclGroup::Const,
-            Declaration::Docstring(_) => DeclGroup::Docstring,
+            Declaration::Import(_) => DeclSpacingClass::Import,
+            Declaration::Const(_) | Declaration::Static(_) => DeclSpacingClass::ConstLike,
+            Declaration::Docstring(_) => DeclSpacingClass::Docstring,
+            Declaration::TypeAlias(_) => DeclSpacingClass::SingleLineType,
+            Declaration::Newtype(nt) => {
+                if nt.docstring.is_some()
+                    || !nt.rebindings.is_empty()
+                    || !nt.interop_edges.is_empty()
+                    || !nt.methods.is_empty()
+                {
+                    DeclSpacingClass::BodyBearing
+                } else {
+                    DeclSpacingClass::SingleLineType
+                }
+            }
             Declaration::Model(_)
             | Declaration::Class(_)
             | Declaration::Trait(_)
-            | Declaration::TypeAlias(_)
-            | Declaration::Newtype(_)
             | Declaration::Enum(_)
-            | Declaration::Function(_) => DeclGroup::BlockLike,
+            | Declaration::Function(_) => DeclSpacingClass::BodyBearing,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DeclGroup {
+enum DeclSpacingClass {
     Import,
-    Const,
-    BlockLike,
+    ConstLike,
+    SingleLineType,
+    BodyBearing,
     Docstring,
 }

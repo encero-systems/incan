@@ -51,8 +51,11 @@ def calculate(x: int) -> int:
 
 ### Blank Lines
 
-- **2 blank lines** between top-level declarations (functions, classes, models, traits)
-- **1 blank line** between methods within a class/model
+- RFC 053 is the normative vertical-spacing contract for `incan fmt`: [RFC 053](../../RFCs/053_formatter_vertical_spacing_buckets.md)
+- **Exactly 2 blank lines** between top-level body-bearing declarations (`def`, `class`, `model`, `trait`, `enum`, and body-bearing `newtype` / `rusttype` forms)
+- **Exactly 1 blank line** before a following body-bearing member inside a type body
+- **At most 1 blank line** everywhere else, including imports, constants/statics, single-line type aliases, statement blocks, and transitions involving module docstrings
+- Stand-alone comments do **not** satisfy blank-line quotas by themselves; the formatter attaches them to nearby same-scope constructs as leading or trailing comment bundles
 
 ```incan
 def first_function() -> None:
@@ -95,6 +98,7 @@ model User:
 
 - Single-line docstrings on one line: `"""Brief description"""`
 - Multi-line docstrings with content on separate lines:
+- Repeated empty lines inside the docstring payload collapse to **at most one** blank line
 
 ```incan
 """
@@ -140,6 +144,8 @@ Default settings:
 - Line length: 120 characters
 - Quote style: Double quotes
 - Trailing commas: Yes (in multi-line)
+
+The formatter follows RFC 053's vertical-spacing buckets across both `incan fmt` and the library API. `FormatConfig` does not expose blank-line overrides.
 
 ## Limitations
 

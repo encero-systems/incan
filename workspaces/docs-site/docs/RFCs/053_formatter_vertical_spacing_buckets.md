@@ -1,6 +1,6 @@
 # RFC 053: Formatter vertical spacing (three blank-line buckets)
 
-- **Status:** Draft
+- **Status:** In Progress
 - **Created:** 2026-04-08
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 027 (incan vocab crate)
@@ -23,14 +23,7 @@ This RFC defines **normative vertical spacing rules** for Incan’s **source for
 
 ## Motivation
 
-Vertical gaps currently arise from several independent mechanisms such as
-top-level declaration spacing, per-statement leading blank lines, match and
-block layout, docstring emission, comment reattachment, and EOF handling. That
-fragmentation makes it easy for extra consecutive blank lines to appear, for
-example after large `match` arms, and for EOF newline behavior to disagree with
-user expectations. Authors and reviewers need one document that states what the
-formatter guarantees, similar to how Python ecosystems cite PEP 8 for style,
-without reading formatter internals.
+Vertical gaps currently arise from several independent mechanisms such as top-level declaration spacing, per-statement leading blank lines, match and block layout, docstring emission, comment reattachment, and EOF handling. That fragmentation makes it easy for extra consecutive blank lines to appear, for example after large `match` arms, and for EOF newline behavior to disagree with user expectations. Authors and reviewers need one document that states what the formatter guarantees, similar to how Python ecosystems cite PEP 8 for style, without reading formatter internals.
 
 ## Goals
 
@@ -343,10 +336,7 @@ def build_service() -> Service:
 ## Alternatives considered
 
 - **Implementation-only fixes without an RFC:** Rejected for this work because spacing is **user-visible** and **cross-repo**; a written contract reduces debate and drift.
-- **PEP 8 verbatim:** Rejected; Incan has imports, models, interop surfaces,
-  and docstrings that do not map 1:1 to Python, so the bucket rules should be
-  Incan-specific while keeping the same spirit for top-level breathing room and
-  tight imports.
+- **PEP 8 verbatim:** Rejected; Incan has imports, models, interop surfaces, and docstrings that do not map 1:1 to Python, so the bucket rules should be Incan-specific while keeping the same spirit for top-level breathing room and tight imports.
 
 ## Drawbacks
 
@@ -385,13 +375,7 @@ flowchart TB
   end
 ```
 
-**Intent:** many call sites currently contribute newline decisions
-independently. The foreseen shape concentrates policy in one vertical-spacing
-stage that runs on line-structured output after same-scope construct
-classification and comment placement while respecting string and char literal
-boundaries. That keeps bucket rules, docstring-interior normalization, and EOF
-normalization conceptually centralized while emitters focus on syntax-shaped
-text.
+**Intent:** many call sites currently contribute newline decisions independently. The foreseen shape concentrates policy in one vertical-spacing stage that runs on line-structured output after same-scope construct classification and comment placement while respecting string and char literal boundaries. That keeps bucket rules, docstring-interior normalization, and EOF normalization conceptually centralized while emitters focus on syntax-shaped text.
 
 ## Layers affected
 
@@ -399,6 +383,57 @@ text.
 - **LSP / Tooling:** format-on-save and format-range **should** apply the same spacing contract so editor actions do not diverge from `incan fmt`.
 - **Parser / AST:** implementations **may** require richer classification signals (for example single-line vs body-bearing declarations) if those are not already explicit in the formatting input.
 - **Documentation:** contributor-facing formatter docs **should** link to this RFC as the vertical-spacing contract.
+
+## Implementation Plan
+
+### Phase 1: Vertical-spacing classification
+
+- Classify top-level declarations by formatter surface kind so bucket A applies only to body-bearing declarations.
+- Keep imports, constants/statics, and single-line type forms in bucket C instead of forcing double gaps.
+- Preserve bucket-C behavior inside statement blocks while keeping the formatter deterministic.
+
+### Phase 2: Comment and docstring normalization
+
+- Normalize docstring interiors so repeated empty payload lines collapse to at most one blank line.
+- Reattach stand-alone comments as leading/trailing bundles based on same-scope placement and blank-line separation.
+- Keep EOF output normalized to exactly one trailing newline.
+
+### Phase 3: Regression coverage and docs
+
+- Add formatter regression tests for top-level spacing, trait/member spacing, docstring interiors, and comment placement.
+- Update contributor-facing formatter docs to point at RFC 053 as the vertical-spacing contract.
+- Update release notes for the formatter contract change.
+
+## Progress Checklist
+
+### Spec / design
+
+- [x] Settle the three-bucket spacing contract and comment-placement rules in the RFC text.
+
+### Formatter
+
+- [x] Classify top-level declarations by bucket-A eligibility instead of treating all type-like declarations as body-bearing.
+- [x] Keep block-level spacing in bucket C and avoid double gaps for const/static and single-line type forms.
+- [x] Apply bucket-B spacing only before following body-bearing members in type bodies.
+- [x] Normalize docstring interiors to at most one blank line.
+- [x] Preserve a single trailing newline at EOF.
+
+### Comment placement
+
+- [x] Reattach stand-alone comments as leading or trailing bundles based on blank-line separation and same-scope indentation.
+
+### Tests
+
+- [x] Add regression tests for top-level spacing bucket changes.
+- [x] Add regression tests for trait abstract/default member spacing.
+- [x] Add regression tests for docstring-interior normalization.
+- [x] Add regression tests for backward comment attachment and duplicate comment anchors.
+
+### Docs
+
+- [x] Update the formatter how-to with the RFC 053 contract.
+- [x] Update the `0.2` release notes for formatter vertical spacing.
+- [x] Run the repository verification gate and update this checklist with the results.
 
 ## Design Decisions
 

@@ -62,6 +62,8 @@ pub fn format_source(source: &str) -> Result<String, FormatError> {
 
 /// Format Incan source code with custom configuration.
 ///
+/// Vertical spacing follows RFC 053 and is not configurable through [`FormatConfig`].
+///
 /// Returns an error if the source has syntax errors (formatting requires parsing).
 ///
 /// # Examples
@@ -232,13 +234,41 @@ fn normalize_code_for_match(code: &str) -> String {
     code.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
+/// Stand-alone comment lines that are anchored to a nearby formatted code line.
+#[derive(Clone)]
+struct AnchoredStandaloneBlock {
+    anchor: String,
+    occurrence: usize,
+    indent: usize,
+    lines: Vec<String>,
+}
+
+/// Stand-alone comment lines collected while scanning the source before their anchor is known.
+struct PendingStandaloneBlock {
+    indent: usize,
+    lines: Vec<String>,
+    saw_blank_after: bool,
+}
+
+/// Count leading indentation using source whitespace width rather than byte length.
+fn leading_indent_width(line: &str) -> usize {
+    line.chars().take_while(|ch| ch.is_whitespace()).count()
+}
+
+/// Reattach preserved source comments onto the formatter's AST-shaped output.
+///
+/// The formatter itself only emits comments that are represented in the AST. This pass preserves stand-alone and
+/// inline `# ...` comments from the original source by anchoring them to nearby formatted code lines while respecting
+/// indentation scope, blank-line separation, and string-literal boundaries.
 fn reattach_comments(source: &str, formatted: &str) -> String {
     let mut state = StringState::None;
-    let mut pending_standalone: Vec<String> = Vec::new();
-    let mut anchored_standalone: Vec<(String, usize, Vec<String>)> = Vec::new();
-    let mut trailing_standalone: Vec<String> = Vec::new();
+    let mut pending_standalone: Option<PendingStandaloneBlock> = None;
+    let mut leading_standalone: Vec<AnchoredStandaloneBlock> = Vec::new();
+    let mut trailing_standalone: Vec<AnchoredStandaloneBlock> = Vec::new();
+    let mut eof_standalone: Vec<String> = Vec::new();
     let mut inline_comments: Vec<(String, usize, String)> = Vec::new();
     let mut source_anchor_occurrences: HashMap<String, usize> = HashMap::new();
+    let mut last_code_at_indent: HashMap<usize, (String, usize)> = HashMap::new();
 
     // ---- Extract comments from source and anchor them to code lines ----
     for line in source.lines() {
@@ -250,22 +280,42 @@ fn reattach_comments(source: &str, formatted: &str) -> String {
         let Some(idx) = comment_idx else {
             let trimmed = line.trim();
             if trimmed.is_empty() {
-                if !pending_standalone.is_empty() {
-                    pending_standalone.push(String::new());
+                if let Some(block) = &mut pending_standalone {
+                    block.saw_blank_after = true;
                 }
                 continue;
             }
 
             let anchor = normalize_code_for_match(trimmed);
             let occurrence = source_anchor_occurrences.get(&anchor).copied().unwrap_or(0) + 1;
-            if !pending_standalone.is_empty() {
-                anchored_standalone.push((
-                    anchor.clone(),
-                    occurrence,
-                    trim_trailing_blank_comment_lines(&pending_standalone),
-                ));
-                pending_standalone.clear();
+            let indent = leading_indent_width(line);
+            if let Some(block) = pending_standalone.take() {
+                let lines = trim_trailing_blank_comment_lines(&block.lines);
+                let next_same_scope = indent == block.indent;
+                if !block.saw_blank_after && next_same_scope {
+                    leading_standalone.push(AnchoredStandaloneBlock {
+                        anchor: anchor.clone(),
+                        occurrence,
+                        indent: block.indent,
+                        lines,
+                    });
+                } else if let Some((prev_anchor, prev_occurrence)) = last_code_at_indent.get(&block.indent) {
+                    trailing_standalone.push(AnchoredStandaloneBlock {
+                        anchor: prev_anchor.clone(),
+                        occurrence: *prev_occurrence,
+                        indent: block.indent,
+                        lines,
+                    });
+                } else {
+                    leading_standalone.push(AnchoredStandaloneBlock {
+                        anchor: anchor.clone(),
+                        occurrence,
+                        indent: block.indent,
+                        lines,
+                    });
+                }
             }
+            last_code_at_indent.insert(indent, (anchor.clone(), occurrence));
             source_anchor_occurrences.insert(anchor, occurrence);
             continue;
         };
@@ -273,38 +323,105 @@ fn reattach_comments(source: &str, formatted: &str) -> String {
         let code_prefix = &line[..idx];
         let comment_text = line[idx..].trim_end().to_string();
         if code_prefix.trim().is_empty() {
-            pending_standalone.push(line.trim_end().to_string());
+            let indent = leading_indent_width(line);
+            if let Some(block) = &mut pending_standalone {
+                if !block.saw_blank_after && block.indent == indent {
+                    block.lines.push(line.trim_end().to_string());
+                } else {
+                    let lines = trim_trailing_blank_comment_lines(&block.lines);
+                    if let Some((prev_anchor, prev_occurrence)) = last_code_at_indent.get(&block.indent) {
+                        trailing_standalone.push(AnchoredStandaloneBlock {
+                            anchor: prev_anchor.clone(),
+                            occurrence: *prev_occurrence,
+                            indent: block.indent,
+                            lines,
+                        });
+                    } else {
+                        eof_standalone.extend(lines);
+                    }
+                    *block = PendingStandaloneBlock {
+                        indent,
+                        lines: vec![line.trim_end().to_string()],
+                        saw_blank_after: false,
+                    };
+                }
+            } else {
+                pending_standalone = Some(PendingStandaloneBlock {
+                    indent,
+                    lines: vec![line.trim_end().to_string()],
+                    saw_blank_after: false,
+                });
+            }
             continue;
         }
 
         let anchor = normalize_code_for_match(code_prefix.trim_end());
         let occurrence = source_anchor_occurrences.get(&anchor).copied().unwrap_or(0) + 1;
-        if !pending_standalone.is_empty() {
-            anchored_standalone.push((
-                anchor.clone(),
-                occurrence,
-                trim_trailing_blank_comment_lines(&pending_standalone),
-            ));
-            pending_standalone.clear();
+        let indent = leading_indent_width(line);
+        if let Some(block) = pending_standalone.take() {
+            let lines = trim_trailing_blank_comment_lines(&block.lines);
+            let next_same_scope = indent == block.indent;
+            if !block.saw_blank_after && next_same_scope {
+                leading_standalone.push(AnchoredStandaloneBlock {
+                    anchor: anchor.clone(),
+                    occurrence,
+                    indent: block.indent,
+                    lines,
+                });
+            } else if let Some((prev_anchor, prev_occurrence)) = last_code_at_indent.get(&block.indent) {
+                trailing_standalone.push(AnchoredStandaloneBlock {
+                    anchor: prev_anchor.clone(),
+                    occurrence: *prev_occurrence,
+                    indent: block.indent,
+                    lines,
+                });
+            } else {
+                leading_standalone.push(AnchoredStandaloneBlock {
+                    anchor: anchor.clone(),
+                    occurrence,
+                    indent: block.indent,
+                    lines,
+                });
+            }
         }
 
         inline_comments.push((anchor.clone(), occurrence, comment_text));
+        last_code_at_indent.insert(indent, (anchor.clone(), occurrence));
         source_anchor_occurrences.insert(anchor, occurrence);
     }
 
-    if !pending_standalone.is_empty() {
-        trailing_standalone = trim_trailing_blank_comment_lines(&pending_standalone);
+    if let Some(block) = pending_standalone.take() {
+        let lines = trim_trailing_blank_comment_lines(&block.lines);
+        if let Some((prev_anchor, prev_occurrence)) = last_code_at_indent.get(&block.indent) {
+            trailing_standalone.push(AnchoredStandaloneBlock {
+                anchor: prev_anchor.clone(),
+                occurrence: *prev_occurrence,
+                indent: block.indent,
+                lines,
+            });
+        } else {
+            eof_standalone = lines;
+        }
     }
 
     // ---- Reattach comments into formatted output ----
     let mut out_lines: Vec<String> = Vec::new();
-    let mut standalone_idx = 0usize;
+    let mut leading_idx = 0usize;
+    let mut trailing_idx = 0usize;
     let mut inline_idx = 0usize;
     let mut formatted_state = StringState::None;
     let mut formatted_anchor_occurrences: HashMap<String, usize> = HashMap::new();
+    let mut pending_trailing: Vec<AnchoredStandaloneBlock> = Vec::new();
 
     for line in formatted.lines() {
         let line_trimmed = line.trim();
+        let current_indent = leading_indent_width(line);
+        while !pending_trailing.is_empty()
+            && (line_trimmed.is_empty() || (!line_trimmed.is_empty() && current_indent <= pending_trailing[0].indent))
+        {
+            let block = pending_trailing.remove(0);
+            out_lines.extend(block.lines);
+        }
         let normalized = if line_trimmed.is_empty() {
             None
         } else {
@@ -316,14 +433,14 @@ fn reattach_comments(source: &str, formatted: &str) -> String {
             next
         });
 
-        if standalone_idx < anchored_standalone.len()
+        while leading_idx < leading_standalone.len()
             && normalized
                 .as_ref()
-                .is_some_and(|n| n == &anchored_standalone[standalone_idx].0)
-            && occurrence.is_some_and(|occ| occ == anchored_standalone[standalone_idx].1)
+                .is_some_and(|n| n == &leading_standalone[leading_idx].anchor)
+            && occurrence.is_some_and(|occ| occ == leading_standalone[leading_idx].occurrence)
         {
-            out_lines.extend(anchored_standalone[standalone_idx].2.iter().cloned());
-            standalone_idx += 1;
+            out_lines.extend(leading_standalone[leading_idx].lines.iter().cloned());
+            leading_idx += 1;
         }
 
         let mut out_line = line.to_string();
@@ -344,18 +461,38 @@ fn reattach_comments(source: &str, formatted: &str) -> String {
         }
 
         out_lines.push(out_line);
+
+        while trailing_idx < trailing_standalone.len()
+            && normalized
+                .as_ref()
+                .is_some_and(|n| n == &trailing_standalone[trailing_idx].anchor)
+            && occurrence.is_some_and(|occ| occ == trailing_standalone[trailing_idx].occurrence)
+        {
+            pending_trailing.push(trailing_standalone[trailing_idx].clone());
+            trailing_idx += 1;
+        }
     }
 
-    while standalone_idx < anchored_standalone.len() {
-        out_lines.extend(anchored_standalone[standalone_idx].2.iter().cloned());
-        standalone_idx += 1;
+    while leading_idx < leading_standalone.len() {
+        out_lines.extend(leading_standalone[leading_idx].lines.iter().cloned());
+        leading_idx += 1;
     }
 
-    if !trailing_standalone.is_empty() {
+    while trailing_idx < trailing_standalone.len() {
+        pending_trailing.push(trailing_standalone[trailing_idx].clone());
+        trailing_idx += 1;
+    }
+
+    while !pending_trailing.is_empty() {
+        let block = pending_trailing.remove(0);
+        out_lines.extend(block.lines);
+    }
+
+    if !eof_standalone.is_empty() {
         if out_lines.last().is_some_and(|l| !l.is_empty()) {
             out_lines.push(String::new());
         }
-        out_lines.extend(trailing_standalone);
+        out_lines.extend(eof_standalone);
     }
 
     let mut out = out_lines.join("\n");
@@ -931,6 +1068,30 @@ const B: int = 2
         Ok(())
     }
 
+    #[test]
+    fn test_format_source_collapses_docstring_interior_blank_runs() -> Result<(), FormatError> {
+        let source = r#"def explain() -> str:
+    """
+    First paragraph.
+
+
+    Second paragraph.
+    """
+    return "ok"
+"#;
+        let formatted = format_source(source)?;
+        let expected = r#"def explain() -> str:
+    """
+    First paragraph.
+
+    Second paragraph.
+    """
+    return "ok"
+"#;
+        assert_eq!(formatted, expected);
+        Ok(())
+    }
+
     /// Regression (GitHub #247): class body docstrings must round-trip for several body shapes **and** stay attached
     /// on [`ClassDecl::docstring`] after lex+parse of the formatted source (tooling / API extraction path).
     ///
@@ -1182,7 +1343,46 @@ type Middle = newtype int
 type Second = newtype int
 "#;
         let formatted = format_source(source)?;
+        let expected = r#"# ---- first ----
+@derive(Clone)
+type First = newtype int
+@derive(Clone)
+type Middle = newtype int
+# ---- second ----
+@derive(Clone)
+type Second = newtype int
+"#;
+        assert_eq!(formatted, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_blank_line_separated_comment_attaches_backward() -> Result<(), FormatError> {
+        let source = r#"type UserId = str
+# comment about the alias
+
+def load_user(id: UserId) -> User:
+    pass
+"#;
+        let formatted = format_source(source)?;
         assert_eq!(formatted, source);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_trailing_comment_after_multiline_function_stays_after_suite() -> Result<(), FormatError> {
+        let source = r#"def load_user(id: UserId) -> User:
+    pass
+
+# TODO: split retries
+"#;
+        let formatted = format_source(source)?;
+        let expected = r#"def load_user(id: UserId) -> User:
+    pass
+# TODO: split retries
+"#;
+        assert_eq!(formatted, expected);
+        let _ = program_from_source(&formatted)?;
         Ok(())
     }
 
@@ -1383,11 +1583,82 @@ from rust::std::f64 import INFINITY, NAN
 const A: int = 1
 const B: int = 2
 
-
 def sum_constants() -> int:
     return A + B
 "#;
         assert_eq!(result, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_top_level_spacing_single_line_alias_then_body_bearing_decl() -> Result<(), FormatError> {
+        let source = r#"type UserId = str
+model User:
+  id: UserId
+
+def load_user(id: UserId) -> User:
+  pass
+"#;
+        let result = format_source(source)?;
+
+        let expected = r#"type UserId = str
+
+model User:
+    id: UserId
+
+
+def load_user(id: UserId) -> User:
+    pass
+"#;
+        assert_eq!(result, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_trait_abstract_methods_stay_tight_before_default_method() -> Result<(), FormatError> {
+        let source = r#"trait Service:
+  def connect(self) -> None: ...
+  def close(self) -> None: ...
+  def reset(self) -> None:
+    pass
+"#;
+        let result = format_source(source)?;
+
+        let expected = r#"trait Service:
+    def connect(self) -> None: ...
+    def close(self) -> None: ...
+
+    def reset(self) -> None:
+        pass
+"#;
+        assert_eq!(result, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_with_custom_config_keeps_rfc053_spacing() -> Result<(), FormatError> {
+        let source = r#"model User:
+  def connect(self) -> None: ...
+  def reset(self) -> None:
+    pass
+
+def build_user() -> User:
+  pass
+"#;
+        let config = FormatConfig::new().with_indent_width(2);
+        let formatted = format_source_with_config(source, config)?;
+
+        let expected = r#"model User:
+  def connect(self) -> None: ...
+
+  def reset(self) -> None:
+    pass
+
+
+def build_user() -> User:
+  pass
+"#;
+        assert_eq!(formatted, expected);
         Ok(())
     }
 

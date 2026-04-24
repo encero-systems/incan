@@ -18,6 +18,7 @@ The formatter is part of the toolchain and should remain aligned with the parser
 
 - it should be idempotent (formatting twice yields the same output)
 - it should never print invalid syntax
+- its vertical-spacing behavior should match [RFC 053](../../../RFCs/053_formatter_vertical_spacing_buckets.md), which is the normative formatter contract
 
 See:
 

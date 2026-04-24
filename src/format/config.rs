@@ -13,10 +13,6 @@ pub struct FormatConfig {
     pub quote_style: QuoteStyle,
     /// Whether to use trailing commas in multi-line constructs
     pub trailing_commas: bool,
-    /// Number of blank lines between top-level declarations
-    pub blank_lines_top_level: usize,
-    /// Number of blank lines between methods in a class/model
-    pub blank_lines_methods: usize,
 }
 
 /// Quote style for string literals
@@ -35,8 +31,6 @@ impl Default for FormatConfig {
             line_length: 120,
             quote_style: QuoteStyle::Double,
             trailing_commas: true,
-            blank_lines_top_level: 2,
-            blank_lines_methods: 1,
         }
     }
 }
@@ -104,18 +98,6 @@ mod tests {
         assert!(config.trailing_commas);
     }
 
-    #[test]
-    fn test_default_config_blank_lines_top_level() {
-        let config = FormatConfig::default();
-        assert_eq!(config.blank_lines_top_level, 2);
-    }
-
-    #[test]
-    fn test_default_config_blank_lines_methods() {
-        let config = FormatConfig::default();
-        assert_eq!(config.blank_lines_methods, 1);
-    }
-
     // ========================================
     // Constructor tests
     // ========================================
@@ -128,8 +110,6 @@ mod tests {
         assert_eq!(new_config.line_length, default_config.line_length);
         assert_eq!(new_config.quote_style, default_config.quote_style);
         assert_eq!(new_config.trailing_commas, default_config.trailing_commas);
-        assert_eq!(new_config.blank_lines_top_level, default_config.blank_lines_top_level);
-        assert_eq!(new_config.blank_lines_methods, default_config.blank_lines_methods);
     }
 
     // ========================================
