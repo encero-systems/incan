@@ -563,6 +563,7 @@ impl TypeChecker {
 
     fn check_while_stmt(&mut self, while_stmt: &WhileStmt) {
         match &while_stmt.condition {
+            // ---- Context: ordinary boolean `while` condition ----
             Condition::Expr(expr) => {
                 let cond_ty = self.check_expr(expr);
                 let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
@@ -576,6 +577,7 @@ impl TypeChecker {
                 let _ = self.pop_loop_context();
                 self.symbols.exit_scope();
             }
+            // ---- Context: pattern-driven `while let` loop ----
             Condition::Let { pattern, value } => {
                 let value_ty = self.check_expr(value);
                 self.symbols.enter_scope(ScopeKind::Block);
@@ -590,6 +592,10 @@ impl TypeChecker {
         }
     }
 
+    /// Type-check a statement-form `loop:` body.
+    ///
+    /// Statement loops share the same loop context stack as `for` / `while`, but they do not accept `break <value>`
+    /// because no surrounding expression consumes a result.
     fn check_loop_stmt(&mut self, loop_stmt: &LoopStmt) {
         self.symbols.enter_scope(ScopeKind::Block);
         self.push_loop_context(LoopContextKind::Statement, None);
@@ -617,6 +623,11 @@ impl TypeChecker {
         self.symbols.exit_scope();
     }
 
+    /// Validate a `break` statement against the innermost active loop context.
+    ///
+    /// For expression-form `loop:` bodies this records the break value type so the loop result can be resolved after
+    /// the body finishes checking. For statement loops it rejects `break <value>` while still type-checking the
+    /// provided expression to surface any nested errors.
     fn check_break_stmt(&mut self, value: Option<&Spanned<Expr>>, span: Span) {
         let Some((loop_kind, expected_break_ty)) = self
             .loop_stack
@@ -626,20 +637,15 @@ impl TypeChecker {
             if let Some(value) = value {
                 self.check_expr(value);
             }
-            self.errors.push(crate::frontend::diagnostics::CompileError::new(
-                "`break` is only valid inside loops".into(),
-                span,
-            ));
+            self.errors.push(errors::break_outside_loop(span));
             return;
         };
 
         let break_ty = match (loop_kind, value) {
             (LoopContextKind::Statement, Some(value)) => {
                 let value_ty = self.check_expr(value);
-                self.errors.push(crate::frontend::diagnostics::CompileError::new(
-                    "`break <value>` is only valid inside `loop:` expressions".into(),
-                    value.span,
-                ));
+                self.errors
+                    .push(errors::break_value_requires_loop_expression(value.span));
                 Some((value_ty, value.span))
             }
             (LoopContextKind::Statement, None) => None,
@@ -661,12 +667,10 @@ impl TypeChecker {
         }
     }
 
+    /// Validate that `continue` appears inside some active loop context.
     fn check_continue_stmt(&mut self, span: Span) {
         if self.loop_stack.is_empty() {
-            self.errors.push(crate::frontend::diagnostics::CompileError::new(
-                "`continue` is only valid inside loops".into(),
-                span,
-            ));
+            self.errors.push(errors::continue_outside_loop(span));
         }
     }
 

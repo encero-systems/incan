@@ -257,13 +257,20 @@ pub enum Pattern {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IfExpr {
+    /// Condition that decides whether the `then` body executes.
     pub condition: Spanned<Expr>,
+    /// Statements evaluated when the condition is truthy.
     pub then_body: Vec<Spanned<Statement>>,
+    /// Optional fallback statements evaluated when the condition is false.
     pub else_body: Option<Vec<Spanned<Statement>>>,
 }
 
+/// Explicit infinite-loop expression (`loop:`).
+///
+/// Unlike `while`, this form is allowed in expression position and may yield a value via `break <expr>`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoopExpr {
+    /// Statements that execute for each loop iteration until a `break` exits the loop.
     pub body: Vec<Spanned<Statement>>,
 }
 

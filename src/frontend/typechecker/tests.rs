@@ -6611,3 +6611,19 @@ def run() -> int:
         "expected missing-break diagnostic, got {errs:?}"
     );
 }
+
+#[test]
+fn break_outside_loop_uses_typed_diagnostic() {
+    let errs = check_str_err(
+        r#"
+def run() -> None:
+  break
+"#,
+        "expected break-outside-loop diagnostic",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("`break` is only valid inside loops")),
+        "expected break-outside-loop diagnostic, got {errs:?}"
+    );
+}

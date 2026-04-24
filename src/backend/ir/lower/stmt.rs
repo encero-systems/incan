@@ -378,7 +378,10 @@ impl AstLowering {
                             let body_expr = self.lower_block_expr(&w.body, true)?;
                             let break_expr = TypedExpr::new(
                                 IrExprKind::Block {
-                                    stmts: vec![IrStmt::new(IrStmtKind::Break(None))],
+                                    stmts: vec![IrStmt::new(IrStmtKind::Break {
+                                        label: None,
+                                        value: None,
+                                    })],
                                     value: None,
                                 },
                                 IrType::Unit,

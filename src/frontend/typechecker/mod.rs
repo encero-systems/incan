@@ -258,14 +258,23 @@ impl TypeCheckInfo {
 /// [`check_with_imports`](Self::check_with_imports).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LoopContextKind {
+    /// A statement-form loop (`for`, `while`, or `loop:`) where `break` cannot yield a value.
     Statement,
+    /// An expression-form `loop:` whose `break` statements must unify to one result type.
     Expression,
 }
 
+/// Semantic state for the innermost loop currently being type-checked.
+///
+/// Each active loop records whether it is statement- or expression-oriented, any contextual expected type for
+/// `break <value>`, and the concrete break result types seen while checking the body.
 #[derive(Debug, Clone)]
 pub(crate) struct LoopContext {
+    /// Whether this loop is a statement loop or a value-producing `loop:` expression.
     pub kind: LoopContextKind,
+    /// Type that outer context expects this loop expression to produce, when known.
     pub expected_break_ty: Option<ResolvedType>,
+    /// Types observed from `break` statements that contribute to the loop result.
     pub break_types: Vec<(ResolvedType, Span)>,
 }
 
@@ -408,6 +417,10 @@ impl TypeChecker {
         }
     }
 
+    /// Push a new loop context before checking a loop body.
+    ///
+    /// Statement loops pass `None` for `expected_break_ty`; expression loops forward whatever result type the
+    /// surrounding context expects.
     pub(crate) fn push_loop_context(&mut self, kind: LoopContextKind, expected_break_ty: Option<ResolvedType>) {
         self.loop_stack.push(LoopContext {
             kind,
@@ -416,14 +429,21 @@ impl TypeChecker {
         });
     }
 
+    /// Pop the innermost loop context once the corresponding body has been checked.
     pub(crate) fn pop_loop_context(&mut self) -> Option<LoopContext> {
         self.loop_stack.pop()
     }
 
+    /// Borrow the innermost active loop so `break` checking can append inferred break types.
     pub(crate) fn current_loop_context_mut(&mut self) -> Option<&mut LoopContext> {
         self.loop_stack.last_mut()
     }
 
+    /// Resolve the final type of a `loop:` expression from the `break` types observed in its body.
+    ///
+    /// When an outer expected type exists, every `break` must be compatible with it. Otherwise this picks the
+    /// narrowest compatible type seen across all `break` statements and emits a type mismatch when no single result
+    /// type can satisfy every branch.
     pub(crate) fn resolve_loop_break_result_type(
         &mut self,
         loop_span: Span,
@@ -431,13 +451,11 @@ impl TypeChecker {
         break_types: &[(ResolvedType, Span)],
     ) -> ResolvedType {
         let Some((first_ty, _)) = break_types.first() else {
-            self.errors.push(CompileError::new(
-                "loop expression must contain at least one `break`".to_string(),
-                loop_span,
-            ));
+            self.errors.push(errors::loop_expression_requires_break(loop_span));
             return ResolvedType::Unknown;
         };
 
+        // ---- Context: outer expression already constrains the loop result type ----
         if let Some(expected) = expected_break_ty {
             for (ty, span) in break_types {
                 if !self.types_compatible(ty, expected) {
@@ -449,6 +467,7 @@ impl TypeChecker {
             return expected.clone();
         }
 
+        // ---- Context: infer a common result type from the observed `break` values ----
         let mut result_ty = first_ty.clone();
         for (ty, span) in break_types.iter().skip(1) {
             if self.types_compatible(ty, &result_ty) {

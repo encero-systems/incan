@@ -97,8 +97,9 @@ Guidelines:
 
 ### Formatting
 
-- Wrap rustdoc prose naturally — don't worry about line length.
-- Use `make fmt` to format the codebase after making changes, and before running tests.
+- Never manually hard-wrap prose comments or rustdoc to an arbitrary width. Write comment prose naturally, then run `make fmt`.
+- Always run `make fmt` after touching Rust code or rustdoc, and before running tests.
+- If you touch comment prose that is already awkwardly short-wrapped, rewrite it as a natural paragraph before running `make fmt`; do not assume rustfmt will expand it for you.
 
 ### Documentation requirements (mandatory)
 

@@ -106,6 +106,11 @@ impl TypeChecker {
         ResolvedType::Unit
     }
 
+    /// Type-check a value-producing `loop:` expression.
+    ///
+    /// The loop body runs in its own block scope so bindings introduced inside the loop do not leak outward.
+    /// `break <value>` statements feed their inferred types into the active loop context, which is resolved after
+    /// the body finishes checking.
     pub(in crate::frontend::typechecker::check_expr) fn check_loop_expr(
         &mut self,
         loop_expr: &LoopExpr,

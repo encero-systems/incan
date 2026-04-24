@@ -563,7 +563,19 @@ fn collect_backend_clone_bounds_in_stmt(
                 collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
             }
         }
-        IrStmtKind::Return(None) | IrStmtKind::Break(_) | IrStmtKind::Continue(_) => {}
+        IrStmtKind::Break { value: Some(expr), .. } => {
+            collect_backend_clone_bounds_for_value_use(
+                expr,
+                ValueUseSite::ReturnValue {
+                    target_ty: Some(&expr.ty),
+                },
+                type_param_names,
+                self_clone_params,
+                clone_params,
+            );
+            collect_backend_clone_bounds_in_expr(expr, type_param_names, self_clone_params, clone_params);
+        }
+        IrStmtKind::Return(None) | IrStmtKind::Break { label: _, value: None } | IrStmtKind::Continue(_) => {}
     }
 }
 
@@ -805,6 +817,11 @@ fn collect_backend_clone_bounds_in_expr(
             }
             if let Some(value) = value {
                 collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        IrExprKind::Loop { body } => {
+            for stmt in body {
+                collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
             }
         }
         IrExprKind::Match { scrutinee, arms } => {
