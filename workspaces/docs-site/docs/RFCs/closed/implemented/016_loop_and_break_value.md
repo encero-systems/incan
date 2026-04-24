@@ -1,13 +1,13 @@
 # RFC 016: `loop` and `break <value>` (Loop Expressions)
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2025-12-24
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 006 (generators)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/327
-- **RFC PR:** —
+- **RFC PR:** https://github.com/dannys-code-corner/incan/pull/399
 - **Written against:** v0.1
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -179,7 +179,7 @@ This works when the loop is “repeat until condition,” but not always when th
 - Lower loop expressions and value-carrying breaks through IR and emission so the backend preserves loop-result semantics instead of desugaring them away incorrectly.
 - Cover the feature with parser, typechecker, formatter, and codegen tests, then update the control-flow docs and release notes for the release line that eventually ships the feature.
 
-## Progress Checklist
+## Implementation log
 
 ### Parser / AST / Formatter / Tooling
 
@@ -213,7 +213,7 @@ This works when the loop is “repeat until condition,” but not always when th
 ### Docs / Release Notes
 
 - [x] Update the control-flow docs to explain `loop:` and `break <value>`.
-- [ ] Add release notes coverage for the release line that ships this feature.
+- [x] Add release notes coverage for the release line that ships this feature.
 
 ## Design Decisions
 

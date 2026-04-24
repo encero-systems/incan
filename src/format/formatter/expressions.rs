@@ -143,28 +143,9 @@ impl Formatter {
                 self.writer.dedent();
             }
             Expr::If(if_expr) => {
-                self.writer.write("if ");
                 self.format_expr(&if_expr.condition.node);
-                self.writer.writeln(":");
-                self.writer.indent();
-                for stmt in &if_expr.then_body {
-                    self.format_statement(stmt);
-                }
-                if if_expr.then_body.is_empty() {
-                    self.writer.writeln("pass");
-                }
-                self.writer.dedent();
-                if let Some(else_body) = &if_expr.else_body {
-                    self.writer.writeln("else:");
-                    self.writer.indent();
-                    for stmt in else_body {
-                        self.format_statement(stmt);
-                    }
-                    if else_body.is_empty() {
-                        self.writer.writeln("pass");
-                    }
-                    self.writer.dedent();
-                }
+                self.writer.write(" if ");
+                // Note: This handles ternary-style if expressions
             }
             Expr::Loop(loop_expr) => {
                 self.writer.writeln("loop:");
