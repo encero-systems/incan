@@ -2,7 +2,9 @@
 
 use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind};
 
-use crate::frontend::ast::{CallArg, Declaration, Expr, MatchBody, Program, SliceExpr, Spanned, Statement, Type};
+use crate::frontend::ast::{
+    CallArg, Condition, Declaration, Expr, MatchBody, Program, SliceExpr, Spanned, Statement, Type,
+};
 use incan_core::lang::conventions;
 use incan_core::lang::types::{collections, numerics, stringlike};
 
