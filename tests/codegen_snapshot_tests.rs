@@ -944,6 +944,15 @@ fn test_models_codegen() {
 fn test_list_pop_clone_only_model_codegen() {
     let source = load_test_file("list_pop_clone_only_model");
     let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("incan_stdlib::collections::list_pop"),
+        "expected list.pop() emission to route through the stdlib helper; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains(".pop().unwrap_or_else"),
+        "list.pop() emission must not inline unwrap_or_else fallback logic; generated:\n{rust_code}"
+    );
     insta::assert_snapshot!("list_pop_clone_only_model", rust_code);
 }
 
@@ -1184,6 +1193,23 @@ fn test_imports_codegen() {
 fn test_builtins_codegen() {
     let source = load_test_file("builtins");
     let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("incan_stdlib::collections::list_min_copy")
+            || compact.contains("incan_stdlib::collections::list_min_clone")
+            || compact.contains("incan_stdlib::collections::list_min_f64"),
+        "expected min() emission to route through stdlib helpers; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("incan_stdlib::collections::list_max_copy")
+            || compact.contains("incan_stdlib::collections::list_max_clone")
+            || compact.contains("incan_stdlib::collections::list_max_f64"),
+        "expected max() emission to route through stdlib helpers; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains(".unwrap_or_else"),
+        "builtins codegen must not inline unwrap_or_else fallback paths for list min/max; generated:\n{rust_code}"
+    );
     insta::assert_snapshot!("builtins", rust_code);
 }
 
@@ -1607,6 +1633,15 @@ fn test_std_serde_json_compiled_codegen() {
 fn test_std_serde_json_import_codegen() {
     let source = load_test_file("std_serde_json_import");
     let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("incan_stdlib::json::stringify_or_raise"),
+        "expected JSON stringify emission to route through stdlib helper; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("serde_json::to_string"),
+        "generated JSON stringify paths should no longer inline serde_json::to_string fallbacks; generated:\n{rust_code}"
+    );
     insta::assert_snapshot!("std_serde_json_import", rust_code);
 }
 

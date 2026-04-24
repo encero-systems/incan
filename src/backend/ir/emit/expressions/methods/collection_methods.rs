@@ -128,10 +128,10 @@ pub(super) fn emit_collection_method(
             Ok(quote! { () })
         }
         CollectionMethodKind::Pop => {
-            // Incan types `pop()` as `T`, but `Vec::pop` is `Option<T>`. Avoid `unwrap_or_default()` so `T` need not
-            // implement `Default` (e.g. Clone-only models, #194). Empty list uses canonical `IndexError: pop from
-            // empty list` via stdlib (Python-compatible).
-            Ok(quote! { #r.pop().unwrap_or_else(|| incan_stdlib::errors::raise_list_pop_empty()) })
+            // Incan types `pop()` as `T`, not `Option<T>`. Route through the runtime helper so generated Rust does not
+            // encode the empty-list fallback itself while preserving the canonical Python-like error message.
+            let list_mut = emit_list_mut_receiver(receiver, r);
+            Ok(quote! { incan_stdlib::collections::list_pop(#list_mut) })
         }
         CollectionMethodKind::Swap => {
             if args.len() >= 2 {

@@ -282,7 +282,7 @@ pub enum IrExprKind {
     // List of field names for reflection
     FieldsList(Vec<String>),
 
-    // serde_json::to_string(self).unwrap()
+    // `incan_stdlib::json::stringify_or_raise(self, type_name)`
     SerdeToJson,
 
     // serde_json::from_str(s) - contains the target type name
@@ -476,7 +476,7 @@ pub enum BuiltinFn {
     ReadFile,
     /// `write_file(path, content)` → `std::fs::write(path, content)`
     WriteFile,
-    /// `json_stringify(x)` → `serde_json::to_string(&x).unwrap()`
+    /// `json_stringify(x)` → `incan_stdlib::json::stringify_or_raise(&x, type_name)`
     JsonStringify,
 }
 
@@ -567,8 +567,8 @@ pub enum CollectionMethodKind {
     Append,
     /// `list.extend(items)` → `incan_stdlib::collections::list_extend(...)`
     Extend,
-    /// `list.pop()` lowers via `Vec::pop()` without requiring `T: Default`. An empty list raises
-    /// `IndexError: pop from empty list` through `incan_stdlib::errors::raise_list_pop_empty` (#194).
+    /// `list.pop()` lowers via `incan_stdlib::collections::list_pop(...)`, which preserves the `T` return type while
+    /// raising `IndexError: pop from empty list` on the runtime side (#194).
     Pop,
     /// `list.swap(i, j)` → `incan_stdlib::collections::list_swap(...)`
     Swap,

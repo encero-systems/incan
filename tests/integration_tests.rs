@@ -3591,6 +3591,53 @@ mod rfc031_pub_import_integration_tests {
         Ok(())
     }
 
+    #[test]
+    fn generated_runtime_helpers_run_for_pop_min_max_and_to_json() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"generated_runtime_helpers\"\nversion = \"0.3.0-dev.0\"\n",
+            "from std.serde.json import Serialize\n\nmodel Payload with Serialize:\n  value: int\n\ndef main() -> None:\n  mut xs = [3, 1, 4]\n  println(xs.pop())\n  println(min(xs))\n  println(max(xs))\n  println(Payload(value=2).to_json())\n",
+        )?;
+
+        let output = Command::new(incan_bin_path())
+            .arg("run")
+            .arg(&main_path)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "expected generated runtime helper path project to run successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = stdout.lines().collect();
+        assert_eq!(
+            lines.first().copied(),
+            Some("4"),
+            "expected xs.pop() output first, got:\n{stdout}"
+        );
+        assert_eq!(
+            lines.get(1).copied(),
+            Some("1"),
+            "expected min(xs) after pop, got:\n{stdout}"
+        );
+        assert_eq!(
+            lines.get(2).copied(),
+            Some("3"),
+            "expected max(xs) after pop, got:\n{stdout}"
+        );
+        assert_eq!(
+            lines.get(3).copied(),
+            Some("{\"value\":2}"),
+            "expected Payload.to_json() output, got:\n{stdout}"
+        );
+        Ok(())
+    }
+
     fn write_pub_boundary_type_fidelity_library(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let producer_root = root.join("pub_boundary_library");
         std::fs::create_dir_all(producer_root.join("src"))?;

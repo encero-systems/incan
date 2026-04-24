@@ -115,10 +115,7 @@ impl Stack {
     }
     pub fn pop(&self) -> i64 {
         if ::std::convert::identity(self.items.len() as i64) > 0 {
-            return self
-                .items
-                .pop()
-                .unwrap_or_else(|| incan_stdlib::errors::raise_list_pop_empty());
+            return incan_stdlib::collections::list_pop(&mut self.items);
         }
         return -1;
     }

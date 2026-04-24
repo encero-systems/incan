@@ -32,20 +32,8 @@ fn test_sum_builtin() {
 }
 fn test_min_max_builtins() {
     let values = vec![3, 1, 4, 1, 5, 9];
-    let minimum = values
-        .iter()
-        .min()
-        .copied()
-        .unwrap_or_else(|| incan_stdlib::errors::raise_value_error(
-            "min() arg is an empty sequence",
-        ));
-    let maximum = values
-        .iter()
-        .max()
-        .copied()
-        .unwrap_or_else(|| incan_stdlib::errors::raise_value_error(
-            "max() arg is an empty sequence",
-        ));
+    let minimum = incan_stdlib::collections::list_min_copy(&values);
+    let maximum = incan_stdlib::collections::list_max_copy(&values);
     println!("{}", minimum);
     println!("{}", maximum);
 }

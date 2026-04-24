@@ -545,11 +545,9 @@ impl<'a> IrEmitter<'a> {
 
             IrExprKind::FieldsList(fields) => Ok(quote! { vec![#(#fields),*] }),
 
-            IrExprKind::SerdeToJson => Ok(quote! {
-                serde_json::to_string(self).unwrap_or_else(|_| {
-                    incan_stdlib::errors::raise_json_serialization_error(std::any::type_name::<Self>())
-                })
-            }),
+            IrExprKind::SerdeToJson => {
+                Ok(quote! { incan_stdlib::json::stringify_or_raise(self, std::any::type_name::<Self>()) })
+            }
 
             IrExprKind::SerdeFromJson(type_name) => {
                 let type_ident = format_ident!("{}", type_name);

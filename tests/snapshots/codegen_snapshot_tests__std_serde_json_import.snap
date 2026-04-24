@@ -61,10 +61,7 @@ impl Config {
     }
     /// Serialize this model to a JSON string
     pub fn to_json(&self) -> String {
-        serde_json::to_string(self)
-            .unwrap_or_else(|_| {
-                incan_stdlib::errors::raise_json_serialization_error(stringify!(Config))
-            })
+        incan_stdlib::json::stringify_or_raise(self, stringify!(Config))
     }
     /// Deserialize a JSON string into this model
     pub fn from_json(json_str: String) -> Result<Self, String> {
