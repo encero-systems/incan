@@ -336,6 +336,11 @@ impl<'a> Parser<'a> {
         Ok(Statement::Return(expr))
     }
 
+    /// Parse an `if` / `while` condition, including RFC 049 let-pattern forms.
+    ///
+    /// Ordinary boolean conditions stay as expression-backed conditions, while
+    /// `let PATTERN = VALUE` is captured explicitly so later stages can apply
+    /// match-equivalent semantics without reparsing the surface spelling.
     fn control_flow_condition(&mut self) -> Result<Condition, CompileError> {
         if self.match_token(&TokenKind::Keyword(KeywordId::Let)) {
             let pattern = self.pattern()?;

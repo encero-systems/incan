@@ -135,6 +135,11 @@ pub enum Condition {
 }
 
 impl Condition {
+    /// Return the source span that covers the full control-flow condition.
+    ///
+    /// For `if let` / `while let`, this spans from the pattern start through the
+    /// scrutinee expression so downstream diagnostics and tooling can treat the
+    /// let-pattern condition as one surface unit.
     #[must_use]
     pub fn span(&self) -> Span {
         match self {
