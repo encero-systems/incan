@@ -20,6 +20,8 @@ pub enum Statement {
     Return(Option<Spanned<Expr>>),
     /// `if expr: ... [else: ...]`
     If(IfStmt),
+    /// `loop: ...`
+    Loop(LoopStmt),
     /// `while expr: ...`
     While(WhileStmt),
     /// `for x in expr: ...`
@@ -28,8 +30,8 @@ pub enum Statement {
     Expr(Spanned<Expr>),
     /// `pass` or `...`
     Pass,
-    /// `break` - exit the innermost loop
-    Break,
+    /// `break` / `break expr` - exit the innermost loop, optionally producing a loop-expression value
+    Break(Option<Spanned<Expr>>),
     /// `continue` - skip to next iteration
     Continue,
     /// Compound assignment: `x += value`, `x -= value`, etc.
@@ -134,6 +136,11 @@ pub struct IfStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct WhileStmt {
     pub condition: Spanned<Expr>,
+    pub body: Vec<Spanned<Statement>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoopStmt {
     pub body: Vec<Spanned<Statement>>,
 }
 

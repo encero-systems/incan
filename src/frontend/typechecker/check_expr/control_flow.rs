@@ -8,6 +8,7 @@ use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::{ResolvedType, ScopeKind};
 
 use super::TypeChecker;
+use crate::frontend::typechecker::LoopContextKind;
 use crate::frontend::typechecker::helpers::ensure_bool_condition;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
 
@@ -103,6 +104,26 @@ impl TypeChecker {
         }
 
         ResolvedType::Unit
+    }
+
+    pub(in crate::frontend::typechecker::check_expr) fn check_loop_expr(
+        &mut self,
+        loop_expr: &LoopExpr,
+        expected: Option<&ResolvedType>,
+        span: Span,
+    ) -> ResolvedType {
+        self.symbols.enter_scope(ScopeKind::Block);
+        self.push_loop_context(LoopContextKind::Expression, expected.cloned());
+        for stmt in &loop_expr.body {
+            self.check_statement(stmt);
+        }
+        let loop_ctx = self.pop_loop_context();
+        self.symbols.exit_scope();
+        let Some(loop_ctx) = loop_ctx else {
+            return ResolvedType::Unknown;
+        };
+
+        self.resolve_loop_break_result_type(span, expected, &loop_ctx.break_types)
     }
 
     /// Type-check a range expression (`start..end`) and return `Range[int]`.

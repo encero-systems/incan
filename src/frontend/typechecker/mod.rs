@@ -256,6 +256,19 @@ impl TypeCheckInfo {
 /// Holds the symbol table, accumulated errors, and context needed for validation.
 /// Create with [`TypeChecker::new`], then call [`check_program`](Self::check_program) or
 /// [`check_with_imports`](Self::check_with_imports).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoopContextKind {
+    Statement,
+    Expression,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LoopContext {
+    pub kind: LoopContextKind,
+    pub expected_break_ty: Option<ResolvedType>,
+    pub break_types: Vec<(ResolvedType, Span)>,
+}
+
 pub struct TypeChecker {
     /// Symbol table populated during the first pass.
     pub(crate) symbols: SymbolTable,
@@ -271,6 +284,8 @@ pub struct TypeChecker {
     pub(crate) current_return_error_type: Option<ResolvedType>,
     /// Whether the body currently being checked belongs to an `async def` or async method.
     pub(crate) in_async_body: bool,
+    /// Stack of active loop contexts, innermost last.
+    pub(crate) loop_stack: Vec<LoopContext>,
     /// Active trait @requires context for default method bodies.
     pub(crate) current_trait_requires: Option<HashMap<String, ResolvedType>>,
     /// Active trait name for default method diagnostics.
@@ -362,6 +377,7 @@ impl TypeChecker {
             mutable_bindings: HashSet::new(),
             current_return_error_type: None,
             in_async_body: false,
+            loop_stack: Vec::new(),
             current_trait_requires: None,
             current_trait_name: None,
             current_trait_missing_requires_emitted: None,
@@ -390,6 +406,64 @@ impl TypeChecker {
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir: None,
         }
+    }
+
+    pub(crate) fn push_loop_context(&mut self, kind: LoopContextKind, expected_break_ty: Option<ResolvedType>) {
+        self.loop_stack.push(LoopContext {
+            kind,
+            expected_break_ty,
+            break_types: Vec::new(),
+        });
+    }
+
+    pub(crate) fn pop_loop_context(&mut self) -> Option<LoopContext> {
+        self.loop_stack.pop()
+    }
+
+    pub(crate) fn current_loop_context_mut(&mut self) -> Option<&mut LoopContext> {
+        self.loop_stack.last_mut()
+    }
+
+    pub(crate) fn resolve_loop_break_result_type(
+        &mut self,
+        loop_span: Span,
+        expected_break_ty: Option<&ResolvedType>,
+        break_types: &[(ResolvedType, Span)],
+    ) -> ResolvedType {
+        let Some((first_ty, _)) = break_types.first() else {
+            self.errors.push(CompileError::new(
+                "loop expression must contain at least one `break`".to_string(),
+                loop_span,
+            ));
+            return ResolvedType::Unknown;
+        };
+
+        if let Some(expected) = expected_break_ty {
+            for (ty, span) in break_types {
+                if !self.types_compatible(ty, expected) {
+                    self.errors
+                        .push(errors::type_mismatch(&expected.to_string(), &ty.to_string(), *span));
+                    return ResolvedType::Unknown;
+                }
+            }
+            return expected.clone();
+        }
+
+        let mut result_ty = first_ty.clone();
+        for (ty, span) in break_types.iter().skip(1) {
+            if self.types_compatible(ty, &result_ty) {
+                continue;
+            }
+            if self.types_compatible(&result_ty, ty) {
+                result_ty = ty.clone();
+                continue;
+            }
+            self.errors
+                .push(errors::type_mismatch(&result_ty.to_string(), &ty.to_string(), *span));
+            return ResolvedType::Unknown;
+        }
+
+        result_ty
     }
 
     /// Opt into semantic rust-inspect extraction for this checker.
@@ -1396,6 +1470,11 @@ impl TypeChecker {
                     }
                 }
             }
+            Expr::Loop(loop_expr) => {
+                for stmt in &loop_expr.body {
+                    self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
+                }
+            }
             Expr::ListComp(list_comp) => {
                 self.collect_static_dependencies_from_expr(&list_comp.expr.node, deps, visiting_functions);
                 self.collect_static_dependencies_from_expr(&list_comp.iter.node, deps, visiting_functions);
@@ -1596,6 +1675,11 @@ impl TypeChecker {
                             visiting_functions,
                         );
                     }
+                }
+            }
+            Expr::Loop(loop_expr) => {
+                for stmt in &loop_expr.body {
+                    self.collect_static_initializer_static_writes_from_stmt(stmt, current_static, visiting_functions);
                 }
             }
             Expr::ListComp(list_comp) => {
@@ -1822,6 +1906,11 @@ impl TypeChecker {
                     }
                 }
             }
+            Statement::Loop(loop_stmt) => {
+                for inner in &loop_stmt.body {
+                    self.collect_static_initializer_static_writes_from_stmt(inner, current_static, visiting_functions);
+                }
+            }
             Statement::While(while_stmt) => {
                 self.collect_static_initializer_static_writes_from_expr(
                     &while_stmt.condition,
@@ -1842,9 +1931,12 @@ impl TypeChecker {
                     self.collect_static_initializer_static_writes_from_stmt(inner, current_static, visiting_functions);
                 }
             }
+            Statement::Break(Some(expr)) => {
+                self.collect_static_initializer_static_writes_from_expr(expr, current_static, visiting_functions);
+            }
             Statement::Return(None)
             | Statement::Pass
-            | Statement::Break
+            | Statement::Break(None)
             | Statement::Continue
             | Statement::Surface(_)
             | Statement::VocabBlock(_) => {}
@@ -1885,7 +1977,10 @@ impl TypeChecker {
             Statement::Return(Some(expr)) | Statement::Expr(expr) => {
                 self.collect_static_dependencies_from_expr(&expr.node, deps, visiting_functions);
             }
-            Statement::Return(None) | Statement::Pass | Statement::Break | Statement::Continue => {}
+            Statement::Break(Some(expr)) => {
+                self.collect_static_dependencies_from_expr(&expr.node, deps, visiting_functions);
+            }
+            Statement::Return(None) | Statement::Pass | Statement::Break(None) | Statement::Continue => {}
             Statement::If(if_stmt) => {
                 self.collect_static_dependencies_from_expr(&if_stmt.condition.node, deps, visiting_functions);
                 for stmt in &if_stmt.then_body {
@@ -1901,6 +1996,11 @@ impl TypeChecker {
                     for stmt in else_body {
                         self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
                     }
+                }
+            }
+            Statement::Loop(loop_stmt) => {
+                for stmt in &loop_stmt.body {
+                    self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
                 }
             }
             Statement::While(while_stmt) => {

@@ -261,6 +261,17 @@ fn rewrite_statement_list(
                 );
                 rewritten.push(ast::Spanned::new(ast::Statement::While(while_stmt), span));
             }
+            ast::Statement::Loop(mut loop_stmt) => {
+                rewrite_statement_list(
+                    &mut loop_stmt.body,
+                    module_path,
+                    library_manifest_index,
+                    runtime,
+                    helper_imports,
+                    errors,
+                );
+                rewritten.push(ast::Spanned::new(ast::Statement::Loop(loop_stmt), span));
+            }
             ast::Statement::For(mut for_stmt) => {
                 rewrite_statement_list(
                     &mut for_stmt.body,

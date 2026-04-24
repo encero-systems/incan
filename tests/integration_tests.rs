@@ -887,6 +887,42 @@ def main() -> None:
 }
 
 #[test]
+fn test_rfc016_loop_expression_runs() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def find_value(flag: bool) -> int:
+  return loop:
+    if flag:
+      break 42
+    break 7
+
+def main() -> None:
+  println(find_value(True))
+  println(find_value(False))
+"#;
+    let output = Command::new(incan_debug_binary())
+        .args(["run", "-c", source])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "expected loop expression program to run.\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    assert_eq!(
+        lines,
+        vec!["42", "7"],
+        "unexpected loop expression output.\nstdout:\n{stdout}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn test_list_extend_method_runs_without_consuming_source() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def main() -> None:

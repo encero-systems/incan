@@ -371,6 +371,7 @@ impl<'a> Parser<'a> {
             || self.current_surface_keyword(KeywordSurfaceKind::PrefixExpression).is_some()
             || self.check_keyword(KeywordId::Match)
             || self.check_keyword(KeywordId::If)
+            || self.check_keyword(KeywordId::Loop)
             || self.check_punct(PunctuationId::LParen)
             || self.check_punct(PunctuationId::LBracket)
             || self.check_punct(PunctuationId::LBrace)

@@ -467,6 +467,15 @@ impl<'a> IrEmitter<'a> {
                 }
             }
 
+            IrExprKind::Loop { body } => {
+                let body_tokens = self.emit_stmts(body)?;
+                Ok(quote! {
+                    loop {
+                        #(#body_tokens)*
+                    }
+                })
+            }
+
             IrExprKind::Await(inner) => {
                 let i = self.emit_expr(inner)?;
                 Ok(quote! { #i.await })

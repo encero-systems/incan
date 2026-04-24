@@ -1,6 +1,6 @@
 # RFC 016: `loop` and `break <value>` (Loop Expressions)
 
-- **Status:** Planned
+- **Status:** In Progress
 - **Created:** 2025-12-24
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 006 (generators)
@@ -171,6 +171,49 @@ This works when the loop is “repeat until condition,” but not always when th
 - **Typechecker:** treat `loop:` as an expression; unify break value types; rules for non-terminating loops until a bottom type exists.
 - **Lowering / IR / emission:** represent infinite loops and value-carrying `break` so the backend can emit the correct infinite-loop + break-value pattern.
 - **Formatter / LSP (as applicable):** formatting and keyword-aware tooling for `loop` and extended `break`.
+
+## Implementation Plan
+
+- Add `loop:` and `break <value>` support to the parser, AST, formatter, and keyword/tooling registries so the syntax is recognized consistently in statement and expression position.
+- Extend typechecking so `loop:` expressions infer a result type from reachable `break` values, reject `break <value>` outside `loop:`, and reject non-terminating `loop:` expressions where a concrete value is required.
+- Lower loop expressions and value-carrying breaks through IR and emission so the backend preserves loop-result semantics instead of desugaring them away incorrectly.
+- Cover the feature with parser, typechecker, formatter, and codegen tests, then update the control-flow docs and release notes for the release line that eventually ships the feature.
+
+## Progress Checklist
+
+### Parser / AST / Formatter / Tooling
+
+- [x] Add `loop` to the keyword registry and syntax highlighting.
+- [x] Parse `loop:` in statement position and expression position.
+- [x] Extend `break` parsing to accept an optional value.
+- [x] Add formatter support for `loop:` and `break <value>`.
+- [x] Keep AST/LSP/frontend walkers aligned with the new nodes.
+
+### Typechecker
+
+- [x] Infer `loop:` expression result types from reachable `break` values.
+- [x] Reject `break <value>` outside `loop:`.
+- [x] Reject `loop:` expressions with no reachable `break` when a concrete type is required.
+- [x] Keep `continue` diagnostics and ordinary statement-loop behavior aligned with the new loop context rules.
+
+### Lowering / IR / Emission
+
+- [x] Represent `loop:` and value-carrying `break` explicitly in IR.
+- [x] Lower loop expressions and `break <value>` through the backend without losing semantics.
+- [x] Emit correct Rust `loop { ... break value; }` shapes for loop expressions.
+
+### Tests
+
+- [x] Add a parser unit test for `loop:` with `break <value>`.
+- [x] Add typechecker tests for valid loop expressions and invalid `break <value>` usage.
+- [x] Add a formatter round-trip test for `loop:` with `break <value>`.
+- [x] Add a codegen snapshot for loop expressions.
+- [x] Add an end-to-end runtime/integration test for loop expressions.
+
+### Docs / Release Notes
+
+- [x] Update the control-flow docs to explain `loop:` and `break <value>`.
+- [ ] Add release notes coverage for the release line that ships this feature.
 
 ## Design Decisions
 

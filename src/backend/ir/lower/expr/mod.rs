@@ -429,6 +429,16 @@ impl AstLowering {
                 )
             }
 
+            ast::Expr::Loop(loop_expr) => {
+                self.push_scope();
+                self.non_linear_context_depth += 1;
+                let body_result = self.lower_statements(&loop_expr.body);
+                self.non_linear_context_depth -= 1;
+                let body = body_result?;
+                self.pop_scope();
+                (IrExprKind::Loop { body }, IrType::Unknown)
+            }
+
             // ---- Closures ----
             ast::Expr::Closure(params, body) => {
                 let param_pairs: Vec<(String, IrType)> = params

@@ -435,6 +435,11 @@ impl<'a> Parser<'a> {
             return self.if_expr(start);
         }
 
+        // Loop expression
+        if self.check_keyword(KeywordId::Loop) {
+            return self.loop_expr(start);
+        }
+
         // self
         if self.match_token(&TokenKind::Keyword(KeywordId::SelfKw)) {
             let end = self.tokens[self.pos - 1].span.end;
@@ -612,6 +617,7 @@ impl<'a> Parser<'a> {
             Expr::If(if_expr) => {
                 self.shift_spanned_expr(&mut if_expr.condition, offset);
             }
+            Expr::Loop(_) => {}
             Expr::ListComp(comp) => {
                 self.shift_spanned_expr(&mut comp.expr, offset);
                 self.shift_spanned_expr(&mut comp.iter, offset);
@@ -975,6 +981,24 @@ impl<'a> Parser<'a> {
                 then_body,
                 else_body,
             })),
+            Span::new(start, end),
+        ))
+    }
+
+    fn loop_expr(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
+        self.expect(&TokenKind::Keyword(KeywordId::Loop), "Expected 'loop'")?;
+        self.expect(
+            &TokenKind::Punctuation(PunctuationId::Colon),
+            "Expected ':' after loop",
+        )?;
+        self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
+        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        let body = self.block()?;
+        self.expect(&TokenKind::Dedent, "Expected dedent after loop body")?;
+
+        let end = self.tokens[self.pos - 1].span.end;
+        Ok(Spanned::new(
+            Expr::Loop(Box::new(LoopExpr { body })),
             Span::new(start, end),
         ))
     }

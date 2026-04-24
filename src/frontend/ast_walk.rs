@@ -210,10 +210,11 @@ where
                 .as_ref()
                 .is_some_and(|else_body| any_expr_in_body_impl(else_body, pred))
         }
+        Statement::Loop(s) => any_expr_in_body_impl(&s.body, pred),
         Statement::While(s) => expr_has(&s.condition.node, pred) || any_expr_in_body_impl(&s.body, pred),
         Statement::For(s) => expr_has(&s.iter.node, pred) || any_expr_in_body_impl(&s.body, pred),
-
-        Statement::Return(None) | Statement::Pass | Statement::Break | Statement::Continue => false,
+        Statement::Break(Some(expr)) => expr_has(&expr.node, pred),
+        Statement::Return(None) | Statement::Break(None) | Statement::Pass | Statement::Continue => false,
     }
 }
 
@@ -287,6 +288,7 @@ where
                     .as_ref()
                     .is_some_and(|else_body| any_expr_in_body_impl(else_body, pred))
         }
+        Expr::Loop(loop_expr) => any_expr_in_body_impl(&loop_expr.body, pred),
         Expr::ListComp(comp) => {
             expr_has(&comp.expr.node, pred)
                 || expr_has(&comp.iter.node, pred)

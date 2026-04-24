@@ -1,0 +1,18 @@
+def find_value(flag: bool) -> int:
+    return loop:
+        if flag:
+            break 42
+        break 7
+
+
+def spin(limit: int) -> None:
+    mut current = 0
+    loop:
+        if current >= limit:
+            break
+        current = current + 1
+
+
+def main() -> None:
+    let answer: int = find_value(True)
+    spin(answer)

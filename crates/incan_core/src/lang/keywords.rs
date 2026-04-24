@@ -45,6 +45,7 @@ pub enum KeywordId {
     Elif,
     Match,
     Case,
+    Loop,
     While,
     For,
     Break,
@@ -215,6 +216,15 @@ pub const KEYWORDS: &[KeywordDescriptor] = &[
         &[KeywordUsage::Statement],
         RFC::_000,
         Since(0, 1),
+    ),
+    info(
+        KeywordId::Loop,
+        "loop",
+        &[],
+        KeywordCategory::ControlFlow,
+        &[KeywordUsage::Statement, KeywordUsage::Expression],
+        RFC::_016,
+        Since(0, 3),
     ),
     info(
         KeywordId::While,

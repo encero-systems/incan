@@ -34,6 +34,7 @@
 | Elif | `elif` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
 | Match | `match` |  | Hard | - | ControlFlow | Statement, Expression | RFC 000 | 0.1 | Stable |
 | Case | `case` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| Loop | `loop` |  | Hard | - | ControlFlow | Statement, Expression | RFC 016 | 0.3 | Stable |
 | While | `while` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
 | For | `for` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
 | Break | `break` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |

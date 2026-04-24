@@ -6525,3 +6525,48 @@ def run() -> int:
         "expected unsupported call-site type args diagnostic, got {errs:?}"
     );
 }
+
+#[test]
+fn loop_expression_infers_break_value_type() {
+    assert_check_ok(
+        r#"
+def run() -> int:
+  return loop:
+    break 42
+"#,
+    );
+}
+
+#[test]
+fn break_value_requires_loop_expression() {
+    let errs = check_str_err(
+        r#"
+def run(xs: list[int]) -> None:
+  for x in xs:
+    break x
+"#,
+        "expected break-value diagnostic in for loop",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("only valid inside `loop:` expressions")),
+        "expected loop-expression-only diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn loop_expression_without_break_is_rejected() {
+    let errs = check_str_err(
+        r#"
+def run() -> int:
+  return loop:
+    pass
+"#,
+        "expected missing-break diagnostic for loop expression",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("loop expression must contain at least one `break`")),
+        "expected missing-break diagnostic, got {errs:?}"
+    );
+}

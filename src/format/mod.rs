@@ -1783,6 +1783,17 @@ def build_user() -> User:
     }
 
     #[test]
+    fn test_format_source_loop_expression_with_break_value_round_trip() -> Result<(), FormatError> {
+        let source = r#"def run() -> int:
+    return loop:
+        break 42
+"#;
+        let formatted = format_source(source)?;
+        assert_eq!(formatted.trim_end(), source.trim_end());
+        Ok(())
+    }
+
+    #[test]
     fn test_format_merges_adjacent_rust_from_imports_same_target() -> Result<(), FormatError> {
         let source = r#"from rust::libm @ "0.2" import sqrt as rust_sqrt, fabs as rust_abs
 from rust::libm @ "0.2" import floor as rust_floor, ceil as rust_ceil

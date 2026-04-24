@@ -56,6 +56,7 @@ fn for_body_needs_mut_iteration(pattern: &Pattern, body: &[IrStmt]) -> bool {
                 stmts.iter().any(|s| stmt_mutates_var(s, var))
                     || value.as_ref().is_some_and(|v| expr_contains_mutation(v, var))
             }
+            IrExprKind::Loop { body } => body.iter().any(|stmt| stmt_mutates_var(stmt, var)),
             _ => false,
         }
     }
@@ -79,6 +80,9 @@ fn for_body_needs_mut_iteration(pattern: &Pattern, body: &[IrStmt]) -> bool {
             IrStmtKind::Loop { body, .. } => body.iter().any(|s| stmt_mutates_var(s, var)),
             IrStmtKind::Block(stmts) => stmts.iter().any(|s| stmt_mutates_var(s, var)),
             IrStmtKind::Match { arms, .. } => arms.iter().any(|arm| expr_contains_mutation(&arm.body, var)),
+            IrStmtKind::Break { label: _, value } => {
+                value.as_ref().is_some_and(|value| expr_contains_mutation(value, var))
+            }
             _ => false,
         }
     }
@@ -332,7 +336,7 @@ fn stmt_mutates_storage_binding(stmt: &IrStmt, names: &mut HashSet<String>) {
         }
         // ---- Context: terminal/unsupported statement kinds ----
         IrStmtKind::Return(None)
-        | IrStmtKind::Break(_)
+        | IrStmtKind::Break { label: _, value: _ }
         | IrStmtKind::Continue(_)
         | IrStmtKind::CompoundAssign { .. } => {}
     }
@@ -560,10 +564,21 @@ impl<'a> IrEmitter<'a> {
                 Ok(quote! { return #converted; })
             }
             IrStmtKind::Return(None) => Ok(quote! { return; }),
-            IrStmtKind::Break(label) => {
+            IrStmtKind::Break { label, value } => {
+                let break_value = if let Some(value) = value {
+                    Some(self.emit_expr(value)?)
+                } else {
+                    None
+                };
                 if let Some(l) = label {
                     let label_lifetime = syn::Lifetime::new(&format!("'{}", l), proc_macro2::Span::call_site());
-                    Ok(quote! { break #label_lifetime; })
+                    if let Some(value) = break_value {
+                        Ok(quote! { break #label_lifetime #value; })
+                    } else {
+                        Ok(quote! { break #label_lifetime; })
+                    }
+                } else if let Some(value) = break_value {
+                    Ok(quote! { break #value; })
                 } else {
                     Ok(quote! { break; })
                 }

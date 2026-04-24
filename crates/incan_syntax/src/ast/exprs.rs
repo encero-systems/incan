@@ -47,6 +47,8 @@ pub enum Expr {
     Match(Box<Spanned<Expr>>, Vec<Spanned<MatchArm>>),
     /// If expression
     If(Box<IfExpr>),
+    /// Loop expression
+    Loop(Box<LoopExpr>),
     /// List comprehension: `[expr for x in iter if cond]`
     ListComp(Box<ListComp>),
     /// Dict comprehension: `{k: v for x in iter if cond}`
@@ -258,6 +260,11 @@ pub struct IfExpr {
     pub condition: Spanned<Expr>,
     pub then_body: Vec<Spanned<Statement>>,
     pub else_body: Option<Vec<Spanned<Statement>>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoopExpr {
+    pub body: Vec<Spanned<Statement>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

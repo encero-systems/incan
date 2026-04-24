@@ -200,6 +200,7 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
             }
             None
         }
+        Expr::Loop(loop_expr) => call_site_types_in_stmts(&loop_expr.body, offset),
         Expr::ListComp(boxed) => call_site_type_in_expr(&boxed.expr, offset)
             .or_else(|| call_site_type_in_expr(&boxed.iter, offset))
             .or_else(|| boxed.filter.as_ref().and_then(|e| call_site_type_in_expr(e, offset))),
@@ -271,6 +272,7 @@ fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Ty
                 })
             })
             .or_else(|| i.else_body.as_ref().and_then(|b| call_site_types_in_stmts(b, offset))),
+        Statement::Loop(l) => call_site_types_in_stmts(&l.body, offset),
         Statement::While(w) => {
             call_site_type_in_expr(&w.condition, offset).or_else(|| call_site_types_in_stmts(&w.body, offset))
         }
@@ -291,7 +293,8 @@ fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Ty
                 exprs.iter().find_map(|e| call_site_type_in_expr(e, offset))
             }
         },
-        Statement::Pass | Statement::Break | Statement::Continue => None,
+        Statement::Break(Some(value)) => call_site_type_in_expr(value, offset),
+        Statement::Pass | Statement::Break(None) | Statement::Continue => None,
         Statement::VocabBlock(_) => None,
     }
 }
