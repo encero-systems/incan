@@ -16,6 +16,21 @@ pub(super) fn emit_dict_lookup_key(receiver: &TypedExpr, arg: &TypedExpr, emitte
     plan_dict_lookup_key(&receiver.ty, &arg.ty).apply(emitted)
 }
 
+fn collection_element_type(ty: &IrType) -> Option<&IrType> {
+    match ty {
+        IrType::List(elem) | IrType::Set(elem) => Some(elem.as_ref()),
+        IrType::Ref(inner) | IrType::RefMut(inner) => collection_element_type(inner),
+        _ => None,
+    }
+}
+
+fn is_string_storage_type(ty: &IrType) -> bool {
+    matches!(
+        ty,
+        IrType::String | IrType::StrRef | IrType::StaticStr | IrType::FrozenStr
+    )
+}
+
 /// Emit collection-related known methods (list/dict/set).
 pub(super) fn emit_collection_method(
     emitter: &IrEmitter,
@@ -147,7 +162,23 @@ pub(super) fn emit_collection_method(
             if let Some(arg) = args.first() {
                 let a = emitter.emit_expr(arg)?;
                 match &receiver.ty {
-                    IrType::List(_) | IrType::Set(_) => {
+                    IrType::List(_) | IrType::Ref(_) | IrType::RefMut(_)
+                        if collection_element_type(&receiver.ty).is_some_and(is_string_storage_type) =>
+                    {
+                        return Ok(quote! {{
+                            let __incan_probe = #a;
+                            let __incan_probe = <_ as AsRef<str>>::as_ref(&__incan_probe);
+                            #r.iter().any(|__incan_item| <_ as AsRef<str>>::as_ref(__incan_item) == __incan_probe)
+                        }});
+                    }
+                    IrType::Set(_) if collection_element_type(&receiver.ty).is_some_and(is_string_storage_type) => {
+                        return Ok(quote! {{
+                            let __incan_probe = #a;
+                            let __incan_probe = <_ as AsRef<str>>::as_ref(&__incan_probe);
+                            #r.contains(__incan_probe)
+                        }});
+                    }
+                    IrType::List(_) | IrType::Set(_) | IrType::Ref(_) | IrType::RefMut(_) => {
                         return Ok(quote! { #r.contains(&#a) });
                     }
                     IrType::Dict(_, _) => {

@@ -41,7 +41,12 @@ impl<'a> IrEmitter<'a> {
 
         match plan_list_comprehension_iteration(is_range, filter.is_some()) {
             ComprehensionIterationPlan::RangeFilter => {
-                let filter_tokens = self.emit_expr(filter.expect("range filter plan requires filter"))?;
+                let Some(filter) = filter else {
+                    return Err(EmitError::Unsupported(
+                        "internal error: range comprehension filter plan requires a filter".to_string(),
+                    ));
+                };
+                let filter_tokens = self.emit_expr(filter)?;
                 Ok(quote! {
                     #iter_wrapped.filter(|&#var_ident| #filter_tokens).map(|#var_ident| #elem).collect::<Vec<_>>()
                 })
@@ -50,7 +55,12 @@ impl<'a> IrEmitter<'a> {
                 #iter_wrapped.map(|#var_ident| #elem).collect::<Vec<_>>()
             }),
             ComprehensionIterationPlan::FilterMapCloneBinding => {
-                let filter_tokens = self.emit_expr(filter.expect("filter_map plan requires filter"))?;
+                let Some(filter) = filter else {
+                    return Err(EmitError::Unsupported(
+                        "internal error: filtered comprehension plan requires a filter".to_string(),
+                    ));
+                };
+                let filter_tokens = self.emit_expr(filter)?;
                 Ok(quote! {
                     #iter_wrapped
                         .iter()
@@ -104,7 +114,12 @@ impl<'a> IrEmitter<'a> {
 
         match plan_dict_comprehension_iteration(filter.is_some()) {
             ComprehensionIterationPlan::FilterMapCloneBinding => {
-                let filter_tokens = self.emit_expr(filter.expect("filtered dict plan requires filter"))?;
+                let Some(filter) = filter else {
+                    return Err(EmitError::Unsupported(
+                        "internal error: filtered dict comprehension plan requires a filter".to_string(),
+                    ));
+                };
+                let filter_tokens = self.emit_expr(filter)?;
                 Ok(quote! {
                     #iter
                         .iter()

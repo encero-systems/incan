@@ -237,6 +237,7 @@ nav:
           - Writing RFCs: contributing/how-to/writing_rfcs.md
       - Explanation:
           - Architecture: contributing/explanation/architecture.md
+          - Duckborrowing: contributing/explanation/duckborrowing.md
           - Layering rules: contributing/explanation/layering.md
           - Readable, maintainable Rust: contributing/explanation/readable-maintainable-rust.md
           - "std.testing internals": contributing/explanation/stdlib_testing_internals.md

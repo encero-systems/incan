@@ -74,7 +74,7 @@ pub fn bind(xs: Vec<String>) -> Vec<Binding> {
             expr_index: field_ref(idx),
         });
     }
-    return out;
+    return out.clone();
 }
 fn main() {
     std::panic::set_hook(

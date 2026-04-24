@@ -510,45 +510,51 @@ impl AstLowering {
 
             ast::Statement::TupleUnpack(tu) => {
                 let value = self.lower_expr_spanned(&tu.value)?;
+                let value_ty = value.ty.clone();
                 let temp_name = format!("__incan_tuple_unpack_{}", tu.names.join("_"));
                 let mutability = match tu.binding {
                     ast::BindingKind::Mutable => Mutability::Mutable,
                     _ => Mutability::Immutable,
                 };
 
-                self.define_local_binding(temp_name.clone(), value.ty.clone(), false);
+                self.define_local_binding(temp_name.clone(), value_ty.clone(), false);
 
                 let mut stmts = vec![IrStmt::new(IrStmtKind::Let {
                     name: temp_name.clone(),
-                    ty: value.ty.clone(),
+                    ty: value_ty.clone(),
                     mutability: Mutability::Immutable,
                     value,
                 })];
+                let element_types = match &value_ty {
+                    IrType::Tuple(items) => items.clone(),
+                    _ => vec![IrType::Unknown; tu.names.len()],
+                };
 
                 for (idx, name) in tu.names.iter().enumerate() {
+                    let field_ty = element_types.get(idx).cloned().unwrap_or(IrType::Unknown);
                     let field_expr = TypedExpr::new(
                         IrExprKind::Field {
                             object: Box::new(TypedExpr::new(
                                 IrExprKind::Var {
                                     name: temp_name.clone(),
-                                    access: VarAccess::Copy,
+                                    access: VarAccess::Move,
                                     ref_kind: VarRefKind::Value,
                                 },
                                 self.lookup_var(&temp_name),
                             )),
                             field: idx.to_string(),
                         },
-                        IrType::Unknown,
+                        field_ty.clone(),
                     );
 
-                    self.define_local_binding(name.clone(), IrType::Unknown, false);
+                    self.define_local_binding(name.clone(), field_ty.clone(), false);
                     if matches!(mutability, Mutability::Mutable) {
                         self.mutable_vars.insert(name.clone(), true);
                     }
 
                     stmts.push(IrStmt::new(IrStmtKind::Let {
                         name: name.clone(),
-                        ty: IrType::Unknown,
+                        ty: field_ty,
                         mutability,
                         value: field_expr,
                     }));

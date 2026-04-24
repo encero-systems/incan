@@ -1569,6 +1569,134 @@ def main() -> None:
     }
 
     #[test]
+    fn test_match_on_shared_self_option_field_materializes_owned_scrutinee() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+pub class Node:
+    value: int
+
+@derive(Clone)
+pub class Wrapper:
+    child: Option[Node]
+
+    def read(self) -> int:
+        match self.child:
+            Some(child) => return child.value
+            None => return 0
+
+def main() -> None:
+    println(Wrapper(child=Some(Node(value=4))).read())
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "shared self option-field match regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["4"],
+            "unexpected shared self option-field match output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_match_on_shared_self_option_box_field_materializes_owned_scrutinee()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from rust::std::boxed import Box
+
+@derive(Clone)
+pub class Node:
+    value: int
+
+@derive(Clone)
+pub class Wrapper:
+    child: Option[Box[Node]]
+
+    def read(self) -> int:
+        match self.child:
+            Some(child) => return child.as_ref().value
+            None => return 0
+
+def main() -> None:
+    println(Wrapper(child=Some(Box.new(Node(value=4)))).read())
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "shared self option-box-field match regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["4"],
+            "unexpected shared self option-box-field match output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_generic_match_on_shared_self_option_field_infers_clone_bound() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+pub class Wrapper[T]:
+    child: Option[T]
+
+    def read_or(self, fallback: T) -> T:
+        match self.child:
+            Some(child) => return child
+            None => return fallback
+
+def main() -> None:
+    println(Wrapper(child=Some(4)).read_or(0))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "generic shared self option-field match regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["4"],
+            "unexpected generic shared self option-field match output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_trait_supertraits_runtime_with_backend_clone_bounds() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([

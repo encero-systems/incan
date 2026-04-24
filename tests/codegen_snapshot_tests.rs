@@ -750,6 +750,18 @@ fn test_collections_codegen() {
     let source = load_test_file("collections");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("collections", rust_code);
+    assert!(
+        rust_code.contains("(1, \"one\".to_string())"),
+        "expected tuple[str] literal elements to materialize owned String values"
+    );
+    assert!(
+        rust_code.contains("(\"a\".to_string(), 1)"),
+        "expected dict[str, _] literal keys to materialize owned String values"
+    );
+    assert!(
+        rust_code.contains("(2, \"two\".to_string())"),
+        "expected dict[_, str] literal values to materialize owned String values"
+    );
 }
 
 #[test]

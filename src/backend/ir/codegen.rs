@@ -793,53 +793,72 @@ impl<'a> IrCodegen<'a> {
         let dependency_type_metadata = collect_dependency_type_metadata(&self.dependency_modules);
 
         // Generate module files
-        let mut modules = HashMap::new();
+        let mut lowered_modules = Vec::new();
         for (name, ast, _) in &self.dependency_modules {
-            if module_names.contains(name) {
-                let module_type_info = {
-                    use crate::frontend::typechecker::TypeChecker;
-                    let mut tc = TypeChecker::new();
-                    self.configure_typechecker(&mut tc);
-                    match tc.check_with_imports_allow_private(ast, &deps) {
-                        Ok(()) => tc.type_info().clone(),
-                        Err(errs) => return Err(GenerationError::TypeCheck(errs)),
-                    }
-                };
-                let mut lowering = AstLowering::new_with_type_info(module_type_info);
-                lowering.seed_struct_field_aliases(global_aliases.clone());
-                let mut ir = lowering.lower_program(ast)?;
-                // Do not auto-add serde derives to dependency modules.
-                // Global serde usage in the main module must not mutate unrelated dependency
-                // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
-                // RFC 023: Infer trait bounds for generic functions.
-                super::trait_bound_inference::infer_trait_bounds(&mut ir);
-                let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
-                let module_code = if use_emit_service {
-                    let mut svc = EmitService::new_from_program(&ir);
-                    let inner = svc.inner_mut();
-                    inner.set_internal_module_roots(internal_roots.clone());
-                    inner.set_type_module_paths(
-                        dependency_type_metadata.module_paths.clone(),
-                        dependency_type_metadata.ambiguous_type_names.clone(),
-                    );
-                    inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-                    inner.set_add_clippy_allows(false);
-                    inner.set_external_rust_functions(self.external_rust_functions.clone());
-                    svc.emit_program(&ir)?
-                } else {
-                    let mut emitter = IrEmitter::new(&ir.function_registry);
-                    emitter.set_internal_module_roots(internal_roots.clone());
-                    emitter.set_type_module_paths(
-                        dependency_type_metadata.module_paths.clone(),
-                        dependency_type_metadata.ambiguous_type_names.clone(),
-                    );
-                    emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-                    emitter.set_add_clippy_allows(false);
-                    emitter.set_external_rust_functions(self.external_rust_functions.clone());
-                    emitter.emit_program(&ir)?
-                };
-                modules.insert(name.to_string(), module_code);
+            if !module_names.contains(name) {
+                continue;
             }
+            let module_type_info = {
+                use crate::frontend::typechecker::TypeChecker;
+                let mut tc = TypeChecker::new();
+                self.configure_typechecker(&mut tc);
+                match tc.check_with_imports_allow_private(ast, &deps) {
+                    Ok(()) => tc.type_info().clone(),
+                    Err(errs) => return Err(GenerationError::TypeCheck(errs)),
+                }
+            };
+            let mut lowering = AstLowering::new_with_type_info(module_type_info);
+            lowering.seed_struct_field_aliases(global_aliases.clone());
+            let mut ir = lowering.lower_program(ast)?;
+            // Do not auto-add serde derives to dependency modules.
+            // Global serde usage in the main module must not mutate unrelated dependency
+            // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
+            super::trait_bound_inference::infer_trait_bounds(&mut ir);
+            lowered_modules.push((name.to_string(), ir));
+        }
+        for idx in 0..lowered_modules.len() {
+            let (left, rest) = lowered_modules.split_at_mut(idx);
+            let Some((_, current_ir, tail)) = rest
+                .split_first_mut()
+                .map(|((name, ir), tail)| (name.clone(), ir, tail))
+            else {
+                continue;
+            };
+            let external_programs: Vec<&super::IrProgram> = left
+                .iter()
+                .map(|(_, ir)| ir)
+                .chain(tail.iter().map(|(_, ir)| ir))
+                .collect();
+            super::trait_bound_inference::propagate_trait_bounds_from_programs(current_ir, &external_programs);
+        }
+        let mut modules = HashMap::new();
+        for (name, ir) in lowered_modules {
+            let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
+            let module_code = if use_emit_service {
+                let mut svc = EmitService::new_from_program(&ir);
+                let inner = svc.inner_mut();
+                inner.set_internal_module_roots(internal_roots.clone());
+                inner.set_type_module_paths(
+                    dependency_type_metadata.module_paths.clone(),
+                    dependency_type_metadata.ambiguous_type_names.clone(),
+                );
+                inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
+                inner.set_add_clippy_allows(false);
+                inner.set_external_rust_functions(self.external_rust_functions.clone());
+                svc.emit_program(&ir)?
+            } else {
+                let mut emitter = IrEmitter::new(&ir.function_registry);
+                emitter.set_internal_module_roots(internal_roots.clone());
+                emitter.set_type_module_paths(
+                    dependency_type_metadata.module_paths.clone(),
+                    dependency_type_metadata.ambiguous_type_names.clone(),
+                );
+                emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
+                emitter.set_add_clippy_allows(false);
+                emitter.set_external_rust_functions(self.external_rust_functions.clone());
+                emitter.emit_program(&ir)?
+            };
+            modules.insert(name, module_code);
         }
 
         Ok((main_code, modules))
@@ -921,59 +940,78 @@ impl<'a> IrCodegen<'a> {
         let dependency_type_metadata = collect_dependency_type_metadata(&self.dependency_modules);
 
         // Generate module files by path
-        let mut modules = HashMap::new();
+        let mut lowered_modules = Vec::new();
         for (name, ast, _) in &self.dependency_modules {
             // Find matching path by comparing joined segments with module name
             // Module name is path segments joined with "_" (e.g., "db_models")
             for path in module_paths {
                 let path_name = path.join("_");
-                if path_name == *name {
-                    let module_type_info = {
-                        use crate::frontend::typechecker::TypeChecker;
-                        let mut tc = TypeChecker::new();
-                        self.configure_typechecker(&mut tc);
-                        match tc.check_with_imports_allow_private(ast, &deps) {
-                            Ok(()) => tc.type_info().clone(),
-                            Err(errs) => return Err(GenerationError::TypeCheck(errs)),
-                        }
-                    };
-                    let mut lowering = AstLowering::new_with_type_info(module_type_info);
-                    lowering.seed_struct_field_aliases(global_aliases.clone());
-                    let mut ir = lowering.lower_program(ast)?;
-                    // Do not auto-add serde derives to dependency modules.
-                    // Global serde usage in the main module must not mutate unrelated dependency
-                    // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
-                    // RFC 023: Infer trait bounds for generic functions.
-                    super::trait_bound_inference::infer_trait_bounds(&mut ir);
-                    let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
-                    let module_code = if use_emit_service {
-                        let mut svc = EmitService::new_from_program(&ir);
-                        let inner = svc.inner_mut();
-                        inner.set_internal_module_roots(internal_roots.clone());
-                        inner.set_type_module_paths(
-                            dependency_type_metadata.module_paths.clone(),
-                            dependency_type_metadata.ambiguous_type_names.clone(),
-                        );
-                        inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-                        inner.set_add_clippy_allows(false);
-                        inner.set_external_rust_functions(self.external_rust_functions.clone());
-                        svc.emit_program(&ir)?
-                    } else {
-                        let mut emitter = IrEmitter::new(&ir.function_registry);
-                        emitter.set_internal_module_roots(internal_roots.clone());
-                        emitter.set_type_module_paths(
-                            dependency_type_metadata.module_paths.clone(),
-                            dependency_type_metadata.ambiguous_type_names.clone(),
-                        );
-                        emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-                        emitter.set_add_clippy_allows(false);
-                        emitter.set_external_rust_functions(self.external_rust_functions.clone());
-                        emitter.emit_program(&ir)?
-                    };
-                    modules.insert(path.clone(), module_code);
-                    break;
+                if path_name != *name {
+                    continue;
                 }
+                let module_type_info = {
+                    use crate::frontend::typechecker::TypeChecker;
+                    let mut tc = TypeChecker::new();
+                    self.configure_typechecker(&mut tc);
+                    match tc.check_with_imports_allow_private(ast, &deps) {
+                        Ok(()) => tc.type_info().clone(),
+                        Err(errs) => return Err(GenerationError::TypeCheck(errs)),
+                    }
+                };
+                let mut lowering = AstLowering::new_with_type_info(module_type_info);
+                lowering.seed_struct_field_aliases(global_aliases.clone());
+                let mut ir = lowering.lower_program(ast)?;
+                // Do not auto-add serde derives to dependency modules.
+                // Global serde usage in the main module must not mutate unrelated dependency
+                // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
+                super::trait_bound_inference::infer_trait_bounds(&mut ir);
+                lowered_modules.push((path.clone(), ir));
+                break;
             }
+        }
+        for idx in 0..lowered_modules.len() {
+            let (left, rest) = lowered_modules.split_at_mut(idx);
+            let Some((_, current_ir, tail)) = rest
+                .split_first_mut()
+                .map(|((path, ir), tail)| (path.clone(), ir, tail))
+            else {
+                continue;
+            };
+            let external_programs: Vec<&super::IrProgram> = left
+                .iter()
+                .map(|(_, ir)| ir)
+                .chain(tail.iter().map(|(_, ir)| ir))
+                .collect();
+            super::trait_bound_inference::propagate_trait_bounds_from_programs(current_ir, &external_programs);
+        }
+        let mut modules = HashMap::new();
+        for (path, ir) in lowered_modules {
+            let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
+            let module_code = if use_emit_service {
+                let mut svc = EmitService::new_from_program(&ir);
+                let inner = svc.inner_mut();
+                inner.set_internal_module_roots(internal_roots.clone());
+                inner.set_type_module_paths(
+                    dependency_type_metadata.module_paths.clone(),
+                    dependency_type_metadata.ambiguous_type_names.clone(),
+                );
+                inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
+                inner.set_add_clippy_allows(false);
+                inner.set_external_rust_functions(self.external_rust_functions.clone());
+                svc.emit_program(&ir)?
+            } else {
+                let mut emitter = IrEmitter::new(&ir.function_registry);
+                emitter.set_internal_module_roots(internal_roots.clone());
+                emitter.set_type_module_paths(
+                    dependency_type_metadata.module_paths.clone(),
+                    dependency_type_metadata.ambiguous_type_names.clone(),
+                );
+                emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
+                emitter.set_add_clippy_allows(false);
+                emitter.set_external_rust_functions(self.external_rust_functions.clone());
+                emitter.emit_program(&ir)?
+            };
+            modules.insert(path, module_code);
         }
 
         Ok((main_code, modules))

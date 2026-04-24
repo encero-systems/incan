@@ -1,11 +1,11 @@
 //! Centralized ownership and coercion planning for IR emission.
 //!
 //! This module is the backend's dedicated decision layer for "duckborrowing":
-//! given a typed IR expression and a Rust sink/source boundary, decide whether
-//! emission should move, clone, borrow, or materialize an owned string.
+//! given a typed IR expression and a Rust sink/source boundary, decide whether emission should move, clone, borrow, or
+//! materialize an owned string.
 //!
-//! Keep emitter modules calling this planner instead of open-coding ad hoc
-//! `.clone()`, `&`, `&mut`, `.to_string()`, or `.into()` decisions.
+//! Keep emitter modules calling this planner instead of open-coding ad hoc `.clone()`, `&`, `&mut`, `.to_string()`, or
+//! `.into()` decisions.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -21,26 +21,53 @@ use super::types::IrType;
 /// A typed sink/source boundary that needs an ownership/coercion decision.
 #[derive(Debug, Clone, Copy)]
 pub enum ValueUseSite<'a> {
+    /// Argument passed to an Incan-defined callable.
+    ///
+    /// Incan call boundaries normally expect owned values, but mutable aggregate parameters and return-position calls
+    /// have special move/reborrow behavior.
     IncanCallArg {
+        /// The callee parameter type after typechecking, when known.
         target_ty: Option<&'a IrType>,
+        /// Full parameter metadata, used for mutable aggregate reborrow decisions.
         callee_param: Option<&'a FunctionParam>,
+        /// Whether this call appears directly inside a `return`, allowing last-use moves to be preserved more
+        /// aggressively.
         in_return: bool,
     },
+    /// Argument passed to an external Rust callable.
+    ///
+    /// Rust interop boundaries preserve Rust API shapes: borrowed arguments stay borrowed and string-like values may
+    /// use `.into()` rather than forcing Incan-owned `String` storage.
     ExternalCallArg {
+        /// The external parameter type when Rust inspection provided one.
         target_ty: Option<&'a IrType>,
     },
+    /// Value stored into a generated struct field.
     StructField {
+        /// The declared field type, when available.
         target_ty: Option<&'a IrType>,
     },
+    /// Value stored into an owned collection or tuple slot.
     CollectionElement {
+        /// The element/key/value/tuple-slot type, when available.
         target_ty: Option<&'a IrType>,
     },
+    /// Value assigned to a local binding or assignment target.
     Assignment {
+        /// The assigned target type, when known.
         target_ty: Option<&'a IrType>,
     },
+    /// Value returned from an Incan function.
     ReturnValue {
+        /// The declared return type, when available.
         target_ty: Option<&'a IrType>,
     },
+    /// Scrutinee consumed by a generated Rust `match`.
+    MatchScrutinee {
+        /// The scrutinee type, used to materialize owned values before pattern matching when necessary.
+        target_ty: Option<&'a IrType>,
+    },
+    /// Method-style argument boundary where the method implementation controls final borrowing.
     MethodArg,
 }
 
@@ -74,6 +101,11 @@ pub fn plan_value_use(expr: &IrExpr, site: ValueUseSite<'_>) -> OwnershipPlan {
         ValueUseSite::ReturnValue { target_ty } => {
             determine_conversion(expr, target_ty, ConversionContext::ReturnValue)
         }
+        // Match scrutinees consume a value into pattern matching. Reuse owned-result materialization semantics so
+        // borrowed/shared non-Copy values are cloned before the match.
+        ValueUseSite::MatchScrutinee { target_ty } => {
+            determine_conversion(expr, target_ty, ConversionContext::ReturnValue)
+        }
         ValueUseSite::MethodArg => determine_conversion(expr, None, ConversionContext::MethodArg),
     }
 }
@@ -86,12 +118,16 @@ pub fn incan_call_arg_needs_rust_mut_borrow(param: &FunctionParam) -> bool {
 /// Whether a collection receiver should be passed through, borrowed, or mutably borrowed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CollectionReceiverPlan {
+    /// Receiver already has the helper's expected reference/value shape.
     AsIs,
+    /// Emit `&receiver`.
     BorrowShared,
+    /// Emit `&mut receiver`.
     BorrowMut,
 }
 
 impl CollectionReceiverPlan {
+    /// Apply the receiver plan to an already-emitted receiver token stream.
     pub fn apply(&self, tokens: TokenStream) -> TokenStream {
         match self {
             Self::AsIs => tokens,
@@ -119,12 +155,16 @@ pub fn plan_collection_receiver(receiver_ty: &IrType, mutable: bool) -> Collecti
 /// How a dictionary lookup-style probe key should be shaped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DictLookupKeyPlan {
+    /// Probe already has the lookup helper's expected shape.
     AsIs,
+    /// Emit `&probe` for ordinary borrowed lookup.
     BorrowShared,
+    /// Emit an `AsRef<str>` probe for owned string-key dictionaries.
     BorrowAsRefStr,
 }
 
 impl DictLookupKeyPlan {
+    /// Apply the key-probe plan to an already-emitted lookup argument.
     pub fn apply(&self, tokens: TokenStream) -> TokenStream {
         match self {
             Self::AsIs => tokens,
@@ -158,15 +198,22 @@ pub fn plan_dict_lookup_key(receiver_ty: &IrType, arg_ty: &IrType) -> DictLookup
 /// How a `for` loop should traverse its iterable at the Rust level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoopIterationPlan {
+    /// Emit the iterable expression directly.
     AsIs,
+    /// Borrow the whole iterable with `&iterable`.
     BorrowWhole,
+    /// Iterate by shared reference with `.iter()`.
     Iter,
+    /// Iterate by shared reference and copy scalar items with `.iter().copied()`.
     IterCopied,
+    /// Iterate by shared reference and clone items with `.iter().cloned()`.
     IterCloned,
+    /// Iterate by mutable reference with `.iter_mut()`.
     IterMut,
 }
 
 impl LoopIterationPlan {
+    /// Apply the loop iteration adapter to an already-emitted iterable expression.
     pub fn apply(&self, tokens: TokenStream) -> TokenStream {
         match self {
             Self::AsIs => tokens,
@@ -240,9 +287,13 @@ pub fn plan_for_loop_iteration(
 /// How a comprehension should traverse its input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComprehensionIterationPlan {
+    /// Use a range expression directly.
     RangeDirect,
+    /// Iterate a range through `.filter(...)`.
     RangeFilter,
+    /// Iterate non-range input by cloning yielded values.
     IterCloned,
+    /// Filter borrowed input and clone the binding before projection.
     FilterMapCloneBinding,
 }
 

@@ -683,7 +683,12 @@ impl<'a> IrEmitter<'a> {
                 }
             }
             IrStmtKind::Match { scrutinee, arms } => {
-                let scrut = self.emit_expr(scrutinee)?;
+                let scrut = self.emit_expr_for_use(
+                    scrutinee,
+                    ValueUseSite::MatchScrutinee {
+                        target_ty: Some(&scrutinee.ty),
+                    },
+                )?;
                 let arm_tokens: Vec<TokenStream> = arms
                     .iter()
                     .map(|arm| {

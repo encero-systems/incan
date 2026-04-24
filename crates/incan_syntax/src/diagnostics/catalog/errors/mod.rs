@@ -1,7 +1,7 @@
 //! Named constructors for every hard error the Incan compiler can emit.
 //!
-//! Each function returns a fully-formed [`CompileError`] with an appropriate severity, human-readable message, and
-//! — where helpful — contextual notes and actionable hints.
+//! Each function returns a fully-formed [`crate::diagnostics::CompileError`] with an appropriate severity,
+//! human-readable message, and — where helpful — contextual notes and actionable hints.
 //!
 //! # Submodules
 //!

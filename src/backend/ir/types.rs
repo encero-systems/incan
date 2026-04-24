@@ -100,20 +100,23 @@ impl IrType {
     /// Returns true for primitive types (unit, bool, int, float) and string references
     /// (`&str`, `&'static str`) since references are Copy.
     pub fn is_copy(&self) -> bool {
-        matches!(
-            self,
+        match self {
             IrType::Unit
-                | IrType::Bool
-                | IrType::Int
-                | IrType::Float
-                | IrType::StaticStr
-                | IrType::StaticBytes
-                | IrType::FrozenStr
-                | IrType::FrozenBytes
-                | IrType::StrRef
-                | IrType::Ref(_)
-                | IrType::RefMut(_)
-        )
+            | IrType::Bool
+            | IrType::Int
+            | IrType::Float
+            | IrType::StaticStr
+            | IrType::StaticBytes
+            | IrType::FrozenStr
+            | IrType::FrozenBytes
+            | IrType::StrRef
+            | IrType::Ref(_)
+            | IrType::RefMut(_) => true,
+            IrType::Tuple(items) => items.iter().all(IrType::is_copy),
+            IrType::Option(inner) => inner.is_copy(),
+            IrType::Result(ok, err) => ok.is_copy() && err.is_copy(),
+            _ => false,
+        }
     }
 
     /// Check if this type is a reference
@@ -423,8 +426,21 @@ mod tests {
     }
 
     #[test]
-    fn test_is_copy_option_false() {
-        assert!(!IrType::Option(Box::new(IrType::Int)).is_copy());
+    fn test_is_copy_option_tracks_inner_type() {
+        assert!(IrType::Option(Box::new(IrType::Int)).is_copy());
+        assert!(!IrType::Option(Box::new(IrType::String)).is_copy());
+    }
+
+    #[test]
+    fn test_is_copy_result_tracks_inner_types() {
+        assert!(IrType::Result(Box::new(IrType::Int), Box::new(IrType::Bool)).is_copy());
+        assert!(!IrType::Result(Box::new(IrType::Int), Box::new(IrType::String)).is_copy());
+    }
+
+    #[test]
+    fn test_is_copy_tuple_tracks_inner_types() {
+        assert!(IrType::Tuple(vec![IrType::Int, IrType::Bool]).is_copy());
+        assert!(!IrType::Tuple(vec![IrType::Int, IrType::String]).is_copy());
     }
 
     #[test]

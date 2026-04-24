@@ -29,7 +29,7 @@ fn helper_loop(xs: Vec<String>, ys: Vec<i64>) -> Vec<i64> {
     for y in ys.iter().copied() {
         out.push(match_index(xs.clone(), y));
     }
-    return out;
+    return out.clone();
 }
 fn helper_list(xs: Vec<String>, ys: Vec<i64>) -> Vec<i64> {
     return (ys).iter().cloned().map(|y| match_index(xs.clone(), y)).collect::<Vec<_>>();
