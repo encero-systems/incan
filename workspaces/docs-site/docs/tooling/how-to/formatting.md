@@ -52,9 +52,9 @@ def calculate(x: int) -> int:
 ### Blank Lines
 
 - RFC 053 is the normative vertical-spacing contract for `incan fmt`: [RFC 053](../../RFCs/053_formatter_vertical_spacing_buckets.md)
-- **Exactly 2 blank lines** between top-level body-bearing declarations (`def`, `class`, `model`, `trait`, `enum`, and body-bearing `newtype` / `rusttype` forms)
+- **Exactly 2 blank lines** around top-level `def`, `class`, `model`, `trait`, `enum`, `type`, `newtype`, and `rusttype` declarations
 - **Exactly 1 blank line** before a following body-bearing member inside a type body
-- **At most 1 blank line** everywhere else, including imports, constants/statics, single-line type aliases, statement blocks, and transitions involving module docstrings
+- **At most 1 blank line** everywhere else, including import runs, grouped constants/statics, statement blocks, and transitions involving module docstrings when no top-level spaced declaration is involved
 - Stand-alone comments do **not** satisfy blank-line quotas by themselves; the formatter attaches them to nearby same-scope constructs as leading or trailing comment bundles
 
 ```incan

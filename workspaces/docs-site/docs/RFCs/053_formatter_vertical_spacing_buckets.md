@@ -87,28 +87,27 @@ def explain() -> str:
 ### Buckets (normative)
 
 - **Bucket A — Exactly two blank lines:**  
-    Between the **last non-blank line** of a **preceding** top-level declaration and the **first non-blank line** of a **following** top-level declaration, there **must** be **exactly two** consecutive blank lines, **if and only if** **both** declarations are **top-level body-bearing declarations** as defined below. No other transition **may** use bucket A.
+    Between the **last non-blank line** of a **preceding** top-level declaration and the **first non-blank line** of a **following** top-level declaration, there **must** be **exactly two** consecutive blank lines whenever **either side** of that boundary is a **top-level spaced declaration** as defined below. No other transition **may** use bucket A.
 - **Bucket B — Exactly one blank line:**  
     Between the **last non-blank line** of a **preceding** member and the **first non-blank line** of a **following** body-bearing member inside the **same** `class`, `model`, `trait`, `type`, or `enum` body (including **methods** and other **indented** member declarations), there **must** be **exactly one** consecutive blank line, unless this RFC explicitly places that boundary in bucket C. This includes mixed bodies where one or more **single-line** members are followed by a **body-bearing** member: the blank line before the body-bearing member still uses bucket B, while adjacent single-line members that are not followed by a body-bearing member remain in bucket C.
 - **Bucket C — At most one blank line (zero or one):**  
-    For every transition **not** covered by bucket A or B, the formatter **must** emit **zero** or **one** consecutive blank line between the **last non-blank line** of the preceding construct and the **first non-blank line** of the following construct. It **must not** emit **two** or more consecutive blank lines. This bucket applies to **module docstring** boundaries, **import** runs, **const** and **static** declarations, **single-line** `type` and `newtype` declarations, transitions from **imports** to **non-imports**, and **all** statement-level spacing inside function bodies and other indented blocks unless a future RFC narrows a subset. This RFC does **not** impose any further normalization within bucket C: when both **zero** and **one** blank line satisfy the bucket, either form is acceptable.
+    For every transition **not** covered by bucket A or B, the formatter **must** emit **zero** or **one** consecutive blank line between the **last non-blank line** of the preceding construct and the **first non-blank line** of the following construct. It **must not** emit **two** or more consecutive blank lines. This bucket applies to **module docstring** boundaries that do not precede a top-level spaced declaration, **import** runs, adjacent **const** and **static** declarations, transitions from **imports** to **non-imports** when no top-level spaced declaration is involved, and **all** statement-level spacing inside function bodies and other indented blocks unless a future RFC narrows a subset. This RFC does **not** impose any further normalization within bucket C: when both **zero** and **one** blank line satisfy the bucket, either form is acceptable.
 
-### Top-level body-bearing declarations (bucket A eligibility)
+### Top-level spaced declarations (bucket A eligibility)
 
-The following forms, when declared at **module top level**, count as **body-bearing** for bucket A **when** they are **not** in the **single-line** shape described in “Single-line type forms”:
+The following forms, when declared at **module top level**, count as **top-level spaced declarations** for bucket A:
 
 - `def` (function) with an indented suite.
 - `class` with an indented suite.
 - `model` with an indented suite.
 - `enum` with an indented suite.
 - `trait` with an indented suite.
-- `type` (type alias) or `newtype`/`rusttype` whose formatted shape includes an **indented body** or **multi-line** right-hand side as determined by the formatter’s wrapping rules (i.e. not a single-line form).
+- `type` (type alias), including single-line aliases.
+- `newtype` / `rusttype`, including single-line forms.
 
-**Module** and **file** leading **docstrings** are **not** body-bearing declarations for bucket A; spacing after a module docstring follows bucket C (typically **one** blank line before the next top-level item).
+When one of these declarations appears at top level, the formatter should visually isolate it with bucket A even when the neighboring declaration is a `const`, `static`, import block, module docstring boundary, or another non-spaced top-level item.
 
-### Single-line type forms (bucket C)
-
-A **top-level** `type` alias (or `newtype` / `rusttype`) that the formatter emits as a **single non-empty source line** (no indented suite) **must** be treated as **non-body-bearing** for bucket A. Consecutive such declarations **must** use bucket C between them (**zero** or **one** blank line, never two or more).
+**Module** and **file** leading **docstrings** are **not** top-level spaced declarations by themselves, but a module docstring immediately followed by a top-level spaced declaration still uses bucket A at that boundary.
 
 ### Vocab-registered surfaces
 
@@ -215,13 +214,13 @@ def fetch_user(client: Client, id: UserId) -> User:
 - The **module docstring** interior contains **one** blank line between paragraphs, which is permitted by the docstring-interior cap; the gap after the closing docstring and before the first import is bucket C.
 - The two **import** lines remain in bucket C and therefore do not require a blank line between them.
 - The stand-alone module comment is placed relative to nearby code rather than counted as a blank line. Its presence therefore does not itself satisfy or violate a bucket quota.
-- `const DEFAULT_TIMEOUT`, `static USER_AGENT`, and the single-line alias `type UserId = str` all remain in bucket C. This RFC intentionally leaves **zero** versus **one** blank line within that bucket to formatter choice or preserved author preference where the implementation allows it.
-- The transition from the single-line alias `type UserId = str` to `model User:` is still bucket C because the alias is **not** body-bearing for bucket-A purposes.
-- The transition from `model User:` to `enum Token:` is bucket A because both are top-level body-bearing declarations; the example therefore uses **exactly two** blank lines there.
+- `const DEFAULT_TIMEOUT` and `static USER_AGENT` remain in bucket C with respect to each other, but the boundary before or after `type UserId = str` uses bucket A because top-level `type` declarations are intentionally spaced out.
+- The transition from the single-line alias `type UserId = str` to `model User:` is bucket A because top-level `type` declarations are intentionally spaced out.
+- The transition from `model User:` to `enum Token:` is bucket A because both are top-level spaced declarations; the example therefore uses **exactly two** blank lines there.
 - Inside `enum Token`, the variants `Plus` and `Minus` remain in bucket C relative to each other, but the blank line before `def is_operator(...)` is bucket B because the method is a following **body-bearing** member.
 - The blank line inside the `match` body before `_ => False` is bucket C because statement-level spacing inside indented blocks is bucket C unless another RFC narrows it.
 - The inline comment on `_ => False` does not create a second spacing boundary; it is part of the same non-blank source line.
-- The transition from `enum Token:` to `def fetch_user(...)` is bucket A because both are top-level body-bearing declarations.
+- The transition from `enum Token:` to `def fetch_user(...)` is bucket A because both are top-level spaced declarations.
 - The function docstring interior again demonstrates the **at most one** empty-line rule for docstring payloads.
 - The statement-level blank lines inside `fetch_user(...)` are bucket C, so one blank line is acceptable but two or more are not.
 
@@ -235,9 +234,9 @@ def a_function() -> None:
     ...
 ```
 
-- The transition from `type UserId = str` to `def a_function(...)` is still bucket C because the single-line alias is not body-bearing.
+- The transition from `type UserId = str` to `def a_function(...)` is bucket A because top-level `type` declarations use the widened spacing rule.
 - Because there is **no** blank line between the comment and `def a_function(...)`, the comment is treated as a **leading** comment of the function.
-- The bucket-C blank line is therefore measured between `type UserId = str` and the `comment + def a_function(...)` bundle.
+- The bucket-A blank line is therefore measured between `type UserId = str` and the `comment + def a_function(...)` bundle.
 
 By contrast, in the following spelling the comment becomes a **trailing** comment of the alias because a blank line separates it from the following construct:
 
@@ -250,7 +249,7 @@ def a_function() -> None:
 ```
 
 - The blank line between the comment and `def a_function(...)` prevents the comment from attaching forward.
-- The comment therefore stays with `type UserId = str`, and the formatter then applies the ordinary bucket-C boundary to the following function.
+- The comment therefore stays with `type UserId = str`, and the formatter then applies the ordinary bucket-A boundary to the following function.
 
 ### Canonical comment-placement examples (normative, regression-oriented)
 
@@ -331,7 +330,7 @@ def build_service() -> Service:
 
 - `# same-scope note` attaches within the function body because it shares that indentation level with `commit()`.
 - `# top-level note` does **not** attach into the class body because it is at a different indentation level; it attaches **forward** to `def build_service(...)`.
-- Because `class Service` and `def build_service(...)` are both top-level body-bearing declarations, bucket A is measured between `class Service` and the `comment + def build_service(...)` bundle, so the example uses **exactly two** blank lines there.
+- Because `class Service` and `def build_service(...)` are both top-level spaced declarations, bucket A is measured between `class Service` and the `comment + def build_service(...)` bundle, so the example uses **exactly two** blank lines there.
 
 ## Alternatives considered
 
@@ -388,8 +387,8 @@ flowchart TB
 
 ### Phase 1: Vertical-spacing classification
 
-- Classify top-level declarations by formatter surface kind so bucket A applies only to body-bearing declarations.
-- Keep imports, constants/statics, and single-line type forms in bucket C instead of forcing double gaps.
+- Classify top-level declarations by formatter surface kind so bucket A applies around top-level spaced declarations, including `type` / `newtype` forms.
+- Keep import runs and adjacent constants/statics in bucket C unless a neighboring top-level spaced declaration widens the boundary.
 - Preserve bucket-C behavior inside statement blocks while keeping the formatter deterministic.
 
 ### Phase 2: Comment and docstring normalization
@@ -412,8 +411,8 @@ flowchart TB
 
 ### Formatter
 
-- [x] Classify top-level declarations by bucket-A eligibility instead of treating all type-like declarations as body-bearing.
-- [x] Keep block-level spacing in bucket C and avoid double gaps for const/static and single-line type forms.
+- [x] Classify top-level declarations by bucket-A eligibility so top-level `def` / `model` / `type`-like declarations stay visually isolated.
+- [x] Keep block-level spacing in bucket C while allowing statics/consts to widen when adjacent to a top-level spaced declaration.
 - [x] Apply bucket-B spacing only before following body-bearing members in type bodies.
 - [x] Normalize docstring interiors to at most one blank line.
 - [x] Preserve a single trailing newline at EOF.

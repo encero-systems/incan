@@ -1346,8 +1346,12 @@ type Second = newtype int
         let expected = r#"# ---- first ----
 @derive(Clone)
 type First = newtype int
+
+
 @derive(Clone)
 type Middle = newtype int
+
+
 # ---- second ----
 @derive(Clone)
 type Second = newtype int
@@ -1365,7 +1369,14 @@ def load_user(id: UserId) -> User:
     pass
 "#;
         let formatted = format_source(source)?;
-        assert_eq!(formatted, source);
+        let expected = r#"type UserId = str
+# comment about the alias
+
+
+def load_user(id: UserId) -> User:
+    pass
+"#;
+        assert_eq!(formatted, expected);
         Ok(())
     }
 
@@ -1583,6 +1594,7 @@ from rust::std::f64 import INFINITY, NAN
 const A: int = 1
 const B: int = 2
 
+
 def sum_constants() -> int:
     return A + B
 "#;
@@ -1603,12 +1615,31 @@ def load_user(id: UserId) -> User:
 
         let expected = r#"type UserId = str
 
+
 model User:
     id: UserId
 
 
 def load_user(id: UserId) -> User:
     pass
+"#;
+        assert_eq!(result, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_top_level_spacing_static_then_function_uses_two_blank_lines() -> Result<(), FormatError> {
+        let source = r#"static prism_store_node_counts: list[int] = []
+pub def allocate_prism_store_id() -> int:
+  return len(prism_store_node_counts)
+"#;
+        let result = format_source(source)?;
+
+        let expected = r#"static prism_store_node_counts: list[int] = []
+
+
+pub def allocate_prism_store_id() -> int:
+    return len(prism_store_node_counts)
 "#;
         assert_eq!(result, expected);
         Ok(())

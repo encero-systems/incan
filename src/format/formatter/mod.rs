@@ -150,16 +150,21 @@ impl Formatter {
     /// to get the desired vertical spacing.
     fn top_level_spacing(&self, prev: &Declaration, next: &Declaration) -> usize {
         if matches!(prev, Declaration::Docstring(_)) {
-            // Module docstring is followed by a single blank line.
-            return 1;
+            return if Self::decl_needs_wide_top_level_spacing(next) {
+                RFC053_TOP_LEVEL_BLANK_LINES
+            } else {
+                1
+            };
+        }
+
+        if Self::decl_needs_wide_top_level_spacing(prev) || Self::decl_needs_wide_top_level_spacing(next) {
+            return RFC053_TOP_LEVEL_BLANK_LINES;
         }
 
         match (Self::decl_spacing_class(prev), Self::decl_spacing_class(next)) {
             (DeclSpacingClass::Docstring, _) | (_, DeclSpacingClass::Docstring) => 1,
             (DeclSpacingClass::Import, DeclSpacingClass::Import)
-            | (DeclSpacingClass::ConstLike, DeclSpacingClass::ConstLike)
-            | (DeclSpacingClass::SingleLineType, DeclSpacingClass::SingleLineType) => 0,
-            (DeclSpacingClass::BodyBearing, DeclSpacingClass::BodyBearing) => RFC053_TOP_LEVEL_BLANK_LINES,
+            | (DeclSpacingClass::ConstLike, DeclSpacingClass::ConstLike) => 0,
             _ => 1,
         }
     }
@@ -169,18 +174,7 @@ impl Formatter {
             Declaration::Import(_) => DeclSpacingClass::Import,
             Declaration::Const(_) | Declaration::Static(_) => DeclSpacingClass::ConstLike,
             Declaration::Docstring(_) => DeclSpacingClass::Docstring,
-            Declaration::TypeAlias(_) => DeclSpacingClass::SingleLineType,
-            Declaration::Newtype(nt) => {
-                if nt.docstring.is_some()
-                    || !nt.rebindings.is_empty()
-                    || !nt.interop_edges.is_empty()
-                    || !nt.methods.is_empty()
-                {
-                    DeclSpacingClass::BodyBearing
-                } else {
-                    DeclSpacingClass::SingleLineType
-                }
-            }
+            Declaration::TypeAlias(_) | Declaration::Newtype(_) => DeclSpacingClass::TypeLike,
             Declaration::Model(_)
             | Declaration::Class(_)
             | Declaration::Trait(_)
@@ -188,13 +182,26 @@ impl Formatter {
             | Declaration::Function(_) => DeclSpacingClass::BodyBearing,
         }
     }
+
+    fn decl_needs_wide_top_level_spacing(decl: &Declaration) -> bool {
+        matches!(
+            decl,
+            Declaration::TypeAlias(_)
+                | Declaration::Newtype(_)
+                | Declaration::Model(_)
+                | Declaration::Class(_)
+                | Declaration::Trait(_)
+                | Declaration::Enum(_)
+                | Declaration::Function(_)
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DeclSpacingClass {
     Import,
     ConstLike,
-    SingleLineType,
+    TypeLike,
     BodyBearing,
     Docstring,
 }

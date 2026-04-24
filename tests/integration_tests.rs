@@ -339,6 +339,7 @@ trait Service:
     let expected = r#"type UserId = str
 # comment about the alias
 
+
 model User:
     """
     First paragraph.
@@ -354,6 +355,40 @@ trait Service:
 
     def reset(self) -> None:
         pass
+"#;
+    assert_eq!(formatted, expected);
+
+    let tokens = lexer::lex(&formatted)
+        .map_err(|errs| std::io::Error::other(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n")))?;
+    parser::parse(&tokens)
+        .map_err(|errs| std::io::Error::other(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n")))?;
+
+    Ok(())
+}
+
+/// Regression (GitHub #336 / RFC 053): top-level type/function-shaped declarations keep two blank lines even when
+/// adjacent to module statics.
+#[test]
+fn test_cli_fmt_keeps_two_blank_lines_between_static_and_function() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = make_temp_test_dir();
+    let path = dir.join("rfc053_static_function_spacing.incn");
+    fs::write(
+        &path,
+        r#"static prism_store_node_counts: list[int] = []
+pub def allocate_prism_store_id() -> int:
+  return len(prism_store_node_counts)
+"#,
+    )?;
+
+    let status = Command::new(incan_debug_binary()).arg("fmt").arg(&path).status()?;
+    assert!(status.success(), "incan fmt failed");
+
+    let formatted = fs::read_to_string(&path)?;
+    let expected = r#"static prism_store_node_counts: list[int] = []
+
+
+pub def allocate_prism_store_id() -> int:
+    return len(prism_store_node_counts)
 "#;
     assert_eq!(formatted, expected);
 
