@@ -3,9 +3,24 @@
 
 use crate::frontend::ast::*;
 
-use super::Formatter;
+use super::{Formatter, RFC053_METHOD_BLANK_LINES};
 
 impl Formatter {
+    fn method_is_body_bearing(method: &MethodDecl) -> bool {
+        method.body.is_some()
+    }
+
+    fn format_methods_with_spacing(&mut self, methods: &[Spanned<MethodDecl>], seen_member_before_methods: bool) {
+        let mut seen_member = seen_member_before_methods;
+        for method in methods {
+            if Self::method_is_body_bearing(&method.node) && seen_member {
+                self.writer.blank_lines(RFC053_METHOD_BLANK_LINES);
+            }
+            self.format_method(&method.node);
+            seen_member = true;
+        }
+    }
+
     pub(super) fn format_declaration(&mut self, decl: &Declaration) {
         match decl {
             Declaration::Import(import) => self.format_import(import),
@@ -52,24 +67,15 @@ impl Formatter {
         if trimmed.is_empty() {
             self.writer.writeln("\"\"\"\"\"\"");
         } else if trimmed.contains('\n') {
-            let lines: Vec<&str> = trimmed.lines().collect();
-            let first = lines[0].trim();
-            let rest = &lines[1..];
-            let common_indent = rest
-                .iter()
-                .filter(|line| !line.trim().is_empty())
-                .map(|line| line.chars().take_while(|ch| ch.is_whitespace()).count())
-                .min()
-                .unwrap_or(0);
+            let lines = normalized_docstring_lines(trimmed);
 
             // Multi-line docstring
             self.writer.writeln("\"\"\"");
-            self.writer.writeln(first);
-            for line in rest {
-                if line.trim().is_empty() {
+            for line in lines {
+                if line.is_empty() {
                     self.writer.newline();
                 } else {
-                    self.writer.writeln(strip_common_indent(line, common_indent).trim_end());
+                    self.writer.writeln(&line);
                 }
             }
             self.writer.writeln("\"\"\"");
@@ -307,14 +313,7 @@ impl Formatter {
             self.format_field(&field.node);
         }
 
-        let mut first_method = true;
-        for method in &model.methods {
-            if has_fields || !first_method {
-                self.writer.newline();
-            }
-            self.format_method(&method.node);
-            first_method = false;
-        }
+        self.format_methods_with_spacing(&model.methods, has_fields);
 
         if model.fields.is_empty() && model.methods.is_empty() {
             if model.docstring.is_some() {
@@ -376,14 +375,7 @@ impl Formatter {
             self.format_field(&field.node);
         }
 
-        let mut first_method = true;
-        for method in &class.methods {
-            if has_fields || !first_method {
-                self.writer.newline();
-            }
-            self.format_method(&method.node);
-            first_method = false;
-        }
+        self.format_methods_with_spacing(&class.methods, has_fields);
 
         if class.fields.is_empty() && class.methods.is_empty() {
             if class.docstring.is_some() {
@@ -423,14 +415,7 @@ impl Formatter {
             }
         }
 
-        let mut first = true;
-        for method in &tr.methods {
-            if !first {
-                self.writer.newline();
-            }
-            self.format_method(&method.node);
-            first = false;
-        }
+        self.format_methods_with_spacing(&tr.methods, false);
 
         if tr.methods.is_empty() {
             if tr.docstring.is_some() {
@@ -572,12 +557,7 @@ impl Formatter {
             }
         }
 
-        for (idx, method) in nt.methods.iter().enumerate() {
-            if idx > 0 {
-                self.writer.newline();
-            }
-            self.format_method(&method.node);
-        }
+        self.format_methods_with_spacing(&nt.methods, !nt.rebindings.is_empty() || !nt.interop_edges.is_empty());
 
         self.writer.dedent();
     }
@@ -874,4 +854,32 @@ fn strip_common_indent(line: &str, indent: usize) -> &str {
     }
 
     &line[start..]
+}
+
+fn normalized_docstring_lines(doc: &str) -> Vec<String> {
+    let lines: Vec<&str> = doc.lines().collect();
+    let first = lines.first().map(|line| line.trim()).unwrap_or_default();
+    let rest = lines.get(1..).unwrap_or_default();
+    let common_indent = rest
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.chars().take_while(|ch| ch.is_whitespace()).count())
+        .min()
+        .unwrap_or(0);
+
+    let mut normalized = Vec::new();
+    normalized.push(first.to_string());
+    let mut previous_blank = false;
+    for line in rest {
+        if line.trim().is_empty() {
+            if !previous_blank {
+                normalized.push(String::new());
+                previous_blank = true;
+            }
+        } else {
+            normalized.push(strip_common_indent(line, common_indent).trim_end().to_string());
+            previous_blank = false;
+        }
+    }
+    normalized
 }

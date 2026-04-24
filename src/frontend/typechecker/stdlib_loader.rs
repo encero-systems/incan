@@ -639,8 +639,8 @@ fn extract_function_meta(program: &ast::Program) -> HashMap<String, FunctionMeta
 /// Extract trait metadata from a stdlib module's AST.
 ///
 /// Walks top-level trait declarations and records the `rust.module()` backing path (if any).
-/// This metadata is used by [`LoweringHelpers::resolve_derive_module_path`] to map `@derive(Trait)` references
-/// to their Rust proc-macro crate paths for derive passthrough.
+/// This metadata is used by `AstLowering::resolve_derive_module_path` to map `@derive(Trait)` references to their Rust
+/// proc-macro crate paths for derive passthrough.
 fn extract_trait_meta(program: &ast::Program) -> HashMap<String, TraitMeta> {
     let mut meta = HashMap::new();
     let rust_module_path = program.rust_module_path.as_ref().map(|sp| sp.node.clone());

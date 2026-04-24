@@ -13,8 +13,10 @@ Keep `orchestrate-parallel-work` generic. Use this skill as the opinionated wrap
 
 - Confirm the requested scope before spawning anything.
 - If the input is an RFC, treat RFC hygiene and lifecycle state as part of the work, not pre-existing setup.
+- Treat user-facing docs and versioning as part of implementation, not optional closeout polish.
 - Optimize for end-to-end correctness, not maximal concurrency.
 - Use clean worktrees for real implementation slices.
+- Every implementation must land in a fresh worktree rooted under `/Users/danny/Development/encero/tmp` so VS Code picks it up; do not implement in `/tmp` or in the main repo checkout.
 - Require every worker to plan, implement, verify, review, and fix within its owned slice.
 - Require the orchestrator to perform its own integration review/fix loop after collecting worker output.
 - Do not commit, push, or open a PR unless the user explicitly asked for that. When not explicitly asked, still draft the commit message and PR description as ready-to-use artifacts.
@@ -46,6 +48,7 @@ In RFC intake mode:
 5. If the RFC is still `Draft` and design is settled, use `bump-rfc` to move it to `Planned`.
 6. If implementation is actually being picked up now, use `bump-rfc` to move it to `In Progress`. For this skill, the parent Ralph loop itself counts as "a contributor has picked up the work"; a child loop does not need its own PR or branch-level ceremony.
 7. Use the RFC's `Implementation Plan` and `Progress Checklist` as the source of truth for implementation phases. If they are missing or weak, strengthen them before spawning workers.
+8. Establish the docs/version baseline up front: verify the repo's actual dev version from the source-of-truth metadata, identify which user-facing docs must change if the feature lands, and do not assume an older release line from stale release notes or worker worktrees.
 
 Do not quietly force an RFC past open design questions. Stop and ask the user.
 
@@ -65,7 +68,7 @@ If scope is ambiguous, stop and ask a short numbered list of missing decisions.
 
 ### 2. Pick the execution backend
 
-Default to Codex subagents plus git worktrees.
+Default to Codex subagents plus git worktrees under `/Users/danny/Development/encero/tmp`.
 
 If the user explicitly wants OpenCode:
 
@@ -82,6 +85,8 @@ Use `start-work` once at the orchestration boundary to resolve issue/RFC context
 
 Do not mechanically run `start-work` inside every worker unless each worker owns a distinct issue or RFC. The important requirement is a clean worktree plus resolved context, not duplicated branch ceremony.
 
+Create the worktree root first if it does not exist: `/Users/danny/Development/encero/tmp`.
+
 Create:
 
 - one orchestrator worktree for final integration
@@ -89,11 +94,21 @@ Create:
 
 Base all worker worktrees from the same resolved starting point unless there is a deliberate dependency chain.
 
+For non-decomposed work, the single-agent implementation still belongs in a fresh worktree under `/Users/danny/Development/encero/tmp`; "keep the work local" does not mean "edit the primary checkout directly."
+
+Before spawning workers, identify:
+
+- the source-of-truth version file(s) for the repo
+- whether the task is on a `-dev.N` line and therefore needs a version bump
+- the authored user-facing docs that must be updated if the change is user-visible
+
+Do not treat RFC edits or release notes alone as sufficient user documentation.
+
 ### 4. Decide whether parallelism is justified
 
 Before spawning workers, decide whether the task actually decomposes cleanly. If it does not, keep the work local and continue as a single-agent Ralph loop.
 
-When it does decompose, hand off to `orchestrate-parallel-work` for slice definition, ownership, and worktree isolation.
+When it does decompose, hand off to `orchestrate-parallel-work` for slice definition, ownership, and worktree isolation under `/Users/danny/Development/encero/tmp`.
 
 If the task came from an RFC:
 
@@ -109,7 +124,7 @@ Each worker must own a non-overlapping slice with:
 - exact goal
 - owned files or directories
 - explicit non-goals
-- dedicated worktree path
+- dedicated worktree path under `/Users/danny/Development/encero/tmp`
 - verification command
 - expected result format
 
@@ -145,6 +160,8 @@ The orchestrator must:
 
 - inspect each worker result and changed-file list
 - reconcile naming, docs, tests, and architectural seams across slices
+- ensure user-facing docs were updated for user-visible behavior, not only RFC text or release notes
+- verify the repo version baseline again before finish and bump `-dev.N` by one at minimum for implementation work on the active dev line
 - update RFC progress state and checklist items as phases land
 - move the accepted work into the orchestrator worktree cleanly
 - run the repo-level gate
@@ -175,7 +192,8 @@ Treat these as default expectations, not optional polish:
 - Boy Scout cleanup within touched files
 - tests proportional to risk and surface area
 - architectural fit with existing boundaries
-- docs and release notes when the repo rules require them
+- user-facing docs and release notes when the repo rules require them
+- version checks up front and a dev-version bump (`-dev.N` -> `-dev.(N+1)`) at minimum for implementation work on the active dev line
 
 If the task teaches a durable lesson about orchestration, testing, or worktree hygiene, consider `add-learning` before finishing.
 
@@ -209,9 +227,14 @@ Do not recurse `ralph-loop` indefinitely. A child loop is a phase owner, not ano
 - [ ] Child loops did not spawn further `ralph-loop` children
 - [ ] Scope was restated and confirmed before execution
 - [ ] Backend choice was explicit
+- [ ] RFC lifecycle state and implementation plan/checklist were confirmed before coding started
 - [ ] Every implementation worker had a clean worktree and non-overlapping ownership
+- [ ] Every implementation worktree lived under `/Users/danny/Development/encero/tmp`
+- [ ] Docs/version baseline was established from repo source-of-truth metadata before implementation
 - [ ] Every worker ran plan -> implement -> verify -> review -> fix loops
 - [ ] The orchestrator ran its own integration review/fix loop
+- [ ] User-visible behavior changes updated authored user docs, not only RFCs/release notes
+- [ ] Active dev version was re-checked and bumped by one dev increment at minimum for implementation work
 - [ ] Child loops did not draft PRs or final commit artifacts of their own
 - [ ] Final gate passed or remaining failures were reported concretely
 - [ ] Commit/PR artifacts were drafted

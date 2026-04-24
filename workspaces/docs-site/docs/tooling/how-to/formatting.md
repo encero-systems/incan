@@ -1,7 +1,10 @@
-# Incan Code Formatting
+# Formatting With `incan fmt`
 
-The `incan fmt` command formats Incan source code following a consistent style inspired by
-[Ruff](https://docs.astral.sh/ruff/) and [Black](https://black.readthedocs.io/).
+`incan fmt` is the formatter for Incan source files.
+It is the reference implementation of the canonical [Incan Code Style Guide](../../language/reference/code_style.md).
+
+If you want the actual style rules, start with the style guide.
+This page is about the tool: how to run it, what it guarantees, and where its current limits are.
 
 ## Quick Start
 
@@ -26,83 +29,25 @@ incan fmt --diff myfile.incn
 ```
 
 !!! note "`--diff` output can look empty for EOF-only changes"
-    If the only change is at end-of-file (like adding/removing a trailing newline), some diff viewers may not display an
-    obvious change even though `incan fmt` would update the file.
+    If the only change is at end-of-file (like adding/removing a trailing newline), some diff viewers may not display an obvious change even though `incan fmt` would update the file.
 
-## Style Guide
+## Relationship To The Style Guide
 
-### Indentation
+The style guide is the canonical source for what Incan code should look like:
 
-- **4 spaces** per indentation level
-- No tabs
+- [Incan Code Style Guide](../../language/reference/code_style.md)
 
-```incan
-def calculate(x: int) -> int:
-    if x > 0:
-        return x * 2
-    return 0
-```
+`incan fmt` should make valid source conform to that guide.
+In particular, the current formatter contract includes:
 
-### Line Length
+- `4`-space indentation
+- a `120`-character line-length target
+- top-level double-blank-line spacing only where the style guide permits it
+- preservation of one authored readability gap inside ordinary code blocks
+- comment placement that remains same-scope and structure-aware
+- one trailing newline at end-of-file
 
-- **120 characters** target (best-effort, not strictly enforced)
-- Long lines are wrapped after opening parentheses/brackets where possible
-- Manual wrapping may be needed for very long expressions
-
-### Blank Lines
-
-- **2 blank lines** between top-level declarations (functions, classes, models, traits)
-- **1 blank line** between methods within a class/model
-
-```incan
-def first_function() -> None:
-    pass
-
-
-def second_function() -> None:
-    pass
-
-
-model User:
-    name: str
-    age: int
-
-    def greet(self) -> str:
-        return f"Hello, {self.name}"
-
-    def is_adult(self) -> bool:
-        return self.age >= 18
-```
-
-### Spacing
-
-- **Spaces around binary operators**: `a + b`, not `a+b`
-- **No space after function name**: `foo(x)`, not `foo (x)`
-- **Space after comma**: `foo(a, b)`, not `foo(a,b)`
-- **Space after colon in type annotations**: `x: int`, not `x:int`
-- **No space around `=` in named arguments**: `User(name="Alice")`, not `User(name = "Alice")`
-
-### Strings
-
-- **Double quotes** preferred for strings
-- Single quotes preserved if already used
-
-### Trailing Commas
-
-- Added in multi-line constructs for cleaner diffs
-
-### Docstrings
-
-- Single-line docstrings on one line: `"""Brief description"""`
-- Multi-line docstrings with content on separate lines:
-
-```incan
-"""
-This is a longer docstring.
-
-It can span multiple lines.
-"""
-```
+RFC 053 remains the historical design record for the vertical-spacing portion of that contract.
 
 ## CLI Options
 
@@ -131,8 +76,8 @@ Add to your CI pipeline to enforce consistent formatting:
 
 ## Configuration
 
-Currently, formatting options use sensible defaults based on Ruff/Black conventions.
-Configuration file support (e.g., `incan.toml`) is planned for future releases.
+Currently, formatting options use sensible defaults.
+Configuration file support (for example `incan.toml`) is planned for a future release.
 
 Default settings:
 
@@ -141,13 +86,15 @@ Default settings:
 - Quote style: Double quotes
 - Trailing commas: Yes (in multi-line)
 
+The same formatting behavior applies through both `incan fmt` and the library formatter API.
+`FormatConfig` controls ordinary options such as indentation, line length, quote style, and trailing commas, but it does not currently expose blank-line or comment-placement overrides.
+
 ## Limitations
 
 ### Parse-required
 
 **The formatter requires valid syntax.**
-Unlike some formatters that can handle partial/broken code, `incan fmt` operates on the parsed AST
-and cannot format files with syntax errors.
+Unlike some formatters that can tolerate partial or broken code, `incan fmt` works on parsed syntax and cannot format files with syntax errors.
 
 If a file has errors, you'll see:
 
@@ -159,12 +106,14 @@ Fix syntax errors before formatting.
 
 ### Line length is best-effort
 
-The 120-character line length is a **target**, not a strict limit.
-The formatter doesn't automatically wrap all long lines.
-Some constructs (very long strings, complex expressions) may exceed the target and require manual formatting.
+The `120`-character line length is a target, not a strict hard limit.
+The formatter does not yet rewrite every possible overflowing construct.
+Very long strings, signatures, fluent call chains, and some nested expressions may still require manual judgment.
 
 ## Next Steps
 
-- [Language Guide](../../language/index.md) - Learn Incan syntax and features
-- [Examples](https://github.com/dannys-code-corner/incan/tree/main/examples) - Sample programs
-- [testing](testing.md) - Test runner and fixtures
+- [Incan Code Style Guide](../../language/reference/code_style.md)
+- [Language Guide](../../language/index.md)
+- [Examples](https://github.com/dannys-code-corner/incan/tree/main/examples)
+- [Testing](testing.md)
+- [RFC 053](../../RFCs/closed/implemented/053_formatter_vertical_spacing_buckets.md)

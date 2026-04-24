@@ -4,7 +4,19 @@
 
 use super::config::FormatConfig;
 
-/// Writer that tracks indentation and builds formatted output
+/// Snapshot of a writer position that can be restored after speculative formatting.
+///
+/// The formatter uses checkpoints when it tries an inline layout first and falls back to a multiline layout if the
+/// inline version exceeds the configured line length or emits a newline.
+#[derive(Clone, Copy)]
+pub struct WriterCheckpoint {
+    output_len: usize,
+    indent_level: usize,
+    at_line_start: bool,
+    current_line_length: usize,
+}
+
+/// Writer that tracks indentation, line length, and the formatted output buffer.
 pub struct FormatWriter {
     /// The output buffer
     output: String,
@@ -33,6 +45,41 @@ impl FormatWriter {
     /// Get the formatted output
     pub fn finish(self) -> String {
         self.output
+    }
+
+    /// Capture the current output and indentation state.
+    pub fn checkpoint(&self) -> WriterCheckpoint {
+        WriterCheckpoint {
+            output_len: self.output.len(),
+            indent_level: self.indent_level,
+            at_line_start: self.at_line_start,
+            current_line_length: self.current_line_length,
+        }
+    }
+
+    /// Restore the writer to a previously captured checkpoint.
+    pub fn restore(&mut self, checkpoint: WriterCheckpoint) {
+        self.output.truncate(checkpoint.output_len);
+        self.indent_level = checkpoint.indent_level;
+        self.at_line_start = checkpoint.at_line_start;
+        self.current_line_length = checkpoint.current_line_length;
+    }
+
+    /// Return whether any text written since `checkpoint` contains a newline.
+    pub fn output_since_contains_newline(&self, checkpoint: WriterCheckpoint) -> bool {
+        self.output
+            .get(checkpoint.output_len..)
+            .is_some_and(|output| output.contains('\n'))
+    }
+
+    /// Return whether the current line is longer than the configured target length.
+    pub fn line_length_exceeded(&self) -> bool {
+        self.current_line_length > self.config.line_length
+    }
+
+    /// Return whether the next write will start a fresh line.
+    pub fn is_at_line_start(&self) -> bool {
+        self.at_line_start
     }
 
     /// Increase indentation level
@@ -183,6 +230,17 @@ mod tests {
         writer.write(" ");
         writer.write("world");
         assert_eq!(writer.finish(), "hello world");
+    }
+
+    #[test]
+    fn test_checkpoint_restore_round_trip() {
+        let mut writer = default_writer();
+        writer.write("hello");
+        let checkpoint = writer.checkpoint();
+        writer.write(" world");
+        assert!(!writer.output_since_contains_newline(checkpoint));
+        writer.restore(checkpoint);
+        assert_eq!(writer.finish(), "hello");
     }
 
     #[test]

@@ -17,7 +17,7 @@ New here? Start with: [Start here].
 [Getting Started]:tooling/tutorials/getting_started.md
 [Editor Setup]:tooling/how-to/editor_setup.md
 [Language Server]:tooling/how-to/lsp.md
-[Formatting]:tooling/how-to/formatting.md
+[Formatting]:language/reference/code_style.md
 [Testing]:tooling/how-to/testing.md
 
 How to install, configure, and use Incan [Tooling].
@@ -27,7 +27,7 @@ How to install, configure, and use Incan [Tooling].
 | [Getting Started] | Installation and first steps                     |
 | [Editor Setup]    | IDE configuration and syntax highlighting        |
 | [Language Server] | LSP for diagnostics, hover, and go-to-definition |
-| [Formatting]      | Code formatter (`incan fmt`)                     |
+| [Formatting]      | Canonical Incan code style and formatting rules  |
 | [Testing]         | Test runner (`incan test`)                       |
 
 ## Language Guide

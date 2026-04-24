@@ -1,17 +1,17 @@
 # RFC 053: Formatter vertical spacing (three blank-line buckets)
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2026-04-08
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 027 (incan vocab crate)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/336
-- **RFC PR:** —
+- **RFC PR:** https://github.com/dannys-code-corner/incan/pull/393
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
-This RFC defines **normative vertical spacing rules** for Incan’s **source formatter** (`incan fmt` and equivalent editor actions). Spacing is described with **three blank-line buckets**: (1) **exactly two** empty lines, (2) **exactly one** empty line, and (3) **at most one** empty line (zero or one) — plus **end-of-file** and **docstring-interior** caps. Stand-alone comments are handled through explicit placement rules; they do **not** themselves satisfy blank-line quotas. The goal is a **stable, citeable contract** (Python's PEP 8–like in spirit) so formatted output is predictable, diffs stay readable, and companion repos can align CI and review expectations without reverse-engineering formatter internals.
+This RFC records the implemented **vertical spacing model** for Incan’s **source formatter** (`incan fmt` and equivalent editor actions). Spacing is described with **three blank-line buckets**: (1) **exactly two** empty lines, (2) **exactly one** empty line, and (3) **at most one** empty line (zero or one) — plus **end-of-file** and **docstring-interior** caps. Stand-alone comments are handled through explicit placement rules; they do **not** themselves satisfy blank-line quotas. The live user-facing contract now lives in the formatting docs; this RFC remains the historical design record behind that behavior.
 
 ## Core model
 
@@ -23,14 +23,7 @@ This RFC defines **normative vertical spacing rules** for Incan’s **source for
 
 ## Motivation
 
-Vertical gaps currently arise from several independent mechanisms such as
-top-level declaration spacing, per-statement leading blank lines, match and
-block layout, docstring emission, comment reattachment, and EOF handling. That
-fragmentation makes it easy for extra consecutive blank lines to appear, for
-example after large `match` arms, and for EOF newline behavior to disagree with
-user expectations. Authors and reviewers need one document that states what the
-formatter guarantees, similar to how Python ecosystems cite PEP 8 for style,
-without reading formatter internals.
+Vertical gaps currently arise from several independent mechanisms such as top-level declaration spacing, per-statement leading blank lines, match and block layout, docstring emission, comment reattachment, and EOF handling. That fragmentation makes it easy for extra consecutive blank lines to appear, for example after large `match` arms, and for EOF newline behavior to disagree with user expectations. Authors and reviewers need one document that states what the formatter guarantees, similar to how Python ecosystems cite PEP 8 for style, without reading formatter internals.
 
 ## Goals
 
@@ -94,28 +87,27 @@ def explain() -> str:
 ### Buckets (normative)
 
 - **Bucket A — Exactly two blank lines:**  
-    Between the **last non-blank line** of a **preceding** top-level declaration and the **first non-blank line** of a **following** top-level declaration, there **must** be **exactly two** consecutive blank lines, **if and only if** **both** declarations are **top-level body-bearing declarations** as defined below. No other transition **may** use bucket A.
+    Between the **last non-blank line** of a **preceding** top-level declaration and the **first non-blank line** of a **following** top-level declaration, there **must** be **exactly two** consecutive blank lines whenever **either side** of that boundary is a **top-level spaced declaration** as defined below. No other transition **may** use bucket A.
 - **Bucket B — Exactly one blank line:**  
     Between the **last non-blank line** of a **preceding** member and the **first non-blank line** of a **following** body-bearing member inside the **same** `class`, `model`, `trait`, `type`, or `enum` body (including **methods** and other **indented** member declarations), there **must** be **exactly one** consecutive blank line, unless this RFC explicitly places that boundary in bucket C. This includes mixed bodies where one or more **single-line** members are followed by a **body-bearing** member: the blank line before the body-bearing member still uses bucket B, while adjacent single-line members that are not followed by a body-bearing member remain in bucket C.
 - **Bucket C — At most one blank line (zero or one):**  
-    For every transition **not** covered by bucket A or B, the formatter **must** emit **zero** or **one** consecutive blank line between the **last non-blank line** of the preceding construct and the **first non-blank line** of the following construct. It **must not** emit **two** or more consecutive blank lines. This bucket applies to **module docstring** boundaries, **import** runs, **const** and **static** declarations, **single-line** `type` and `newtype` declarations, transitions from **imports** to **non-imports**, and **all** statement-level spacing inside function bodies and other indented blocks unless a future RFC narrows a subset. This RFC does **not** impose any further normalization within bucket C: when both **zero** and **one** blank line satisfy the bucket, either form is acceptable.
+    For every transition **not** covered by bucket A or B, the formatter **must** emit **zero** or **one** consecutive blank line between the **last non-blank line** of the preceding construct and the **first non-blank line** of the following construct. It **must not** emit **two** or more consecutive blank lines. This bucket applies to **module docstring** boundaries that do not precede a top-level spaced declaration, **import** runs, adjacent **const** and **static** declarations, transitions from **imports** to **non-imports** when no top-level spaced declaration is involved, and **all** statement-level spacing inside function bodies and other indented blocks unless a future RFC narrows a subset. This RFC does **not** impose any further normalization within bucket C: when both **zero** and **one** blank line satisfy the bucket, either form is acceptable.
 
-### Top-level body-bearing declarations (bucket A eligibility)
+### Top-level spaced declarations (bucket A eligibility)
 
-The following forms, when declared at **module top level**, count as **body-bearing** for bucket A **when** they are **not** in the **single-line** shape described in “Single-line type forms”:
+The following forms, when declared at **module top level**, count as **top-level spaced declarations** for bucket A:
 
 - `def` (function) with an indented suite.
 - `class` with an indented suite.
 - `model` with an indented suite.
 - `enum` with an indented suite.
 - `trait` with an indented suite.
-- `type` (type alias) or `newtype`/`rusttype` whose formatted shape includes an **indented body** or **multi-line** right-hand side as determined by the formatter’s wrapping rules (i.e. not a single-line form).
+- `type` (type alias), including single-line aliases.
+- `newtype` / `rusttype`, including single-line forms.
 
-**Module** and **file** leading **docstrings** are **not** body-bearing declarations for bucket A; spacing after a module docstring follows bucket C (typically **one** blank line before the next top-level item).
+When one of these declarations appears at top level, the formatter should visually isolate it with bucket A even when the neighboring declaration is a `const`, `static`, import block, module docstring boundary, or another non-spaced top-level item.
 
-### Single-line type forms (bucket C)
-
-A **top-level** `type` alias (or `newtype` / `rusttype`) that the formatter emits as a **single non-empty source line** (no indented suite) **must** be treated as **non-body-bearing** for bucket A. Consecutive such declarations **must** use bucket C between them (**zero** or **one** blank line, never two or more).
+**Module** and **file** leading **docstrings** are **not** top-level spaced declarations by themselves, but a module docstring immediately followed by a top-level spaced declaration still uses bucket A at that boundary.
 
 ### Vocab-registered surfaces
 
@@ -222,13 +214,13 @@ def fetch_user(client: Client, id: UserId) -> User:
 - The **module docstring** interior contains **one** blank line between paragraphs, which is permitted by the docstring-interior cap; the gap after the closing docstring and before the first import is bucket C.
 - The two **import** lines remain in bucket C and therefore do not require a blank line between them.
 - The stand-alone module comment is placed relative to nearby code rather than counted as a blank line. Its presence therefore does not itself satisfy or violate a bucket quota.
-- `const DEFAULT_TIMEOUT`, `static USER_AGENT`, and the single-line alias `type UserId = str` all remain in bucket C. This RFC intentionally leaves **zero** versus **one** blank line within that bucket to formatter choice or preserved author preference where the implementation allows it.
-- The transition from the single-line alias `type UserId = str` to `model User:` is still bucket C because the alias is **not** body-bearing for bucket-A purposes.
-- The transition from `model User:` to `enum Token:` is bucket A because both are top-level body-bearing declarations; the example therefore uses **exactly two** blank lines there.
+- `const DEFAULT_TIMEOUT` and `static USER_AGENT` remain in bucket C with respect to each other, but the boundary before or after `type UserId = str` uses bucket A because top-level `type` declarations are intentionally spaced out.
+- The transition from the single-line alias `type UserId = str` to `model User:` is bucket A because top-level `type` declarations are intentionally spaced out.
+- The transition from `model User:` to `enum Token:` is bucket A because both are top-level spaced declarations; the example therefore uses **exactly two** blank lines there.
 - Inside `enum Token`, the variants `Plus` and `Minus` remain in bucket C relative to each other, but the blank line before `def is_operator(...)` is bucket B because the method is a following **body-bearing** member.
 - The blank line inside the `match` body before `_ => False` is bucket C because statement-level spacing inside indented blocks is bucket C unless another RFC narrows it.
 - The inline comment on `_ => False` does not create a second spacing boundary; it is part of the same non-blank source line.
-- The transition from `enum Token:` to `def fetch_user(...)` is bucket A because both are top-level body-bearing declarations.
+- The transition from `enum Token:` to `def fetch_user(...)` is bucket A because both are top-level spaced declarations.
 - The function docstring interior again demonstrates the **at most one** empty-line rule for docstring payloads.
 - The statement-level blank lines inside `fetch_user(...)` are bucket C, so one blank line is acceptable but two or more are not.
 
@@ -242,9 +234,9 @@ def a_function() -> None:
     ...
 ```
 
-- The transition from `type UserId = str` to `def a_function(...)` is still bucket C because the single-line alias is not body-bearing.
+- The transition from `type UserId = str` to `def a_function(...)` is bucket A because top-level `type` declarations use the widened spacing rule.
 - Because there is **no** blank line between the comment and `def a_function(...)`, the comment is treated as a **leading** comment of the function.
-- The bucket-C blank line is therefore measured between `type UserId = str` and the `comment + def a_function(...)` bundle.
+- The bucket-A blank line is therefore measured between `type UserId = str` and the `comment + def a_function(...)` bundle.
 
 By contrast, in the following spelling the comment becomes a **trailing** comment of the alias because a blank line separates it from the following construct:
 
@@ -257,7 +249,7 @@ def a_function() -> None:
 ```
 
 - The blank line between the comment and `def a_function(...)` prevents the comment from attaching forward.
-- The comment therefore stays with `type UserId = str`, and the formatter then applies the ordinary bucket-C boundary to the following function.
+- The comment therefore stays with `type UserId = str`, and the formatter then applies the ordinary bucket-A boundary to the following function.
 
 ### Canonical comment-placement examples (normative, regression-oriented)
 
@@ -338,15 +330,12 @@ def build_service() -> Service:
 
 - `# same-scope note` attaches within the function body because it shares that indentation level with `commit()`.
 - `# top-level note` does **not** attach into the class body because it is at a different indentation level; it attaches **forward** to `def build_service(...)`.
-- Because `class Service` and `def build_service(...)` are both top-level body-bearing declarations, bucket A is measured between `class Service` and the `comment + def build_service(...)` bundle, so the example uses **exactly two** blank lines there.
+- Because `class Service` and `def build_service(...)` are both top-level spaced declarations, bucket A is measured between `class Service` and the `comment + def build_service(...)` bundle, so the example uses **exactly two** blank lines there.
 
 ## Alternatives considered
 
 - **Implementation-only fixes without an RFC:** Rejected for this work because spacing is **user-visible** and **cross-repo**; a written contract reduces debate and drift.
-- **PEP 8 verbatim:** Rejected; Incan has imports, models, interop surfaces,
-  and docstrings that do not map 1:1 to Python, so the bucket rules should be
-  Incan-specific while keeping the same spirit for top-level breathing room and
-  tight imports.
+- **PEP 8 verbatim:** Rejected; Incan has imports, models, interop surfaces, and docstrings that do not map 1:1 to Python, so the bucket rules should be Incan-specific while keeping the same spirit for top-level breathing room and tight imports.
 
 ## Drawbacks
 
@@ -385,23 +374,68 @@ flowchart TB
   end
 ```
 
-**Intent:** many call sites currently contribute newline decisions
-independently. The foreseen shape concentrates policy in one vertical-spacing
-stage that runs on line-structured output after same-scope construct
-classification and comment placement while respecting string and char literal
-boundaries. That keeps bucket rules, docstring-interior normalization, and EOF
-normalization conceptually centralized while emitters focus on syntax-shaped
-text.
+**Intent:** many call sites currently contribute newline decisions independently. The foreseen shape concentrates policy in one vertical-spacing stage that runs on line-structured output after same-scope construct classification and comment placement while respecting string and char literal boundaries. That keeps bucket rules, docstring-interior normalization, and EOF normalization conceptually centralized while emitters focus on syntax-shaped text.
 
 ## Layers affected
 
 - **Formatter:** the reference formatter **must** enforce the bucket rules, docstring-interior cap, and EOF rule described in this RFC.
 - **LSP / Tooling:** format-on-save and format-range **should** apply the same spacing contract so editor actions do not diverge from `incan fmt`.
 - **Parser / AST:** implementations **may** require richer classification signals (for example single-line vs body-bearing declarations) if those are not already explicit in the formatting input.
-- **Documentation:** contributor-facing formatter docs **should** link to this RFC as the vertical-spacing contract.
+- **Documentation:** contributor-facing formatter docs **should** present the live formatting rules directly; this RFC remains the historical design snapshot behind that contract.
+
+## Implementation Plan
+
+### Phase 1: Vertical-spacing classification
+
+- Classify top-level declarations by formatter surface kind so bucket A applies around top-level spaced declarations, including `type` / `newtype` forms.
+- Keep import runs and adjacent constants/statics in bucket C unless a neighboring top-level spaced declaration widens the boundary.
+- Preserve bucket-C behavior inside statement blocks while keeping the formatter deterministic.
+
+### Phase 2: Comment and docstring normalization
+
+- Normalize docstring interiors so repeated empty payload lines collapse to at most one blank line.
+- Reattach stand-alone comments as leading/trailing bundles based on same-scope placement and blank-line separation.
+- Keep EOF output normalized to exactly one trailing newline.
+
+### Phase 3: Regression coverage and docs
+
+- Add formatter regression tests for top-level spacing, trait/member spacing, docstring interiors, and comment placement.
+- Update contributor-facing formatter docs so the formatting page is the live contract and RFC 053 remains the design record.
+- Update release notes for the formatter contract change.
+
+## Implementation Log
+
+### Spec / design
+
+- [x] Settle the three-bucket spacing contract and comment-placement rules in the RFC text.
+
+### Formatter
+
+- [x] Classify top-level declarations by bucket-A eligibility so top-level `def` / `model` / `type`-like declarations stay visually isolated.
+- [x] Keep block-level spacing in bucket C while allowing statics/consts to widen when adjacent to a top-level spaced declaration.
+- [x] Apply bucket-B spacing only before following body-bearing members in type bodies.
+- [x] Normalize docstring interiors to at most one blank line.
+- [x] Preserve a single trailing newline at EOF.
+
+### Comment placement
+
+- [x] Reattach stand-alone comments as leading or trailing bundles based on blank-line separation and same-scope indentation.
+
+### Tests
+
+- [x] Add regression tests for top-level spacing bucket changes.
+- [x] Add regression tests for trait abstract/default member spacing.
+- [x] Add regression tests for docstring-interior normalization.
+- [x] Add regression tests for backward comment attachment and duplicate comment anchors.
+
+### Docs
+
+- [x] Update the formatter how-to with the RFC 053 contract.
+- [x] Update the `0.2` release notes for formatter vertical spacing.
+- [x] Run the repository verification gate and update this checklist with the results.
 
 ## Design Decisions
 
 - The formatter contract is intentionally expressed through three blank-line buckets rather than ad hoc formatter heuristics.
 - Stand-alone comments do not satisfy blank-line quotas by themselves; placement rules govern how they interact with spacing.
-- The RFC is intended as the normative vertical-spacing contract for both `incan fmt` and editor-integrated formatting surfaces.
+- The formatter how-to carries the live user-facing contract, while this RFC remains the settled design record behind that behavior.

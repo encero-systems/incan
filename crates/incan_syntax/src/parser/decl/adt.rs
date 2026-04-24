@@ -11,7 +11,7 @@ impl<'a> Parser<'a> {
         let type_params = self.type_params()?;
         self.expect_punct(PunctuationId::Colon, "Expected ':' after enum name")?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        self.expect_suite_indent("Expected indented block")?;
 
         let docstring = self.optional_leading_block_docstring();
 

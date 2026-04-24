@@ -708,13 +708,24 @@ impl<'a> Parser<'a> {
             "Expected ':' after match subject",
         )?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        self.expect_suite_indent("Expected indented block")?;
 
         let mut arms = Vec::new();
         self.skip_newlines();
+        let mut next_leading = 0u8;
         while !self.check(&TokenKind::Dedent) && !self.is_at_end() {
-            arms.push(self.match_arm()?);
-            self.skip_newlines();
+            let mut arm = self.match_arm()?;
+            arm.leading_blank_lines = next_leading;
+            arms.push(arm);
+
+            next_leading = self.consume_inter_statement_blank_prefix();
+            if next_leading > 0
+                && self.check(&TokenKind::Dedent)
+                && self.dedent_is_followed_by_outer_statement()
+            {
+                self.pending_dedent_blank_lines = self.pending_dedent_blank_lines.max(next_leading);
+                next_leading = 0;
+            }
         }
 
         self.expect(&TokenKind::Dedent, "Expected dedent after match body")?;
@@ -746,7 +757,7 @@ impl<'a> Parser<'a> {
 
             // Check if inline or block
             if self.match_token(&TokenKind::Newline) {
-                self.expect(&TokenKind::Indent, "Expected indented block")?;
+                self.expect_suite_indent("Expected indented block")?;
                 let body = self.block()?;
                 self.expect(&TokenKind::Dedent, "Expected dedent after case body")?;
                 let end = self.tokens[self.pos - 1].span.end;
@@ -762,8 +773,6 @@ impl<'a> Parser<'a> {
                 // Inline: could be expression or statement (like `return 0`)
                 // Try parsing as a single statement and wrap in block
                 let stmt = self.inline_statement()?;
-                // Consume trailing newline after inline statement
-                self.match_token(&TokenKind::Newline);
                 let end = stmt.span.end;
                 return Ok(Spanned::new(
                     MatchArm {
@@ -786,7 +795,7 @@ impl<'a> Parser<'a> {
 
         // Check for block or expression
         if self.match_token(&TokenKind::Newline) {
-            self.expect(&TokenKind::Indent, "Expected indented block")?;
+            self.expect_suite_indent("Expected indented block")?;
             let body = self.block()?;
             self.expect(&TokenKind::Dedent, "Expected dedent after arm body")?;
             let end = self.tokens[self.pos - 1].span.end;
@@ -800,7 +809,6 @@ impl<'a> Parser<'a> {
             ))
         } else {
             let stmt = self.inline_statement()?;
-            self.match_token(&TokenKind::Newline);
             let end = stmt.span.end;
             let body = if let Statement::Expr(expr) = &stmt.node {
                 MatchBody::Expr(expr.clone())
@@ -945,14 +953,14 @@ impl<'a> Parser<'a> {
             "Expected ':' after if condition",
         )?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        self.expect_suite_indent("Expected indented block")?;
         let then_body = self.block()?;
         self.expect(&TokenKind::Dedent, "Expected dedent after if body")?;
 
         let else_body = if self.match_token(&TokenKind::Keyword(KeywordId::Else)) {
             self.expect(&TokenKind::Punctuation(PunctuationId::Colon), "Expected ':' after else")?;
             self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-            self.expect(&TokenKind::Indent, "Expected indented block")?;
+            self.expect_suite_indent("Expected indented block")?;
             let body = self.block()?;
             self.expect(&TokenKind::Dedent, "Expected dedent after else body")?;
             Some(body)

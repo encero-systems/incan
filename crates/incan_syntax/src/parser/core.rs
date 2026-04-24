@@ -41,6 +41,11 @@ pub struct Parser<'a> {
     vocab_block_stack: Vec<String>,
     module_path: Option<String>,
     library_imported_vocab: ImportedLibraryVocab,
+    /// Blank-line intent consumed by an inner block immediately before its `Dedent`.
+    ///
+    /// The next outer statement should receive this as `leading_blank_lines`; otherwise a readable gap after a nested
+    /// suite is lost before the outer block can see it.
+    pending_dedent_blank_lines: u8,
 }
 
 /// Compares a path segment to an expected spelling for parser path-context checks.
@@ -88,6 +93,7 @@ impl<'a> Parser<'a> {
             vocab_block_stack: Vec::new(),
             module_path,
             library_imported_vocab: library_imported_vocab.cloned().unwrap_or_default(),
+            pending_dedent_blank_lines: 0,
         }
     }
 

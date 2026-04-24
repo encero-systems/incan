@@ -15,6 +15,9 @@ use super::config::FormatConfig;
 use super::writer::FormatWriter;
 use crate::frontend::ast::*;
 
+pub(super) const RFC053_TOP_LEVEL_BLANK_LINES: usize = 2;
+pub(super) const RFC053_METHOD_BLANK_LINES: usize = 1;
+
 /// Formatter that transforms AST back to formatted source code.
 pub struct Formatter {
     writer: FormatWriter,
@@ -147,41 +150,58 @@ impl Formatter {
     /// to get the desired vertical spacing.
     fn top_level_spacing(&self, prev: &Declaration, next: &Declaration) -> usize {
         if matches!(prev, Declaration::Docstring(_)) {
-            // Module docstring is followed by a single blank line.
-            return 1;
+            return if Self::decl_needs_wide_top_level_spacing(next) {
+                RFC053_TOP_LEVEL_BLANK_LINES
+            } else {
+                1
+            };
         }
 
-        match (Self::decl_group(prev), Self::decl_group(next)) {
-            (DeclGroup::Import, DeclGroup::Import) => 0,
-            (DeclGroup::Import, _) | (_, DeclGroup::Import) => 1,
-            (DeclGroup::Const, DeclGroup::Const) => 0,
-            (DeclGroup::BlockLike, DeclGroup::BlockLike)
-            | (DeclGroup::Const, DeclGroup::BlockLike)
-            | (DeclGroup::BlockLike, DeclGroup::Const) => self.writer.config().blank_lines_top_level,
-            (DeclGroup::Docstring, _) | (_, DeclGroup::Docstring) => 1,
+        if Self::decl_needs_wide_top_level_spacing(prev) || Self::decl_needs_wide_top_level_spacing(next) {
+            return RFC053_TOP_LEVEL_BLANK_LINES;
+        }
+
+        match (Self::decl_spacing_class(prev), Self::decl_spacing_class(next)) {
+            (DeclSpacingClass::Docstring, _) | (_, DeclSpacingClass::Docstring) => 1,
+            (DeclSpacingClass::Import, DeclSpacingClass::Import)
+            | (DeclSpacingClass::ConstLike, DeclSpacingClass::ConstLike) => 0,
+            _ => 1,
         }
     }
 
-    fn decl_group(decl: &Declaration) -> DeclGroup {
+    fn decl_spacing_class(decl: &Declaration) -> DeclSpacingClass {
         match decl {
-            Declaration::Import(_) => DeclGroup::Import,
-            Declaration::Const(_) | Declaration::Static(_) => DeclGroup::Const,
-            Declaration::Docstring(_) => DeclGroup::Docstring,
+            Declaration::Import(_) => DeclSpacingClass::Import,
+            Declaration::Const(_) | Declaration::Static(_) => DeclSpacingClass::ConstLike,
+            Declaration::Docstring(_) => DeclSpacingClass::Docstring,
+            Declaration::TypeAlias(_) | Declaration::Newtype(_) => DeclSpacingClass::TypeLike,
             Declaration::Model(_)
             | Declaration::Class(_)
             | Declaration::Trait(_)
-            | Declaration::TypeAlias(_)
-            | Declaration::Newtype(_)
             | Declaration::Enum(_)
-            | Declaration::Function(_) => DeclGroup::BlockLike,
+            | Declaration::Function(_) => DeclSpacingClass::BodyBearing,
         }
+    }
+
+    fn decl_needs_wide_top_level_spacing(decl: &Declaration) -> bool {
+        matches!(
+            decl,
+            Declaration::TypeAlias(_)
+                | Declaration::Newtype(_)
+                | Declaration::Model(_)
+                | Declaration::Class(_)
+                | Declaration::Trait(_)
+                | Declaration::Enum(_)
+                | Declaration::Function(_)
+        )
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DeclGroup {
+enum DeclSpacingClass {
     Import,
-    Const,
-    BlockLike,
+    ConstLike,
+    TypeLike,
+    BodyBearing,
     Docstring,
 }

@@ -745,7 +745,7 @@ impl TypeChecker {
     /// - Validates value arguments against the specialized formals, then runs [`Self::infer_type_param_bindings`] so
     ///   remaining type parameters are filled from argument types.
     /// - Enforces explicit `with` bounds, requires every method type parameter to be concretely bound when brackets
-    ///   were present, and records [`TypeCheckInfo::call_site_monomorph_type_args`] for lowering.
+    ///   were present, and records `TypeCheckInfo::call_site_monomorph_type_args` for lowering.
     ///
     /// # Parameters
     ///

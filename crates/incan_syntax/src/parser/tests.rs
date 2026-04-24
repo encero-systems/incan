@@ -163,6 +163,25 @@ class Box:
     }
 
     #[test]
+    fn test_parse_method_multiline_receiver_allows_trailing_comma() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+class Box:
+  def get(
+    self,
+  ) -> int:
+    return 1
+"#;
+        let program = parse_str(source)?;
+        let class = require_class_decl(&program.declarations[0])?;
+        assert_eq!(class.methods.len(), 1);
+        let method = &class.methods[0].node;
+        assert_eq!(method.name, "get");
+        assert!(matches!(method.receiver, Some(Receiver::Immutable)));
+        assert!(method.params.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_class_docstring() -> Result<(), Vec<CompileError>> {
         let source = r#"
 class FieldInfo:
@@ -248,6 +267,86 @@ enum Color:
         assert_eq!(func.body.len(), 2);
         assert_eq!(func.body[0].leading_blank_lines, 0);
         assert_eq!(func.body[1].leading_blank_lines, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_block_preserves_blank_line_after_nested_suite() -> Result<(), Vec<CompileError>> {
+        let source = r#"def f(items: list[int]) -> int:
+    for item in items:
+        value = item
+
+    result = 1
+    return result
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        assert_eq!(func.body.len(), 3);
+        assert_eq!(func.body[0].leading_blank_lines, 0);
+        assert_eq!(func.body[1].leading_blank_lines, 1);
+        assert_eq!(func.body[2].leading_blank_lines, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_block_preserves_single_blank_line_between_sibling_if_statements() -> Result<(), Vec<CompileError>> {
+        let source = r#"def f(a: bool, b: bool) -> None:
+    if a:
+        x = 1
+
+    if b:
+        y = 2
+
+    z = 3
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        assert_eq!(func.body.len(), 3);
+        assert_eq!(func.body[0].leading_blank_lines, 0);
+        assert_eq!(func.body[1].leading_blank_lines, 1);
+        assert_eq!(func.body[2].leading_blank_lines, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_block_does_not_invent_blank_line_between_sibling_if_statements() -> Result<(), Vec<CompileError>> {
+        let source = r#"def f(a: bool, b: bool) -> None:
+    if a:
+        x = 1
+    if b:
+        y = 2
+    z = 3
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        assert_eq!(func.body.len(), 3);
+        assert_eq!(func.body[0].leading_blank_lines, 0);
+        assert_eq!(func.body[1].leading_blank_lines, 0);
+        assert_eq!(func.body[2].leading_blank_lines, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_block_preserves_single_blank_line_between_if_blocks_ending_in_match() -> Result<(), Vec<CompileError>> {
+        let source = r#"def f(a: bool, b: bool, result: Result[int, str]) -> None:
+    if a:
+        match result:
+            Ok(_) => return
+            Err(err) => return
+
+    if b:
+        match result:
+            Ok(_) => return
+            Err(err) => return
+
+    z = 3
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        assert_eq!(func.body.len(), 3);
+        assert_eq!(func.body[0].leading_blank_lines, 0);
+        assert_eq!(func.body[1].leading_blank_lines, 1);
+        assert_eq!(func.body[2].leading_blank_lines, 1);
         Ok(())
     }
 
@@ -1046,6 +1145,27 @@ def add(a: int, b: int) -> int:
     }
 
     #[test]
+    fn test_parse_function_multiline_params_allow_trailing_comma() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def identity(
+  value: int,
+) -> int:
+  return value
+"#;
+        let program = parse_str(source)?;
+        assert_eq!(program.declarations.len(), 1);
+        match &program.declarations[0].node {
+            Declaration::Function(f) => {
+                assert_eq!(f.name, "identity");
+                assert_eq!(f.params.len(), 1);
+                assert_eq!(f.params[0].node.name, "value");
+            }
+            _ => panic!("Expected function"),
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_import() -> Result<(), Vec<CompileError>> {
         let source = "import polars::prelude as pl";
         let program = parse_str(source)?;
@@ -1695,6 +1815,96 @@ def f() -> int:
                 MatchBody::Expr(_) => panic!("Expected inline return to parse as statement block"),
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_match_fat_arrow_block_allows_blank_before_body() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f() -> int:
+  match Err("bad"):
+    Ok(x) =>
+      return x
+    Err(err) =>
+
+      return 0
+"#;
+        let program = parse_str(source)?;
+        let func = match &program.declarations[0].node {
+            Declaration::Function(func) => func,
+            _ => panic!("Expected function declaration"),
+        };
+        let match_expr = match &func.body[0].node {
+            Statement::Expr(expr) => expr,
+            _ => panic!("Expected match expression statement"),
+        };
+        let arms = match &match_expr.node {
+            Expr::Match(_, arms) => arms,
+            _ => panic!("Expected match expression"),
+        };
+        assert_eq!(arms.len(), 2);
+        assert!(matches!(arms[1].node.body, MatchBody::Block(ref stmts) if stmts.len() == 1));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_match_arm_suite_does_not_inherit_outer_blank_line_intent() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(result: Result[int, str]) -> int:
+  match result:
+    Ok(value) => match value:
+      Ready(x) => return x
+
+      Failed(err) => return 0
+
+    Err(err) =>
+      return 1
+"#;
+        let program = parse_str(source)?;
+        let func = match &program.declarations[0].node {
+            Declaration::Function(func) => func,
+            _ => panic!("Expected function declaration"),
+        };
+        let match_expr = match &func.body[0].node {
+            Statement::Expr(expr) => expr,
+            _ => panic!("Expected match expression statement"),
+        };
+        let arms = match &match_expr.node {
+            Expr::Match(_, arms) => arms,
+            _ => panic!("Expected match expression"),
+        };
+        let err_body = match &arms[1].node.body {
+            MatchBody::Block(stmts) => stmts,
+            _ => panic!("Expected block match body"),
+        };
+        assert_eq!(err_body.len(), 1);
+        assert_eq!(
+            err_body[0].leading_blank_lines, 0,
+            "outer Err arm body should not inherit the preserved gap from the nested Ok arm"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_if_elif_else_allows_blank_before_suite_body() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(kind: str) -> int:
+  if kind == "a":
+    return 1
+  elif kind == "b":
+
+    return 2
+  else:
+
+    return 3
+"#;
+        let program = parse_str(source)?;
+        let func = match &program.declarations[0].node {
+            Declaration::Function(func) => func,
+            _ => panic!("Expected function declaration"),
+        };
+        assert_eq!(func.body.len(), 1);
+        assert!(matches!(func.body[0].node, Statement::If(_)));
         Ok(())
     }
 

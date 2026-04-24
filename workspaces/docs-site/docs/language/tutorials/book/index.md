@@ -27,5 +27,5 @@ Goals:
 ## Notes
 
 - Canonical install/build/run guidance lives under Tooling: [Install, build, and run](../../../tooling/how-to/install_and_run.md).
-- Canonical formatting/style guidance lives under Tooling: [Code formatting](../../../tooling/how-to/formatting.md).
+- Canonical formatting/style guidance lives in the language reference: [Incan Code Style Guide](../../reference/code_style.md).
 - The generated language reference is discoverable under Language → Reference: [Language reference (generated)](../../reference/language.md).

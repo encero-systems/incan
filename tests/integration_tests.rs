@@ -306,6 +306,161 @@ fn test_cli_fmt_preserves_fstring_escaped_newline_roundtrip() -> Result<(), Box<
     Ok(())
 }
 
+/// Regression (GitHub #336 / RFC 053): the CLI formatter must apply the vertical-spacing contract on disk.
+#[test]
+fn test_cli_fmt_applies_rfc053_vertical_spacing_contract() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = make_temp_test_dir();
+    let path = dir.join("rfc053_vertical_spacing.incn");
+    fs::write(
+        &path,
+        r#"type UserId = str
+# comment about the alias
+
+model User:
+  """
+  First paragraph.
+
+
+  Second paragraph.
+  """
+  id: UserId
+
+trait Service:
+  def connect(self) -> None: ...
+  def reset(self) -> None:
+    pass
+"#,
+    )?;
+
+    let status = Command::new(incan_debug_binary()).arg("fmt").arg(&path).status()?;
+    assert!(status.success(), "incan fmt failed");
+
+    let formatted = fs::read_to_string(&path)?;
+    let expected = r#"type UserId = str
+# comment about the alias
+
+
+model User:
+    """
+    First paragraph.
+
+    Second paragraph.
+    """
+
+    id: UserId
+
+
+trait Service:
+    def connect(self) -> None: ...
+
+    def reset(self) -> None:
+        pass
+"#;
+    assert_eq!(formatted, expected);
+
+    let tokens = lexer::lex(&formatted)
+        .map_err(|errs| std::io::Error::other(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n")))?;
+    parser::parse(&tokens)
+        .map_err(|errs| std::io::Error::other(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n")))?;
+
+    Ok(())
+}
+
+/// Regression (GitHub #336 / RFC 053): top-level type/function-shaped declarations keep two blank lines even when
+/// adjacent to module statics.
+#[test]
+fn test_cli_fmt_keeps_two_blank_lines_between_static_and_function() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = make_temp_test_dir();
+    let path = dir.join("rfc053_static_function_spacing.incn");
+    fs::write(
+        &path,
+        r#"static prism_store_node_counts: list[int] = []
+pub def allocate_prism_store_id() -> int:
+  return len(prism_store_node_counts)
+"#,
+    )?;
+
+    let status = Command::new(incan_debug_binary()).arg("fmt").arg(&path).status()?;
+    assert!(status.success(), "incan fmt failed");
+
+    let formatted = fs::read_to_string(&path)?;
+    let expected = r#"static prism_store_node_counts: list[int] = []
+
+
+pub def allocate_prism_store_id() -> int:
+    return len(prism_store_node_counts)
+"#;
+    assert_eq!(formatted, expected);
+
+    let tokens = lexer::lex(&formatted)
+        .map_err(|errs| std::io::Error::other(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n")))?;
+    parser::parse(&tokens)
+        .map_err(|errs| std::io::Error::other(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n")))?;
+
+    Ok(())
+}
+
+/// Regression (GitHub #336 / RFC 053): a trailing own-line comment after a multi-line construct must stay after the
+/// full suite, not get reinserted after the construct header.
+#[test]
+fn test_cli_fmt_keeps_trailing_comment_after_multiline_function() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = make_temp_test_dir();
+    let path = dir.join("rfc053_trailing_comment_after_function.incn");
+    fs::write(
+        &path,
+        r#"def load_user(id: str) -> str:
+    return id
+
+# TODO: split retries
+"#,
+    )?;
+
+    let status = Command::new(incan_debug_binary()).arg("fmt").arg(&path).status()?;
+    assert!(status.success(), "incan fmt failed");
+
+    let formatted = fs::read_to_string(&path)?;
+    let expected = r#"def load_user(id: str) -> str:
+    return id
+# TODO: split retries
+"#;
+    assert_eq!(formatted, expected);
+
+    let tokens = lexer::lex(&formatted)
+        .map_err(|errs| std::io::Error::other(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n")))?;
+    parser::parse(&tokens)
+        .map_err(|errs| std::io::Error::other(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n")))?;
+
+    Ok(())
+}
+
+/// Regression (GitHub #394): multiline function parameter lists must accept a trailing comma.
+#[test]
+fn test_cli_check_accepts_trailing_comma_in_multiline_function_params() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = make_temp_test_dir();
+    let path = dir.join("trailing_param_comma.incn");
+    fs::write(
+        &path,
+        r#"def identity(
+    value: int,
+) -> int:
+    return value
+
+
+def main() -> None:
+    println(identity(1))
+"#,
+    )?;
+
+    let output = Command::new(incan_debug_binary()).arg("--check").arg(&path).output()?;
+    assert!(
+        output.status.success(),
+        "expected multiline trailing parameter comma to parse/typecheck; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    Ok(())
+}
+
 /// Regression: float compound-assign with int RHS should typecheck (Python-like / promotion).
 #[test]
 fn test_compound_assign_float_with_int_rhs() {

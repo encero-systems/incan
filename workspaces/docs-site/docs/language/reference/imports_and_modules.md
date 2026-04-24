@@ -170,6 +170,8 @@ set(iterable)       # Convert to Set
 incan run -c "import this"
 ```
 
+--8<-- "_snippets/language/zen_of_incan.md"
+
 ## Incan standard library (`std.*`)
 
 <!-- TODO: move this to its own section -->
@@ -193,8 +195,7 @@ import — no manual feature flags needed.
 
 ### Soft keywords
 
-Some language keywords are **import-activated** (soft keywords). They behave like identifiers by default and only become
-reserved keywords after importing a particular `std.*` namespace.
+Some language keywords are **import-activated** (soft keywords). They behave like identifiers by default and only become reserved keywords after importing a particular `std.*` namespace.
 
 Currently:
 
@@ -341,11 +342,8 @@ etc.) where available.
 
 ## Rust crates vs Incan modules (important)
 
-- **External crates**: Prefer `rust::...` imports (e.g. `import rust::serde_json`), which also enables automatic
-  dependency management for generated `Cargo.toml`.
-- **Incan project modules** (multi-file projects): imports like `from db.schema import Database` refer to modules in
-  the current crate and are emitted as `crate::db::schema::Database` in generated Rust so they compile reliably from
-  submodules.
+- **External crates**: Prefer `rust::...` imports (e.g. `import rust::serde_json`), which also enables automatic dependency management for generated `Cargo.toml`.
+- **Incan project modules** (multi-file projects): imports like `from db.schema import Database` refer to modules in the current crate and are emitted as `crate::db::schema::Database` in generated Rust so they compile reliably from submodules.
 
 ### Version and feature annotations (Rust crates only)
 
@@ -374,8 +372,7 @@ Rules:
 - If the crate is configured in `incan.toml`, inline annotations are **not allowed**.
 - When the same crate is imported in multiple files, versions must match and features are unioned.
 
-These annotations only apply to `rust::` imports. Incan module imports (`from models import User`) do not support version
-or feature annotations.
+These annotations only apply to `rust::` imports. Incan module imports (`from models import User`) do not support version or feature annotations.
 
 See: [Rust interop](../how-to/rust_interop.md) for practical guidance and examples.
 

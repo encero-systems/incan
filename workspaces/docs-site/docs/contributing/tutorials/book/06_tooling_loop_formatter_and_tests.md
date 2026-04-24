@@ -18,10 +18,12 @@ The formatter is part of the toolchain and should remain aligned with the parser
 
 - it should be idempotent (formatting twice yields the same output)
 - it should never print invalid syntax
+- its behavior should match the [Incan Code Style Guide](../../../language/reference/code_style.md), with [Formatting with `incan fmt`](../../../tooling/how-to/formatting.md) documenting the tool-specific surface
 
 See:
 
-- [Code formatting](../../../tooling/how-to/formatting.md)
+- [Incan Code Style Guide](../../../language/reference/code_style.md)
+- [Formatting with `incan fmt`](../../../tooling/how-to/formatting.md)
 
 Where it lives:
 

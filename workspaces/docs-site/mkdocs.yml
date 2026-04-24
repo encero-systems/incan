@@ -142,6 +142,7 @@ nav:
       - Reference:
           - About the language reference: language/reference/index.md
           - Language reference (generated): language/reference/language.md
+          - Code style guide: language/reference/code_style.md
           - Glossary: language/reference/glossary.md
           - File I/O reference (Path/File APIs): language/reference/file_io.md
           - Imports and modules: language/reference/imports_and_modules.md
@@ -206,7 +207,7 @@ nav:
           - Troubleshooting: tooling/how-to/troubleshooting.md
           - Editor setup: tooling/how-to/editor_setup.md
           - LSP: tooling/how-to/lsp.md
-          - Formatting: tooling/how-to/formatting.md
+          - Formatting with incan fmt: tooling/how-to/formatting.md
           - Testing: tooling/how-to/testing.md
       - Explanation:
           - Projects today: tooling/explanation/projects_today.md

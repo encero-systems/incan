@@ -25,7 +25,7 @@ impl<'a> Parser<'a> {
         let return_type = self.type_expr()?;
         self.expect_punct(PunctuationId::Colon, "Expected ':' after return type")?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        self.expect_suite_indent("Expected indented block")?;
 
         let body = self.block()?;
 
@@ -77,7 +77,7 @@ impl<'a> Parser<'a> {
                 None
             } else {
                 self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-                self.expect(&TokenKind::Indent, "Expected indented block")?;
+                self.expect_suite_indent("Expected indented block")?;
                 let b = self.block()?;
                 self.expect(&TokenKind::Dedent, "Expected dedent after method body")?;
                 Some(b)
@@ -108,24 +108,32 @@ impl<'a> Parser<'a> {
         &mut self,
         is_classmethod: bool,
     ) -> Result<(Option<Receiver>, Vec<Spanned<Param>>), CompileError> {
+        self.skip_newlines();
+
         // Check for receiver
         let receiver = if self.check_keyword(KeywordId::Mut) {
             self.advance();
             self.expect(&TokenKind::Keyword(KeywordId::SelfKw), "Expected 'self' after 'mut'")?;
+            self.skip_newlines();
             if self.check(&TokenKind::Punctuation(PunctuationId::Comma)) {
                 self.advance();
+                self.skip_newlines();
             }
             Some(Receiver::Mutable)
         } else if self.check_keyword(KeywordId::SelfKw) {
             self.advance();
+            self.skip_newlines();
             if self.check(&TokenKind::Punctuation(PunctuationId::Comma)) {
                 self.advance();
+                self.skip_newlines();
             }
             Some(Receiver::Immutable)
         } else if is_classmethod && self.peek_ident_text("cls") {
             self.advance();
+            self.skip_newlines();
             if self.check(&TokenKind::Punctuation(PunctuationId::Comma)) {
                 self.advance();
+                self.skip_newlines();
             }
             None
         } else {
@@ -143,10 +151,20 @@ impl<'a> Parser<'a> {
 
     /// Parse parameters.
     fn params(&mut self) -> Result<Vec<Spanned<Param>>, CompileError> {
+        // Implicit line continuation: skip newlines after (
+        self.skip_newlines();
+
         let mut params = Vec::new();
         if !self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
             loop {
+                // Allow trailing comma before )
+                self.skip_newlines();
+                if self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
+                    break;
+                }
+
                 params.push(self.param()?);
+                self.skip_newlines();
                 if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
                     break;
                 }

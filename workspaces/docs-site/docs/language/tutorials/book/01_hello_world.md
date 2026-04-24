@@ -17,8 +17,8 @@ def main() -> None:
     - `println("...")`: prints with a newline (used in most examples)
     - `print("...")`: prints without a newline
 
-Tip: Incan uses indentation for blocks. The canonical style is **4 spaces** per indent level; run `incan fmt` to normalize
-formatting (see: [Code formatting](../../../tooling/how-to/formatting.md)).
+Tip: Incan uses indentation for blocks. The canonical style is **4 spaces** per indent level; see the
+[Incan Code Style Guide](../../reference/code_style.md) and run `incan fmt` to normalize source.
 
 ## Run it
 
