@@ -278,6 +278,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 
 - [ ] **User-facing changes update the right docs** — rustdoc, docs-site pages, examples, and release notes stay aligned when behavior changes.
 - [ ] **Release-note inventories stay complete** — when the branch implements or materially completes an RFC/user-facing feature, verify the current release notes mention it in the implemented/features inventory where this repo expects that summary to live.
+- [ ] **Generated language reference is current** — if the change touches `crates/incan_core/src/lang/`, `crates/incan_core/src/bin/generate_lang_reference.rs`, or `workspaces/docs-site/docs/language/reference/language.md`, run `cargo run -p incan_core --bin generate_lang_reference`, inspect the resulting `language.md` diff, and require that generated diff to be committed or explicitly reported as blocked.
 - [ ] **Compiler bugs discovered during review are surfaced explicitly** — if you find a likely compiler defect that should not be fixed inside the current change, invoke `flag-compiler-bug` instead of burying it in review notes.
 - [ ] **Repo learnings are captured when warranted** — if the change taught a durable lesson about architecture, testing, or pitfalls, consider whether `AGENTS.md` should be updated.
 
@@ -333,6 +334,7 @@ Before you write "no blockers", "no warnings", or equivalent clean-review langua
 - [ ] User-facing docs do not casually lean on RFC references unless the page is explicitly RFC/contributor-facing or the RFC appears in an explicit release-note inventory.
 - [ ] Docs, CLI help, examples, scaffolds, and release notes do not claim behavior the code does not implement.
 - [ ] Release-note inventories were updated where the repo expects them for implemented user-facing work.
+- [ ] If language registries or generated language-reference inputs changed, `cargo run -p incan_core --bin generate_lang_reference` was run and any resulting `workspaces/docs-site/docs/language/reference/language.md` diff was reviewed and committed.
 - [ ] `make fmt` was run after fixes.
 - [ ] `make pre-commit` was run after the final fix pass, or you explicitly report why it was not run.
 
@@ -379,7 +381,8 @@ Before declaring the loop clean, do one explicit final sweep for the common miss
 - manually chopped Rust prose comments in touched `.rs` files,
 - short-prosed Markdown paragraphs in touched `.md` files,
 - direct RFC references in user-facing docs, and
-- missing release-note inventory updates for implemented user-facing work.
+- missing release-note inventory updates for implemented user-facing work, and
+- stale generated language reference output after registry or generator changes.
 
 The default verification bar for a strong review is:
 

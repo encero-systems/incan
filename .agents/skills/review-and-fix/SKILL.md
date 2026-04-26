@@ -64,6 +64,7 @@ The repair pass should aim to leave the worktree in a strong verified state:
 
 - `make fmt`
 - narrow relevant checks
+- `cargo run -p incan_core --bin generate_lang_reference` when language registries, the reference generator, or `workspaces/docs-site/docs/language/reference/language.md` changed; inspect and commit any resulting generated diff
 - `make pre-commit`
 
 If the broad gate fails for unrelated environmental reasons, report that explicitly as residual risk instead of
