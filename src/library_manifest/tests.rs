@@ -76,6 +76,37 @@ fn manifest_io_round_trip_preserves_trait_supertraits() -> Result<(), Box<dyn st
 }
 
 #[test]
+fn manifest_io_round_trip_preserves_value_enum_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.exports.enums.push(EnumExport {
+        name: "Status".to_string(),
+        type_params: Vec::new(),
+        value_type: Some(EnumValueTypeExport::Str),
+        variants: vec![
+            EnumVariantExport {
+                name: "Active".to_string(),
+                fields: Vec::new(),
+                value: Some(EnumValueExport::Str("active".to_string())),
+            },
+            EnumVariantExport {
+                name: "Disabled".to_string(),
+                fields: Vec::new(),
+                value: Some(EnumValueExport::Str("disabled".to_string())),
+            },
+        ],
+        derives: Vec::new(),
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("value_enum.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
 fn manifest_io_round_trip_preserves_generic_method_type_params() -> Result<(), Box<dyn std::error::Error>> {
     let mut manifest = LibraryManifest::new("mylib", "0.1.0");
     manifest.exports.classes.push(ClassExport {

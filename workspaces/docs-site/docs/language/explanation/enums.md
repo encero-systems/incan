@@ -126,6 +126,40 @@ match msg:
 
 ---
 
+## Value enums
+
+Use a value enum when each variant needs one canonical external `str` or `int` representation:
+
+```incan
+enum Environment(str):
+    Development = "development"
+    Production = "production"
+
+enum HttpStatus(int):
+    Ok = 200
+    NotFound = 404
+```
+
+Value enum variants are still enum values, not primitive values. `Environment.Production` has type `Environment`, not
+`str`, and `HttpStatus.NotFound` has type `HttpStatus`, not `int`.
+
+The compiler generates two helpers:
+
+```incan
+def render(env: Environment, status: HttpStatus) -> str:
+    env_value = env.value()
+    maybe_status = HttpStatus.from_value(404)
+    return env_value
+```
+
+`value()` returns the backing primitive type. `from_value(...)` accepts the backing primitive type and returns
+`Option[Enum]` so unknown external values are explicit.
+
+Value enums cannot carry payload fields and cannot be generic. Raw values must be explicit, must match the declared
+backing type, and must be unique within the enum.
+
+---
+
 ## Generic enums
 
 Enums can be generic — parameterized over types:
@@ -258,18 +292,21 @@ For serialization details, see [Derives: Serialization](../reference/derives/ser
 ## Common pitfall: enums are not lookup tables
 
 Incan enums are **algebraic types** — each variant is a fixed tag, optionally carrying data.
-They are **not** key-value mappings or integer-valued constants.
+Ordinary enums are **not** key-value mappings or integer-valued constants. If you need one canonical string or integer
+representation per variant, use a [value enum](#value-enums).
 
 The compiler will catch the mistake early with a targeted error message:
 
 ```incan
-# ✗ These are all rejected with clear diagnostics:
+# Rejected: ordinary enums cannot have mapped values.
 enum Categories:
     GROCERIES => Category("Groceries")   # "cannot have mapped values"
 
+# Rejected: variants cannot contain dotted names.
 enum FlowType:
     Cash.Inflow                           # "cannot contain dots"
 
+# Rejected: ordinary enums cannot assign raw values.
 enum Color:
     Red = 1                               # "cannot have assigned values"
 ```
@@ -373,13 +410,14 @@ enum Ordering:
 
 ## Summary
 
-| Concept       | Description                                |
-| ------------- | ------------------------------------------ |
-| `enum`        | Define a type with fixed variants          |
-| Variants      | Each case of an enum, optionally with data |
-| Generic enum  | Enum parameterized over types: `Option[T]` |
-| `match`       | Exhaustive pattern matching on enums       |
-| Destructuring | Extract data from variants: `Some(x) =>`   |
+| Concept       | Description                                  |
+| ------------- | -------------------------------------------- |
+| `enum`        | Define a type with fixed variants            |
+| Variants      | Each case of an enum, optionally with data   |
+| Value enum    | Enum with canonical `str` / `int` raw values |
+| Generic enum  | Enum parameterized over types: `Option[T]`   |
+| `match`       | Exhaustive pattern matching on enums         |
+| Destructuring | Extract data from variants: `Some(x) =>`     |
 
 Enums are one of Incan's most powerful features — use them for:
 

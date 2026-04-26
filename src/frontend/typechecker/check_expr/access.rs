@@ -25,12 +25,89 @@ use incan_core::lang::{enum_helpers, surface::option_methods};
 
 use super::TypeChecker;
 
+struct ValueEnumGeneratedCall<'a> {
+    enum_name: &'a str,
+    value_enum: &'a ValueEnumInfo,
+    method: &'a str,
+    base_is_type_name: bool,
+    type_args: &'a [Spanned<Type>],
+    args: &'a [CallArg],
+    arg_types: &'a [ResolvedType],
+    span: Span,
+}
+
 /// Diagnostic label for a Rust path receiver in type errors (`rust::{path}`).
 fn rust_receiver_display(path: &str) -> String {
     format!("rust::{path}")
 }
 
 impl TypeChecker {
+    /// Return whether an expression names an enum type rather than an enum value.
+    fn is_enum_type_name_expr(&self, expr: &Spanned<Expr>) -> bool {
+        let Expr::Ident(name) = &expr.node else {
+            return false;
+        };
+        self.lookup_symbol(name)
+            .is_some_and(|sym| matches!(sym.kind, SymbolKind::Type(TypeInfo::Enum(_))))
+    }
+
+    /// Build the `Option[Enum]` return type for generated `from_value(...)`.
+    fn value_enum_from_value_return_type(enum_name: &str) -> ResolvedType {
+        option_ty(ResolvedType::Named(enum_name.to_string()))
+    }
+
+    /// Typecheck generated value-enum helpers reached through member-access call syntax.
+    fn check_value_enum_generated_method_call(&mut self, call: ValueEnumGeneratedCall<'_>) -> Option<ResolvedType> {
+        match call.method {
+            "value" if !call.base_is_type_name => {
+                if !call.type_args.is_empty() {
+                    self.errors
+                        .push(errors::explicit_call_site_type_args_not_supported(call.span));
+                }
+                if !call.args.is_empty() {
+                    self.errors.push(errors::builtin_arity(
+                        &format!("{}.value()", call.enum_name),
+                        0,
+                        call.args.len(),
+                        call.span,
+                    ));
+                    return Some(ResolvedType::Unknown);
+                }
+                Some(call.value_enum.value_type.resolved_type())
+            }
+            "from_value" if call.base_is_type_name => {
+                if !call.type_args.is_empty() {
+                    self.errors
+                        .push(errors::explicit_call_site_type_args_not_supported(call.span));
+                }
+                if call.args.len() != 1 {
+                    self.errors.push(errors::builtin_arity(
+                        &format!("{}.from_value()", call.enum_name),
+                        1,
+                        call.args.len(),
+                        call.span,
+                    ));
+                    return Some(ResolvedType::Unknown);
+                }
+                let expected = call.value_enum.value_type.resolved_type();
+                if let Some((arg_ty, arg)) = call.arg_types.first().zip(call.args.first()) {
+                    let expr = match arg {
+                        CallArg::Positional(expr) | CallArg::Named(_, expr) => expr,
+                    };
+                    if !self.types_compatible(arg_ty, &expected) {
+                        self.errors.push(errors::type_mismatch(
+                            &expected.to_string(),
+                            &arg_ty.to_string(),
+                            expr.span,
+                        ));
+                    }
+                }
+                Some(Self::value_enum_from_value_return_type(call.enum_name))
+            }
+            _ => None,
+        }
+    }
+
     /// Resolve known fields on compiler-provided surface record types.
     ///
     /// This currently covers `std.reflection.FieldInfo` so callers can typecheck member access on values returned by
@@ -152,12 +229,23 @@ impl TypeChecker {
                 }
                 info.ty.clone()
             }
-            TypeInfo::Enum(enum_info) if enum_info.variants.contains(&field.to_string()) => {
-                return Some(if let Some(args) = type_args {
-                    ResolvedType::Generic(type_name.to_string(), args.to_vec())
-                } else {
-                    ResolvedType::Named(type_name.to_string())
-                });
+            TypeInfo::Enum(enum_info) => {
+                if enum_info.variants.contains(&field.to_string()) {
+                    return Some(if let Some(args) = type_args {
+                        ResolvedType::Generic(type_name.to_string(), args.to_vec())
+                    } else {
+                        ResolvedType::Named(type_name.to_string())
+                    });
+                }
+                if field == "from_value"
+                    && let Some(value_enum) = &enum_info.value_enum
+                {
+                    return Some(ResolvedType::Function(
+                        vec![value_enum.value_type.resolved_type()],
+                        Box::new(Self::value_enum_from_value_return_type(type_name)),
+                    ));
+                }
+                return None;
             }
             TypeInfo::Newtype(nt) if nt.is_rusttype => {
                 if let ResolvedType::RustPath(path) = &nt.underlying {
@@ -884,6 +972,24 @@ impl TypeChecker {
 
         if self.nominal_type_supports_reflection_magic(&base_ty, method)
             && let Some(ret) = self.reflection_magic_method_return_type(method)
+        {
+            return ret;
+        }
+
+        let base_is_type_name = self.is_enum_type_name_expr(base);
+        if let ResolvedType::Named(enum_name) = &base_ty
+            && let Some(TypeInfo::Enum(enum_info)) = self.lookup_semantic_type_info(enum_name)
+            && let Some(value_enum) = enum_info.value_enum.clone()
+            && let Some(ret) = self.check_value_enum_generated_method_call(ValueEnumGeneratedCall {
+                enum_name,
+                value_enum: &value_enum,
+                method,
+                base_is_type_name,
+                type_args,
+                args,
+                arg_types: &arg_types,
+                span,
+            })
         {
             return ret;
         }

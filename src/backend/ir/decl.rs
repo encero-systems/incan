@@ -255,6 +255,8 @@ pub struct StructField {
 pub struct IrEnum {
     pub name: String,
     pub variants: Vec<EnumVariant>,
+    /// Value enum backing type, when this enum is an RFC 032 value enum.
+    pub value_type: Option<IrEnumValueType>,
     pub derives: Vec<String>,
     pub visibility: Visibility,
     /// Type parameters for generics, with optional trait bounds (RFC 023).
@@ -294,6 +296,22 @@ pub enum IrRustAttrArg {
 pub struct EnumVariant {
     pub name: String,
     pub fields: VariantFields,
+    /// Raw RFC 032 value for this variant when the parent enum is a value enum.
+    pub raw_value: Option<IrEnumValue>,
+}
+
+/// Primitive backing type for an RFC 032 value enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrEnumValueType {
+    String,
+    Int,
+}
+
+/// Raw per-variant value for an RFC 032 value enum.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IrEnumValue {
+    String(String),
+    Int(i64),
 }
 
 /// Variant fields (unit, tuple, or struct)

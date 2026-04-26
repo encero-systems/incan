@@ -1357,6 +1357,32 @@ pub class WithDecorator[T]:
     }
 
     #[test]
+    fn test_format_source_preserves_value_enum_declarations() -> Result<(), FormatError> {
+        let source = r#"enum Color(str):
+  Red="red"
+  Blue = "blue"
+
+enum Status(int):
+    Pending=1
+    Done = 2
+"#;
+
+        let expected = r#"enum Color(str):
+    Red = "red"
+    Blue = "blue"
+
+
+enum Status(int):
+    Pending = 1
+    Done = 2
+"#;
+
+        assert_eq!(format_source(source)?, expected);
+        assert_eq!(format_source(expected)?, expected);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_preserves_trait_body_docstring_ast() -> Result<(), FormatError> {
         const DOC: &str = r#"    """
     Line A documents the class API.

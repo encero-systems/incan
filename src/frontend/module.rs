@@ -804,19 +804,23 @@ source-root = "library"
             decorators: vec![],
             name: "Color".to_string(),
             type_params: vec![],
+            value_type: None,
             docstring: None,
             variants: vec![
                 make_spanned(VariantDecl {
                     name: "Red".to_string(),
                     fields: vec![],
+                    value: None,
                 }),
                 make_spanned(VariantDecl {
                     name: "Green".to_string(),
                     fields: vec![],
+                    value: None,
                 }),
                 make_spanned(VariantDecl {
                     name: "Blue".to_string(),
                     fields: vec![],
+                    value: None,
                 }),
             ],
         };

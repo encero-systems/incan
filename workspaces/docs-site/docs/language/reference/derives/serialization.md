@@ -75,7 +75,7 @@ When `Serialize`/`Deserialize` is derived, the alias is used as the JSON key (`"
 
 ## Enums
 
-Enums support `Serialize` and `Deserialize` just like models:
+Ordinary enums support `Serialize` and `Deserialize` just like models:
 
 ```incan
 @derive(Serialize, Deserialize)
@@ -89,6 +89,23 @@ enum ApiResponse:
     Success(str)
     Error(int, str)
 ```
+
+Value enums serialize and deserialize through their declared raw value rather than the variant name:
+
+```incan
+@derive(Serialize, Deserialize)
+enum Environment(str):
+    Development = "development"
+    Production = "production"
+
+@derive(Serialize, Deserialize)
+enum HttpStatus(int):
+    Ok = 200
+    NotFound = 404
+```
+
+`Environment.Production` serializes as `"production"` and deserializes only from known raw values. `HttpStatus.NotFound`
+serializes as `404`.
 
 When a model references an enum in its fields, the compiler automatically propagates `Serialize`/`Deserialize` derives
 to the enum:
@@ -136,5 +153,6 @@ Newtypes serialize to/from their underlying type's JSON representation.
 | `Dict[str, T]`    | object           |
 | `Option[T]`       | value or `null`  |
 | `model` / `class` | object           |
-| `enum`            | variant encoding |
+| ordinary `enum`   | variant encoding |
+| value `enum`      | backing `str` / `int` |
 | `newtype`         | underlying type  |

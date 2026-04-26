@@ -13,9 +13,9 @@ use crate::frontend::symbols::*;
 use crate::frontend::testing_markers::load_testing_marker_semantics;
 use crate::frontend::typechecker::TypeChecker;
 use crate::library_manifest::{
-    ClassExport, ConstExport, EnumExport, FieldExport, FunctionExport, LibraryManifest, MethodExport, ModelExport,
-    NewtypeExport, ParamExport, ReceiverExport, StaticExport, TraitExport, TypeParamExport,
-    resolved_type_from_manifest_type_ref,
+    ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport, FunctionExport,
+    LibraryManifest, MethodExport, ModelExport, NewtypeExport, ParamExport, ReceiverExport, StaticExport, TraitExport,
+    TypeParamExport, resolved_type_from_manifest_type_ref,
 };
 use incan_core::interop::is_rust_capability_bound;
 use incan_core::lang::stdlib::{self, is_typechecker_only_stdlib};
@@ -907,10 +907,30 @@ impl TypeChecker {
         }
     }
 
+    /// Convert a manifest enum export into local enum symbol metadata.
     fn enum_info_from_manifest(&self, export: &EnumExport) -> EnumInfo {
+        let value_enum = export.value_type.map(|value_type| ValueEnumInfo {
+            value_type: match value_type {
+                EnumValueTypeExport::Str => ValueEnumBacking::Str,
+                EnumValueTypeExport::Int => ValueEnumBacking::Int,
+            },
+            values: export
+                .variants
+                .iter()
+                .filter_map(|variant| {
+                    let value = match variant.value.as_ref()? {
+                        EnumValueExport::Str(value) => ValueEnumValue::Str(value.clone()),
+                        EnumValueExport::Int(value) => ValueEnumValue::Int(*value),
+                    };
+                    Some((variant.name.clone(), value))
+                })
+                .collect(),
+        });
+
         EnumInfo {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
             variants: export.variants.iter().map(|variant| variant.name.clone()).collect(),
+            value_enum,
             derives: export.derives.clone(),
         }
     }

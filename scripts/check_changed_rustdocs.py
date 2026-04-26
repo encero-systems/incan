@@ -24,30 +24,47 @@ FN_RE = re.compile(
 )
 DOC_RE = re.compile(r"^\s*///|^\s*/\*\*")
 ATTR_RE = re.compile(r"^\s*#\s*\[")
+HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+))? @@")
 
 
-def changed_rust_files() -> list[Path]:
-    """Return changed Rust source files that should satisfy the rustdoc gate."""
+def changed_rust_files() -> dict[Path, set[int]]:
+    """Return changed Rust source files and their changed current-file line numbers."""
     result = subprocess.run(
-        ["git", "diff", "--name-only", "--", "*.rs"],
+        ["git", "diff", "--unified=0", "--", "*.rs"],
         cwd=ROOT,
         capture_output=True,
         text=True,
         check=True,
     )
-    files: list[Path] = []
+    files: dict[Path, set[int]] = {}
+    current_path: Path | None = None
     for raw in result.stdout.splitlines():
         raw = raw.strip()
-        if not raw:
+        if raw.startswith("+++ b/"):
+            rel = raw.removeprefix("+++ b/")
+            current_path = ROOT / rel
+            if (
+                not current_path.is_file()
+                or "/tests/" in rel
+                or rel.startswith("tests/")
+                or rel.endswith("/tests.rs")
+                or "/examples/" in rel
+                or rel.startswith("examples/")
+            ):
+                current_path = None
+                continue
+            files.setdefault(current_path, set())
             continue
-        path = ROOT / raw
-        if not path.is_file():
+        if current_path is None:
             continue
-        if "/tests/" in raw or raw.startswith("tests/"):
+        match = HUNK_RE.match(raw)
+        if match is None:
             continue
-        if "/examples/" in raw or raw.startswith("examples/"):
+        start = int(match.group("start"))
+        count = int(match.group("count") or "1")
+        if count == 0:
             continue
-        files.append(path)
+        files[current_path].update(range(start, start + count))
     return files
 
 
@@ -105,10 +122,54 @@ def test_module_lines(lines: list[str]) -> set[int]:
     return lines_in_test_modules
 
 
-def missing_docs(path: Path) -> list[tuple[int, str]]:
+def quote_macro_lines(lines: list[str]) -> set[int]:
+    """Return line numbers that live inside simple `quote! { ... }` token blocks."""
+    quoted: set[int] = set()
+    depth = 0
+    active = False
+
+    for index, line in enumerate(lines, start=1):
+        if not active and "quote!" in line and "{" in line:
+            active = True
+            after_quote = line.split("quote!", 1)[1]
+            depth = after_quote.count("{") - after_quote.count("}")
+            quoted.add(index)
+            if depth <= 0:
+                active = False
+            continue
+
+        if active:
+            quoted.add(index)
+            depth += line.count("{")
+            depth -= line.count("}")
+            if depth <= 0:
+                active = False
+
+    return quoted
+
+
+def function_end_line(lines: list[str], fn_index: int) -> int:
+    """Return the best-effort inclusive end line for a function starting at `fn_index`."""
+    depth = 0
+    saw_body = False
+    for index in range(fn_index, len(lines)):
+        line = lines[index]
+        depth += line.count("{")
+        if "{" in line:
+            saw_body = True
+        depth -= line.count("}")
+        if saw_body and depth <= 0:
+            return index + 1
+        if not saw_body and line.rstrip().endswith(";"):
+            return index + 1
+    return len(lines)
+
+
+def missing_docs(path: Path, changed_lines: set[int]) -> list[tuple[int, str]]:
     """Return undocumented non-test function definitions for one Rust source file."""
     lines = path.read_text().splitlines()
     test_lines = test_module_lines(lines)
+    quoted_lines = quote_macro_lines(lines)
     misses: list[tuple[int, str]] = []
     for index, line in enumerate(lines):
         match = FN_RE.match(line)
@@ -116,6 +177,11 @@ def missing_docs(path: Path) -> list[tuple[int, str]]:
             continue
         line_no = index + 1
         if line_no in test_lines:
+            continue
+        if line_no in quoted_lines:
+            continue
+        end_line = function_end_line(lines, index)
+        if not any(line_no <= changed <= end_line for changed in changed_lines):
             continue
         name = match.group("name")
         if name == "main":
@@ -128,8 +194,8 @@ def missing_docs(path: Path) -> list[tuple[int, str]]:
 def main() -> int:
     """Run the touched-file rustdoc gate and print failures in `path:line:name` form."""
     misses: list[tuple[Path, int, str]] = []
-    for path in changed_rust_files():
-        for line, name in missing_docs(path):
+    for path, changed_lines in changed_rust_files().items():
+        for line, name in missing_docs(path, changed_lines):
             misses.append((path, line, name))
 
     if not misses:

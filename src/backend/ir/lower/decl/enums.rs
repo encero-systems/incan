@@ -1,6 +1,6 @@
 //! Enum declaration lowering.
 
-use super::super::super::decl::{EnumVariant, IrEnum, VariantFields};
+use super::super::super::decl::{EnumVariant, IrEnum, IrEnumValue, IrEnumValueType, VariantFields};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast;
@@ -9,6 +9,10 @@ use incan_core::lang::derives::{self, DeriveId};
 impl AstLowering {
     /// Lower an enum declaration.
     pub(in crate::backend::ir::lower) fn lower_enum(&mut self, e: &ast::EnumDecl) -> Result<IrEnum, LoweringError> {
+        let value_type = e.value_type.as_ref().map(|ty| match ty.node {
+            ast::ValueEnumType::Str => IrEnumValueType::String,
+            ast::ValueEnumType::Int => IrEnumValueType::Int,
+        });
         let variants = e
             .variants
             .iter()
@@ -18,9 +22,14 @@ impl AstLowering {
                 } else {
                     VariantFields::Tuple(v.node.fields.iter().map(|t| self.lower_type(&t.node)).collect())
                 };
+                let raw_value = v.node.value.as_ref().map(|value| match &value.node {
+                    ast::ValueEnumLiteral::Str(raw) => IrEnumValue::String(raw.clone()),
+                    ast::ValueEnumLiteral::Int(raw) => IrEnumValue::Int(raw.value),
+                });
                 EnumVariant {
                     name: v.node.name.clone(),
                     fields,
+                    raw_value,
                 }
             })
             .collect();
@@ -45,6 +54,7 @@ impl AstLowering {
         Ok(IrEnum {
             name: e.name.clone(),
             variants,
+            value_type,
             derives,
             visibility: Self::map_visibility(e.visibility),
             type_params: Self::lower_type_params(&e.type_params),
