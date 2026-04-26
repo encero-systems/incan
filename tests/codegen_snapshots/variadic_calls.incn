@@ -1,0 +1,29 @@
+def collect(prefix: str, *items: int, **labels: str) -> int:
+  mut total: int = 0
+  for item in items:
+    total = total + item
+  return total
+
+def collect_via_callable(xs: list[int], kw: dict[str, str]) -> int:
+  f = collect
+  return f("x", 1, *xs, name="inline", **kw)
+
+class Collector:
+  def collect(self, *items: int, **labels: str) -> int:
+    mut total: int = 0
+    for item in items:
+      total = total + item
+    return total
+
+def collect_via_method(xs: list[int], kw: dict[str, str]) -> int:
+  collector = Collector()
+  return collector.collect(1, *xs, name="inline", **kw)
+
+def main() -> int:
+  xs_direct = [2, 3]
+  kw_direct = {"name": "demo"}
+  xs_callable = [4, 5]
+  kw_callable = {"name": "callable"}
+  xs_method = [6, 7]
+  kw_method = {"name": "method"}
+  return collect("x", 1, *xs_direct, name="inline", **kw_direct) + collect_via_callable(xs_callable, kw_callable) + collect_via_method(xs_method, kw_method)
