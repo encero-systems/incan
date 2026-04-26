@@ -216,6 +216,9 @@ nav:
           - CLI reference: tooling/reference/cli_reference.md
           - Project configuration: tooling/reference/project_configuration.md
           - LSP protocol support: tooling/reference/lsp_protocol_support.md
+  - Whitepapers:
+      - Overview: whitepapers/index.md
+      - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md
   - Contributing:
       - Start here: contributing/index.md
       - Tutorials:
