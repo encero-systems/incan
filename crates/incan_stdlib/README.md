@@ -75,6 +75,7 @@ These files define the user-facing `std.*` API surface and are parsed by the com
 
 For `std.testing`, this also includes marker semantics metadata consumed by `incan test` discovery/execution.
 The Rust runtime in `src/testing.rs` only provides irreducible host boundaries declared via `@rust.extern`.
+The language `assert` statement is always available without importing `std.testing`; the stdlib assertion helpers mirror that behavior for call-style assertions and unwrap-style helpers.
 
 ### Why a Separate Crate?
 

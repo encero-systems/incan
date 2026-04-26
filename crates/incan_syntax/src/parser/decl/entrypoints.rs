@@ -57,6 +57,20 @@ impl<'a> Parser<'a> {
             Declaration::Enum(self.enum_decl(decorators, visibility)?)
         } else if self.starts_surface_function_decl() {
             Declaration::Function(self.function_decl(decorators, visibility)?)
+        } else if self.is_module_tests_header() {
+            if visibility == Visibility::Public {
+                return Err(CompileError::syntax(
+                    "`module tests:` cannot be public".to_string(),
+                    self.current_span(),
+                ));
+            }
+            if !decorators.is_empty() {
+                return Err(CompileError::syntax(
+                    "`module tests:` cannot have decorators".to_string(),
+                    decorators[0].span,
+                ));
+            }
+            Declaration::TestModule(self.test_module_decl()?)
         } else {
             if let Some(err) = self.inactive_soft_keyword_error() {
                 return Err(err);
@@ -87,6 +101,65 @@ impl<'a> Parser<'a> {
             ty,
             value,
         })
+    }
+
+    /// Return `true` when the current declaration starts the reserved RFC 018 inline test module.
+    fn is_module_tests_header(&self) -> bool {
+        matches!(&self.peek().kind, TokenKind::Ident(name) if name == "module")
+            && matches!(&self.peek_next().kind, TokenKind::Ident(name) if name == "tests")
+            && matches!(
+                self.tokens.get(self.pos + 2).map(|token| &token.kind),
+                Some(TokenKind::Punctuation(PunctuationId::Colon))
+            )
+    }
+
+    /// Parse `module tests:` as a parser-owned inline test-only scope.
+    ///
+    /// The parser keeps declarations inside the block structurally scoped and restores soft-keyword state afterward so
+    /// imports that appear only in the inline test module do not affect production declarations that follow it.
+    fn test_module_decl(&mut self) -> Result<TestModuleDecl, CompileError> {
+        self.expect(&TokenKind::Ident(String::new()), "Expected 'module'")?;
+        let name = self.identifier()?;
+        if name != "tests" {
+            return Err(CompileError::syntax(
+                "Only `module tests:` is supported".to_string(),
+                self.current_span(),
+            ));
+        }
+        self.expect_punct(PunctuationId::Colon, "Expected ':' after `module tests`")?;
+        self.expect(&TokenKind::Newline, "Expected newline after `module tests:`")?;
+        self.expect_suite_indent("Expected indented block after `module tests:`")?;
+
+        let outer_soft_keywords = self.active_soft_keywords.clone();
+        let outer_imported_specs = self.active_imported_keyword_specs.clone();
+        let body_result = self.test_module_body();
+        self.active_soft_keywords = outer_soft_keywords;
+        self.active_imported_keyword_specs = outer_imported_specs;
+
+        let body = body_result?;
+        self.expect(&TokenKind::Dedent, "Expected dedent after `module tests:` body")?;
+        Ok(TestModuleDecl { name, body })
+    }
+
+    /// Parse declarations within a `module tests:` block.
+    ///
+    /// `pass` and `...` are accepted as empty placeholders so authors can stub an inline test module before adding test
+    /// declarations.
+    fn test_module_body(&mut self) -> Result<Vec<Spanned<Declaration>>, CompileError> {
+        let mut body = Vec::new();
+        self.skip_newlines();
+        while !self.check(&TokenKind::Dedent) && !self.is_at_end() {
+            if self.match_keyword(KeywordId::Pass) || self.match_punct(PunctuationId::Ellipsis) {
+                self.skip_newlines();
+                continue;
+            }
+
+            let decl = self.declaration()?;
+            self.activate_soft_keywords_for_declaration(&decl.node);
+            body.push(decl);
+            self.skip_newlines();
+        }
+        Ok(body)
     }
 
     fn static_decl_with_visibility(&mut self, visibility: Visibility) -> Result<StaticDecl, CompileError> {

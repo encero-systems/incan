@@ -15,7 +15,7 @@ use crate::cli::commands::common::{
 use crate::cli::prelude::ParsedModule;
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::resolve_dependencies;
-use crate::frontend::ast::Program;
+use crate::frontend::ast::{Declaration, Program};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{lexer, parser};
@@ -31,6 +31,27 @@ const INCAN_FILE_TEST_MOD: &str = "__incan_file_tests";
 
 fn parse_isolated_target_env(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1" | "true" | "yes" | "on"))
+}
+
+/// Return a runner-only AST where RFC 018 inline test-module declarations are emitted as ordinary module declarations.
+///
+/// Production build/run lowering intentionally strips `Declaration::TestModule`. The test runner needs the opposite:
+/// the production declarations plus the inline test declarations in one generated test crate so the existing per-file
+/// Rust harness can call inline `test_*` functions directly.
+fn ast_with_inline_test_declarations(ast: &Program) -> Program {
+    let mut declarations = Vec::with_capacity(ast.declarations.len());
+    for decl in &ast.declarations {
+        match &decl.node {
+            Declaration::TestModule(test_module) => declarations.extend(test_module.body.iter().cloned()),
+            _ => declarations.push(decl.clone()),
+        }
+    }
+
+    Program {
+        declarations,
+        rust_module_path: ast.rust_module_path.clone(),
+        warnings: ast.warnings.clone(),
+    }
 }
 
 /// Shared Cargo `target/` directory for generated test crates in a package.
@@ -537,6 +558,7 @@ pub(super) fn run_file_tests_batch(
             })
             .collect();
     }
+    let runner_ast = ast_with_inline_test_declarations(&ast);
 
     let cargo_feature_selection = CargoFeatureSelection {
         cargo_features: cargo_features.to_vec(),
@@ -553,7 +575,7 @@ pub(super) fn run_file_tests_batch(
     let project_root = absolute_project_root(&project_root);
     let source_root = common::resolve_source_root(&project_root, manifest.as_ref());
     let source_modules = match collect_source_modules_for_test(
-        &ast,
+        &runner_ast,
         &source_root,
         Some(&library_imported_vocab),
         Some(&library_manifest_index),
@@ -592,7 +614,7 @@ pub(super) fn run_file_tests_batch(
             path_segments: vec!["test".to_string()],
             file_path: first.file_path.clone(),
             source: source.clone(),
-            ast: ast.clone(),
+            ast: runner_ast.clone(),
         };
 
         let mut dependency_modules: Vec<ParsedModule> = Vec::with_capacity(1 + source_modules.len());
@@ -713,7 +735,7 @@ pub(super) fn run_file_tests_batch(
 
         let prepared = PreparedTestFile {
             library_manifest_index,
-            ast,
+            ast: runner_ast,
             source_modules,
             project_root,
             resolved,

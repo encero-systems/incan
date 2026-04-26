@@ -894,8 +894,20 @@ impl TypeChecker {
             Declaration::Newtype(nt) => self.check_newtype(nt),
             Declaration::Enum(en) => self.check_enum(en),
             Declaration::Function(func) => self.check_function(func),
+            Declaration::TestModule(test_module) => self.check_test_module(test_module),
             Declaration::Docstring(_) => {} // Docstrings don't need checking
         }
+    }
+
+    fn check_test_module(&mut self, test_module: &TestModuleDecl) {
+        self.symbols.enter_scope(ScopeKind::Block);
+        for decl in &test_module.body {
+            self.collect_declaration(decl);
+        }
+        for decl in &test_module.body {
+            self.check_declaration(decl);
+        }
+        self.symbols.exit_scope();
     }
 
     fn check_const(&mut self, konst: &ConstDecl, span: Span) {

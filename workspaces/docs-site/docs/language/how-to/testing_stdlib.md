@@ -1,45 +1,116 @@
-# `std.testing` standard library guide
+# Testing in Incan
 
-This page covers what `std.testing` provides and how to use it in your tests.
+This page covers the language model for writing tests in Incan: where tests live, how inline `module tests:` blocks work, and what `std.testing` provides.
 
 > If you want CLI usage (`incan test`, discovery, flags), see [Tooling: Testing](../../tooling/how-to/testing.md).
 > If you want the API reference only, see [Standard library reference: `std.testing`](../reference/stdlib/testing.md).
 
-## Assertion helpers
+## Where tests live
+
+Incan supports two test contexts.
+
+| Context                | Use it for                                                                                   | Discovery rule                                           |
+| ---------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| Conventional test file | Black-box tests, integration tests, tests spanning several modules                           | A file named `test_*.incn` or `*_test.incn`              |
+| Inline test module     | Unit tests that belong next to production code, including tests of same-file private helpers | A production `.incn` file with one `module tests:` block |
+
+Conventional test files collect top-level `def test_*()` functions and top-level fixtures. Inline test modules collect only tests and fixtures declared inside `module tests:`. A production-scope function named `test_*` is still just a production function unless it is inside the inline test block.
+
+## Inline `module tests:`
+
+An inline test module is a test-only block inside a production source file:
 
 ```incan
-from std.testing import assert, assert_eq, assert_ne, assert_true, assert_false, fail
+def slugify(title: str) -> str:
+    return title.strip().lower().replace(" ", "-")
+
+def has_private_prefix(slug: str) -> bool:
+    return slug.startswith("_")
+
+module tests:
+    from std.testing import assert_eq, assert_false
+
+    def test_slugify_trims_and_replaces_spaces() -> None:
+        assert_eq(slugify("  Hello Incan  "), "hello-incan")
+
+    def test_can_call_same_file_private_helper() -> None:
+        assert_false(has_private_prefix("public-page"))
+```
+
+This is a language feature, not just a test-runner naming convention.
+
+!!! tip "Coming from Python?"
+    Python usually puts unit tests in separate files and relies on naming conventions plus module imports to reach the code under test. Inline `module tests:` is closer to Rust's `#[cfg(test)] mod tests`: the tests live in the same source file as the implementation, can call same-file private helpers, and are removed from normal build/run output. Because Incan is compiled, the compiler can omit inline tests from final package builds as part of the language contract; Python packaging can exclude test files, but Python has no equivalent compiler-stripped inline test block.
+
+- Code inside `module tests:` can read names from the enclosing file, including names that are not `pub`.
+- Names declared inside `module tests:` do not become production module members.
+- Imports inside `module tests:` are test-only and do not affect `incan build` or `incan run`.
+- A file may contain at most one `module tests:` block.
+- A conventional `test_*.incn` or `*_test.incn` file must not contain `module tests:`; put top-level tests there instead.
+
+Keep test-only imports inside the block:
+
+```incan
+def double(value: int) -> int:
+    return value * 2
+
+module tests:
+    from std.testing import assert_eq, parametrize
+
+    @parametrize("value, expected", [
+        (1, 2),
+        (4, 8),
+    ])
+    def test_double(value: int, expected: int) -> None:
+        assert_eq(double(value), expected)
+```
+
+## Assertion helpers
+
+The language `assert` statement is always available. You do not import `std.testing` to enable it:
+
+```incan
+def test_addition() -> None:
+    assert 1 + 1 == 2
+    assert 3 > 2, "math ordering changed"
+```
+
+`std.testing` provides function-call helpers that mirror the assertion behavior when a helper call is clearer or when you need an unwrap-style return value:
+
+```incan
+import std.testing as testing
+from std.testing import assert_eq, assert_ne, assert_true, assert_false, fail
 from std.testing import assert_is_some, assert_is_none, assert_is_ok, assert_is_err
 ```
 
-|            Function             |           Fails when           | Returns |
-| ------------------------------- | ------------------------------ | ------- |
-| `assert(condition, msg?)`       | `condition` is false           | —       |
-| `assert_true(condition, msg?)`  | `condition` is false           | —       |
-| `assert_false(condition, msg?)` | `condition` is true            | —       |
-| `assert_eq(left, right, msg?)`  | `left != right`                | —       |
-| `assert_ne(left, right, msg?)`  | `left == right`                | —       |
-| `assert_is_some(option, msg?)`  | `option` is `None`             | `T`     |
-| `assert_is_none(option, msg?)`  | `option` is `Some(...)`        | —       |
-| `assert_is_ok(result, msg?)`    | `result` is `Err(...)`         | `T`     |
-| `assert_is_err(result, msg?)`   | `result` is `Ok(...)`          | `E`     |
-| `fail(msg)`                     | Always (unconditional failure) | —       |
+| Function                          | Fails when                     | Returns |
+| --------------------------------- | ------------------------------ | ------- |
+| `testing.assert(condition, msg?)` | `condition` is false           | —       |
+| `assert_true(condition, msg?)`    | `condition` is false           | —       |
+| `assert_false(condition, msg?)`   | `condition` is true            | —       |
+| `assert_eq(left, right, msg?)`    | `left != right`                | —       |
+| `assert_ne(left, right, msg?)`    | `left == right`                | —       |
+| `assert_is_some(option, msg?)`    | `option` is `None`             | `T`     |
+| `assert_is_none(option, msg?)`    | `option` is `Some(...)`        | —       |
+| `assert_is_ok(result, msg?)`      | `result` is `Err(...)`         | `T`     |
+| `assert_is_err(result, msg?)`     | `result` is `Ok(...)`          | `E`     |
+| `fail(msg)`                       | Always (unconditional failure) | —       |
 
 All `msg` parameters are optional. When omitted, a sensible default message is used.
 
 ## `assert_raises`
 
-`std.testing.assert_raises` is not available for ordinary use yet.
+Use `std.testing.assert_raises[E](block, msg = "")` when a test needs to assert that a zero-argument callable raises or panics with runtime error kind `E`.
 
-- The name remains part of the public testing surface.
-- Calling it currently fails with a clear "not implemented yet" diagnostic.
-- For now, prefer the available helpers such as `assert_is_err(...)` or test the `Result` value directly.
+- `assert call() raises ErrorType[, msg]` is the statement form for single-call checks.
+- `assert_raises[E](helper, msg?)` is the helper form for named zero-argument functions or closures.
+- Panic payloads match either the exact error kind name, such as `ValueError`, or the standard `Kind: message` prefix.
 
-## Assert statement syntax (planned)
+## Assert statement syntax
 
-Incan will support `assert` as a statement keyword. When available, the mapping will be:
+Incan supports `assert` as a language statement. It is part of the language, not a marker or decorator, and it does not require `import std.testing`.
 
-|        Statement        |              Desugars to              |
+| Statement               | Desugars to                           |
 | ----------------------- | ------------------------------------- |
 | `assert cond`           | `std.testing.assert(cond)`            |
 | `assert a == b`         | `std.testing.assert_eq(a, b)`         |
@@ -49,13 +120,13 @@ Incan will support `assert` as a statement keyword. When available, the mapping 
 | `assert res is Ok(v)`   | `v = std.testing.assert_is_ok(res)`   |
 | `assert res is Err(e)`  | `e = std.testing.assert_is_err(res)`  |
 
-Until then, use the function-call forms directly.
+The mapping is semantic. The compiler may implement the language statement as an intrinsic, but the `std.testing.assert_*` helpers must keep matching behavior and message propagation.
 
 ## Markers and decorators
 
 Test markers control how `incan test` discovers and runs tests:
 
-|              Decorator              |                             Effect                              |
+| Decorator                           | Effect                                                          |
 | ----------------------------------- | --------------------------------------------------------------- |
 | `@skip(reason?)`                    | Skips the test unconditionally.                                 |
 | `@xfail(reason?)`                   | Marks the test as expected to fail (XPASS if it passes).        |
@@ -63,8 +134,9 @@ Test markers control how `incan test` discovers and runs tests:
 | `@fixture`                          | Declares a test fixture (see below).                            |
 | `@parametrize(argnames, argvalues)` | Runs the test once per parameter set.                           |
 
-Markers are declared in `testing.incn` with marker metadata, and `incan test` consumes that metadata during discovery.
-This keeps marker behavior in the runner and prevents regular runtime calls to marker functions.
+Unlike the language `assert` statement, markers are `std.testing` APIs. Import the marker decorators you use.
+
+Markers are declared in `testing.incn` with marker metadata, and `incan test` consumes that metadata during discovery. This keeps marker behavior in the runner and prevents regular runtime calls to marker functions.
 
 ## Fixtures
 
@@ -163,7 +235,7 @@ def shared_client() -> Client:
     client.disconnect()
 ```
 
-|           Scope            |                 Lifetime                  |
+| Scope                      | Lifetime                                  |
 | -------------------------- | ----------------------------------------- |
 | `"function"` (the default) | Created and torn down for each test.      |
 | `"module"`                 | Shared across all tests in one test file. |

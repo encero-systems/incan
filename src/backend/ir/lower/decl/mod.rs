@@ -137,6 +137,12 @@ impl AstLowering {
             }
             ast::Declaration::Import(i) => self.lower_import(i),
             ast::Declaration::Trait(t) => IrDeclKind::Trait(self.lower_trait(t)?),
+            ast::Declaration::TestModule(_) => {
+                return Err(LoweringError {
+                    message: "Test modules are not lowered to production IR".to_string(),
+                    span: IrSpan::default(),
+                });
+            }
             ast::Declaration::Docstring(_) => {
                 // Skip docstrings in codegen
                 return Err(LoweringError {

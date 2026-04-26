@@ -1,12 +1,12 @@
 # Testing in Incan
 
-Incan provides a pytest-like testing experience with `incan test`.
+Incan provides a pytest-like test runner with `incan test`.
 
-For the **testing API** (assertions, markers, fixtures, parametrization), see:
-[Standard library reference → `std.testing`](../../language/reference/stdlib/testing.md).
+For the **language model for writing tests** (inline `module tests:`, assertions, markers, fixtures, parametrization), see: [Language → Testing in Incan](../../language/how-to/testing_stdlib.md).
 
-For a guided walkthrough, see:
-[The Incan Book → Unit tests](../../language/tutorials/book/13_unit_tests.md).
+For the **API reference** only, see: [Standard library reference → `std.testing`](../../language/reference/stdlib/testing.md).
+
+For a guided walkthrough, see: [The Incan Book → Unit tests](../../language/tutorials/book/13_unit_tests.md).
 
 ## Quick Start
 
@@ -16,7 +16,14 @@ For a guided walkthrough, see:
     If you run into errors, see [Troubleshooting](troubleshooting.md).
     If it still looks like a bug, please [file an issue on GitHub](https://github.com/dannys-code-corner/incan/issues).
 
-Create a test file (must be named `test_*.incn` or `*_test.incn`):
+You can write tests in either of two places:
+
+- a conventional test file named `test_*.incn` or `*_test.incn`
+- an inline `module tests:` block inside a production `.incn` source file
+
+Use a conventional test file when the test is mostly black-box or spans multiple modules. Use an inline `module tests:` block when the test belongs next to the implementation or needs same-file private helpers.
+
+Create a conventional test file, for example `tests/test_math.incn`:
 
 ```incan
 """Test file for math operations"""
@@ -45,34 +52,114 @@ incan test tests/
 
 ## Test Discovery
 
-Tests are discovered automatically:
+Tests are discovered automatically from two sources:
 
-- **Files**: Named `test_*.incn` or `*_test.incn`
-- **Functions**: Named `def test_*()`
+- **Conventional test files**: files named `test_*.incn` or `*_test.incn`
+- **Inline test modules**: non-test `.incn` source files that contain a parsed `module tests:` block
+- **Test functions**: functions named `def test_*()` in the active test context
 
 ```bash
 my_project/
 ├── src/
-│   └── main.incn
+│   ├── main.incn           # ✗ not discovered unless it contains module tests:
+│   └── math.incn           # ✓ discovered if it contains module tests:
 └── tests/
     ├── test_math.incn      # ✓ discovered
     ├── test_strings.incn   # ✓ discovered
     └── helpers.incn        # ✗ not a test file
 ```
 
-## Assertions
+For conventional test files, `incan test` collects top-level `def test_*()` functions and top-level fixtures. These files must not contain `module tests:`; keep them as ordinary test modules.
 
-Use assertion functions from the `std.testing` module (not Python-style `assert expr`):
+For production source files, `incan test` ignores top-level `def test_*()` functions and only collects tests and fixtures declared inside the file's `module tests:` block. That rule keeps accidental production functions from becoming tests.
+
+## Inline `module tests:`
+
+Inline test modules let you keep unit tests next to the code they exercise:
 
 ```incan
-from std.testing import assert, assert_eq, assert_ne, assert_true, assert_false, fail
+def normalize_name(name: str) -> str:
+    return name.strip().lower()
+
+def is_internal_name(name: str) -> bool:
+    return normalize_name(name).startswith("_")
+
+module tests:
+    from std.testing import assert_eq, assert_false
+
+    def test_normalize_name() -> None:
+        assert_eq(normalize_name("  Alice  "), "alice")
+
+    def test_private_helper() -> None:
+        assert_false(is_internal_name("public"))
+```
+
+Run the project or file normally:
+
+```bash
+incan test .
+incan test src/math.incn
+```
+
+Inline test modules have test-only scope:
+
+- Names from the enclosing file, including non-`pub` helpers, are visible inside `module tests:`.
+- Imports and helpers declared inside `module tests:` do not leak into the production module.
+- `incan build` and `incan run` strip the inline test body from generated production output.
+- `incan test` compiles the inline test body as runner-only code and executes its `def test_*()` functions.
+
+Put `std.testing` imports inside `module tests:` unless production code also needs that module:
+
+```incan
+def production_value() -> int:
+    return 42
+
+module tests:
+    from std.testing import assert_eq
+
+    def test_production_value() -> None:
+        assert_eq(production_value(), 42)
+```
+
+Do not place `module tests:` in a conventional test file:
+
+```incan
+# tests/test_math.incn
+
+module tests:
+    def test_not_valid_here() -> None:
+        pass
+```
+
+Use top-level tests in named test files instead:
+
+```incan
+# tests/test_math.incn
+
+def test_valid_here() -> None:
+    pass
+```
+
+## Assertions
+
+Use the language `assert` statement for simple assertions:
+
+```incan
+def test_arithmetic() -> None:
+    assert 1 + 1 == 2
+    assert 3 > 2, "ordering changed"
+```
+
+Import assertion helpers from `std.testing` when a function-call helper is clearer or when you need a returned unwrapped value:
+
+```incan
+from std.testing import assert_eq, assert_ne, assert_true, assert_false, fail
 
 # Equality
 assert_eq(actual, expected)
 assert_ne(actual, other)
 
-# Boolean
-assert(condition)
+# Boolean helpers
 assert_true(condition)
 assert_false(condition)
 

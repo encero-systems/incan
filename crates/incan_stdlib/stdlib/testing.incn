@@ -244,14 +244,16 @@ pub def assert_ne[T](left: T, right: T, msg: str = "assertion failed: left == ri
         fail(msg)
 
 
-pub def assert_true(condition: bool, msg: str = "") -> None:
+pub def assert_true(condition: bool, msg: str = "assertion failed: expected true") -> None:
     """Assert condition is true."""
-    assert(condition, msg)
+    if not condition:
+        fail(msg)
 
 
-pub def assert_false(condition: bool, msg: str = "") -> None:
+pub def assert_false(condition: bool, msg: str = "assertion failed: expected false") -> None:
     """Assert condition is false."""
-    assert(not condition, msg)
+    if condition:
+        fail(msg)
 
 
 pub def assert_is_some[T](option: Option[T], msg: str = "assertion failed: expected Some, got None") -> T:
@@ -300,10 +302,11 @@ pub def assert_is_err[T, E](result: Result[T, E], msg: str = "assertion failed: 
         Err(err) => return err
         Ok(_) => return fail_t(msg)
 
-# TODO: structured `assert ... raises ...` support is not implemented yet.
-pub def assert_raises[E](block: () -> None, msg: str = "") -> E:
+pub def assert_raises[E](block: () -> None, msg: str = "") -> None:
     """
-    Assert that a block raises/panics with error type E.
+    Assert that a zero-argument block raises/panics with error type E.
+
+    The compiler recognizes this helper at call sites and emits runtime panic-payload matching.
 
     Example:
 
@@ -311,11 +314,10 @@ pub def assert_raises[E](block: () -> None, msg: str = "") -> E:
     def bad_parse() -> None:
         int("not a number")
 
-    err = assert_raises[ValueError](bad_parse)
+    assert_raises[ValueError](bad_parse)
     ```
     """
-    # TODO: block-style error assertions are blocked until parser support for `assert <expr> raises <Type>` lands.
-    #       Keep this explicit failure path so callers get a clear diagnostic today.
+    # Compiler-recognized helper calls are emitted before this fallback body is used.
     if msg == "":
-        return fail_t("std.testing.assert_raises is not implemented yet")
+        return fail_t("std.testing.assert_raises requires compiler lowering")
     return fail_t(msg)

@@ -5,14 +5,31 @@
 
 use std::collections::HashMap;
 
-use super::super::expr::{IrCallArg, IrExprKind, MatchArm, Pattern as IrPattern, VarAccess, VarRefKind};
+use super::super::expr::{
+    IrCallArg, IrExprKind, Literal as IrLiteral, MatchArm, Pattern as IrPattern, VarAccess, VarRefKind,
+};
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::IrType;
 use super::super::{IrSpan, Mutability, TypedExpr};
 use super::AstLowering;
 use super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
+use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_semantics_core::SurfaceStmtLoweringAction;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssertIsPatternKind {
+    Some,
+    None,
+    Ok,
+    Err,
+}
+
+struct AssertIsPattern<'a> {
+    kind: AssertIsPatternKind,
+    scrutinee: &'a Spanned<ast::Expr>,
+    binding: Option<String>,
+}
 
 impl AstLowering {
     fn resolve_named_assign_target(&self, name: &str) -> AssignTarget {
@@ -184,6 +201,7 @@ impl AstLowering {
     pub(super) fn lower_statement(&mut self, stmt: &ast::Statement) -> Result<IrStmt, LoweringError> {
         let kind = match stmt {
             ast::Statement::Expr(e) => IrStmtKind::Expr(self.lower_expr_spanned(e)?),
+            ast::Statement::Assert(assert_stmt) => return Ok(IrStmt::new(self.lower_assert_stmt(assert_stmt)?)),
 
             ast::Statement::Assignment(a) => {
                 let rhs_direct_static = self.is_direct_static_ident(&a.value);
@@ -685,8 +703,45 @@ impl AstLowering {
                 span: IrSpan::default(),
             });
         };
-        let condition = self.lower_expr_spanned(condition_expr)?;
+        if let Some(pattern) = Self::assert_is_pattern_from_expr(condition_expr) {
+            return self.lower_assert_is_pattern_stmt(pattern, args.get(1));
+        }
         let message = args.get(1).map(|m| self.lower_expr_spanned(m)).transpose()?;
+        let condition = self.lower_expr_spanned(condition_expr)?;
+        self.lower_assert_condition_expr(condition, message)
+    }
+
+    fn lower_assert_stmt(&mut self, assert_stmt: &ast::AssertStmt) -> Result<IrStmtKind, LoweringError> {
+        match &assert_stmt.kind {
+            ast::AssertKind::Condition(condition) => {
+                let message = assert_stmt
+                    .message
+                    .as_ref()
+                    .map(|m| self.lower_expr_spanned(m))
+                    .transpose()?;
+                let condition = self.lower_expr_spanned(condition)?;
+                self.lower_assert_condition_expr(condition, message)
+            }
+            ast::AssertKind::IsPattern { value, pattern } => {
+                let Some(pattern) = Self::assert_is_pattern_from_pattern(value, pattern) else {
+                    return Err(LoweringError {
+                        message: "unsupported assert `is` pattern reached lowering".to_string(),
+                        span: IrSpan::default(),
+                    });
+                };
+                self.lower_assert_is_pattern_stmt(pattern, assert_stmt.message.as_ref())
+            }
+            ast::AssertKind::Raises { call, error_type } => {
+                self.lower_assert_raises_stmt(call, error_type, assert_stmt.message.as_ref())
+            }
+        }
+    }
+
+    fn lower_assert_condition_expr(
+        &mut self,
+        condition: TypedExpr,
+        message: Option<TypedExpr>,
+    ) -> Result<IrStmtKind, LoweringError> {
         let lowered = super::super::surface_semantics::desugar_assert_statement(condition, message);
 
         let callee = TypedExpr::new(
@@ -712,6 +767,196 @@ impl AstLowering {
             IrType::Unit,
         );
         Ok(IrStmtKind::Expr(call))
+    }
+
+    fn lower_assert_raises_stmt(
+        &mut self,
+        call: &Spanned<ast::Expr>,
+        error_type: &Spanned<ast::Type>,
+        message: Option<&Spanned<ast::Expr>>,
+    ) -> Result<IrStmtKind, LoweringError> {
+        let mut call_args = vec![
+            IrCallArg {
+                name: None,
+                expr: self.lower_expr_spanned(call)?,
+            },
+            IrCallArg {
+                name: None,
+                expr: TypedExpr::new(
+                    IrExprKind::Literal(IrLiteral::StaticStr(error_type.node.to_string())),
+                    IrType::StaticStr,
+                ),
+            },
+        ];
+        if let Some(message) = message {
+            call_args.push(IrCallArg {
+                name: None,
+                expr: self.lower_expr_spanned(message)?,
+            });
+        }
+
+        let helper_name = "assert_raises";
+        let callee = TypedExpr::new(
+            IrExprKind::Var {
+                name: helper_name.to_string(),
+                access: VarAccess::Copy,
+                ref_kind: VarRefKind::Value,
+            },
+            self.lookup_var(helper_name),
+        );
+        Ok(IrStmtKind::Expr(TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(callee),
+                type_args: Vec::new(),
+                args: call_args,
+                canonical_path: Some(vec!["std".to_string(), "testing".to_string(), helper_name.to_string()]),
+            },
+            IrType::Unit,
+        )))
+    }
+
+    /// Lower RFC 018 `assert value is Some/None/Ok/Err` forms to typed assertion helper calls.
+    fn lower_assert_is_pattern_stmt(
+        &mut self,
+        pattern: AssertIsPattern<'_>,
+        message: Option<&Spanned<ast::Expr>>,
+    ) -> Result<IrStmtKind, LoweringError> {
+        let scrutinee = self.lower_expr_spanned(pattern.scrutinee)?;
+        let return_ty = match (&pattern.kind, &scrutinee.ty) {
+            (AssertIsPatternKind::Some, IrType::Option(inner)) => inner.as_ref().clone(),
+            (AssertIsPatternKind::Ok, IrType::Result(ok, _)) => ok.as_ref().clone(),
+            (AssertIsPatternKind::Err, IrType::Result(_, err)) => err.as_ref().clone(),
+            (AssertIsPatternKind::None, _) => IrType::Unit,
+            _ => IrType::Unknown,
+        };
+        let helper_name = match pattern.kind {
+            AssertIsPatternKind::Some => "assert_is_some",
+            AssertIsPatternKind::None => "assert_is_none",
+            AssertIsPatternKind::Ok => "assert_is_ok",
+            AssertIsPatternKind::Err => "assert_is_err",
+        };
+        let mut call_args = vec![IrCallArg {
+            name: None,
+            expr: scrutinee,
+        }];
+        if let Some(message) = message {
+            call_args.push(IrCallArg {
+                name: None,
+                expr: self.lower_expr_spanned(message)?,
+            });
+        }
+
+        let callee = TypedExpr::new(
+            IrExprKind::Var {
+                name: helper_name.to_string(),
+                access: VarAccess::Copy,
+                ref_kind: VarRefKind::Value,
+            },
+            self.lookup_var(helper_name),
+        );
+        let call = TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(callee),
+                type_args: Vec::new(),
+                args: call_args,
+                canonical_path: Some(vec!["std".to_string(), "testing".to_string(), helper_name.to_string()]),
+            },
+            return_ty.clone(),
+        );
+
+        if let Some(binding) = pattern.binding {
+            self.define_local_binding(binding.clone(), return_ty.clone(), false);
+            return Ok(IrStmtKind::Let {
+                name: binding,
+                ty: return_ty,
+                mutability: Mutability::Immutable,
+                value: call,
+            });
+        }
+
+        Ok(IrStmtKind::Expr(call))
+    }
+
+    fn assert_is_pattern_from_expr(expr: &Spanned<ast::Expr>) -> Option<AssertIsPattern<'_>> {
+        let ast::Expr::Binary(scrutinee, ast::BinaryOp::Is, pattern_expr) = &expr.node else {
+            return None;
+        };
+        match &pattern_expr.node {
+            ast::Expr::Literal(ast::Literal::None) => Some(AssertIsPattern {
+                kind: AssertIsPatternKind::None,
+                scrutinee,
+                binding: None,
+            }),
+            ast::Expr::Ident(name) if name == constructors::as_str(ConstructorId::None) => Some(AssertIsPattern {
+                kind: AssertIsPatternKind::None,
+                scrutinee,
+                binding: None,
+            }),
+            ast::Expr::Call(callee, type_args, args) if type_args.is_empty() => {
+                let ast::Expr::Ident(name) = &callee.node else {
+                    return None;
+                };
+                let kind = match name.as_str() {
+                    n if n == constructors::as_str(ConstructorId::Some) => AssertIsPatternKind::Some,
+                    n if n == constructors::as_str(ConstructorId::Ok) => AssertIsPatternKind::Ok,
+                    n if n == constructors::as_str(ConstructorId::Err) => AssertIsPatternKind::Err,
+                    _ => return None,
+                };
+                let [ast::CallArg::Positional(arg)] = args.as_slice() else {
+                    return None;
+                };
+                let binding = match &arg.node {
+                    ast::Expr::Ident(name) if name == "_" => None,
+                    ast::Expr::Ident(name) => Some(name.clone()),
+                    _ => return None,
+                };
+                Some(AssertIsPattern {
+                    kind,
+                    scrutinee,
+                    binding,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn assert_is_pattern_from_pattern<'a>(
+        scrutinee: &'a Spanned<ast::Expr>,
+        pattern: &Spanned<ast::Pattern>,
+    ) -> Option<AssertIsPattern<'a>> {
+        match &pattern.node {
+            ast::Pattern::Constructor(name, args)
+                if name == constructors::as_str(ConstructorId::None) && args.is_empty() =>
+            {
+                Some(AssertIsPattern {
+                    kind: AssertIsPatternKind::None,
+                    scrutinee,
+                    binding: None,
+                })
+            }
+            ast::Pattern::Constructor(name, args) => {
+                let kind = match name.as_str() {
+                    n if n == constructors::as_str(ConstructorId::Some) => AssertIsPatternKind::Some,
+                    n if n == constructors::as_str(ConstructorId::Ok) => AssertIsPatternKind::Ok,
+                    n if n == constructors::as_str(ConstructorId::Err) => AssertIsPatternKind::Err,
+                    _ => return None,
+                };
+                let [ast::PatternArg::Positional(arg)] = args.as_slice() else {
+                    return None;
+                };
+                let binding = match &arg.node {
+                    ast::Pattern::Wildcard => None,
+                    ast::Pattern::Binding(name) => Some(name.clone()),
+                    _ => return None,
+                };
+                Some(AssertIsPattern {
+                    kind,
+                    scrutinee,
+                    binding,
+                })
+            }
+            _ => None,
+        }
     }
 
     /// Bump the number of ident reads for a given name.
@@ -804,6 +1049,16 @@ impl AstLowering {
                     }
                 }
             },
+            ast::Statement::Assert(assert_stmt) => {
+                match &assert_stmt.kind {
+                    ast::AssertKind::Condition(condition) => self.count_expr_ident_reads(&condition.node, counts),
+                    ast::AssertKind::IsPattern { value, .. } => self.count_expr_ident_reads(&value.node, counts),
+                    ast::AssertKind::Raises { call, .. } => self.count_expr_ident_reads(&call.node, counts),
+                }
+                if let Some(message) = &assert_stmt.message {
+                    self.count_expr_ident_reads(&message.node, counts);
+                }
+            }
             ast::Statement::VocabBlock(vocab_block) => {
                 for arg in &vocab_block.header_args {
                     self.count_expr_ident_reads(&arg.node, counts);

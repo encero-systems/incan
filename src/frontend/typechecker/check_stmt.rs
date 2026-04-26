@@ -4,13 +4,28 @@ use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::*;
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved};
+use incan_core::lang::errors as runtime_errors;
 use incan_core::lang::keywords;
+use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::{NumericTy, result_numeric_type};
 use incan_semantics_core::SurfaceStmtTypeCheck;
 
 use super::{LoopContextKind, TypeChecker};
 use crate::frontend::typechecker::helpers::{collection_type_id, ensure_bool_condition};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssertIsPatternKind {
+    Some,
+    None,
+    Ok,
+    Err,
+}
+
+struct AssertIsPattern {
+    kind: AssertIsPatternKind,
+    binding: Option<(String, Span)>,
+}
 
 impl TypeChecker {
     // ========================================================================
@@ -41,6 +56,7 @@ impl TypeChecker {
                     stmt.span,
                 ));
             }
+            Statement::Assert(assert_stmt) => self.check_assert_stmt(assert_stmt),
             Statement::Surface(surface_stmt) => self.check_surface_stmt(surface_stmt, stmt.span),
             Statement::Expr(expr) => {
                 self.check_expr(expr);
@@ -749,9 +765,25 @@ impl TypeChecker {
     }
 
     fn check_assert_stmt(&mut self, assert_stmt: &AssertStmt) {
-        let cond_ty = self.check_expr(&assert_stmt.condition);
-        let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
-        ensure_bool_condition(&cond_ty, assert_stmt.condition.span, is_compatible, &mut self.errors);
+        match &assert_stmt.kind {
+            AssertKind::Condition(condition) => {
+                let cond_ty = self.check_expr(condition);
+                let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
+                ensure_bool_condition(&cond_ty, condition.span, is_compatible, &mut self.errors);
+            }
+            AssertKind::IsPattern { value, pattern } => self.check_assert_is_pattern(value, pattern),
+            AssertKind::Raises { call, error_type } => {
+                self.check_expr(call);
+                if let Type::Simple(name) = &error_type.node
+                    && (runtime_errors::from_str(name).is_some() || name == "AssertionError")
+                {
+                    // Known runtime error vocabulary.
+                } else {
+                    self.errors
+                        .push(errors::unknown_symbol(&error_type.node.to_string(), error_type.span));
+                }
+            }
+        }
 
         if let Some(message) = &assert_stmt.message {
             let msg_ty = self.check_expr(message);
@@ -762,6 +794,93 @@ impl TypeChecker {
                     message.span,
                 ));
             }
+        }
+    }
+
+    /// Validate the restricted RFC 018 `assert value is Some/None/Ok/Err` pattern subset.
+    fn check_assert_is_pattern(&mut self, scrutinee: &Spanned<Expr>, pattern: &Spanned<Pattern>) {
+        let scrutinee_ty = self.check_expr(scrutinee);
+        let Some(pattern) = Self::assert_is_pattern_from_pattern(pattern) else {
+            self.errors.push(errors::expected_token_message(
+                "Expected assert `is` pattern Some(name), Some(_), None, Ok(name), Ok(_), Err(name), or Err(_)",
+                &format!("{:?}", pattern.node),
+                pattern.span,
+            ));
+            return;
+        };
+
+        let expected = match pattern.kind {
+            AssertIsPatternKind::Some | AssertIsPatternKind::None => "Option[_]",
+            AssertIsPatternKind::Ok | AssertIsPatternKind::Err => "Result[_, _]",
+        };
+        let compatible = match pattern.kind {
+            AssertIsPatternKind::Some | AssertIsPatternKind::None => scrutinee_ty.is_option(),
+            AssertIsPatternKind::Ok | AssertIsPatternKind::Err => scrutinee_ty.is_result(),
+        };
+        if !compatible && !matches!(scrutinee_ty, ResolvedType::Unknown) {
+            self.errors.push(errors::type_mismatch(
+                expected,
+                &scrutinee_ty.to_string(),
+                scrutinee.span,
+            ));
+            return;
+        }
+
+        if let Some((name, span)) = pattern.binding {
+            if self.symbols.lookup_local(&name).is_some() {
+                self.errors.push(errors::duplicate_definition(&name, span));
+                return;
+            }
+            let ty = match pattern.kind {
+                AssertIsPatternKind::Some => scrutinee_ty
+                    .option_inner_type()
+                    .cloned()
+                    .unwrap_or(ResolvedType::Unknown),
+                AssertIsPatternKind::Ok => scrutinee_ty.result_ok_type().cloned().unwrap_or(ResolvedType::Unknown),
+                AssertIsPatternKind::Err => scrutinee_ty.result_err_type().cloned().unwrap_or(ResolvedType::Unknown),
+                AssertIsPatternKind::None => ResolvedType::Unit,
+            };
+            self.symbols.define(Symbol {
+                name,
+                kind: SymbolKind::Variable(VariableInfo {
+                    ty,
+                    is_mutable: false,
+                    is_used: false,
+                }),
+                span,
+                scope: 0,
+            });
+        }
+    }
+
+    fn assert_is_pattern_from_pattern(pattern: &Spanned<Pattern>) -> Option<AssertIsPattern> {
+        match &pattern.node {
+            Pattern::Constructor(name, args)
+                if name == constructors::as_str(ConstructorId::None) && args.is_empty() =>
+            {
+                Some(AssertIsPattern {
+                    kind: AssertIsPatternKind::None,
+                    binding: None,
+                })
+            }
+            Pattern::Constructor(name, args) => {
+                let kind = match name.as_str() {
+                    n if n == constructors::as_str(ConstructorId::Some) => AssertIsPatternKind::Some,
+                    n if n == constructors::as_str(ConstructorId::Ok) => AssertIsPatternKind::Ok,
+                    n if n == constructors::as_str(ConstructorId::Err) => AssertIsPatternKind::Err,
+                    _ => return None,
+                };
+                let [PatternArg::Positional(arg)] = args.as_slice() else {
+                    return None;
+                };
+                let binding = match &arg.node {
+                    Pattern::Wildcard => None,
+                    Pattern::Binding(name) => Some((name.clone(), arg.span)),
+                    _ => return None,
+                };
+                Some(AssertIsPattern { kind, binding })
+            }
+            _ => None,
         }
     }
 
@@ -783,7 +902,7 @@ impl TypeChecker {
             (SurfaceStmtTypeCheck::AssertCheck, SurfaceStmtPayload::KeywordArgs(args)) => {
                 if let Some(condition) = args.first() {
                     let assert_stmt = AssertStmt {
-                        condition: condition.clone(),
+                        kind: AssertKind::Condition(condition.clone()),
                         message: args.get(1).cloned(),
                     };
                     self.check_assert_stmt(&assert_stmt);

@@ -1889,6 +1889,32 @@ impl TypeChecker {
                     visiting_functions,
                 );
             }
+            Statement::Assert(assert_stmt) => {
+                match &assert_stmt.kind {
+                    AssertKind::Condition(condition) => self.collect_static_initializer_static_writes_from_expr(
+                        condition,
+                        current_static,
+                        visiting_functions,
+                    ),
+                    AssertKind::IsPattern { value, .. } => self.collect_static_initializer_static_writes_from_expr(
+                        value,
+                        current_static,
+                        visiting_functions,
+                    ),
+                    AssertKind::Raises { call, .. } => self.collect_static_initializer_static_writes_from_expr(
+                        call,
+                        current_static,
+                        visiting_functions,
+                    ),
+                }
+                if let Some(message) = &assert_stmt.message {
+                    self.collect_static_initializer_static_writes_from_expr(
+                        message,
+                        current_static,
+                        visiting_functions,
+                    );
+                }
+            }
             Statement::Return(Some(expr)) | Statement::Expr(expr) => {
                 self.collect_static_initializer_static_writes_from_expr(expr, current_static, visiting_functions);
             }
@@ -2064,6 +2090,22 @@ impl TypeChecker {
             }
             Statement::ChainedAssignment(assign) => {
                 self.collect_static_dependencies_from_expr(&assign.value.node, deps, visiting_functions);
+            }
+            Statement::Assert(assert_stmt) => {
+                match &assert_stmt.kind {
+                    AssertKind::Condition(condition) => {
+                        self.collect_static_dependencies_from_expr(&condition.node, deps, visiting_functions);
+                    }
+                    AssertKind::IsPattern { value, .. } => {
+                        self.collect_static_dependencies_from_expr(&value.node, deps, visiting_functions);
+                    }
+                    AssertKind::Raises { call, .. } => {
+                        self.collect_static_dependencies_from_expr(&call.node, deps, visiting_functions);
+                    }
+                }
+                if let Some(message) = &assert_stmt.message {
+                    self.collect_static_dependencies_from_expr(&message.node, deps, visiting_functions);
+                }
             }
             Statement::Surface(_) | Statement::VocabBlock(_) => {}
         }
@@ -2726,7 +2768,7 @@ fn is_public_decl(decl: &Spanned<Declaration>) -> bool {
         Declaration::Newtype(n) => matches!(n.visibility, Visibility::Public),
         Declaration::Trait(t) => matches!(t.visibility, Visibility::Public),
         Declaration::Function(f) => matches!(f.visibility, Visibility::Public),
-        Declaration::Import(_) | Declaration::Docstring(_) => false,
+        Declaration::Import(_) | Declaration::Docstring(_) | Declaration::TestModule(_) => false,
     }
 }
 

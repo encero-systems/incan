@@ -87,5 +87,6 @@ pub enum Declaration {
     Newtype(super::NewtypeDecl),
     Enum(super::EnumDecl),
     Function(super::FunctionDecl),
+    TestModule(super::TestModuleDecl),
     Docstring(String), // Module-level docstring
 }

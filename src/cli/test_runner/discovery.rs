@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::frontend::ast::{DecoratorArg, DecoratorArgValue, Expr, Literal};
+use crate::frontend::ast::{Declaration, DecoratorArg, DecoratorArgValue, Expr, Literal, Program, Spanned};
 use crate::frontend::ast_walk::any_expr_in_body;
 use crate::frontend::testing_markers::{
     TestingMarkerKind, TestingMarkerSemantics, load_testing_marker_semantics, resolve_testing_marker_kind,
@@ -11,13 +11,67 @@ use crate::frontend::{lexer, parser};
 
 use super::types::{DiscoveryResult, FixtureInfo, FixtureScope, ParametrizeCase, TestInfo, TestMarker};
 
+/// Return whether `path` uses the conventional standalone test-file naming scheme.
+fn is_named_test_file(path: &Path) -> bool {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    (name.starts_with("test_") || name.ends_with("_test.incn")) && name.ends_with(".incn")
+}
+
+/// Return whether `path` is an Incan source file, regardless of whether it is a conventional test file.
+fn is_incan_source_file(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()) == Some("incn")
+}
+
+/// Cheap pre-parse filter for inline test modules.
+///
+/// Directory discovery can see many production files.  This check avoids parsing ordinary `.incn` files that cannot
+/// contain RFC 018 inline tests while still requiring a real parser-confirmed `Declaration::TestModule` before the file
+/// becomes a test target.
+fn source_may_contain_inline_test_module(source: &str) -> bool {
+    source.contains("module tests")
+}
+
+/// Parse a non-test source file just far enough to prove it contains a real RFC 018 inline test module.
+fn file_has_inline_test_module(path: &Path) -> bool {
+    if !is_incan_source_file(path) || is_named_test_file(path) {
+        return false;
+    }
+
+    let Ok(source) = fs::read_to_string(path) else {
+        return false;
+    };
+    if !source_may_contain_inline_test_module(&source) {
+        return false;
+    }
+
+    let Ok(tokens) = lexer::lex(&source) else {
+        return false;
+    };
+    let path_display = path.to_string_lossy();
+    let Ok(ast) = parser::parse_with_module_path(&tokens, Some(path_display.as_ref())) else {
+        return false;
+    };
+
+    ast.declarations
+        .iter()
+        .any(|decl| matches!(decl.node, Declaration::TestModule(_)))
+}
+
+/// Build a lightweight [`Program`] wrapper around a declaration slice so existing import-alias collection stays shared.
+fn program_for_decls(declarations: Vec<Spanned<Declaration>>) -> Program {
+    Program {
+        declarations,
+        rust_module_path: None,
+        warnings: Vec::new(),
+    }
+}
+
 /// Discover test files in a directory.
 pub fn discover_test_files(path: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
 
     if path.is_file() {
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if (name.starts_with("test_") || name.ends_with("_test.incn")) && name.ends_with(".incn") {
+        if is_named_test_file(path) || file_has_inline_test_module(path) {
             files.push(path.to_path_buf());
         }
     } else if path.is_dir()
@@ -31,8 +85,7 @@ pub fn discover_test_files(path: &Path) -> Vec<PathBuf> {
                     files.extend(discover_test_files(&entry_path));
                 }
             } else {
-                let name = entry_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if (name.starts_with("test_") || name.ends_with("_test.incn")) && name.ends_with(".incn") {
+                if is_named_test_file(&entry_path) || file_has_inline_test_module(&entry_path) {
                     files.push(entry_path);
                 }
             }
@@ -53,7 +106,30 @@ pub fn discover_tests_and_fixtures(file_path: &Path) -> Result<DiscoveryResult, 
     let ast = parser::parse_with_module_path(&tokens, Some(path_display.as_ref()))
         .map_err(|e| format!("Parser error: {:?}", e))?;
 
-    let import_aliases = crate::frontend::decorator_resolution::collect_import_aliases(&ast);
+    let is_named_test_file = is_named_test_file(file_path);
+    let test_module = ast.declarations.iter().find_map(|decl| match &decl.node {
+        Declaration::TestModule(test_module) => Some(test_module),
+        _ => None,
+    });
+    if is_named_test_file && test_module.is_some() {
+        return Err("RFC 018 test files must not contain `module tests:`; put inline tests in production source files or use top-level test functions in test files".to_string());
+    }
+
+    let declarations: Vec<Spanned<Declaration>> = if is_named_test_file {
+        ast.declarations.clone()
+    } else if let Some(test_module) = test_module {
+        test_module.body.clone()
+    } else {
+        Vec::new()
+    };
+
+    let mut import_aliases = crate::frontend::decorator_resolution::collect_import_aliases(&ast);
+    if !is_named_test_file {
+        let inline_program = program_for_decls(declarations.clone());
+        import_aliases.extend(crate::frontend::decorator_resolution::collect_import_aliases(
+            &inline_program,
+        ));
+    }
     let semantics =
         load_testing_marker_semantics().map_err(|e| format!("Failed to load std.testing marker semantics: {e}"))?;
 
@@ -61,16 +137,16 @@ pub fn discover_tests_and_fixtures(file_path: &Path) -> Result<DiscoveryResult, 
     let mut fixtures = Vec::new();
 
     let mut fixture_names: Vec<String> = Vec::new();
-    for decl in &ast.declarations {
-        if let crate::frontend::ast::Declaration::Function(func) = &decl.node
+    for decl in &declarations {
+        if let Declaration::Function(func) = &decl.node
             && has_fixture_decorator(&func.decorators, &import_aliases, &semantics)
         {
             fixture_names.push(func.name.clone());
         }
     }
 
-    for decl in &ast.declarations {
-        if let crate::frontend::ast::Declaration::Function(func) = &decl.node {
+    for decl in &declarations {
+        if let Declaration::Function(func) = &decl.node {
             if has_fixture_decorator(&func.decorators, &import_aliases, &semantics) {
                 let (scope, autouse) = extract_fixture_args(&func.decorators, &import_aliases, &semantics);
                 let dependencies = extract_fixture_dependencies(&func.params, &fixture_names);
@@ -314,6 +390,14 @@ mod tests {
         Ok(file)
     }
 
+    /// Write Incan source to a temp file that does not use a conventional test-file name.
+    fn write_source_file(source: &str) -> Result<tempfile::NamedTempFile, Box<dyn std::error::Error>> {
+        let mut file = tempfile::Builder::new().prefix("module_").suffix(".incn").tempfile()?;
+        file.write_all(source.as_bytes())?;
+        file.flush()?;
+        Ok(file)
+    }
+
     // ---- Basic test discovery ----
 
     #[test]
@@ -364,6 +448,102 @@ def test_only_this() -> None:
 
         assert_eq!(result.tests.len(), 1, "only test_ prefixed functions are tests");
         assert_eq!(result.tests[0].function_name, "test_only_this");
+        Ok(())
+    }
+
+    #[test]
+    fn discover_test_files_includes_source_files_with_inline_module_tests() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let src_dir = dir.path().join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        let inline_path = src_dir.join("math.incn");
+        let helper_path = src_dir.join("helpers.incn");
+        std::fs::write(
+            &inline_path,
+            r#"
+def add(a: int, b: int) -> int:
+    return a + b
+
+module tests:
+    from std.testing import assert_eq
+
+    def test_add() -> None:
+        assert_eq(add(2, 3), 5)
+"#,
+        )?;
+        std::fs::write(
+            &helper_path,
+            r#"
+def helper() -> int:
+    return 42
+"#,
+        )?;
+
+        let discovered = discover_test_files(dir.path());
+
+        assert!(
+            discovered.contains(&inline_path),
+            "source file with inline `module tests:` should be discovered"
+        );
+        assert!(
+            !discovered.contains(&helper_path),
+            "ordinary source file without inline tests should not be discovered"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn discover_inline_module_tests_and_fixtures() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+from std.testing import fixture
+
+def test_not_discovered_from_production_scope() -> None:
+    pass
+
+def helper() -> int:
+    return 42
+
+module tests:
+    from std.testing import fixture
+
+    @fixture
+    def inline_fixture() -> int:
+        return helper()
+
+    def test_inline(inline_fixture: int) -> None:
+        pass
+"#;
+        let file = write_source_file(source)?;
+        let result = discover_tests_and_fixtures(file.path())?;
+
+        assert_eq!(
+            result.tests.len(),
+            1,
+            "only inline test-module functions are discovered"
+        );
+        assert_eq!(result.tests[0].function_name, "test_inline");
+        assert_eq!(result.tests[0].required_fixtures, vec!["inline_fixture".to_string()]);
+        assert_eq!(result.fixtures.len(), 1, "inline fixture is discovered");
+        assert_eq!(result.fixtures[0].name, "inline_fixture");
+        Ok(())
+    }
+
+    #[test]
+    fn discover_test_file_rejects_module_tests() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+module tests:
+    def test_inline() -> None:
+        pass
+"#;
+        let file = write_test_file(source)?;
+        let err = discover_tests_and_fixtures(file.path())
+            .err()
+            .ok_or("expected test file with inline module tests to fail discovery")?;
+
+        assert!(
+            err.contains("must not contain `module tests:`"),
+            "expected RFC 018 inline-module diagnostic, got: {err}"
+        );
         Ok(())
     }
 

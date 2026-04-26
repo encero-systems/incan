@@ -38,6 +38,7 @@ How to install, configure, and use Incan [Tooling].
 [File I/O]:language/how-to/file_io.md
 [Async Programming]:language/how-to/async_programming.md
 [Derives & Traits]:language/reference/derives_and_traits.md
+[Testing in Incan]:language/how-to/testing_stdlib.md
 [Scopes & Name Resolution]:language/explanation/scopes_and_name_resolution.md
 [Imports & Modules]:language/explanation/imports_and_modules.md
 [Rust Interop]:language/how-to/rust_interop.md
@@ -53,6 +54,7 @@ How to write Incan code: [Language].
 | [File I/O]                 | Reading, writing files and path handling               |
 | [Async Programming]        | Async/await with Tokio                                 |
 | [Derives & Traits]         | Derive macros and trait system                         |
+| [Testing in Incan]         | Inline `module tests:`, assertions, fixtures, markers  |
 | [Scopes & Name Resolution] | Block scoping, shadowing, and how names are resolved   |
 | [Imports & Modules]        | Module system, imports, and built-in functions         |
 | [Rust Interop]             | Using Rust crates directly from Incan                  |

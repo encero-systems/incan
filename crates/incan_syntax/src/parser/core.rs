@@ -106,6 +106,7 @@ impl<'a> Parser<'a> {
         let mut declarations = Vec::new();
         let mut rust_module_path: Option<Spanned<String>> = None;
         let mut seen_non_doc_decl = false;
+        let mut seen_test_module = false;
 
         // Skip leading newlines
         self.skip_newlines();
@@ -142,6 +143,15 @@ impl<'a> Parser<'a> {
             // ---- Context: normal declarations ----
             match self.declaration() {
                 Ok(decl) => {
+                    if matches!(decl.node, Declaration::TestModule(_)) {
+                        if seen_test_module {
+                            self.errors.push(CompileError::syntax(
+                                "Only one `module tests:` block is allowed per file".to_string(),
+                                decl.span,
+                            ));
+                        }
+                        seen_test_module = true;
+                    }
                     self.activate_soft_keywords_for_declaration(&decl.node);
                     if !matches!(decl.node, Declaration::Docstring(_)) {
                         seen_non_doc_decl = true;

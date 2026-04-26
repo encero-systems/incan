@@ -5652,6 +5652,130 @@ def main() -> None:
 }
 
 #[test]
+fn test_rfc018_assert_is_some_binding_is_visible_after_assert() {
+    let source = r#"
+import std.testing
+
+def unwrap_name(value: Option[str]) -> str:
+  assert value is Some(name)
+  return name
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc018_assert_is_result_bindings_are_visible_after_assert() {
+    let source = r#"
+import std.testing
+
+def unwrap_ok(value: Result[int, str]) -> int:
+  assert value is Ok(number)
+  return number
+
+def unwrap_err(value: Result[int, str]) -> str:
+  assert value is Err(message)
+  return message
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc018_assert_is_none_and_wildcard_patterns_typecheck() {
+    let source = r#"
+import std.testing
+
+def check_option(value: Option[int], other: Option[str]) -> None:
+  assert value is None
+  assert other is Some(_)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc018_assert_raises_accepts_builtin_error_vocabulary() {
+    let source = r#"
+def explode() -> None:
+  pass
+
+def check() -> None:
+  assert explode() raises ValueError, "expected failure"
+  assert explode() raises AssertionError
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc018_assert_raises_rejects_unknown_error_type() {
+    let source = r#"
+def explode() -> None:
+  pass
+
+def check() -> None:
+  assert explode() raises MadeUpError
+"#;
+    let errs = check_str_err(source, "unknown assert raises error type should fail");
+    assert!(
+        errs.iter().any(|e| e.message.contains("MadeUpError")),
+        "Expected unknown error type diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rfc018_assert_is_pattern_rejects_wrong_scrutinee_type() {
+    let source = r#"
+import std.testing
+
+def broken(value: int) -> None:
+  assert value is Some(inner)
+"#;
+    let errs = check_str_err(source, "assert is Some on non-Option should fail");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Option[_]") && e.message.contains("int")),
+        "Expected Option mismatch diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rfc018_assert_is_pattern_rejects_nested_and_multiple_bindings() {
+    let nested = r#"
+import std.testing
+
+def broken(value: Option[Result[int, str]]) -> None:
+  assert value is Some(Ok(inner))
+"#;
+    let nested_errs = check_str_err(nested, "nested assert pattern should fail");
+    assert!(
+        nested_errs
+            .iter()
+            .any(|e| e.message.contains("Expected assert `is` pattern")
+                || e.message.contains("patterns only support a single identifier or `_`")
+                || e.message.contains("patterns require exactly one binding or `_`")),
+        "Expected nested-pattern diagnostic; got: {:?}",
+        nested_errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+
+    let multiple = r#"
+import std.testing
+
+def broken(value: Option[int]) -> None:
+  assert value is Some(left, right)
+"#;
+    let multiple_errs = check_str_err(multiple, "multiple assert bindings should fail");
+    assert!(
+        multiple_errs
+            .iter()
+            .any(|e| e.message.contains("Expected assert `is` pattern")
+                || e.message.contains("patterns only support a single identifier or `_`")
+                || e.message.contains("patterns require exactly one binding or `_`")),
+        "Expected multiple-binding diagnostic; got: {:?}",
+        multiple_errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_known_stdlib_web_submodule_is_accepted() {
     let source = "from std.web.app import App\n";
     let result = check_str(source);

@@ -28,6 +28,8 @@ pub enum Statement {
     For(ForStmt),
     /// Expression statement
     Expr(Spanned<Expr>),
+    /// `assert expr`, `assert expr, msg`, `assert call() raises Error`, or `assert value is Pattern`.
+    Assert(AssertStmt),
     /// `pass` or `...`
     Pass,
     /// `break` / `break expr` - exit the innermost loop, optionally producing a loop-expression value
@@ -179,8 +181,31 @@ pub struct ForStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssertStmt {
-    pub condition: Spanned<Expr>,
+    /// Structured assertion form selected by the parser.
+    pub kind: AssertKind,
+    /// Optional failure message after the assertion payload.
     pub message: Option<Spanned<Expr>>,
+}
+
+/// Parser-owned shape of RFC 018 assertion syntax.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssertKind {
+    /// Ordinary boolean assertion: `assert expr`.
+    Condition(Spanned<Expr>),
+    /// Pattern assertion: `assert value is Some(name)`.
+    IsPattern {
+        /// Value being matched by the assertion pattern.
+        value: Spanned<Expr>,
+        /// Limited Option/Result pattern accepted by RFC 018.
+        pattern: Spanned<Pattern>,
+    },
+    /// Runtime-error assertion: `assert call() raises ErrorType`.
+    Raises {
+        /// Call expected to raise the requested runtime error type.
+        call: Spanned<Expr>,
+        /// Runtime error type named after `raises`.
+        error_type: Spanned<Type>,
+    },
 }
 
 /// Generic surface statement node emitted by parser handoff.

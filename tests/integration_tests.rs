@@ -3422,6 +3422,9 @@ mod test_runner_e2e {
     use super::incan_debug_binary;
     use std::path::Path;
     use std::process::Command;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_PROJECT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     /// Create a temp directory with a single test file and return the directory path.
     fn write_test_project(filename: &str, source: &str) -> std::path::PathBuf {
@@ -3432,7 +3435,8 @@ mod test_runner_e2e {
             panic!("system time before UNIX epoch");
         };
         let uniq = duration.as_nanos();
-        dir.push(format!("incan_e2e_test_{}", uniq));
+        let seq = TEST_PROJECT_COUNTER.fetch_add(1, Ordering::Relaxed);
+        dir.push(format!("incan_e2e_test_{}_{}_{}", std::process::id(), seq, uniq));
         let Ok(()) = std::fs::create_dir_all(&dir) else {
             panic!("failed to create temp dir");
         };
@@ -3478,6 +3482,22 @@ mod test_runner_e2e {
             .current_dir(cwd)
             .output()
             .unwrap_or_else(|e| panic!("failed to run `incan test {relative_path}`: {}", e))
+    }
+
+    /// Run `incan build <entry> <out_dir>` for an inline-test production source.
+    fn run_incan_build(entry: &Path, out_dir: &Path) -> std::process::Output {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "build",
+                entry.to_string_lossy().as_ref(),
+                out_dir.to_string_lossy().as_ref(),
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output();
+        let Ok(output) = output else {
+            panic!("failed to run `incan build`");
+        };
+        output
     }
 
     // ---- Passing test ----
@@ -4006,6 +4026,201 @@ def test_assert_statement_sugar() -> None:
             stdout.contains("PASSED") || stdout.contains("passed"),
             "expected PASSED in output.\nstdout:\n{}",
             stdout,
+        );
+    }
+
+    #[test]
+    fn e2e_inline_module_tests_are_discovered_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "inline_module_tests_run"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::write(
+            src_dir.join("main.incn"),
+            r#"
+def add(a: int, b: int) -> int:
+    return a + b
+
+def main() -> None:
+    pass
+
+module tests:
+    from std.testing import assert_eq
+
+    def test_addition() -> None:
+        assert_eq(add(2, 3), 5)
+"#,
+        )?;
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected inline module test run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("1 passed"),
+            "expected inline test to run.\nstdout:\n{}",
+            stdout
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_inline_module_tests_can_access_private_enclosing_names() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "inline_private_access"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::write(
+            src_dir.join("main.incn"),
+            r#"
+def secret() -> str:
+    return "private"
+
+def main() -> None:
+    pass
+
+module tests:
+    from std.testing import assert_eq
+
+    def test_secret() -> None:
+        assert_eq(secret(), "private")
+"#,
+        )?;
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected inline module test to access enclosing private helper.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_inline_module_test_imports_do_not_affect_build() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "inline_imports_do_not_affect_build"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        let entry = src_dir.join("main.incn");
+        std::fs::write(
+            &entry,
+            r#"
+def main() -> None:
+    println("production")
+
+module tests:
+    from std.testing import assert_eq
+
+    def test_production() -> None:
+        assert_eq(1 + 1, 2)
+"#,
+        )?;
+
+        let out_dir = dir.join("out");
+        let output = run_incan_build(&entry, &out_dir);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected production build to ignore inline test imports.\nstderr:\n{}",
+            stderr,
+        );
+        let main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        assert!(
+            !main_rs.contains("__incan_std::testing"),
+            "inline test import should not leak into generated production code:\n{}",
+            main_rs,
+        );
+        assert!(
+            !main_rs.contains("test_production"),
+            "inline test function should not leak into generated production code:\n{}",
+            main_rs,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_assert_failure_message_is_reported() {
+        let dir = write_test_project(
+            "test_assert_message.incn",
+            r#"
+def test_message() -> None:
+    assert False, "custom boom"
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let combined = format!("{stdout}\n{stderr}");
+
+        assert!(
+            !output.status.success(),
+            "expected assertion failure test to fail.\n{}",
+            combined,
+        );
+        assert!(
+            combined.contains("AssertionError: custom boom"),
+            "expected custom assertion message in output.\n{}",
+            combined,
+        );
+    }
+
+    #[test]
+    fn e2e_assert_eq_failure_reports_kind_and_message() {
+        let dir = write_test_project(
+            "test_assert_eq_message.incn",
+            r#"
+def test_eq_message() -> None:
+    assert 1 == 2, "math broke"
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let combined = format!("{stdout}\n{stderr}");
+
+        assert!(
+            !output.status.success(),
+            "expected assertion failure test to fail.\n{}",
+            combined,
+        );
+        assert!(
+            combined.contains("AssertionError: math broke"),
+            "expected custom equality assertion message in output.\n{}",
+            combined,
+        );
+        assert!(
+            combined.contains("left != right"),
+            "expected equality failure kind in output.\n{}",
+            combined,
         );
     }
 

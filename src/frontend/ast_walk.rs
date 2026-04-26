@@ -23,7 +23,8 @@
 //! - import-path traversal
 
 use crate::frontend::ast::{
-    CallArg, Condition, Declaration, DecoratorArg, DecoratorArgValue, Expr, MatchBody, Program, Spanned, Statement,
+    AssertKind, CallArg, Condition, Declaration, DecoratorArg, DecoratorArgValue, Expr, MatchBody, Program, Spanned,
+    Statement,
 };
 
 /// Returns `true` if any expression in `program` satisfies `pred`.
@@ -105,6 +106,7 @@ where
                 || params_have_expr(&f.params, pred)
                 || any_expr_in_body_impl(&f.body, pred)
         }
+        Declaration::TestModule(test_module) => test_module.body.iter().any(|decl| declaration_has_expr(decl, pred)),
     }
 }
 
@@ -183,6 +185,7 @@ where
             a.targets.iter().any(|target| expr_has(&target.node, pred)) || expr_has(&a.value.node, pred)
         }
         Statement::ChainedAssignment(a) => expr_has(&a.value.node, pred),
+        Statement::Assert(assert_stmt) => assert_has_expr(assert_stmt, pred),
         Statement::Surface(surface_stmt) => match &surface_stmt.payload {
             crate::frontend::ast::SurfaceStmtPayload::KeywordArgs(args) => {
                 args.iter().any(|arg| expr_has(&arg.node, pred))
@@ -216,6 +219,22 @@ where
         Statement::Break(Some(expr)) => expr_has(&expr.node, pred),
         Statement::Return(None) | Statement::Break(None) | Statement::Pass | Statement::Continue => false,
     }
+}
+
+fn assert_has_expr<F>(assert_stmt: &crate::frontend::ast::AssertStmt, pred: &mut F) -> bool
+where
+    F: FnMut(&Expr) -> bool,
+{
+    let has_core_expr = match &assert_stmt.kind {
+        AssertKind::Condition(condition) => expr_has(&condition.node, pred),
+        AssertKind::IsPattern { value, .. } => expr_has(&value.node, pred),
+        AssertKind::Raises { call, .. } => expr_has(&call.node, pred),
+    };
+    has_core_expr
+        || assert_stmt
+            .message
+            .as_ref()
+            .is_some_and(|message| expr_has(&message.node, pred))
 }
 
 fn condition_has_expr<F>(condition: &Condition, pred: &mut F) -> bool

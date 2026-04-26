@@ -290,6 +290,7 @@ fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Ty
             .find_map(|e| call_site_type_in_expr(e, offset))
             .or_else(|| call_site_type_in_expr(&t.value, offset)),
         Statement::ChainedAssignment(c) => call_site_type_in_expr(&c.value, offset),
+        Statement::Assert(assert_stmt) => call_site_type_in_assert_stmt(assert_stmt, offset),
         Statement::Surface(s) => match &s.payload {
             crate::frontend::ast::SurfaceStmtPayload::KeywordArgs(exprs) => {
                 exprs.iter().find_map(|e| call_site_type_in_expr(e, offset))
@@ -299,6 +300,24 @@ fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Ty
         Statement::Pass | Statement::Break(None) | Statement::Continue => None,
         Statement::VocabBlock(_) => None,
     }
+}
+
+fn call_site_type_in_assert_stmt(
+    assert_stmt: &crate::frontend::ast::AssertStmt,
+    offset: usize,
+) -> Option<&Spanned<Type>> {
+    let core_hit = match &assert_stmt.kind {
+        crate::frontend::ast::AssertKind::Condition(condition) => call_site_type_in_expr(condition, offset),
+        crate::frontend::ast::AssertKind::IsPattern { value, .. } => call_site_type_in_expr(value, offset),
+        crate::frontend::ast::AssertKind::Raises { call, error_type } => call_site_type_in_expr(call, offset)
+            .or_else(|| (error_type.span.start <= offset && offset <= error_type.span.end).then_some(error_type)),
+    };
+    core_hit.or_else(|| {
+        assert_stmt
+            .message
+            .as_ref()
+            .and_then(|message| call_site_type_in_expr(message, offset))
+    })
 }
 
 /// Search a control-flow condition for explicit call-site type arguments at the

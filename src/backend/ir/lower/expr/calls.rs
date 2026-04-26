@@ -3,8 +3,8 @@
 
 use super::super::super::TypedExpr;
 use super::super::super::expr::{
-    BuiltinFn, IrCallArg, IrExprKind, IrInteropCoercionKind, MatchArm, MethodCallArgPolicy, Pattern, VarAccess,
-    VarRefKind,
+    BuiltinFn, IrCallArg, IrExprKind, IrInteropCoercionKind, Literal as IrLiteral, MatchArm, MethodCallArgPolicy,
+    Pattern, VarAccess, VarRefKind,
 };
 use super::super::super::types::IrType;
 use super::super::AstLowering;
@@ -219,6 +219,29 @@ impl AstLowering {
         for (arg_ir, arg_ast) in args_ir.iter_mut().zip(args.iter()) {
             let arg_span = Self::call_arg_expr(arg_ast).span;
             arg_ir.expr = self.wrap_with_rust_arg_coercion(arg_ir.expr.clone(), arg_span)?;
+        }
+        if imported_callee_path.as_ref().is_some_and(|path| {
+            path.len() == 3 && path[0] == "std" && path[1] == "testing" && path[2] == "assert_raises"
+        }) && args_ir
+            .get(1)
+            .is_none_or(|arg| !matches!(arg.expr.kind, IrExprKind::Literal(IrLiteral::StaticStr(_))))
+        {
+            let Some(error_type) = type_args.first() else {
+                return Err(LoweringError {
+                    message: "std.testing.assert_raises requires an error type argument".to_string(),
+                    span: call_span.into(),
+                });
+            };
+            args_ir.insert(
+                1,
+                IrCallArg {
+                    name: None,
+                    expr: TypedExpr::new(
+                        IrExprKind::Literal(IrLiteral::StaticStr(error_type.node.to_string())),
+                        IrType::StaticStr,
+                    ),
+                },
+            );
         }
         let ret_ty = if let IrType::Function { ret, .. } = &func.ty {
             (**ret).clone()

@@ -1,6 +1,6 @@
 # RFC 018: language primitives for testing
 
-- **Status:** Planned
+- **Status:** In Progress
 - **Created:** 2026-01-14
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 019 (test runner and CLI), RFC 001 (language portions; superseded), RFC 002 (language portions; superseded)
@@ -307,7 +307,7 @@ Minimum diagnostics guarantee:
 - On failure, assertion output must include the optional message (if provided) and enough detail to diagnose the failing
 condition.
 - For equality/inequality assertions (`assert a == b` / `assert a != b`), the minimum guarantee is that the output
-includes both “left” and “right” values (via `Debug`-style formatting) plus the optional message.
+identifies the failed comparison kind and includes the optional message when one is provided.
 
 Runtime error model:
 
@@ -348,23 +348,23 @@ Rules:
 Full signatures (required `testing` API surface for this RFC):
 
 ```incan
-assert(condition: bool, msg: str = "") -> None
-assert_true(condition: bool, msg: str = "") -> None
-assert_false(condition: bool, msg: str = "") -> None
-assert_eq[T: Debug](left: T, right: T, msg: str = "") -> None
-assert_ne[T: Debug](left: T, right: T, msg: str = "") -> None
-assert_is_some[T](option: Option[T], msg: str = "") -> T
-assert_is_none[T](option: Option[T], msg: str = "") -> None
-assert_is_ok[T, E](result: Result[T, E], msg: str = "") -> T
-assert_is_err[T, E](result: Result[T, E], msg: str = "") -> E
-assert_raises[E](block: () -> None, msg: str = "") -> E
+assert(condition: bool, msg: str = "assertion failed") -> None
+assert_true(condition: bool, msg: str = "assertion failed: expected true") -> None
+assert_false(condition: bool, msg: str = "assertion failed: expected false") -> None
+assert_eq[T](left: T, right: T, msg: str = "assertion failed: left != right") -> None
+assert_ne[T](left: T, right: T, msg: str = "assertion failed: left == right") -> None
+assert_is_some[T](option: Option[T], msg: str = "assertion failed: expected Some, got None") -> T
+assert_is_none[T](option: Option[T], msg: str = "assertion failed: expected None, got Some") -> None
+assert_is_ok[T, E](result: Result[T, E], msg: str = "assertion failed: expected Ok, got Err") -> T
+assert_is_err[T, E](result: Result[T, E], msg: str = "assertion failed: expected Err, got Ok") -> E
+assert_raises[E](block: () -> None, msg: str = "") -> None
 ```
 
-Trait bounds for formatting:
+Trait bounds:
 
-- `assert_eq` and `assert_ne` require `T: Debug` so that failure output can render both values.
-- If `T` does not implement `Debug`, the compiler must emit a diagnostic suggesting `@derive(Debug)` on the type.
-- Other assertion helpers do not require `Debug` on their type parameters (they only report success/failure, not values).
+- `assert_eq` and `assert_ne` require the comparison operation to typecheck for `T`.
+- Assertion failure messages report the assertion kind and optional custom message. They do not require `Debug` formatting of compared values.
+- Other assertion helpers do not require extra trait bounds on their type parameters.
 
 Desugaring rule used by the compiler:
 
@@ -525,12 +525,89 @@ Legend:
 
 ## Layers affected
 
-- **Lexer** — `assert` must be treated as a soft keyword activated by `std.testing` imports, not a hard keyword. The lexer emits `Ident("assert")`; the parser promotes it via the keyword registry.
+- **Lexer** — `assert` must be treated as a soft keyword in statement position, not as a hard reserved word. The lexer emits `Ident("assert")`; the parser promotes it to the assertion statement form without requiring a `std.testing` import.
 - **Parser** — must parse the `assert <expr>` form, the `assert <expr>, <msg>` form, and the `assert <expr> raises <Type>` form as distinct AST nodes; must parse and validate `module tests:` as a reserved inline block producing a `TestModule` AST node; must enforce that `module tests:` appears at most once per file at module scope.
 - **Typechecker** — must gate resolution of test-only decorators and helpers behind `testing`-activated import context; must validate that names inside `module tests:` are not visible outside and that the block has read access to private module members.
 - **Lowering** — must lower `assert <expr>` to the appropriate `testing.assert_*` call based on expression shape (equality, inequality, option/result, pattern binding); must lower `assert <expr> raises <Type>` to `testing.assert_raises`; must strip `module tests:` bodies from non-test compilation modes.
 - **Stdlib (`std.testing`)** — `assert_eq`, `assert_ne`, `assert_is_some`, `assert_is_none`, `assert_raises`, `assert`, and their message-accepting overloads must conform to the desugaring rules specified in this RFC.
 - **CLI** — `incan build` and `incan run` must strip `module tests:` bodies; `incan --check` must typecheck them; `incan test` must include them in the compilation unit.
+
+## Implementation Plan
+
+### Phase 1: Parser, AST, and formatting
+
+- Parse `assert`, optional assertion messages, `assert ... raises`, and the supported `is Some/None/Ok/Err` pattern-binding forms without requiring a `std.testing` import.
+- Represent inline `module tests:` blocks in the AST with stable spans and enforce the file-level placement/cardinality rules.
+- Keep formatter and LSP syntax behavior aligned with the parsed surface.
+
+### Phase 2: Typechecking and scope rules
+
+- Typecheck assertion expressions, assertion messages, raises targets, and limited pattern bindings with span-precise diagnostics for unsupported forms.
+- Enforce inline test-module scoping: enclosing names are visible inside `module tests:`, and names/imports declared inside do not leak out.
+- Preserve `std.testing`-gated recognition for runner-facing decorators and helpers while keeping the language `assert` primitive always-on.
+
+### Phase 3: Lowering, emission, and runtime behavior
+
+- Lower each assertion form to the corresponding `std.testing` helper or intrinsic-compatible runtime behavior, including message propagation and equality/inequality value formatting.
+- Strip inline `module tests:` bodies from build/run emission while keeping them available to check/test compilation modes.
+- Ensure generated Rust compiles for production assertions and inline test modules.
+
+### Phase 4: Stdlib, docs, and release readiness
+
+- Align `std.testing` helper signatures and Rust backing functions with the RFC surface.
+- Add parser, typechecker, codegen, integration, and docs coverage for the accepted language behavior.
+- Update user-facing docs, release notes, RFC progress state, and the active development version.
+
+## Progress Checklist
+
+### Spec / RFC lifecycle
+
+- [x] Review RFC 018 for lifecycle readiness and resolve stale wording that conflicted with always-on `assert` semantics.
+- [x] Move RFC 018 from `Planned` to `In Progress` because implementation work has been picked up.
+- [x] Keep RFC 018 checklist current as implementation phases land.
+
+### Parser / AST / formatter
+
+- [x] Parser: parse `assert <expr>` without requiring `std.testing`.
+- [x] Parser: parse optional assertion messages.
+- [x] Parser: parse and validate `assert <call-expr> raises <ErrorType>`.
+- [x] Parser/AST: represent supported assertion pattern-binding forms.
+- [x] Parser/AST: represent inline `module tests:` blocks and enforce cardinality/placement rules.
+- [x] Formatter/LSP: preserve syntax and diagnostics for the new statement forms.
+
+### Typechecker / scope
+
+- [x] Typechecker: require assert conditions to typecheck as `bool`.
+- [x] Typechecker: require assertion messages to typecheck as `str`.
+- [x] Typechecker: validate raises target/runtime-error requirements or reject unsupported targets explicitly.
+- [x] Typechecker: introduce allowed `Some`/`Ok`/`Err` assertion bindings into the current lexical scope.
+- [x] Typechecker: reject unsupported nested/multi-binding assertion patterns.
+- [x] Typechecker: enforce inline test-module scope visibility and non-leakage.
+- [x] Typechecker: keep `std.testing` decorator/helper recognition gated by resolved `std.testing` imports.
+
+### Lowering / emission / runtime
+
+- [x] Lowering: map boolean, equality, inequality, option/result, and raises assertions to the RFC-defined helper behavior.
+- [x] Emission: generate compiling Rust for assertion helper calls and assertion failure paths.
+- [x] Emission/CLI: strip inline `module tests:` bodies from build/run outputs.
+- [x] Check/test modes: typecheck inline `module tests:` blocks in the appropriate contexts.
+- [x] Runtime/std.testing: align helper message defaults, panic behavior, and value formatting with RFC 018.
+
+### Tests
+
+- [x] Parser tests cover accepted and rejected assertion syntax.
+- [x] Parser tests cover inline `module tests:` placement/cardinality.
+- [x] Typechecker tests cover assertion typing, message typing, binding scope, and unsupported patterns.
+- [x] Codegen snapshots cover the primary assertion lowering forms.
+- [x] Integration tests cover runtime assertion failures, optional messages, inline `module tests:` execution, and inline test stripping behavior.
+- [x] Existing `std.testing` marker/runner tests continue to pass.
+
+### Docs / release
+
+- [x] Update language tutorial/reference docs for always-on `assert` and inline `module tests:`.
+- [x] Update `std.testing` docs to separate language assertions from helper APIs and runner-facing decorators.
+- [x] Update current release notes for RFC 018.
+- [x] Bump the active `0.3.0-dev.N` version by one before closeout.
 
 ## Design Decisions
 

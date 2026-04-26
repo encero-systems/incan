@@ -179,7 +179,8 @@ impl Formatter {
             | Declaration::Class(_)
             | Declaration::Trait(_)
             | Declaration::Enum(_)
-            | Declaration::Function(_) => DeclSpacingClass::BodyBearing,
+            | Declaration::Function(_)
+            | Declaration::TestModule(_) => DeclSpacingClass::BodyBearing,
         }
     }
 
@@ -193,6 +194,7 @@ impl Formatter {
                 | Declaration::Trait(_)
                 | Declaration::Enum(_)
                 | Declaration::Function(_)
+                | Declaration::TestModule(_)
         )
     }
 }

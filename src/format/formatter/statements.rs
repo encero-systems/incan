@@ -16,6 +16,7 @@ impl Formatter {
                     self.writer.newline();
                 }
             }
+            Statement::Assert(assert_stmt) => self.format_assert(assert_stmt),
             Statement::Assignment(assign) => {
                 self.format_assignment(assign);
             }
@@ -170,6 +171,28 @@ impl Formatter {
         }
         self.writer.write(" = ");
         self.format_expr(&assign.value.node);
+        self.writer.newline();
+    }
+
+    fn format_assert(&mut self, assert_stmt: &AssertStmt) {
+        self.writer.write("assert ");
+        match &assert_stmt.kind {
+            AssertKind::Condition(condition) => self.format_expr(&condition.node),
+            AssertKind::IsPattern { value, pattern } => {
+                self.format_expr(&value.node);
+                self.writer.write(" is ");
+                self.format_pattern(&pattern.node);
+            }
+            AssertKind::Raises { call, error_type } => {
+                self.format_expr(&call.node);
+                self.writer.write(" raises ");
+                self.format_type(&error_type.node);
+            }
+        }
+        if let Some(message) = &assert_stmt.message {
+            self.writer.write(", ");
+            self.format_expr(&message.node);
+        }
         self.writer.newline();
     }
 

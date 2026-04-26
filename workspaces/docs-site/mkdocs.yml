@@ -135,7 +135,7 @@ nav:
           - Module state: language/how-to/module_state.md
           - Modeling with enums: language/how-to/modeling_with_enums.md
           - Project lifecycle: language/how-to/project_lifecycle.md
-          - std.testing guide: language/how-to/testing_stdlib.md
+          - Testing: language/how-to/testing_stdlib.md
           - String processing: language/how-to/string_processing.md
           - Performance: language/how-to/performance.md
           - Rust interop: language/how-to/rust_interop.md

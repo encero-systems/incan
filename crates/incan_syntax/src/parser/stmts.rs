@@ -71,6 +71,8 @@ impl<'a> Parser<'a> {
             self.while_stmt()?
         } else if self.check_keyword(KeywordId::For) {
             self.for_stmt()?
+        } else if self.is_assert_statement_keyword() {
+            self.assert_stmt()?
         } else if let Some(vocab_block) = self.try_vocab_block_statement()? {
             vocab_block
         } else if let Some(surface_stmt) = self.try_surface_keyword_statement()? {
@@ -92,9 +94,6 @@ impl<'a> Parser<'a> {
         } else if self.check_keyword(KeywordId::Let) || self.check_keyword(KeywordId::Mut) {
             self.assignment_stmt()?
         } else {
-            if let Some(err) = self.inactive_assert_statement_error() {
-                return Err(err);
-            }
             // Could be assignment or expression
             self.assignment_or_expr_stmt()?
         };
@@ -126,12 +125,11 @@ impl<'a> Parser<'a> {
             Statement::Pass
         } else if self.check_keyword(KeywordId::Static) {
             return Err(errors::static_only_allowed_at_module_scope(self.current_span()));
+        } else if self.is_assert_statement_keyword() {
+            self.assert_stmt()?
         } else if let Some(surface_stmt) = self.try_surface_keyword_statement()? {
             surface_stmt
         } else {
-            if let Some(err) = self.inactive_assert_statement_error() {
-                return Err(err);
-            }
             // Expression statement
             let expr = self.expression()?;
             Statement::Expr(expr)
@@ -339,6 +337,156 @@ impl<'a> Parser<'a> {
         Ok(Statement::Return(expr))
     }
 
+    /// Return `true` when the current token is statement-position `assert`.
+    ///
+    /// RFC 018 keeps `assert` soft in the lexer, so statement parsing recognizes the identifier spelling directly
+    /// while assignment-like uses (`assert = value`, `assert: T = value`) remain ordinary identifiers.
+    fn is_assert_statement_keyword(&self) -> bool {
+        if !matches!(
+            &self.peek().kind,
+            TokenKind::Ident(name) if name == incan_core::lang::keywords::as_str(KeywordId::Assert)
+        ) {
+            return false;
+        }
+
+        !matches!(
+            self.peek_next().kind,
+            TokenKind::Operator(OperatorId::Eq)
+                | TokenKind::Punctuation(PunctuationId::Colon)
+                | TokenKind::Punctuation(PunctuationId::Comma)
+                | TokenKind::Operator(OperatorId::PlusEq)
+                | TokenKind::Operator(OperatorId::MinusEq)
+                | TokenKind::Operator(OperatorId::StarEq)
+                | TokenKind::Operator(OperatorId::SlashEq)
+                | TokenKind::Operator(OperatorId::SlashSlashEq)
+                | TokenKind::Operator(OperatorId::PercentEq)
+        )
+    }
+
+    /// Parse the RFC 018 `assert` statement family.
+    ///
+    /// Ordinary expressions, `is` pattern assertions, `raises` assertions, and optional messages are represented
+    /// distinctly so later compiler stages can lower without reparsing expression syntax.
+    fn assert_stmt(&mut self) -> Result<Statement, CompileError> {
+        self.expect(&TokenKind::Ident(String::new()), "Expected 'assert'")?;
+
+        let condition = self.expression()?;
+        let kind = if self.match_ident_text("raises") {
+            self.assert_raises_kind(condition)?
+        } else {
+            self.assert_condition_kind(condition)?
+        };
+        let message = if self.match_punct(PunctuationId::Comma) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+
+        Ok(Statement::Assert(AssertStmt { kind, message }))
+    }
+
+    /// Convert the parsed condition expression into a structured assertion form.
+    fn assert_condition_kind(&self, condition: Spanned<Expr>) -> Result<AssertKind, CompileError> {
+        let Expr::Binary(left, BinaryOp::Is, right) = condition.node else {
+            return Ok(AssertKind::Condition(condition));
+        };
+
+        let pattern = self.expr_to_assert_pattern(*right)?;
+        Ok(AssertKind::IsPattern {
+            value: *left,
+            pattern,
+        })
+    }
+
+    /// Parse the tail of `assert call() raises ErrorType`.
+    fn assert_raises_kind(&mut self, call: Spanned<Expr>) -> Result<AssertKind, CompileError> {
+        if !matches!(call.node, Expr::Call(_, _, _) | Expr::MethodCall(_, _, _, _)) {
+            return Err(CompileError::syntax(
+                "`assert ... raises` requires a call expression".to_string(),
+                call.span,
+            ));
+        }
+
+        let error_type = self.type_expr()?;
+        Ok(AssertKind::Raises { call, error_type })
+    }
+
+    /// Convert the expression form parsed after `is` into the limited RFC 018 pattern subset.
+    fn expr_to_assert_pattern(&self, expr: Spanned<Expr>) -> Result<Spanned<Pattern>, CompileError> {
+        match expr.node {
+            Expr::Literal(Literal::None) => Ok(Spanned::new(
+                Pattern::Constructor("None".to_string(), Vec::new()),
+                expr.span,
+            )),
+            Expr::Call(callee, type_args, args) => {
+                if !type_args.is_empty() {
+                    return Err(CompileError::syntax(
+                        "`assert ... is` patterns do not support explicit type arguments".to_string(),
+                        expr.span,
+                    ));
+                }
+                let Expr::Ident(name) = callee.node else {
+                    return Err(CompileError::syntax(
+                        "`assert ... is` only supports Some/Ok/Err/None patterns".to_string(),
+                        callee.span,
+                    ));
+                };
+                if !matches!(name.as_str(), "Some" | "Ok" | "Err") {
+                    return Err(CompileError::syntax(
+                        "`assert ... is` only supports Some/Ok/Err/None patterns".to_string(),
+                        callee.span,
+                    ));
+                }
+                let pattern_args = self.assert_pattern_args(args, expr.span)?;
+                Ok(Spanned::new(Pattern::Constructor(name, pattern_args), expr.span))
+            }
+            _ => Err(CompileError::syntax(
+                "`assert ... is` only supports Some/Ok/Err/None patterns".to_string(),
+                expr.span,
+            )),
+        }
+    }
+
+    /// Convert positional call arguments into the single binding/wildcard pattern allowed by RFC 018.
+    fn assert_pattern_args(
+        &self,
+        args: Vec<CallArg>,
+        span: Span,
+    ) -> Result<Vec<PatternArg>, CompileError> {
+        if args.len() != 1 {
+            return Err(CompileError::syntax(
+                "`assert ... is` patterns require exactly one binding or `_`".to_string(),
+                span,
+            ));
+        }
+
+        let Some(arg) = args.into_iter().next() else {
+            return Err(CompileError::syntax(
+                "`assert ... is` patterns require exactly one binding or `_`".to_string(),
+                span,
+            ));
+        };
+
+        let CallArg::Positional(value) = arg else {
+            return Err(CompileError::syntax(
+                "`assert ... is` patterns do not support named fields".to_string(),
+                span,
+            ));
+        };
+
+        let pattern = match value.node {
+            Expr::Ident(name) if name == "_" => Pattern::Wildcard,
+            Expr::Ident(name) => Pattern::Binding(name),
+            _ => {
+                return Err(CompileError::syntax(
+                    "`assert ... is` patterns only support a single identifier or `_`".to_string(),
+                    value.span,
+                ));
+            }
+        };
+        Ok(vec![PatternArg::Positional(Spanned::new(pattern, value.span))])
+    }
+
     fn break_stmt(&mut self) -> Result<Statement, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::Break), "Expected 'break'")?;
         let value = if !self.check(&TokenKind::Newline)
@@ -513,39 +661,6 @@ impl<'a> Parser<'a> {
 
         let name = self.identifier()?;
         Ok(Spanned::new(Pattern::Binding(name), span))
-    }
-
-    /// Targeted soft-keyword diagnostic for `assert <expr>` when `std.testing` is not imported.
-    ///
-    /// Keep `assert(...)` valid as a normal function call for backwards compatibility.
-    fn inactive_assert_statement_error(&self) -> Option<CompileError> {
-        let TokenKind::Ident(name) = &self.peek().kind else {
-            return None;
-        };
-        if name != incan_core::lang::keywords::as_str(KeywordId::Assert)
-            || self.active_soft_keywords.contains(&KeywordId::Assert)
-        {
-            return None;
-        }
-
-        let looks_like_identifier_usage = matches!(
-            self.peek_next().kind,
-            TokenKind::Punctuation(PunctuationId::LParen)
-                | TokenKind::Operator(OperatorId::Eq)
-                | TokenKind::Punctuation(PunctuationId::Colon)
-                | TokenKind::Punctuation(PunctuationId::Comma)
-                | TokenKind::Operator(OperatorId::PlusEq)
-                | TokenKind::Operator(OperatorId::MinusEq)
-                | TokenKind::Operator(OperatorId::StarEq)
-                | TokenKind::Operator(OperatorId::SlashEq)
-                | TokenKind::Operator(OperatorId::SlashSlashEq)
-                | TokenKind::Operator(OperatorId::PercentEq)
-        );
-        if looks_like_identifier_usage {
-            return None;
-        }
-
-        Some(errors::soft_keyword_requires_import(name, "testing", self.current_span()))
     }
 
     fn assignment_stmt(&mut self) -> Result<Statement, CompileError> {
