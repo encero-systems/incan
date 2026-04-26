@@ -185,15 +185,13 @@ gh issue comment <NNN> --repo dannys-code-corner/incan --body \
 
 ### GitHub actions
 
+Ensure the implementation PR body includes a closing keyword for the issue, for example `Closes #<NNN>`. Do not manually close the issue as part of the RFC bump; the PR merge should close it.
+
+Optionally post a traceability comment while the PR is still open:
+
 ```bash
-# If the implementation PR is still open, leave the issue open and post a status comment.
-# The PR should close the issue on merge via its closing keyword.
 gh issue comment <NNN> --repo dannys-code-corner/incan --body \
   "RFC has moved to **Implemented** in the implementation PR. Implementation is complete and targeted for vX.Y; the issue will close when the PR merges."
-
-# If the implementation is already merged, close the issue.
-gh issue close <NNN> --repo dannys-code-corner/incan \
-  --comment "Implementation complete. Shipped in vX.Y."
 ```
 
 ### Release notes
@@ -212,4 +210,4 @@ Add an entry to `workspaces/docs-site/docs/release_notes/<vX_Y>.md` following th
 | ------------- | ------------- | ------------------------------------------------- | ------------------------------------------- |
 | `Draft` | `Planned` | **Planned+ rule** (**File changes** above); update Status | Relabel `RFC` → `feature` |
 | `Planned` | `In Progress` | Add Implementation Plan + Progress Checklist; update Status | Post plan as issue comment |
-| `In Progress` | `Implemented` | Update Status; fill release field; move file to `closed/implemented/`; optionally rename checklist to log | Comment while PR is open, or close issue after merge |
+| `In Progress` | `Implemented` | Update Status; fill release field; move file to `closed/implemented/`; optionally rename checklist to log | Ensure PR closes issue; optional traceability comment |
