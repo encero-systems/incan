@@ -14,8 +14,8 @@ use crate::frontend::testing_markers::load_testing_marker_semantics;
 use crate::frontend::typechecker::TypeChecker;
 use crate::library_manifest::{
     ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport, FunctionExport,
-    LibraryManifest, MethodExport, ModelExport, NewtypeExport, ParamExport, ReceiverExport, StaticExport, TraitExport,
-    TypeParamExport, resolved_type_from_manifest_type_ref,
+    LibraryManifest, MethodExport, ModelExport, NewtypeExport, ParamExport, ParamKindExport, ReceiverExport,
+    StaticExport, TraitExport, TypeParamExport, resolved_type_from_manifest_type_ref,
 };
 use incan_core::interop::is_rust_capability_bound;
 use incan_core::lang::stdlib::{self, is_typechecker_only_stdlib};
@@ -734,8 +734,8 @@ impl TypeChecker {
                 Self::remap_resolved_type_with_import_aliases(&mut info.ty, imported_type_aliases);
             }
             SymbolKind::Function(info) => {
-                for (_, ty) in &mut info.params {
-                    Self::remap_resolved_type_with_import_aliases(ty, imported_type_aliases);
+                for param in &mut info.params {
+                    Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
                 }
                 Self::remap_resolved_type_with_import_aliases(&mut info.return_type, imported_type_aliases);
             }
@@ -750,8 +750,8 @@ impl TypeChecker {
                         Self::remap_resolved_type_with_import_aliases(&mut field.ty, imported_type_aliases);
                     }
                     for method in info.methods.values_mut() {
-                        for (_, ty) in &mut method.params {
-                            Self::remap_resolved_type_with_import_aliases(ty, imported_type_aliases);
+                        for param in &mut method.params {
+                            Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
                         }
                         Self::remap_resolved_type_with_import_aliases(&mut method.return_type, imported_type_aliases);
                     }
@@ -761,8 +761,8 @@ impl TypeChecker {
                         Self::remap_resolved_type_with_import_aliases(&mut field.ty, imported_type_aliases);
                     }
                     for method in info.methods.values_mut() {
-                        for (_, ty) in &mut method.params {
-                            Self::remap_resolved_type_with_import_aliases(ty, imported_type_aliases);
+                        for param in &mut method.params {
+                            Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
                         }
                         Self::remap_resolved_type_with_import_aliases(&mut method.return_type, imported_type_aliases);
                     }
@@ -770,8 +770,8 @@ impl TypeChecker {
                 TypeInfo::Newtype(info) => {
                     Self::remap_resolved_type_with_import_aliases(&mut info.underlying, imported_type_aliases);
                     for method in info.methods.values_mut() {
-                        for (_, ty) in &mut method.params {
-                            Self::remap_resolved_type_with_import_aliases(ty, imported_type_aliases);
+                        for param in &mut method.params {
+                            Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
                         }
                         Self::remap_resolved_type_with_import_aliases(&mut method.return_type, imported_type_aliases);
                     }
@@ -780,8 +780,8 @@ impl TypeChecker {
             },
             SymbolKind::Trait(info) => {
                 for method in info.methods.values_mut() {
-                    for (_, ty) in &mut method.params {
-                        Self::remap_resolved_type_with_import_aliases(ty, imported_type_aliases);
+                    for param in &mut method.params {
+                        Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
                     }
                     Self::remap_resolved_type_with_import_aliases(&mut method.return_type, imported_type_aliases);
                 }
@@ -810,7 +810,7 @@ impl TypeChecker {
             }
             ResolvedType::Function(params, return_type) => {
                 for param in params {
-                    Self::remap_resolved_type_with_import_aliases(param, imported_type_aliases);
+                    Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
                 }
                 Self::remap_resolved_type_with_import_aliases(return_type, imported_type_aliases);
             }
@@ -1027,10 +1027,17 @@ impl TypeChecker {
             .collect()
     }
 
-    fn params_from_manifest(&self, params: &[ParamExport]) -> Vec<(String, ResolvedType)> {
+    fn params_from_manifest(&self, params: &[ParamExport]) -> Vec<CallableParam> {
         params
             .iter()
-            .map(|param| (param.name.clone(), resolved_type_from_manifest_type_ref(&param.ty)))
+            .map(|param| {
+                CallableParam::named_with_default(
+                    param.name.clone(),
+                    resolved_type_from_manifest_type_ref(&param.ty),
+                    param_kind_from_manifest(param.kind),
+                    param.has_default,
+                )
+            })
             .collect()
     }
 
@@ -1187,5 +1194,13 @@ impl TypeChecker {
                     | SymbolKind::Static(_)
             )
         })
+    }
+}
+
+fn param_kind_from_manifest(kind: ParamKindExport) -> ParamKind {
+    match kind {
+        ParamKindExport::Normal => ParamKind::Normal,
+        ParamKindExport::RestPositional => ParamKind::RestPositional,
+        ParamKindExport::RestKeyword => ParamKind::RestKeyword,
     }
 }

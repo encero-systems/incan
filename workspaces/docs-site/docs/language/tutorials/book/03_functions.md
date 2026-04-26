@@ -40,9 +40,130 @@ def main() -> None:
         main()
     ```
 
-    In Incan, `main` is the program entry point when you run a file (e.g. `incan run ...`), so you don’t need an
-    `__name__` guard - it's implicit in Incan. It is, however, still good practice to keep “do work” code inside `main`,
-    and keep other files as imported helper modules.
+    In Incan, `main` is the program entry point when you run a file (e.g. `incan run ...`), so you don’t need an `__name__` guard - it's implicit in Incan. It is, however, still good practice to keep “do work” code inside `main`, and keep other files as imported helper modules.
+
+## Variadic arguments
+
+Most functions should name every parameter explicitly. Use variadic arguments when the API really wants "zero or more of the same kind of thing" and making callers build a list or dictionary by hand would make ordinary calls noisier.
+
+The mental model is:
+
+- The caller may write many arguments.
+- The function receives one typed container.
+- The annotation is the item type, not the container type.
+
+### `*args`: many positional values, one list
+
+Use `*name: T` when the extra positional values are all the same conceptual kind. Inside the function, `name` is a `List[T]`.
+
+```incan
+def sum_all(*values: int) -> int:
+    mut total: int = 0
+    for value in values:
+        total = total + value
+    return total
+
+def main() -> None:
+    println(f"sum={sum_all(1, 2, 3)}")
+```
+
+This is useful for helpers like `sum_all(1, 2, 3)`, `log("started", "ready")`, or future library APIs that accept any number of already-packaged values.
+
+### `**kwargs`: many named values, one dictionary
+
+Use `**name: T` when the function intentionally accepts an open set of same-typed named options. Inside the function, `name` is a `Dict[str, T]`.
+
+```incan
+def count_headers(path: str, **headers: str) -> int:
+    return len(headers)
+
+def main() -> None:
+    count = count_headers("/status", accept="json", trace="enabled")
+    println(f"headers={count}")
+```
+
+This is a good fit for boundary-style APIs: HTTP headers, labels, metadata, or adapter options where the valid keys may come from another system. It is not a replacement for normal parameters when the names are known and required.
+
+!!! tip "Coming from Python?"
+    Incan's spelling is intentionally familiar, but the types are stricter. Python `*args` collects a tuple and `**kwargs` collects a dict. Incan `*values: int` collects a `List[int]`, and `**headers: str` collects a `Dict[str, str]`.
+
+    Python often uses `**kwargs` as a flexible "anything goes" escape hatch. Incan does not: every captured keyword value must match the declared value type.
+
+### Combining both forms
+
+You can combine `*args` and `**kwargs` when the API has both repeated positional data and open named metadata:
+
+```incan
+def summarize(title: str, *values: int, **labels: str) -> int:
+    mut total: int = 0
+    for value in values:
+        total = total + value
+    return total
+
+def main() -> None:
+    extra = [2, 3]
+    labels = {"source": "demo"}
+    total = summarize("numbers", 1, *extra, kind="example", **labels)
+    println(f"total={total}")
+```
+
+### Unpacking existing containers
+
+If you already have a list, use `*extra` to feed it into a positional rest parameter. If you already have a dictionary, use `**labels` to feed it into a keyword rest parameter.
+
+- `*extra` requires a callee with a `*` rest parameter and `extra` must be compatible with `List[T]`.
+- `**labels` requires a callee with a `**` rest parameter and `labels` must be compatible with `Dict[str, T]`.
+
+This works through function values too, as long as the value comes from a rest-aware function:
+
+```incan
+def collect(prefix: str, *items: int, **labels: str) -> int:
+    return len(items) + len(labels)
+
+def main() -> None:
+    f = collect
+    xs = [1, 2]
+    labels = {"kind": "demo"}
+    count = f("event", 0, *xs, **labels)
+    println(f"count={count}")
+```
+
+This unpacking is intentionally static. RFC 038 also defines fixed-parameter unpacking like `point(*xy)`, but that requires the compiler to prove the unpacked value's shape before lowering the call.
+
+It is also call syntax, not collection-literal syntax. `*extra` belongs in a call like `collect(*extra)`, and `**labels` belongs in a call like `collect(**labels)`. List and dictionary literal spread is a separate feature; `[**labels]` is not valid because `**` is for mapping or keyword unpacking, not list expansion.
+
+### When not to use variadic arguments
+
+Prefer ordinary parameters when the function has a small, known contract:
+
+```incan
+def connect(host: str, port: int) -> str:
+    return f"{host}:{port}"
+```
+
+Prefer a model when options have different value types or deserve documentation:
+
+```incan
+model RequestOptions:
+    timeout_ms: int
+    retry: bool
+
+def request(path: str, options: RequestOptions) -> int:
+    return options.timeout_ms
+```
+
+Prefer packaging repeated heterogeneous data into one type before making it variadic:
+
+```incan
+model Label:
+    name: str
+    value: str
+
+def emit(*labels: Label) -> int:
+    return len(labels)
+```
+
+Normal parameters must come before rest parameters, `**kwargs` must be last, and each function can have at most one `*args` and one `**kwargs` parameter. For the full binding and lowering rules, see [Functions and calls](../../reference/functions.md).
 
 ## Docstrings
 
@@ -115,6 +236,7 @@ You'll explore this more in the [Closures](../../explanation/closures.md) chapte
 ## What to learn next
 
 - Function definitions and signatures: [Language reference (generated)](../../reference/language.md#builtin-functions)
+- Rest parameters and call binding: [Functions and calls](../../reference/functions.md)
 - Function scoping and name lookup: [Scopes & Name Resolution](../../explanation/scopes_and_name_resolution.md)
 - Closures and higher-order patterns: [Closures](../../explanation/closures.md)
 

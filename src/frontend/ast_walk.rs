@@ -357,6 +357,9 @@ where
     F: FnMut(&Expr) -> bool,
 {
     match arg {
-        CallArg::Positional(expr) | CallArg::Named(_, expr) => expr_has(&expr.node, pred),
+        CallArg::Positional(expr)
+        | CallArg::Named(_, expr)
+        | CallArg::PositionalUnpack(expr)
+        | CallArg::KeywordUnpack(expr) => expr_has(&expr.node, pred),
     }
 }

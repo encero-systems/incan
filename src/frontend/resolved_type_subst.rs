@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::frontend::symbols::{MethodInfo, ResolvedType};
+use crate::frontend::symbols::{CallableParam, MethodInfo, ResolvedType};
 
 /// Build a substitution map from declared type parameter names to concrete (or still-generic) arguments.
 ///
@@ -46,7 +46,15 @@ pub(crate) fn substitute_resolved_type(ty: &ResolvedType, map: &HashMap<String, 
             args.iter().map(|a| substitute_resolved_type(a, map)).collect(),
         ),
         ResolvedType::Function(params, ret) => ResolvedType::Function(
-            params.iter().map(|p| substitute_resolved_type(p, map)).collect(),
+            params
+                .iter()
+                .map(|p| CallableParam {
+                    name: p.name.clone(),
+                    ty: substitute_resolved_type(&p.ty, map),
+                    kind: p.kind,
+                    has_default: p.has_default,
+                })
+                .collect(),
             Box::new(substitute_resolved_type(ret, map)),
         ),
         ResolvedType::Tuple(elems) => {
@@ -69,7 +77,12 @@ pub(crate) fn substitute_method_info(info: &MethodInfo, map: &HashMap<String, Re
         params: info
             .params
             .iter()
-            .map(|(n, t)| (n.clone(), substitute_resolved_type(t, map)))
+            .map(|p| CallableParam {
+                name: p.name.clone(),
+                ty: substitute_resolved_type(&p.ty, map),
+                kind: p.kind,
+                has_default: p.has_default,
+            })
             .collect(),
         return_type: substitute_resolved_type(&info.return_type, map),
         is_async: info.is_async,

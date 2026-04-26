@@ -15,6 +15,14 @@ impl Formatter {
                 self.writer.write("=");
                 self.format_expr(&expr.node);
             }
+            CallArg::PositionalUnpack(expr) => {
+                self.writer.write("*");
+                self.format_expr(&expr.node);
+            }
+            CallArg::KeywordUnpack(expr) => {
+                self.writer.write("**");
+                self.format_expr(&expr.node);
+            }
         }
     }
 

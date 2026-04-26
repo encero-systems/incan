@@ -31,7 +31,7 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
         LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
     };
     use incan::library_manifest::{
-        ConstExport, FunctionExport, LibraryManifest, ModelExport, ParamExport, StaticExport, TypeRef,
+        ConstExport, FunctionExport, LibraryManifest, ModelExport, ParamExport, ParamKindExport, StaticExport, TypeRef,
     };
     use std::collections::HashMap;
 
@@ -64,6 +64,8 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
             ty: TypeRef::Named {
                 name: "str".to_string(),
             },
+            kind: ParamKindExport::Normal,
+            has_default: false,
         }],
         return_type: TypeRef::Named {
             name: "Widget".to_string(),
@@ -293,7 +295,7 @@ fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str) -> Strin
     };
     use incan::frontend::vocab_desugar_pass::desugar_program_vocab_blocks;
     use incan::library_manifest::{
-        FunctionExport, LibraryManifest, ParamExport, TypeRef, VocabDesugarerArtifact, VocabExports,
+        FunctionExport, LibraryManifest, ParamExport, ParamKindExport, TypeRef, VocabDesugarerArtifact, VocabExports,
     };
     use sha2::{Digest, Sha256};
     use std::collections::HashMap;
@@ -409,6 +411,8 @@ fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str) -> Strin
             ty: TypeRef::Named {
                 name: "int".to_string(),
             },
+            kind: ParamKindExport::Normal,
+            has_default: false,
         }],
         return_type: TypeRef::Named {
             name: "int".to_string(),
@@ -761,6 +765,13 @@ fn test_function_calls_codegen() {
     let source = load_test_file("function_calls");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("function_calls", rust_code);
+}
+
+#[test]
+fn test_variadic_calls_codegen() {
+    let source = load_test_file("variadic_calls");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("variadic_calls", rust_code);
 }
 
 #[test]

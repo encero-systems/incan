@@ -12,7 +12,7 @@ use crate::frontend::library_exports::{
     CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport, CheckedStaticExport, CheckedTraitExport,
     CheckedTypeAliasExport, CheckedTypeBound, CheckedTypeParam,
 };
-use crate::frontend::symbols::{ResolvedType, ValueEnumBacking, ValueEnumValue};
+use crate::frontend::symbols::{CallableParam, ValueEnumBacking, ValueEnumValue};
 
 /// Errors surfaced while reading, writing, parsing, serializing, or validating `.incnlib` manifests.
 #[derive(Debug, thiserror::Error)]
@@ -202,11 +202,25 @@ pub struct MethodExport {
     pub has_body: bool,
 }
 
-/// One exported positional parameter.
+/// One exported callable parameter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParamExport {
     pub name: String,
     pub ty: TypeRef,
+    #[serde(default)]
+    pub kind: ParamKindExport,
+    #[serde(default)]
+    pub has_default: bool,
+}
+
+/// Exported callable parameter kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ParamKindExport {
+    #[default]
+    Normal,
+    RestPositional,
+    RestKeyword,
 }
 
 /// Exported function signature metadata.
@@ -473,14 +487,26 @@ fn type_bound_from_checked(bound: &CheckedTypeBound) -> TypeBoundExport {
     }
 }
 
-fn params_from_checked(params: &[(String, ResolvedType)]) -> Vec<ParamExport> {
+fn params_from_checked(params: &[CallableParam]) -> Vec<ParamExport> {
     params
         .iter()
-        .map(|(name, ty)| ParamExport {
-            name: name.clone(),
-            ty: type_ref_from_resolved(ty),
+        .filter_map(|param| {
+            Some(ParamExport {
+                name: param.name.clone()?,
+                ty: type_ref_from_resolved(&param.ty),
+                kind: param_kind_from_ast(param.kind),
+                has_default: param.has_default,
+            })
         })
         .collect()
+}
+
+fn param_kind_from_ast(kind: crate::frontend::ast::ParamKind) -> ParamKindExport {
+    match kind {
+        crate::frontend::ast::ParamKind::Normal => ParamKindExport::Normal,
+        crate::frontend::ast::ParamKind::RestPositional => ParamKindExport::RestPositional,
+        crate::frontend::ast::ParamKind::RestKeyword => ParamKindExport::RestKeyword,
+    }
 }
 
 fn receiver_from_checked(receiver: Option<crate::frontend::ast::Receiver>) -> Option<ReceiverExport> {

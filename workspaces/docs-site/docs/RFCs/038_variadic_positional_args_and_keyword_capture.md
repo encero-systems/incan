@@ -1,28 +1,32 @@
-# RFC 038: Variadic Positional Args and Keyword-Argument Capture (`*args` / `**kwargs`)
+# RFC 038: Variadic Args and Call-Site Unpacking (`*args` / `**kwargs`)
 
-- **Status:** Draft
+- **Status:** In Progress
 - **Created:** 2026-03-07
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
     - RFC 035 (First-class named function references)
     - RFC 039 (`race` for awaitable concurrency)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/83
+- **Issue:** [#322](https://github.com/dannys-code-corner/incan/issues/322)
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
 
 ## Summary
 
-Add Python-style rest parameters (`*args` / `**kwargs`) to Incan function definitions:
+Add Python-style rest parameters (`*args` / `**kwargs`) to Incan function definitions and the matching call-site unpacking model:
 
 - `*name: T` captures extra positional arguments and binds `name` as a `List[T]`
 - `**name: V` captures extra named arguments and binds `name` as a `Dict[str, V]`
+- `f(*xs)` expands a list-like or statically shaped positional value into the call
+- `f(**kw)` expands a dict-like or statically shaped keyword value into the call
 
 This is compile-time sugar. The surface syntax is ergonomic, but the lowered model stays explicit:
 
 - a rest positional parameter lowers to an ordinary trailing `List[T]` parameter
 - a rest keyword parameter lowers to an ordinary trailing `Dict[str, V]` parameter
-- call sites that use the sugar are rewritten to construct those containers explicitly
+- rest-aware call sites are rewritten to construct those containers explicitly
+- fixed-parameter unpacking is rewritten to an ordinary ordered call after the compiler proves the unpacked shape
+- call-site unpacking is accepted only when the callee type/signature and unpacked value shape provide a deterministic compile-time binding plan
 
 This RFC is not only about Python-style convenience. It is also a foundational library-design feature. It lets Incan express APIs that naturally accept a variable number of homogeneous inputs without proliferating fixed-arity helper families. A good example is the helper surface proposed in RFC 039, where a variadic `std.async.race(*arms: RaceArm[R])` is cleaner than a permanent `race2` / `race3` / `race4` ladder.
 
@@ -81,20 +85,44 @@ race(awaitable_a, on_a, awaitable_b, on_b)
 
 That distinction is important. This RFC is about giving Incan a clean homogeneous variadic model, not a magic "any sequence of argument shapes" feature.
 
+### Call-site unpacking is part of the same feature
+
+Python users do not experience `*args`, `**kwargs`, `f(*xs)`, and `f(**kw)` as four unrelated features. They are one call-binding model with two directions:
+
+- function definitions may capture extra positional or named arguments
+- function calls may unpack existing positional or named values
+
+Incan should keep that conceptual model. The implementation may still phase the work, but the RFC should define the full call-binding surface instead of splitting fixed-parameter unpacking into a second RFC.
+
 ## Goals
 
 - Add `*name: T` and `**name: V` parameter forms.
+- Add `f(*xs)` and `f(**kw)` call-site unpacking for calls to rest-aware callables.
+- Add `f(*xs)` and `f(**kw)` call-site unpacking for ordinary fixed-parameter callables when the compiler can prove the unpacked shape.
 - Specify them as compile-time sugar over explicit trailing container parameters.
+- Preserve rest-parameter structure in callable metadata so named function values keep the same rest-call behavior as direct calls.
 - Keep the semantics deterministic and type-directed.
 - Preserve Python-like ergonomics without introducing runtime reflection.
 - Enable cleaner library APIs that naturally take "zero or more packaged values".
 
 ## Non-Goals
 
-- Call-site unpacking (`f(*xs)` / `f(**m)`) in this RFC.
+- Dynamic runtime arity dispatch for arbitrary `List[T]` / `Dict[str, T]` values when the compiler cannot prove the needed length or keys.
 - C-style variadics or raw FFI variadics.
 - Heterogeneous positional capture without packaging.
 - An `Any` type for untyped keyword captures.
+- A richer structured-options container for captured keyword arguments beyond `Dict[str, V]`.
+- Collection-literal spread such as `[*xs]` or `{**kw}`. This RFC only defines unpacking inside function call argument lists.
+
+### Why fixed-parameter unpacking belongs here
+
+It is reasonable to ask whether `f(*pair)` for `def f(a: int, b: int)` belongs with rest parameters. It does. Python presents rest capture and call-site unpacking through the same `*` / `**` spelling because both are parts of call binding.
+
+The static typing problems are different, so the rules must be explicit. Rest-directed unpacking has a known destination container. If a function declares `*items: T`, then `f(*xs)` only needs to prove that `xs` is compatible with `List[T]`. If a function declares `**labels: T`, then `f(**kw)` only needs to prove that `kw` is compatible with `Dict[str, T]`.
+
+Fixed-parameter unpacking has no such destination container. The compiler must prove the unpacked value's arity, parameter order, named-key set, duplicate bindings, defaults, and per-field types before it can lower the call. Lists do not normally carry length in their type, and ordinary dictionaries do not normally carry a statically known key set. That means fixed-parameter unpacking needs stricter shape-proof rules, not a separate RFC.
+
+Collection-literal spread is also separate. If Incan adds it later, `[*xs]` would be the natural list-spread shape and `{**kw}` would be the natural dictionary-spread shape. `[**xs]` should remain invalid: `**` means keyword or mapping unpacking, not sequence expansion.
 
 ## Guide-level explanation
 
@@ -146,6 +174,56 @@ def render(template: str, *values: str, **opts: str) -> str:
     return template  # placeholder
 ```
 
+### Call-site unpacking
+
+Use `*expr` at a call site to pass an existing list-like value into a positional rest parameter. Use `**expr` to pass an existing dict-like value into a keyword rest parameter.
+
+```incan
+def log(level: str, *msgs: str) -> None:
+    for msg in msgs:
+        println(f"[{level}] {msg}")
+
+def main() -> None:
+    parts = ["started", "listening"]
+    log("info", *parts)
+    log("info", "boot", *parts, "ready")
+```
+
+Keyword unpacking follows the same rule for functions that declare a keyword rest parameter:
+
+```incan
+def connect(host: str, **opts: str) -> None:
+    ...
+
+def main() -> None:
+    defaults = {"tls": "true"}
+    connect("localhost", **defaults, user="danny")
+```
+
+Call-site unpacking also applies to fixed parameters when the compiler can prove the unpacked shape:
+
+```incan
+def point(x: int, y: int) -> str:
+    return f"{x},{y}"
+
+def main() -> str:
+    xy: tuple[int, int] = (3, 4)
+    return point(*xy)
+```
+
+For keyword unpacking into fixed parameters, the compiler must know the available keys and their value types:
+
+```incan
+def user(name: str, age: int) -> str:
+    return f"{name}:{age}"
+
+def main() -> str:
+    fields = {name="Ada", age=37}
+    return user(**fields)
+```
+
+The exact shaped-key syntax in the second example is illustrative until Incan has a settled static key-shape surface. Ordinary `Dict[str, T]` values are still valid for feeding `**kwargs`; they are not enough by themselves to prove that fixed parameters such as `name` and `age` are present.
+
 ### Higher-order helper APIs
 
 Variadics are especially useful when a library wants to accept any number of homogeneous packaged values:
@@ -165,7 +243,7 @@ The repeated thing here is not "awaitable, callback, awaitable, callback". The r
 
 ### Calls through variables
 
-For calls where the compiler cannot reliably identify the callee signature, Incan may require explicit list/dict arguments rather than applying rest-capture sugar automatically:
+Rest metadata is part of a callable's type-level contract. A function value created from a rest-aware function keeps the same rest-call behavior as a direct call:
 
 ```incan
 def log(level: str, *msgs: str) -> None:
@@ -173,11 +251,11 @@ def log(level: str, *msgs: str) -> None:
 
 def main() -> None:
     f = log
-    # One plausible rule: require the explicit lowered form here.
-    f("info", ["a", "b"])
+    f("info", "a", "b")
+    f("info", *["a", "b"])
 ```
 
-This remains an open design question because ordinary function types may erase rest-parameter structure unless the type system is extended to preserve it explicitly.
+If a callable type is written without rest markers, the compiler treats it as an exact fixed-arity function type. Rest-call sugar is therefore available through function values only when the callable type preserves the rest structure.
 
 ## Reference-level explanation
 
@@ -187,6 +265,8 @@ This RFC introduces two new parameter kinds:
 
 1. **Rest positional parameter**: `*name: T`: Binds `name` as `List[T]` within the function body
 2. **Rest keyword parameter**: `**name: V`: Binds `name` as `Dict[str, V]` within the function body
+3. **Positional unpack argument**: `*expr`: Supplies elements of a list-like or statically shaped positional value to the call
+4. **Keyword unpack argument**: `**expr`: Supplies entries of a dict-like or statically shaped keyword value to the call
 
 In both cases, the annotation specifies the element type (`T`) or value type (`V`), not the container type.
 
@@ -210,31 +290,47 @@ Given:
 def f(p1: A, p2: B, *rest: R, **kw: K) -> T: ...
 ```
 
-Binding a call `f(<positional...>, <named...>)` proceeds as:
+Binding a call `f(<args...>)` proceeds by building one deterministic binding plan across ordinary positional arguments, ordinary named arguments, positional unpack arguments, and keyword unpack arguments.
 
-1. Bind normal parameters from positional arguments left-to-right until normal parameters are exhausted or positional arguments run out.
-2. Bind normal parameters from named arguments by exact name match for any normal params not yet bound.
-3. If a named argument targets a parameter already bound, emit an error.
-4. Remaining positional arguments:
-   - if `*rest` exists: append them to `rest` in order
-   - otherwise: error for too many positional arguments
-5. Remaining named arguments that do not match any normal parameter:
-   - if `**kw` exists: insert them into `kw`
-   - otherwise: error for unknown named argument
+For positional arguments:
+
+1. Direct positional arguments bind ordinary positional parameters left-to-right until those parameters are exhausted.
+2. Surplus direct positional arguments are appended to `*rest` if present; otherwise they are errors.
+3. `*expr` may bind ordinary fixed positional parameters only when `expr` has a statically known ordered shape. The minimum accepted shape is `tuple[T1, T2, ...]`.
+4. If a positional rest parameter exists, any part of a positional unpack expression that is not consumed by fixed parameters may extend that rest list when its element type is compatible with `R`.
+5. Homogeneous `List[T]` is valid for extending `*rest`. It is not valid for filling a fixed number of ordinary parameters unless the language gains a separate way to prove list length statically.
+
+For named arguments:
+
+1. Direct named arguments bind ordinary parameters by exact name.
+2. A direct named argument that targets an already bound parameter is a duplicate-argument error.
+3. Unknown direct named arguments are inserted into `**kw` if present; otherwise they are errors.
+4. `**expr` may bind ordinary fixed named parameters only when `expr` has a statically known key set and value types.
+5. If a keyword rest parameter exists, keys that are not consumed by fixed parameters may extend that keyword rest dictionary when their values are compatible with `K`.
+6. Ordinary `Dict[str, T]` is valid for extending `**kw`. It is not valid for proving that required fixed parameters are present unless a future explicit runtime-checking rule is accepted.
+
+If an unpacked value would bind a parameter that is already bound, the compiler reports a duplicate-argument error. If a required fixed parameter remains unbound after all direct and unpacked arguments are processed, the compiler reports a missing-argument error.
 
 ### Type checking rules
 
 - each extra positional argument bound into `*rest: R` must be type-compatible with `R`
 - each extra named argument value bound into `**kw: K` must be type-compatible with `K`
+- each `*expr` unpack argument must be type-compatible with `List[R]` for the resolved rest positional parameter
+- each `**expr` unpack argument must be type-compatible with `Dict[str, K]` for the resolved rest keyword parameter
+- each `*expr` that binds fixed parameters must have a statically known ordered shape with per-position types compatible with the target parameters
+- each `**expr` that binds fixed parameters must have a statically known key set with per-key value types compatible with the target parameters
 - `rest` is typechecked as `List[R]` within the function
 - `kw` is typechecked as `Dict[str, K]` within the function
+- callable values must preserve rest structure in their function type when they originate from a rest-aware declaration
 
 ### Lowering and runtime behavior
 
 This feature is specified as pure compile-time lowering:
 
 - functions defined with `*rest` and/or `**kw` are implemented as normal functions whose trailing parameters are explicit `List[...]` / `Dict[...]` values
-- calls that use the sugar are rewritten by the compiler to construct those values at the call site
+- calls that use rest-capture sugar are rewritten by the compiler to construct those values at the call site
+- unpack arguments that feed rest parameters are lowered into the same explicit list/dict construction path rather than into runtime reflection or dynamic dispatch
+- unpack arguments that feed fixed parameters are lowered to ordinary positional Rust arguments after binding is resolved
 
 Conceptually:
 
@@ -262,13 +358,25 @@ connect("localhost", 5432, {"tls": "true", "user": "danny"})
 
 The backend can then emit standard Rust `Vec<T>` / `HashMap<String, V>` construction without needing true Rust variadics.
 
+Mixed direct and unpacked rest arguments are flattened into the explicit container in source order:
+
+```incan
+log("info", "a", *more, "z")
+```
+
+lowers conceptually to a call whose final rest list is equivalent to:
+
+```incan
+["a"] + more + ["z"]
+```
+
+The exact generated Rust does not need to use an Incan `+` operation; it only needs to preserve the observable list order.
+
 ### Interaction with function values
 
-RFC 035 makes named functions first-class values, but it does not automatically solve all rest-parameter questions.
+RFC 035 makes named functions first-class values. RFC 038 extends callable metadata so a function value can preserve whether a parameter is ordinary, positional rest, or keyword rest.
 
-The issue is not whether a function can be passed as a value. The issue is whether a plain function type such as `(str, List[str]) -> None` preserves enough surface-level information for the compiler to know that `f("info", "a", "b")` should be treated as sugar instead of an arity error.
-
-This RFC leaves that question open. A conservative first version may require explicit lowered container arguments when the callee is a function value rather than a directly resolved declaration.
+A plain fixed-arity function type such as `(str, List[str]) -> None` does not imply rest-call behavior by itself. Function values that come from rest-aware declarations, and callable types that explicitly preserve rest markers, do imply rest-call behavior.
 
 ### Interaction with existing features
 
@@ -289,9 +397,14 @@ Add to function parameter grammar:
 param ::= IDENT ":" Type
         | "*" IDENT ":" Type
         | "**" IDENT ":" Type
+
+call_arg ::= Expr
+           | IDENT "=" Expr
+           | "*" Expr
+           | "**" Expr
 ```
 
-No new call syntax is required for the capture feature itself. Call-site unpacking is explicitly out of scope for this RFC.
+Call-site unpacking is part of this RFC for both statically rest-aware callees and fixed-parameter callees whose unpacked value shapes are statically provable.
 
 ### Semantics
 
@@ -300,6 +413,9 @@ Key invariants:
 - the `*` / `**` marker determines how arguments are captured
 - the annotation specifies element/value types, not container types
 - binding is deterministic, compile-time, and independent of runtime reflection
+- callable metadata preserves rest markers so function values can keep rest-aware call behavior
+- unpacking is accepted only when the compiler can resolve every destination it feeds
+- fixed-parameter unpacking requires shape proof; rest-parameter unpacking requires container compatibility
 
 ### Compatibility and migration
 
@@ -351,22 +467,99 @@ The homogeneous model is clearer, easier to typecheck, and already sufficient fo
 
 - adds syntax, typing, and diagnostics complexity
 - increases the number of ways to express APIs, which can fragment style
-- leaves an important open question about calls through function values
+- requires callable metadata to carry more than a flat list of parameter types
 - may encourage over-flexible APIs if used without discipline
 
 ## Layers affected
 
 - **Language surface** — `*` and `**` parameter forms in function signatures must be supported and remain distinct from ordinary parameters.
-- **Type system** — rest-parameter metadata, binding rules for extra positional or named arguments, and element or value type mismatches must be validated.
+- **Type system** — rest-parameter metadata, callable rest structure, binding rules for extra positional or named arguments, fixed-parameter unpack shape proof, unpacking rules, and element or value type mismatches must be validated.
 - **Execution handoff** — implementations may rewrite extra positionals into `List[...]` values and extra named arguments into `Dict[str, ...]` values, but the observable call semantics must match this RFC.
 - **Formatter** — `*` and `**` markers on rest parameters should print predictably.
 - **LSP** — rest parameter variables should display as `List[T]` and `Dict[str, V]` on hover and in completions.
 
-## Unresolved questions
+## Implementation Plan
 
-1. Should rest-capture sugar apply when calling through function values, or must such calls use the explicit lowered list/dict form?
-2. Does Incan need function-type syntax that preserves rest-parameter structure explicitly, or is the conservative "direct calls only" rule sufficient?
-3. Should a follow-up RFC add call-site unpacking (`f(*xs)` / `f(**m)` / `f(*xs, **m)`)?
-4. Is `Dict[str, V]` sufficient for keyword captures, or will some ecosystems eventually want a richer tagged-union or structured-options story?
+### Phase 1: Syntax, AST, and formatter
 
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Parse rest parameters and unpack call arguments.
+- Preserve rest parameter and unpack argument kinds in the AST.
+- Format rest markers and unpack arguments predictably.
+
+### Phase 2: Typechecker and callable metadata
+
+- Preserve rest parameter kinds in function and method metadata.
+- Validate rest parameter placement and duplicate rest forms.
+- Bind extra positional/named arguments and unpack arguments against the resolved rest targets.
+- Bind fixed parameters from unpack arguments when the unpacked value shape is statically known.
+- Preserve rest-aware callable behavior through first-class function values.
+
+### Phase 3: Lowering, IR, and emission
+
+- Lower rest parameters to explicit trailing list/dict parameters.
+- Lower rest-aware calls to explicit list/dict construction in source order.
+- Lower fixed-parameter unpacking to ordinary ordered calls after binding is resolved.
+- Emit Rust that preserves ordinary fixed-arity calls, rest capture calls, unpacked rest calls, and fixed-parameter unpacking.
+
+### Phase 4: Tooling, tests, and docs
+
+- Add parser, formatter, typechecker, codegen snapshot, and integration coverage.
+- Update user-facing language docs and release notes.
+- Document the rest-directed subset and the full fixed-parameter north star without splitting the design across RFCs.
+
+## Progress Checklist
+
+### Spec / design
+
+- [x] Link RFC 038 to issue #322.
+- [x] Settle function-value behavior: rest metadata is preserved for rest-aware callable values.
+- [x] Include static call-site unpacking in RFC 038.
+- [x] Fold fixed-parameter call-site unpacking into RFC 038 instead of using a follow-up RFC.
+
+### Parser / AST / formatter
+
+- [x] Parse `*name: T` and `**name: V` parameters.
+- [x] Parse `*expr` and `**expr` call arguments.
+- [x] Preserve rest and unpack kinds in AST nodes.
+- [x] Format rest parameters and unpack arguments stably.
+
+### Typechecker
+
+- [x] Type rest parameters as `List[T]` and `Dict[str, V]` inside declarations.
+- [x] Validate rest parameter placement and duplicates.
+- [x] Validate extra direct positional/named arguments against rest element/value types.
+- [x] Validate `*expr` and `**expr` against rest container types.
+- [ ] Validate `*expr` against statically known ordered shapes for fixed positional parameters.
+- [ ] Validate `**expr` against statically known key shapes for fixed named parameters.
+- [ ] Diagnose duplicate and missing fixed-parameter bindings across direct and unpacked arguments.
+- [x] Preserve rest metadata through first-class function values.
+
+### Lowering / IR / emission
+
+- [x] Lower rest declarations to explicit trailing container parameters.
+- [x] Lower rest-aware direct calls to explicit container arguments.
+- [x] Lower unpack call arguments into the same explicit container construction path.
+- [x] Emit correct Rust for direct rest calls, function-value rest calls, and unpacked rest calls.
+- [ ] Lower fixed-parameter unpacking to ordinary ordered calls.
+
+### Tests
+
+- [x] Parser tests for rest parameters and unpack arguments.
+- [x] Formatter round-trip tests for rest syntax.
+- [x] Typechecker tests for valid rest calls, invalid placement, invalid element/value types, and invalid unpack usage.
+- [x] Codegen snapshot tests for rest capture, callable-value rest calls, and unpacked rest calls.
+- [x] Integration tests for compiled rest calls.
+- [ ] Typechecker and codegen tests for fixed-parameter unpacking once shape proof lands.
+
+### Docs
+
+- [x] Update authored language reference/user docs.
+- [x] Add release notes entry.
+- [x] Keep the full call-site unpacking design in RFC 038.
+
+## Design Decisions
+
+- Rest-call sugar applies through function values when the callable metadata preserves rest parameter structure.
+- RFC 038 adds call-site unpacking for statically rest-aware callees: `f(*xs)` feeds the callee's positional rest parameter and `f(**kw)` feeds the callee's keyword rest parameter.
+- RFC 038 also owns fixed-parameter call-site unpacking: `f(*xs)` and `f(**kw)` may bind ordinary parameters when the compiler can prove the unpacked shape.
+- Captured keyword arguments use `Dict[str, V]`; richer structured-options containers are speculative and out of scope.

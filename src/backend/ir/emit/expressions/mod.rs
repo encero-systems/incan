@@ -460,16 +460,31 @@ impl<'a> IrEmitter<'a> {
                 func,
                 type_args,
                 args,
+                callable_signature,
                 canonical_path,
-            } => self.emit_call_expr(func, type_args, args, canonical_path.as_deref()),
+            } => self.emit_call_expr(
+                func,
+                type_args,
+                args,
+                callable_signature.as_ref(),
+                canonical_path.as_deref(),
+            ),
             IrExprKind::BuiltinCall { func, args } => self.emit_builtin_call(func, args),
             IrExprKind::MethodCall {
                 receiver,
                 method,
                 type_args,
                 args,
+                callable_signature,
                 arg_policy,
-            } => self.emit_method_call_expr(receiver, method, type_args, args, *arg_policy),
+            } => self.emit_method_call_expr(
+                receiver,
+                method,
+                type_args,
+                args,
+                callable_signature.as_ref(),
+                *arg_policy,
+            ),
             IrExprKind::KnownMethodCall { receiver, kind, args } => self.emit_known_method_call(receiver, kind, args),
 
             IrExprKind::Field { object, field } => self.emit_field_expr(object, field),
@@ -767,7 +782,7 @@ mod tests {
     use super::*;
     use crate::backend::ir::FunctionRegistry;
     use crate::backend::ir::expr::{
-        CollectionMethodKind, IrCallArg, MethodCallArgPolicy, MethodKind, VarAccess, VarRefKind,
+        CollectionMethodKind, IrCallArg, IrCallArgKind, MethodCallArgPolicy, MethodKind, VarAccess, VarRefKind,
     };
 
     #[test]
@@ -788,6 +803,7 @@ mod tests {
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(
                         IrExprKind::Var {
                             name: "html".to_string(),
@@ -797,6 +813,7 @@ mod tests {
                         IrType::String,
                     ),
                 }],
+                callable_signature: None,
                 arg_policy: MethodCallArgPolicy::Default,
             },
             IrType::Struct("Response".to_string()),
@@ -913,6 +930,7 @@ mod tests {
                 args: vec![
                     IrCallArg {
                         name: None,
+                        kind: IrCallArgKind::Positional,
                         expr: TypedExpr::new(
                             IrExprKind::Var {
                                 name: "other".to_string(),
@@ -924,9 +942,11 @@ mod tests {
                     },
                     IrCallArg {
                         name: None,
+                        kind: IrCallArgKind::Positional,
                         expr: TypedExpr::new(IrExprKind::Bool(true), IrType::Bool),
                     },
                 ],
+                callable_signature: None,
                 arg_policy: MethodCallArgPolicy::Default,
             },
             IrType::Struct("Dataset".to_string()),
@@ -964,6 +984,7 @@ mod tests {
                 kind: MethodKind::Collection(CollectionMethodKind::Get),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(
                         IrExprKind::Var {
                             name: "word".to_string(),
@@ -1010,8 +1031,10 @@ mod tests {
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(IrExprKind::String("the".to_string()), IrType::String),
                 }],
+                callable_signature: None,
                 arg_policy: MethodCallArgPolicy::PreserveShape,
             },
             IrType::Option(Box::new(IrType::Int)),
@@ -1049,6 +1072,7 @@ mod tests {
                 kind: MethodKind::Collection(CollectionMethodKind::Get),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(IrExprKind::String("the".to_string()), IrType::String),
                 }],
             },
@@ -1127,6 +1151,7 @@ mod tests {
                 kind: MethodKind::Collection(CollectionMethodKind::Index),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(IrExprKind::Int(9), IrType::Int),
                 }],
             },
@@ -1143,6 +1168,7 @@ mod tests {
                 kind: MethodKind::Collection(CollectionMethodKind::Count),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(IrExprKind::Int(9), IrType::Int),
                 }],
             },
@@ -1159,6 +1185,7 @@ mod tests {
                 kind: MethodKind::Collection(CollectionMethodKind::Remove),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(IrExprKind::Int(9), IrType::Int),
                 }],
             },
@@ -1176,10 +1203,12 @@ mod tests {
                 args: vec![
                     IrCallArg {
                         name: None,
+                        kind: IrCallArgKind::Positional,
                         expr: TypedExpr::new(IrExprKind::Int(0), IrType::Int),
                     },
                     IrCallArg {
                         name: None,
+                        kind: IrCallArgKind::Positional,
                         expr: TypedExpr::new(IrExprKind::Int(9), IrType::Int),
                     },
                 ],
@@ -1212,8 +1241,10 @@ mod tests {
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(IrExprKind::String("logs".to_string()), IrType::String),
                 }],
+                callable_signature: None,
                 arg_policy: MethodCallArgPolicy::Default,
             },
             IrType::Unknown,
@@ -1257,10 +1288,12 @@ mod tests {
                 args: vec![
                     IrCallArg {
                         name: None,
+                        kind: IrCallArgKind::Positional,
                         expr: TypedExpr::new(IrExprKind::String("order_lines".to_string()), IrType::String),
                     },
                     IrCallArg {
                         name: None,
+                        kind: IrCallArgKind::Positional,
                         expr: TypedExpr::new(
                             IrExprKind::Var {
                                 name: "input_uri".to_string(),
@@ -1271,6 +1304,7 @@ mod tests {
                         ),
                     },
                 ],
+                callable_signature: None,
                 arg_policy: MethodCallArgPolicy::Default,
             },
             IrType::Unknown,
@@ -1309,6 +1343,7 @@ mod tests {
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(
                         IrExprKind::Var {
                             name: "DEFAULT_NAME".to_string(),
@@ -1318,6 +1353,7 @@ mod tests {
                         IrType::String,
                     ),
                 }],
+                callable_signature: None,
                 arg_policy: MethodCallArgPolicy::Default,
             },
             IrType::Unknown,
@@ -1361,8 +1397,10 @@ mod tests {
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(IrExprKind::String("alice@example.com".to_string()), IrType::String),
                 }],
+                callable_signature: None,
                 arg_policy: MethodCallArgPolicy::Default,
             },
             IrType::Struct("Name".to_string()),

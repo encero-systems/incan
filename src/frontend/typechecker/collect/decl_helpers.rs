@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::frontend::ast::*;
-use crate::frontend::symbols::{FieldInfo, MethodInfo, ResolvedType, TypeBoundInfo};
+use crate::frontend::symbols::{CallableParam, FieldInfo, MethodInfo, ResolvedType, TypeBoundInfo};
 use crate::frontend::typechecker::TypeChecker;
 use incan_core::lang::derives::{self, DeriveId};
 
@@ -51,7 +51,12 @@ fn resolve_owner_self_reference(
         ResolvedType::Function(params, ret) => ResolvedType::Function(
             params
                 .into_iter()
-                .map(|param| resolve_owner_self_reference(param, Some(owner_name), Some(owner_self_ty)))
+                .map(|param| CallableParam {
+                    name: param.name,
+                    ty: resolve_owner_self_reference(param.ty, Some(owner_name), Some(owner_self_ty)),
+                    kind: param.kind,
+                    has_default: param.has_default,
+                })
                 .collect(),
             Box::new(resolve_owner_self_reference(
                 *ret,
@@ -156,13 +161,15 @@ pub(super) fn collect_methods(
                 .params
                 .iter()
                 .map(|p| {
-                    (
+                    CallableParam::named_with_default(
                         p.node.name.clone(),
                         resolve_owner_self_reference(
                             checker.resolve_type_checked(&p.node.ty),
                             owner_name,
                             owner_self_ty.as_ref(),
                         ),
+                        p.node.kind,
+                        p.node.default.is_some(),
                     )
                 })
                 .collect();
@@ -237,7 +244,7 @@ pub(super) fn inject_json_methods(methods: &mut HashMap<String, MethodInfo>, typ
                 type_param_bounds: HashMap::new(),
                 type_param_bound_details: HashMap::new(),
                 receiver: None, // Static method
-                params: vec![("json_str".to_string(), ResolvedType::Str)],
+                params: vec![CallableParam::named("json_str", ResolvedType::Str, ParamKind::Normal)],
                 return_type: ResolvedType::Generic(
                     "Result".to_string(),
                     vec![ResolvedType::Named(type_name.to_string()), ResolvedType::Str],
@@ -279,12 +286,16 @@ pub(super) fn inject_validate_methods(
         .unwrap_or(ResolvedType::Unknown);
 
     // Prefer required fields only (no defaults). This keeps the signature stable and avoids needing default args.
-    let mut params: Vec<(String, ResolvedType)> = Vec::new();
+    let mut params: Vec<CallableParam> = Vec::new();
     for field_name in field_order {
         if let Some(info) = fields.get(field_name)
             && !info.has_default
         {
-            params.push((field_name.clone(), info.ty.clone()));
+            params.push(CallableParam::named(
+                field_name.clone(),
+                info.ty.clone(),
+                ParamKind::Normal,
+            ));
         }
     }
 

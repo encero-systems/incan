@@ -26,6 +26,8 @@ fn manifest_io_round_trip_preserves_recursive_types_and_bounds() -> Result<(), B
                     },
                 ],
             },
+            kind: ParamKindExport::Normal,
+            has_default: false,
         }],
         return_type: TypeRef::Function {
             params: vec![TypeRef::Tuple {
@@ -49,6 +51,114 @@ fn manifest_io_round_trip_preserves_recursive_types_and_bounds() -> Result<(), B
     let loaded = LibraryManifest::read_from_path(&path)?;
 
     assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
+fn manifest_io_round_trip_preserves_rest_parameter_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.exports.functions.push(FunctionExport {
+        name: "collect".to_string(),
+        type_params: Vec::new(),
+        params: vec![
+            ParamExport {
+                name: "items".to_string(),
+                ty: TypeRef::Named {
+                    name: "int".to_string(),
+                },
+                kind: ParamKindExport::RestPositional,
+                has_default: false,
+            },
+            ParamExport {
+                name: "labels".to_string(),
+                ty: TypeRef::Named {
+                    name: "str".to_string(),
+                },
+                kind: ParamKindExport::RestKeyword,
+                has_default: false,
+            },
+        ],
+        return_type: TypeRef::Named {
+            name: "int".to_string(),
+        },
+        is_async: false,
+    });
+    manifest.exports.classes.push(ClassExport {
+        name: "Collector".to_string(),
+        type_params: Vec::new(),
+        extends: None,
+        traits: Vec::new(),
+        derives: Vec::new(),
+        fields: Vec::new(),
+        methods: vec![MethodExport {
+            name: "collect".to_string(),
+            type_params: Vec::new(),
+            receiver: Some(ReceiverExport::Immutable),
+            params: vec![ParamExport {
+                name: "items".to_string(),
+                ty: TypeRef::Named {
+                    name: "int".to_string(),
+                },
+                kind: ParamKindExport::RestPositional,
+                has_default: false,
+            }],
+            return_type: TypeRef::Named {
+                name: "int".to_string(),
+            },
+            is_async: false,
+            has_body: true,
+        }],
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("rest_params.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
+fn manifest_validation_rejects_invalid_rest_parameter_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.exports.functions.push(FunctionExport {
+        name: "bad_collect".to_string(),
+        type_params: Vec::new(),
+        params: vec![
+            ParamExport {
+                name: "labels".to_string(),
+                ty: TypeRef::Named {
+                    name: "str".to_string(),
+                },
+                kind: ParamKindExport::RestKeyword,
+                has_default: false,
+            },
+            ParamExport {
+                name: "value".to_string(),
+                ty: TypeRef::Named {
+                    name: "int".to_string(),
+                },
+                kind: ParamKindExport::Normal,
+                has_default: false,
+            },
+        ],
+        return_type: TypeRef::Named {
+            name: "int".to_string(),
+        },
+        is_async: false,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("invalid_rest_params.incnlib");
+    let err = manifest
+        .write_to_path(&path)
+        .expect_err("expected invalid rest parameter metadata to fail validation");
+    assert!(
+        err.to_string()
+            .contains("cannot appear after a `**kwargs` rest parameter"),
+        "unexpected validation error: {err}"
+    );
     Ok(())
 }
 
@@ -245,6 +355,8 @@ fn manifest_io_round_trip_preserves_generic_method_type_params() -> Result<(), B
             params: vec![ParamExport {
                 name: "value".to_string(),
                 ty: TypeRef::TypeParam { name: "T".to_string() },
+                kind: ParamKindExport::Normal,
+                has_default: false,
             }],
             return_type: TypeRef::TypeParam { name: "T".to_string() },
             is_async: false,

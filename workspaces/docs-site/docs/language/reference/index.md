@@ -15,6 +15,7 @@ For step-by-step learning and patterns, see [Tutorials](../tutorials/book/index.
 ## Table of contents
 
 - [Language reference (generated)](language.md): compiler-generated tables (keywords, operators, builtins, etc.)
+- [Functions and calls](functions.md): function signatures, ordinary call binding, rest parameters, and call-site unpacking
 - [Glossary](glossary.md): canonical terminology used across the docs
 - [Imports and modules](imports_and_modules.md): import syntax, module paths, and module resolution rules
 - [Static storage](static_storage.md): `static`, `pub static`, initialization rules, and live shared module state

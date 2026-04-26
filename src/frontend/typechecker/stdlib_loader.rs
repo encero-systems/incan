@@ -32,7 +32,7 @@ use std::path::PathBuf;
 
 use crate::frontend::ast;
 use crate::frontend::symbols::VariableInfo;
-use crate::frontend::symbols::{FunctionInfo, MethodInfo, ResolvedType, TraitInfo};
+use crate::frontend::symbols::{CallableParam, FunctionInfo, MethodInfo, ResolvedType, TraitInfo};
 use incan_core::lang::conventions;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::stdlib;
@@ -493,14 +493,16 @@ fn extract_method_signatures(
                     )
                 })
                 .collect();
-            let params: Vec<(String, ResolvedType)> = m
+            let params: Vec<CallableParam> = m
                 .node
                 .params
                 .iter()
                 .map(|p| {
-                    (
+                    CallableParam::named_with_default(
                         p.node.name.clone(),
                         ast_type_to_resolved(&p.node.ty.node, &all_type_params),
+                        p.node.kind,
+                        p.node.default.is_some(),
                     )
                 })
                 .collect();
@@ -537,10 +539,17 @@ fn function_decl_to_info(func: &ast::FunctionDecl) -> FunctionInfo {
         })
         .collect();
 
-    let params: Vec<(String, ResolvedType)> = func
+    let params: Vec<CallableParam> = func
         .params
         .iter()
-        .map(|p| (p.node.name.clone(), ast_type_to_resolved(&p.node.ty.node, &tp_names)))
+        .map(|p| {
+            CallableParam::named_with_default(
+                p.node.name.clone(),
+                ast_type_to_resolved(&p.node.ty.node, &tp_names),
+                p.node.kind,
+                p.node.default.is_some(),
+            )
+        })
         .collect();
 
     let return_type = ast_type_to_resolved(&func.return_type.node, &tp_names);
@@ -563,35 +572,43 @@ fn imported_runtime_function_info(name: &str) -> Option<FunctionInfo> {
     let (params, return_type, is_async) = match surface_functions::from_str(name)? {
         SurfaceFnId::Timeout => (
             vec![
-                ("seconds".to_string(), ResolvedType::Float),
-                ("task".to_string(), ResolvedType::Unknown),
+                CallableParam::named("seconds", ResolvedType::Float, ast::ParamKind::Normal),
+                CallableParam::named("task", ResolvedType::Unknown, ast::ParamKind::Normal),
             ],
             ResolvedType::Unknown,
             true,
         ),
         SurfaceFnId::TimeoutMs => (
             vec![
-                ("milliseconds".to_string(), ResolvedType::Int),
-                ("task".to_string(), ResolvedType::Unknown),
+                CallableParam::named("milliseconds", ResolvedType::Int, ast::ParamKind::Normal),
+                CallableParam::named("task", ResolvedType::Unknown, ast::ParamKind::Normal),
             ],
             ResolvedType::Unknown,
             true,
         ),
         SurfaceFnId::SelectTimeout => (
             vec![
-                ("seconds".to_string(), ResolvedType::Float),
-                ("task".to_string(), ResolvedType::Unknown),
+                CallableParam::named("seconds", ResolvedType::Float, ast::ParamKind::Normal),
+                CallableParam::named("task", ResolvedType::Unknown, ast::ParamKind::Normal),
             ],
             ResolvedType::Unknown,
             true,
         ),
         SurfaceFnId::Spawn => (
-            vec![("task".to_string(), ResolvedType::Unknown)],
+            vec![CallableParam::named(
+                "task",
+                ResolvedType::Unknown,
+                ast::ParamKind::Normal,
+            )],
             ResolvedType::Unknown,
             false,
         ),
         SurfaceFnId::SpawnBlocking => (
-            vec![("task".to_string(), ResolvedType::Unknown)],
+            vec![CallableParam::named(
+                "task",
+                ResolvedType::Unknown,
+                ast::ParamKind::Normal,
+            )],
             ResolvedType::Unknown,
             true,
         ),
@@ -731,9 +748,9 @@ fn ast_type_to_resolved(ty: &ast::Type, type_params: &[String]) -> ResolvedType 
             }
         }
         ast::Type::Function(params, ret) => {
-            let param_types: Vec<ResolvedType> = params
+            let param_types: Vec<CallableParam> = params
                 .iter()
-                .map(|p| ast_type_to_resolved(&p.node, type_params))
+                .map(|p| CallableParam::positional(ast_type_to_resolved(&p.node, type_params)))
                 .collect();
             let ret_type = ast_type_to_resolved(&ret.node, type_params);
             ResolvedType::Function(param_types, Box::new(ret_type))
@@ -768,8 +785,8 @@ mod tests {
         assert!(fail_fn.is_some(), "should find 'fail' function");
         let fail_info = &fail_fn.ok_or("fail not found")?.1;
         assert_eq!(fail_info.params.len(), 1);
-        assert_eq!(fail_info.params[0].0, "msg");
-        assert!(matches!(fail_info.params[0].1, ResolvedType::Str));
+        assert_eq!(fail_info.params[0].name(), Some("msg"));
+        assert!(matches!(fail_info.params[0].ty, ResolvedType::Str));
         assert!(fail_info.type_params.is_empty());
         assert!(matches!(fail_info.return_type, ResolvedType::Unit));
 
@@ -777,8 +794,8 @@ mod tests {
         assert!(fail_t_fn.is_some(), "should find 'fail_t' function");
         let fail_t_info = &fail_t_fn.ok_or("fail_t not found")?.1;
         assert_eq!(fail_t_info.params.len(), 1);
-        assert_eq!(fail_t_info.params[0].0, "msg");
-        assert!(matches!(fail_t_info.params[0].1, ResolvedType::Str));
+        assert_eq!(fail_t_info.params[0].name(), Some("msg"));
+        assert!(matches!(fail_t_info.params[0].ty, ResolvedType::Str));
         assert_eq!(fail_t_info.type_params, vec!["T".to_string()]);
         assert!(matches!(fail_t_info.return_type, ResolvedType::TypeVar(ref s) if s == "T"));
 
@@ -787,9 +804,9 @@ mod tests {
         let assert_eq_info = &assert_eq_fn.ok_or("assert_eq not found")?.1;
         assert_eq!(assert_eq_info.params.len(), 3);
         assert_eq!(assert_eq_info.type_params, vec!["T".to_string()]);
-        assert!(matches!(assert_eq_info.params[0].1, ResolvedType::TypeVar(ref s) if s == "T"));
-        assert!(matches!(assert_eq_info.params[1].1, ResolvedType::TypeVar(ref s) if s == "T"));
-        assert!(matches!(assert_eq_info.params[2].1, ResolvedType::Str));
+        assert!(matches!(assert_eq_info.params[0].ty, ResolvedType::TypeVar(ref s) if s == "T"));
+        assert!(matches!(assert_eq_info.params[1].ty, ResolvedType::TypeVar(ref s) if s == "T"));
+        assert!(matches!(assert_eq_info.params[2].ty, ResolvedType::Str));
 
         Ok(())
     }

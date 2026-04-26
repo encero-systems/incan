@@ -678,6 +678,39 @@ def f(a: Foo) -> int:
     }
 
     #[test]
+    fn test_parse_rest_params_and_call_unpacking() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def collect(prefix: str, *items: int, **labels: str) -> int:
+  return 0
+
+def use(xs: list[int], kw: dict[str, str]) -> int:
+  return collect("x", 1, *xs, name="demo", **kw)
+"#;
+        let program = parse_str(source)?;
+        let collect = require_function_decl(&program.declarations[0])?;
+        assert_eq!(collect.params[0].node.kind, ParamKind::Normal);
+        assert_eq!(collect.params[1].node.kind, ParamKind::RestPositional);
+        assert_eq!(collect.params[1].node.name, "items");
+        assert_eq!(collect.params[2].node.kind, ParamKind::RestKeyword);
+        assert_eq!(collect.params[2].node.name, "labels");
+
+        let use_fn = require_function_decl(&program.declarations[1])?;
+        let call_args = match &use_fn.body[0].node {
+            Statement::Return(Some(expr)) => match &expr.node {
+                Expr::Call(_, _, args) => args,
+                _ => panic!("expected call expression"),
+            },
+            _ => panic!("expected return statement"),
+        };
+        assert!(matches!(call_args[0], CallArg::Positional(_)));
+        assert!(matches!(call_args[1], CallArg::Positional(_)));
+        assert!(matches!(call_args[2], CallArg::PositionalUnpack(_)));
+        assert!(matches!(call_args[3], CallArg::Named(ref name, _) if name == "name"));
+        assert!(matches!(call_args[4], CallArg::KeywordUnpack(_)));
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_pattern_named_key_keyword() -> Result<(), Vec<CompileError>> {
         let source = r#"
 def f(a: Foo) -> int:

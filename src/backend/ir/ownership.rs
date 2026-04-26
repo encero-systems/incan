@@ -348,6 +348,7 @@ mod tests {
             ty: IrType::List(Box::new(IrType::Int)),
             mutability: Mutability::Mutable,
             is_self: false,
+            kind: crate::frontend::ast::ParamKind::Normal,
             default: None,
         };
         assert!(incan_call_arg_needs_rust_mut_borrow(&param));

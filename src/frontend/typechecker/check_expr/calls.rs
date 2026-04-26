@@ -454,14 +454,17 @@ impl TypeChecker {
         self.constructor_result_type_with_bindings(type_name, &type_bindings)
     }
 
-    /// Extract the expression from a call argument (positional or named).
+    /// Extract the expression from any call argument.
     fn call_arg_expr(arg: &CallArg) -> &Spanned<Expr> {
         match arg {
-            CallArg::Positional(e) | CallArg::Named(_, e) => e,
+            CallArg::Positional(e)
+            | CallArg::Named(_, e)
+            | CallArg::PositionalUnpack(e)
+            | CallArg::KeywordUnpack(e) => e,
         }
     }
 
-    /// Type-check all call arguments (positional and named).
+    /// Type-check all call arguments, including unpack arguments.
     pub(in crate::frontend::typechecker::check_expr) fn check_call_args(&mut self, args: &[CallArg]) {
         for arg in args {
             self.check_expr(Self::call_arg_expr(arg));
@@ -511,6 +514,10 @@ impl TypeChecker {
                     has_invalid_named = true;
                     self.check_expr(e);
                 }
+                CallArg::PositionalUnpack(e) | CallArg::KeywordUnpack(e) => {
+                    has_invalid_named = true;
+                    self.check_expr(e);
+                }
             }
         }
 
@@ -532,27 +539,33 @@ impl TypeChecker {
     }
 
     /// Type-check call arguments while threading parameter types into contextual-expression checks when available.
-    fn check_call_arg_types_for_params(
-        &mut self,
-        args: &[CallArg],
-        params: &[(String, ResolvedType)],
-    ) -> Vec<ResolvedType> {
+    fn check_call_arg_types_for_params(&mut self, args: &[CallArg], params: &[CallableParam]) -> Vec<ResolvedType> {
+        let normal_params: Vec<&CallableParam> =
+            params.iter().filter(|param| param.kind == ParamKind::Normal).collect();
+        let rest_positional = params.iter().find(|param| param.kind == ParamKind::RestPositional);
+        let rest_keyword = params.iter().find(|param| param.kind == ParamKind::RestKeyword);
         let mut positional_index = 0usize;
 
         args.iter()
             .map(|arg| {
                 let expected = match arg {
                     CallArg::Positional(_) => {
-                        let expected = params.get(positional_index).map(|(_, ty)| ty);
+                        let expected = normal_params
+                            .get(positional_index)
+                            .map(|param| param.ty.clone())
+                            .or_else(|| rest_positional.map(|param| param.ty.clone()));
                         positional_index += 1;
                         expected
                     }
-                    CallArg::Named(name, _) => params
+                    CallArg::Named(name, _) => normal_params
                         .iter()
-                        .find(|(param_name, _)| param_name == name)
-                        .map(|(_, ty)| ty),
+                        .find(|param| param.name() == Some(name.as_str()))
+                        .map(|param| param.ty.clone())
+                        .or_else(|| rest_keyword.map(|param| param.ty.clone())),
+                    CallArg::PositionalUnpack(_) => rest_positional.map(|param| list_ty(param.ty.clone())),
+                    CallArg::KeywordUnpack(_) => rest_keyword.map(|param| dict_ty(ResolvedType::Str, param.ty.clone())),
                 };
-                self.check_expr_with_expected(Self::call_arg_expr(arg), expected)
+                self.check_expr_with_expected(Self::call_arg_expr(arg), expected.as_ref())
             })
             .collect()
     }
@@ -581,7 +594,7 @@ impl TypeChecker {
         }
 
         let expected = value_enum.value_type.resolved_type();
-        let params = vec![("value".to_string(), expected.clone())];
+        let params = vec![CallableParam::named("value", expected.clone(), ParamKind::Normal)];
         let arg_types = self.check_call_arg_types_for_params(args, &params);
         if args.len() != 1 {
             self.errors.push(errors::builtin_arity(
@@ -629,6 +642,121 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
         value_enum.value_type.resolved_type()
+    }
+
+    pub(in crate::frontend::typechecker::check_expr) fn validate_callable_arg_bindings(
+        &mut self,
+        callee: &str,
+        params: &[CallableParam],
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        type_bindings: &mut std::collections::HashMap<String, ResolvedType>,
+        call_span: Span,
+    ) {
+        let normal_params: Vec<(usize, &CallableParam)> = params
+            .iter()
+            .enumerate()
+            .filter(|(_, param)| param.kind == ParamKind::Normal)
+            .collect();
+        let rest_positional = params.iter().find(|param| param.kind == ParamKind::RestPositional);
+        let rest_keyword = params.iter().find(|param| param.kind == ParamKind::RestKeyword);
+
+        let mut normal_bound_spans: Vec<Option<Span>> = vec![None; normal_params.len()];
+        let mut named_seen: std::collections::HashMap<&str, Span> = std::collections::HashMap::new();
+        let mut positional_index = 0usize;
+        let mut unexpected_positional = 0usize;
+
+        for (arg, arg_ty) in args.iter().zip(arg_types.iter()) {
+            let arg_span = Self::call_arg_expr(arg).span;
+            match arg {
+                CallArg::Positional(_) => {
+                    if let Some((_, param)) = normal_params.get(positional_index) {
+                        normal_bound_spans[positional_index] = Some(arg_span);
+                        self.infer_type_param_bindings(&param.ty, arg_ty, type_bindings);
+                        self.emit_arg_type_mismatch_if_needed(&param.ty, arg_ty, arg_span);
+                        positional_index += 1;
+                    } else if let Some(param) = rest_positional {
+                        self.infer_type_param_bindings(&param.ty, arg_ty, type_bindings);
+                        self.emit_arg_type_mismatch_if_needed(&param.ty, arg_ty, arg_span);
+                    } else {
+                        unexpected_positional += 1;
+                    }
+                }
+                CallArg::PositionalUnpack(_) => {
+                    if let Some(param) = rest_positional {
+                        let expected = list_ty(param.ty.clone());
+                        self.infer_type_param_bindings(&expected, arg_ty, type_bindings);
+                        self.emit_arg_type_mismatch_if_needed(&expected, arg_ty, arg_span);
+                    } else {
+                        self.errors
+                            .push(errors::call_unpack_without_rest(callee, "*", arg_span));
+                    }
+                }
+                CallArg::Named(name, _) => {
+                    if let Some(first_span) = named_seen.insert(name.as_str(), arg_span) {
+                        self.errors
+                            .push(errors::duplicate_call_argument(callee, name, first_span));
+                    }
+
+                    if let Some((normal_idx, (_, param))) = normal_params
+                        .iter()
+                        .enumerate()
+                        .find(|(_, (_, param))| param.name() == Some(name.as_str()))
+                    {
+                        if normal_bound_spans[normal_idx].is_some() {
+                            self.errors
+                                .push(errors::duplicate_call_argument(callee, name, arg_span));
+                            continue;
+                        }
+                        normal_bound_spans[normal_idx] = Some(arg_span);
+                        self.infer_type_param_bindings(&param.ty, arg_ty, type_bindings);
+                        self.emit_arg_type_mismatch_if_needed(&param.ty, arg_ty, arg_span);
+                    } else if let Some(param) = rest_keyword {
+                        self.infer_type_param_bindings(&param.ty, arg_ty, type_bindings);
+                        self.emit_arg_type_mismatch_if_needed(&param.ty, arg_ty, arg_span);
+                    } else {
+                        self.errors
+                            .push(errors::unknown_keyword_argument(callee, name, arg_span));
+                    }
+                }
+                CallArg::KeywordUnpack(_) => {
+                    if let Some(param) = rest_keyword {
+                        let expected = dict_ty(ResolvedType::Str, param.ty.clone());
+                        self.infer_type_param_bindings(&expected, arg_ty, type_bindings);
+                        self.emit_arg_type_mismatch_if_needed(&expected, arg_ty, arg_span);
+                    } else {
+                        self.errors
+                            .push(errors::call_unpack_without_rest(callee, "**", arg_span));
+                    }
+                }
+            }
+        }
+
+        if unexpected_positional > 0 {
+            self.errors.push(errors::builtin_arity(
+                callee,
+                normal_params.len(),
+                normal_params.len() + unexpected_positional,
+                call_span,
+            ));
+        }
+
+        for (idx, (_, param)) in normal_params.iter().enumerate() {
+            if normal_bound_spans[idx].is_none()
+                && !param.has_default
+                && let Some(name) = param.name()
+            {
+                self.errors
+                    .push(errors::missing_required_argument(callee, name, call_span));
+            }
+        }
+    }
+
+    fn emit_arg_type_mismatch_if_needed(&mut self, expected: &ResolvedType, actual: &ResolvedType, span: Span) {
+        if !self.types_compatible(actual, expected) {
+            self.errors
+                .push(errors::type_mismatch(&expected.to_string(), &actual.to_string(), span));
+        }
     }
 
     /// Compute the constructor result surface type for a known type symbol.
@@ -711,49 +839,26 @@ impl TypeChecker {
                 seeded_type_bindings = type_param_subst_map_call_site(&info.type_params, &resolved_explicit);
             }
         }
-        let params_with_explicit: Vec<(String, ResolvedType)> = info
+        let params_with_explicit: Vec<CallableParam> = info
             .params
             .iter()
-            .map(|(name, ty)| (name.clone(), substitute_resolved_type(ty, &seeded_type_bindings)))
+            .map(|param| CallableParam {
+                name: param.name.clone(),
+                ty: substitute_resolved_type(&param.ty, &seeded_type_bindings),
+                kind: param.kind,
+                has_default: param.has_default,
+            })
             .collect();
         let arg_types = self.check_call_arg_types_for_params(args, &params_with_explicit);
-        let mut positional: Vec<(ResolvedType, Span)> = Vec::new();
-        let mut named: std::collections::HashMap<&str, (ResolvedType, Span)> = std::collections::HashMap::new();
-
-        for (arg, ty) in args.iter().zip(arg_types.iter()) {
-            let expr = Self::call_arg_expr(arg);
-            match arg {
-                CallArg::Positional(_) => positional.push((ty.clone(), expr.span)),
-                CallArg::Named(name, _) => {
-                    named.insert(name.as_str(), (ty.clone(), expr.span));
-                }
-            }
-        }
-
-        let mut pos_idx = 0usize;
         let mut type_bindings = seeded_type_bindings;
-        for (param_name, param_ty) in &params_with_explicit {
-            let arg = if let Some(v) = named.get(param_name.as_str()) {
-                Some(v)
-            } else if pos_idx < positional.len() {
-                let v = positional.get(pos_idx);
-                pos_idx += 1;
-                v
-            } else {
-                None
-            };
-
-            if let Some((arg_ty, arg_span)) = arg {
-                self.infer_type_param_bindings(param_ty, arg_ty, &mut type_bindings);
-                if !self.types_compatible(arg_ty, param_ty) {
-                    self.errors.push(errors::type_mismatch(
-                        &param_ty.to_string(),
-                        &arg_ty.to_string(),
-                        *arg_span,
-                    ));
-                }
-            }
-        }
+        self.validate_callable_arg_bindings(
+            func_name,
+            &params_with_explicit,
+            args,
+            &arg_types,
+            &mut type_bindings,
+            call_span,
+        );
         self.emit_explicit_bound_errors(func_name, &info.type_param_bounds, &type_bindings, call_span);
 
         let explicit_arity_ok = explicit_type_args.is_empty() || explicit_type_args.len() == info.type_params.len();
@@ -866,7 +971,12 @@ impl TypeChecker {
                 method_info.params = method_info
                     .params
                     .iter()
-                    .map(|(name, ty)| (name.clone(), substitute_resolved_type(ty, &type_bindings)))
+                    .map(|param| CallableParam {
+                        name: param.name.clone(),
+                        ty: substitute_resolved_type(&param.ty, &type_bindings),
+                        kind: param.kind,
+                        has_default: param.has_default,
+                    })
                     .collect();
                 method_info.return_type = substitute_resolved_type(&method_info.return_type, &type_bindings);
             }
@@ -874,35 +984,8 @@ impl TypeChecker {
 
         // ---- Call-site `Self`, value-arg compatibility ----
         let (params, return_type) = self.method_types_substituting_call_site_self(&method_info, receiver_ty);
-        self.validate_method_call_args(&params, args, arg_types);
-
-        // ---- Infer remaining method type parameters from formal/actual pairs ----
-        let mut positional: Vec<&ResolvedType> = Vec::new();
-        let mut named: std::collections::HashMap<&str, &ResolvedType> = std::collections::HashMap::new();
-        for (arg, ty) in args.iter().zip(arg_types.iter()) {
-            match arg {
-                CallArg::Positional(_) => positional.push(ty),
-                CallArg::Named(name, _) => {
-                    named.insert(name.as_str(), ty);
-                }
-            }
-        }
-
-        let mut pos_idx = 0usize;
-        for (param_name, param_ty) in &params {
-            let arg_ty = if let Some(t) = named.get(param_name.as_str()) {
-                Some(*t)
-            } else if pos_idx < positional.len() {
-                let t = positional[pos_idx];
-                pos_idx += 1;
-                Some(t)
-            } else {
-                None
-            };
-            if let Some(arg_ty) = arg_ty {
-                self.infer_type_param_bindings(param_ty, arg_ty, &mut type_bindings);
-            }
-        }
+        self.validate_callable_arg_bindings(method, &params, args, arg_types, &mut type_bindings, call_site_span);
+        self.type_info.record_call_site_callable_params(call_site_span, &params);
 
         self.emit_explicit_bound_errors(method, &method_info.type_param_bounds, &type_bindings, call_site_span);
 
@@ -953,7 +1036,7 @@ impl TypeChecker {
             ResolvedType::Function(expected_params, expected_ret) => {
                 if let ResolvedType::Function(actual_params, actual_ret) = actual {
                     for (e, a) in expected_params.iter().zip(actual_params.iter()) {
-                        self.infer_type_param_bindings(e, a, bindings);
+                        self.infer_type_param_bindings(&e.ty, &a.ty, bindings);
                     }
                     self.infer_type_param_bindings(expected_ret, actual_ret, bindings);
                 }
@@ -1929,16 +2012,26 @@ impl TypeChecker {
                 .push(errors::explicit_call_site_type_args_not_supported(span));
         }
         let callee_ty = self.check_expr(callee);
-        self.check_call_args(args);
 
         match callee_ty {
-            ResolvedType::Function(_, ret) => *ret,
-            ResolvedType::Named(name) => match self.lookup_symbol(&name).map(|s| &s.kind) {
-                Some(SymbolKind::Type(_)) => self.constructor_result_type(&name),
-                Some(SymbolKind::Variant(info)) => ResolvedType::Named(info.enum_name.clone()),
-                _ => ResolvedType::Unknown,
-            },
-            _ => ResolvedType::Unknown,
+            ResolvedType::Function(params, ret) => {
+                let arg_types = self.check_call_arg_types_for_params(args, &params);
+                let mut type_bindings = std::collections::HashMap::new();
+                self.validate_callable_arg_bindings("<callable>", &params, args, &arg_types, &mut type_bindings, span);
+                substitute_resolved_type(&ret, &type_bindings)
+            }
+            ResolvedType::Named(name) => {
+                self.check_call_args(args);
+                match self.lookup_symbol(&name).map(|s| &s.kind) {
+                    Some(SymbolKind::Type(_)) => self.constructor_result_type(&name),
+                    Some(SymbolKind::Variant(info)) => ResolvedType::Named(info.enum_name.clone()),
+                    _ => ResolvedType::Unknown,
+                }
+            }
+            _ => {
+                self.check_call_args(args);
+                ResolvedType::Unknown
+            }
         }
     }
 

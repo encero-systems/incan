@@ -8,8 +8,8 @@ use crate::frontend::library_manifest_index::{
 use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
     ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport, FunctionExport,
-    LibraryExports, LibraryManifest, MethodExport, ModelExport, ParamExport, ReceiverExport, StaticExport, TraitExport,
-    TypeBoundExport, TypeParamExport, TypeRef,
+    LibraryExports, LibraryManifest, MethodExport, ModelExport, ParamExport, ParamKindExport, ReceiverExport,
+    StaticExport, TraitExport, TypeBoundExport, TypeParamExport, TypeRef,
 };
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig, write_borrowed_param_probe_crate, write_substrait_probe_crate};
@@ -170,6 +170,8 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                     ty: TypeRef::Named {
                         name: "str".to_string(),
                     },
+                    kind: ParamKindExport::Normal,
+                    has_default: false,
                 }],
                 return_type: TypeRef::Named {
                     name: "Widget".to_string(),
@@ -318,12 +320,16 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                                     ty: TypeRef::Named {
                                         name: "str".to_string(),
                                     },
+                                    kind: ParamKindExport::Normal,
+                                    has_default: false,
                                 },
                                 ParamExport {
                                     name: "uri".to_string(),
                                     ty: TypeRef::Named {
                                         name: "str".to_string(),
                                     },
+                                    kind: ParamKindExport::Normal,
+                                    has_default: false,
                                 },
                             ],
                             return_type: TypeRef::Applied {
@@ -351,6 +357,8 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                                     name: "LazyFrame".to_string(),
                                     args: vec![TypeRef::TypeParam { name: "T".to_string() }],
                                 },
+                                kind: ParamKindExport::Normal,
+                                has_default: false,
                             }],
                             return_type: TypeRef::Applied {
                                 name: "Result".to_string(),
@@ -416,6 +424,8 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                         name: "DataSet".to_string(),
                         args: vec![TypeRef::TypeParam { name: "T".to_string() }],
                     },
+                    kind: ParamKindExport::Normal,
+                    has_default: false,
                 }],
                 return_type: TypeRef::Named {
                     name: none_constructor_name(),
@@ -1119,8 +1129,8 @@ fn test_rust_inspect_function_signature_preserves_borrowed_rust_path_param() -> 
     assert_eq!(
         checker.resolved_function_type_from_rust_sig(&sig, false),
         ResolvedType::Function(
-            vec![ResolvedType::Ref(Box::new(ResolvedType::RustPath(
-                "demo::Thing".to_string()
+            vec![CallableParam::positional(ResolvedType::Ref(Box::new(
+                ResolvedType::RustPath("demo::Thing".to_string())
             )))],
             Box::new(ResolvedType::Unit),
         )
@@ -4772,6 +4782,164 @@ def foo() -> int:
   return add(1, 2)
 "#;
     assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_variadic_rest_params_typecheck_and_bind_local_container_types() {
+    let source = r#"
+def collect(prefix: str, *items: int, **labels: str) -> int:
+  first: int = items[0]
+  label: str = labels["name"]
+  return first
+
+def main(xs: list[int], kw: dict[str, str]) -> int:
+  return collect("x", 1, *xs, name="demo", **kw)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_variadic_unpack_requires_matching_rest_param() {
+    let source = r#"
+def fixed(value: int) -> int:
+  return value
+
+def main(xs: list[int], kw: dict[str, str]) -> int:
+  return fixed(*xs, **kw)
+"#;
+    let errs = check_str_err(source, "expected unpacking into fixed function to fail");
+    assert!(
+        errs.iter().any(|err| err.message.contains("Cannot use `*` unpacking")),
+        "expected positional unpack diagnostic, got: {errs:?}"
+    );
+    assert!(
+        errs.iter().any(|err| err.message.contains("Cannot use `**` unpacking")),
+        "expected keyword unpack diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_variadic_rest_type_mismatch_reports_element_and_container_shapes() {
+    let source = r#"
+def collect(*items: int, **labels: str) -> int:
+  return 0
+
+def main(xs: list[str], kw: dict[str, int]) -> int:
+  return collect(1.0, *xs, name=2, **kw)
+"#;
+    let errs = check_str_err(source, "expected rest argument type mismatches");
+    let messages: Vec<&str> = errs.iter().map(|err| err.message.as_str()).collect();
+    assert!(
+        messages.iter().any(|msg| msg.contains("expected 'int', found 'float'")),
+        "expected direct rest positional mismatch, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("expected 'List[int]', found 'List[str]'")),
+        "expected positional unpack container mismatch, got: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|msg| msg.contains("expected 'str', found 'int'")),
+        "expected direct keyword rest mismatch, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("expected 'Dict[str, str]', found 'Dict[str, int]'")),
+        "expected keyword unpack container mismatch, got: {messages:?}"
+    );
+}
+
+#[test]
+fn test_variadic_rest_params_preserved_through_function_values() {
+    let source = r#"
+def collect(*items: int, **labels: str) -> int:
+  return 0
+
+def main(xs: list[int], kw: dict[str, str]) -> int:
+  f = collect
+  return f(1, *xs, name="demo", **kw)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_invalid_rest_parameter_declarations_report_targeted_errors() {
+    let source = r#"
+def normal_after_args(*items: int, value: int) -> int:
+  return value
+
+def duplicate_args(*left: int, *right: int) -> int:
+  return 0
+
+def args_after_kwargs(**labels: str, *items: int) -> int:
+  return 0
+
+def duplicate_kwargs(**left: str, **right: str) -> int:
+  return 0
+
+def rest_with_default(*items: int = []) -> int:
+  return 0
+"#;
+    let errs = check_str_err(source, "expected invalid rest parameter declarations");
+    let messages: Vec<&str> = errs.iter().map(|err| err.message.as_str()).collect();
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Normal parameters cannot appear after a rest parameter")),
+        "expected normal-after-rest diagnostic, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Only one `*args` rest parameter")),
+        "expected duplicate *args diagnostic, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("`*args` must appear before `**kwargs`")),
+        "expected *args-after-**kwargs diagnostic, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Only one `**kwargs` rest parameter")),
+        "expected duplicate **kwargs diagnostic, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Rest parameter 'items' cannot declare a default value")),
+        "expected rest-default diagnostic, got: {messages:?}"
+    );
+}
+
+#[test]
+fn test_normal_after_kwargs_reports_single_specific_rest_order_error() {
+    let source = r#"
+def invalid(**labels: str, value: int) -> int:
+  return value
+"#;
+    let errs = check_str_err(source, "expected normal parameter after **kwargs to fail");
+    let messages: Vec<&str> = errs.iter().map(|err| err.message.as_str()).collect();
+    let specific_count = messages
+        .iter()
+        .filter(|msg| msg.contains("Normal parameters cannot appear after a `**kwargs` rest parameter"))
+        .count();
+    let generic_count = messages
+        .iter()
+        .filter(|msg| **msg == "Normal parameters cannot appear after a rest parameter")
+        .count();
+    assert_eq!(
+        specific_count, 1,
+        "expected one **kwargs-specific diagnostic, got: {messages:?}"
+    );
+    assert_eq!(
+        generic_count, 0,
+        "expected no duplicate generic diagnostic, got: {messages:?}"
+    );
 }
 
 #[test]

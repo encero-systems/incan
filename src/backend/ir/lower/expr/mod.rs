@@ -13,8 +13,8 @@ mod patterns;
 
 use super::super::TypedExpr;
 use super::super::expr::{
-    CollectionMethodKind, IrCallArg, IrExpr, IrExprKind, MethodCallArgPolicy, MethodKind, UnaryOp, VarAccess,
-    VarRefKind,
+    CollectionMethodKind, IrCallArg, IrCallArgKind, IrExpr, IrExprKind, MethodCallArgPolicy, MethodKind, UnaryOp,
+    VarAccess, VarRefKind,
 };
 use super::super::types::IrType;
 use super::AstLowering;
@@ -181,7 +181,11 @@ impl AstLowering {
                         // Generate `collection.contains(item)` using the same receiver-aware classification path as
                         // ordinary method syntax so containment keeps builtin semantics for strings, lists, sets, and
                         // dicts without emitter-side name guessing.
-                        let contains_args = vec![IrCallArg { name: None, expr: item }];
+                        let contains_args = vec![IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::Positional,
+                            expr: item,
+                        }];
                         let contains_kind = MethodKind::for_receiver(&collection.ty, "contains").or_else(|| {
                             let mut receiver_ty = &collection.ty;
                             while let IrType::Ref(inner) | IrType::RefMut(inner) = receiver_ty {
@@ -204,6 +208,7 @@ impl AstLowering {
                                 method: "contains".to_string(),
                                 type_args: Vec::new(),
                                 args: contains_args,
+                                callable_signature: None,
                                 arg_policy,
                             }
                         };
@@ -273,7 +278,10 @@ impl AstLowering {
                 let lowered_type_args = self.lower_call_site_type_args(expr_span, type_args);
                 for (arg_ir, arg_ast) in args_ir.iter_mut().zip(args.iter()) {
                     let arg_span = match arg_ast {
-                        ast::CallArg::Positional(expr) | ast::CallArg::Named(_, expr) => expr.span,
+                        ast::CallArg::Positional(expr)
+                        | ast::CallArg::Named(_, expr)
+                        | ast::CallArg::PositionalUnpack(expr)
+                        | ast::CallArg::KeywordUnpack(expr) => expr.span,
                     };
                     arg_ir.expr = self.wrap_with_rust_arg_coercion(arg_ir.expr.clone(), arg_span)?;
                 }
@@ -298,6 +306,7 @@ impl AstLowering {
                             method: method_name,
                             type_args: lowered_type_args,
                             args: args_ir,
+                            callable_signature: self.callable_signature_for_call_span(expr_span),
                             arg_policy,
                         },
                         IrType::Unknown,
@@ -514,7 +523,9 @@ impl AstLowering {
                     .iter()
                     .map(|arg| match arg {
                         ast::CallArg::Named(n, e) => Ok((n.clone(), self.lower_expr_spanned(e)?)),
-                        ast::CallArg::Positional(e) => Ok((String::new(), self.lower_expr_spanned(e)?)),
+                        ast::CallArg::Positional(e)
+                        | ast::CallArg::PositionalUnpack(e)
+                        | ast::CallArg::KeywordUnpack(e) => Ok((String::new(), self.lower_expr_spanned(e)?)),
                     })
                     .collect::<Result<_, LoweringError>>()?;
                 (

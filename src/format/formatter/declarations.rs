@@ -825,6 +825,11 @@ impl Formatter {
         if param.is_mut {
             self.writer.write("mut ");
         }
+        match param.kind {
+            ParamKind::Normal => {}
+            ParamKind::RestPositional => self.writer.write("*"),
+            ParamKind::RestKeyword => self.writer.write("**"),
+        }
         self.writer.write(&param.name);
         self.writer.write(": ");
         self.format_type(&param.ty.node);

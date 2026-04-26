@@ -566,7 +566,10 @@ impl<'a> Parser<'a> {
                 self.shift_spanned_expr(callee, offset);
                 for arg in args {
                     match arg {
-                        CallArg::Positional(value) | CallArg::Named(_, value) => {
+                        CallArg::Positional(value)
+                        | CallArg::Named(_, value)
+                        | CallArg::PositionalUnpack(value)
+                        | CallArg::KeywordUnpack(value) => {
                             self.shift_spanned_expr(value, offset);
                         }
                     }
@@ -595,7 +598,10 @@ impl<'a> Parser<'a> {
                 self.shift_spanned_expr(base, offset);
                 for arg in args {
                     match arg {
-                        CallArg::Positional(value) | CallArg::Named(_, value) => {
+                        CallArg::Positional(value)
+                        | CallArg::Named(_, value)
+                        | CallArg::PositionalUnpack(value)
+                        | CallArg::KeywordUnpack(value) => {
                             self.shift_spanned_expr(value, offset);
                         }
                     }
@@ -650,7 +656,10 @@ impl<'a> Parser<'a> {
             Expr::Constructor(_, args) => {
                 for arg in args {
                     match arg {
-                        CallArg::Positional(value) | CallArg::Named(_, value) => {
+                        CallArg::Positional(value)
+                        | CallArg::Named(_, value)
+                        | CallArg::PositionalUnpack(value)
+                        | CallArg::KeywordUnpack(value) => {
                             self.shift_spanned_expr(value, offset);
                         }
                     }
@@ -1252,6 +1261,7 @@ impl<'a> Parser<'a> {
                     params.push(Spanned::new(
                         Param {
                             is_mut: false,
+                            kind: ParamKind::Normal,
                             name: name.clone(),
                             ty: inferred_ty,
                             default: None,
@@ -1295,6 +1305,24 @@ impl<'a> Parser<'a> {
                     let value = self.expression()?;
                     self.skip_newlines();
                     args.push(CallArg::Named(name, value));
+                    if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                        break;
+                    }
+                    continue;
+                }
+                if self.match_token(&TokenKind::Operator(OperatorId::StarStar)) {
+                    let expr = self.expression()?;
+                    self.skip_newlines();
+                    args.push(CallArg::KeywordUnpack(expr));
+                    if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                        break;
+                    }
+                    continue;
+                }
+                if self.match_token(&TokenKind::Operator(OperatorId::Star)) {
+                    let expr = self.expression()?;
+                    self.skip_newlines();
+                    args.push(CallArg::PositionalUnpack(expr));
                     if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
                         break;
                     }

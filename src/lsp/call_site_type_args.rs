@@ -124,12 +124,10 @@ fn scan_types_in_call(type_args: &[Spanned<Type>], offset: usize) -> Option<&Spa
 fn scan_call_args(args: &[CallArg], offset: usize) -> Option<&Spanned<Type>> {
     for a in args {
         match a {
-            CallArg::Positional(e) => {
-                if let Some(hit) = call_site_type_in_expr(e, offset) {
-                    return Some(hit);
-                }
-            }
-            CallArg::Named(_, e) => {
+            CallArg::Positional(e)
+            | CallArg::Named(_, e)
+            | CallArg::PositionalUnpack(e)
+            | CallArg::KeywordUnpack(e) => {
                 if let Some(hit) = call_site_type_in_expr(e, offset) {
                     return Some(hit);
                 }

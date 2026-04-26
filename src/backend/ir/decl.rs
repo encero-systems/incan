@@ -217,6 +217,8 @@ pub struct FunctionParam {
     pub ty: IrType,
     pub mutability: Mutability,
     pub is_self: bool,
+    /// Surface call-binding kind preserved for RFC 038 rest parameters.
+    pub kind: crate::frontend::ast::ParamKind,
     /// Optional default argument expression (used for call-site default filling).
     pub default: Option<super::IrExpr>,
 }

@@ -100,10 +100,7 @@ impl TypeChecker {
     }
 
     fn function_info_to_resolved_function_type(info: &FunctionInfo) -> ResolvedType {
-        ResolvedType::Function(
-            info.params.iter().map(|(_, ty)| ty.clone()).collect(),
-            Box::new(info.return_type.clone()),
-        )
+        ResolvedType::Function(info.params.clone(), Box::new(info.return_type.clone()))
     }
     // ========================================================================
     // Expressions

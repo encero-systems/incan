@@ -216,6 +216,10 @@ pub enum CallArg {
     Positional(Spanned<Expr>),
     /// Named argument: `name=value`
     Named(Ident, Spanned<Expr>),
+    /// Positional unpack argument: `*expr`.
+    PositionalUnpack(Spanned<Expr>),
+    /// Keyword unpack argument: `**expr`.
+    KeywordUnpack(Spanned<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

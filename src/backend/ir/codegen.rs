@@ -1031,7 +1031,9 @@ mod tests {
         LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
     };
     use crate::frontend::{lexer, parser};
-    use crate::library_manifest::{ConstExport, FunctionExport, LibraryManifest, ModelExport, ParamExport, TypeRef};
+    use crate::library_manifest::{
+        ConstExport, FunctionExport, LibraryManifest, ModelExport, ParamExport, ParamKindExport, TypeRef,
+    };
     use std::collections::HashMap;
     #[cfg(feature = "rust_inspect")]
     use std::fs;
@@ -1133,6 +1135,8 @@ def main() -> None:
                 ty: TypeRef::Named {
                     name: "str".to_string(),
                 },
+                kind: ParamKindExport::Normal,
+                has_default: false,
             }],
             return_type: TypeRef::Named {
                 name: "Widget".to_string(),

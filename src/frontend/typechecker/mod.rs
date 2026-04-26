@@ -151,6 +151,11 @@ pub struct TypeCheckInfo {
     /// that [`AstLowering::lower_expr`](crate::backend::ir::lower::AstLowering::lower_expr) receives as `expr_span`
     /// for those nodes, so lookup stays consistent across phases without holding AST node identities.
     pub call_site_monomorph_type_args: HashMap<(usize, usize), Vec<ResolvedType>>,
+    /// RFC 038: Rest-aware callable signatures keyed by full call expression span.
+    ///
+    /// Function-value calls can recover this from the callee expression type, but method calls need a snapshot because
+    /// lowering does not retain the frontend method table.
+    pub call_site_callable_params: HashMap<(usize, usize), Vec<CallableParam>>,
 }
 
 /// How an identifier expression resolved in the symbol table.
@@ -248,6 +253,21 @@ impl TypeCheckInfo {
             receiver_span.end,
             method.to_string(),
         ));
+    }
+
+    /// Return rest-aware callable metadata recorded for the full call expression span, if any.
+    pub fn call_site_callable_params(&self, span: Span) -> Option<&[CallableParam]> {
+        self.call_site_callable_params
+            .get(&(span.start, span.end))
+            .map(Vec::as_slice)
+    }
+
+    /// Record callable metadata needed by lowering when the callee expression alone cannot carry it.
+    pub(crate) fn record_call_site_callable_params(&mut self, span: Span, params: &[CallableParam]) {
+        if params.iter().any(|param| param.kind != ParamKind::Normal) {
+            self.call_site_callable_params
+                .insert((span.start, span.end), params.to_vec());
+        }
     }
 }
 
@@ -732,7 +752,7 @@ impl TypeChecker {
             .params
             .iter()
             .skip(skip)
-            .map(|p| self.resolved_type_from_rust_display(p.type_display.as_str()))
+            .map(|p| CallableParam::positional(self.resolved_type_from_rust_display(p.type_display.as_str())))
             .collect();
         let ret = self.resolved_type_from_rust_display(sig.return_type.as_str());
         ResolvedType::Function(params, Box::new(ret))
@@ -1552,7 +1572,10 @@ impl TypeChecker {
     ) {
         for arg in args {
             match arg {
-                CallArg::Positional(expr) | CallArg::Named(_, expr) => {
+                CallArg::Positional(expr)
+                | CallArg::Named(_, expr)
+                | CallArg::PositionalUnpack(expr)
+                | CallArg::KeywordUnpack(expr) => {
                     self.collect_static_dependencies_from_expr(&expr.node, deps, visiting_functions);
                 }
             }
@@ -1754,7 +1777,10 @@ impl TypeChecker {
     ) {
         for arg in args {
             match arg {
-                CallArg::Positional(expr) | CallArg::Named(_, expr) => {
+                CallArg::Positional(expr)
+                | CallArg::Named(_, expr)
+                | CallArg::PositionalUnpack(expr)
+                | CallArg::KeywordUnpack(expr) => {
                     self.collect_static_initializer_static_writes_from_expr(expr, current_static, visiting_functions);
                 }
             }
@@ -2737,7 +2763,10 @@ impl TypeChecker {
             }
             (ResolvedType::Function(p1, r1), ResolvedType::Function(p2, r2)) => {
                 p1.len() == p2.len()
-                    && p1.iter().zip(p2.iter()).all(|(t1, t2)| self.types_compatible(t1, t2))
+                    && p1
+                        .iter()
+                        .zip(p2.iter())
+                        .all(|(t1, t2)| t1.kind == t2.kind && self.types_compatible(&t1.ty, &t2.ty))
                     && self.types_compatible(r1, r2)
             }
             (ResolvedType::Tuple(e1), ResolvedType::Tuple(e2)) => {

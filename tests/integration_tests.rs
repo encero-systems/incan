@@ -1876,6 +1876,54 @@ mod codegen_tests {
     }
 
     #[test]
+    fn test_variadic_rest_calls_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def collect(prefix: str, *items: int, **labels: str) -> int:
+    mut total: int = 0
+    for item in items:
+        total = total + item
+    if labels["name"] == "direct":
+        return total
+    if labels["name"] == "callable":
+        return total
+    return total
+
+class Collector:
+    def collect(self, *items: int, **labels: str) -> int:
+        mut total: int = 0
+        for item in items:
+            total = total + item
+        if labels["name"] == "method":
+            return total
+        return -100
+
+def main() -> None:
+    f = collect
+    collector = Collector()
+    println(collect("x", 1, 2, name="direct") + f("x", 4, 5, name="callable") + collector.collect(6, 7, name="method"))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "variadic rest run-path regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["25"], "unexpected variadic rest output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
     fn test_filtered_comprehensions_run_with_borrowed_iterables() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([
@@ -5325,6 +5373,8 @@ pub def display[T](data: DataSet[T]) -> None:
                 ty: TypeRef::Named {
                     name: "int".to_string(),
                 },
+                kind: incan::library_manifest::ParamKindExport::Normal,
+                has_default: false,
             }],
             return_type: TypeRef::Named {
                 name: "int".to_string(),
