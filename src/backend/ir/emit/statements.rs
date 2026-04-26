@@ -728,7 +728,7 @@ mod tests {
     use super::*;
     use crate::backend::ir::FunctionRegistry;
     use crate::backend::ir::TypedExpr;
-    use crate::backend::ir::expr::{CollectionMethodKind, IrCallArg, MethodKind, VarAccess, VarRefKind};
+    use crate::backend::ir::expr::{CollectionMethodKind, IrCallArg, IrCallArgKind, MethodKind, VarAccess, VarRefKind};
 
     #[test]
     fn immutable_static_binding_let_does_not_emit_mut() -> Result<(), String> {
@@ -819,6 +819,7 @@ mod tests {
                     kind: MethodKind::Collection(CollectionMethodKind::Append),
                     args: vec![IrCallArg {
                         name: None,
+                        kind: IrCallArgKind::Positional,
                         expr: TypedExpr::new(IrExprKind::Int(2), IrType::Int),
                     }],
                 },
@@ -867,6 +868,7 @@ mod tests {
                     kind: method_kind,
                     args: vec![IrCallArg {
                         name: None,
+                        kind: IrCallArgKind::Positional,
                         expr: TypedExpr::new(IrExprKind::Int(1), IrType::Int),
                     }],
                 },

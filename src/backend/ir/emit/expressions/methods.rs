@@ -6,6 +6,7 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
+use super::super::super::FunctionSignature;
 use super::super::super::expr::{
     CollectionMethodKind, InternalMethodKind, IrCallArg, IrExprKind, MethodCallArgPolicy, MethodKind, TypedExpr,
     VarAccess, VarRefKind,
@@ -73,6 +74,7 @@ impl<'a> IrEmitter<'a> {
             .with_span(arg.expr.span);
             rewritten.push(IrCallArg {
                 name: arg.name.clone(),
+                kind: arg.kind,
                 expr: rewritten_expr,
             });
         }
@@ -174,13 +176,20 @@ impl<'a> IrEmitter<'a> {
         method: &str,
         type_args: &[IrType],
         args: &[IrCallArg],
+        callable_signature: Option<&FunctionSignature>,
         arg_policy: MethodCallArgPolicy,
     ) -> Result<TokenStream, EmitError> {
         if Self::expr_is_storage_rooted(receiver) {
             let (arg_bindings, rewritten_args) = self.materialize_storage_rooted_args(args)?;
             let rewritten_receiver = Self::rewrite_storage_root_expr(receiver, "__incan_static_value");
-            let inner =
-                self.emit_method_call_expr(&rewritten_receiver, method, type_args, &rewritten_args, arg_policy)?;
+            let inner = self.emit_method_call_expr(
+                &rewritten_receiver,
+                method,
+                type_args,
+                &rewritten_args,
+                callable_signature,
+                arg_policy,
+            )?;
             let wrapped = if matches!(arg_policy, MethodCallArgPolicy::PreserveShape) {
                 self.emit_storage_with_ref(receiver, inner)
             } else {
@@ -261,10 +270,19 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     ValueUseSite::ExternalCallArg { target_ty: None }
                 };
-                let arg_tokens: Vec<TokenStream> = arg_exprs
-                    .iter()
-                    .map(|a| self.emit_expr_for_use(a, use_site))
-                    .collect::<Result<_, _>>()?;
+                let arg_tokens: Vec<TokenStream> = if let Some(sig) = callable_signature
+                    && sig
+                        .params
+                        .iter()
+                        .any(|param| param.kind != crate::frontend::ast::ParamKind::Normal)
+                {
+                    self.emit_rest_aware_call_args(receiver, args, sig)?
+                } else {
+                    arg_exprs
+                        .iter()
+                        .map(|a| self.emit_expr_for_use(a, use_site))
+                        .collect::<Result<_, _>>()?
+                };
                 return Ok(quote! { #type_ident::#m #method_turbofish (#(#arg_tokens),*) });
             }
         }
@@ -305,10 +323,19 @@ impl<'a> IrEmitter<'a> {
         } else {
             ValueUseSite::ExternalCallArg { target_ty: None }
         };
-        let arg_tokens: Vec<TokenStream> = arg_exprs
-            .iter()
-            .map(|a| self.emit_expr_for_use(a, use_site))
-            .collect::<Result<_, _>>()?;
+        let arg_tokens: Vec<TokenStream> = if let Some(sig) = callable_signature
+            && sig
+                .params
+                .iter()
+                .any(|param| param.kind != crate::frontend::ast::ParamKind::Normal)
+        {
+            self.emit_rest_aware_call_args(receiver, args, sig)?
+        } else {
+            arg_exprs
+                .iter()
+                .map(|a| self.emit_expr_for_use(a, use_site))
+                .collect::<Result<_, _>>()?
+        };
         Ok(quote! { #r.#m #method_turbofish (#(#arg_tokens),*) })
     }
 

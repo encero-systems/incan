@@ -26,6 +26,8 @@ fn manifest_io_round_trip_preserves_recursive_types_and_bounds() -> Result<(), B
                     },
                 ],
             },
+            kind: ParamKindExport::Normal,
+            has_default: false,
         }],
         return_type: TypeRef::Function {
             params: vec![TypeRef::Tuple {
@@ -98,6 +100,8 @@ fn manifest_io_round_trip_preserves_generic_method_type_params() -> Result<(), B
             params: vec![ParamExport {
                 name: "value".to_string(),
                 ty: TypeRef::TypeParam { name: "T".to_string() },
+                kind: ParamKindExport::Normal,
+                has_default: false,
             }],
             return_type: TypeRef::TypeParam { name: "T".to_string() },
             is_async: false,

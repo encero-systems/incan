@@ -6,7 +6,7 @@ use incan_core::lang::types::numerics::{self, NumericTypeId};
 use incan_core::lang::types::stringlike::{self, StringLikeId};
 
 use super::TypeRef;
-use crate::frontend::symbols::ResolvedType;
+use crate::frontend::symbols::{CallableParam, ResolvedType};
 
 /// Convert a frontend semantic [`ResolvedType`] into the stable manifest-level [`TypeRef`] surface.
 ///
@@ -41,7 +41,7 @@ pub(super) fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
             args: args.iter().map(type_ref_from_resolved).collect(),
         },
         ResolvedType::Function(params, return_type) => TypeRef::Function {
-            params: params.iter().map(type_ref_from_resolved).collect(),
+            params: params.iter().map(|param| type_ref_from_resolved(&param.ty)).collect(),
             return_type: Box::new(type_ref_from_resolved(return_type)),
         },
         ResolvedType::Tuple(elements) => TypeRef::Tuple {
@@ -89,7 +89,10 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
             }
         }
         TypeRef::Function { params, return_type } => ResolvedType::Function(
-            params.iter().map(resolved_type_from_manifest_type_ref).collect(),
+            params
+                .iter()
+                .map(|param| CallableParam::positional(resolved_type_from_manifest_type_ref(param)))
+                .collect(),
             Box::new(resolved_type_from_manifest_type_ref(return_type)),
         ),
         TypeRef::Tuple { elements } => {

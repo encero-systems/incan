@@ -299,7 +299,7 @@ impl AstLowering {
                 }
             },
             ResolvedType::Function(params, ret) => IrType::Function {
-                params: params.iter().map(|p| self.lower_resolved_type(p)).collect(),
+                params: params.iter().map(|p| self.lower_resolved_type(&p.ty)).collect(),
                 ret: Box::new(self.lower_resolved_type(ret)),
             },
             ResolvedType::Tuple(items) => IrType::Tuple(items.iter().map(|t| self.lower_resolved_type(t)).collect()),

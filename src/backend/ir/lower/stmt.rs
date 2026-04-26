@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use super::super::expr::{IrCallArg, IrExprKind, MatchArm, Pattern as IrPattern, VarAccess, VarRefKind};
+use super::super::expr::{IrCallArg, IrCallArgKind, IrExprKind, MatchArm, Pattern as IrPattern, VarAccess, VarRefKind};
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::IrType;
 use super::super::{IrSpan, Mutability, TypedExpr};
@@ -683,13 +683,18 @@ impl AstLowering {
         let call_args = lowered
             .args
             .into_iter()
-            .map(|expr| IrCallArg { name: None, expr })
+            .map(|expr| IrCallArg {
+                name: None,
+                kind: IrCallArgKind::Positional,
+                expr,
+            })
             .collect();
         let call = TypedExpr::new(
             IrExprKind::Call {
                 func: Box::new(callee),
                 type_args: Vec::new(),
                 args: call_args,
+                callable_signature: None,
                 canonical_path: Some(lowered.canonical_path),
             },
             IrType::Unit,
@@ -717,8 +722,10 @@ impl AstLowering {
     fn count_call_args_ident_reads(&self, args: &[ast::CallArg], counts: &mut HashMap<String, usize>) {
         for arg in args {
             match arg {
-                ast::CallArg::Positional(expr) => self.count_expr_ident_reads(&expr.node, counts),
-                ast::CallArg::Named(_, expr) => self.count_expr_ident_reads(&expr.node, counts),
+                ast::CallArg::Positional(expr)
+                | ast::CallArg::Named(_, expr)
+                | ast::CallArg::PositionalUnpack(expr)
+                | ast::CallArg::KeywordUnpack(expr) => self.count_expr_ident_reads(&expr.node, counts),
             }
         }
     }

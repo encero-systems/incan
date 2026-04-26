@@ -10,8 +10,8 @@ use crate::frontend::ast::{
     TypeAliasDecl, TypeParam, Visibility,
 };
 use crate::frontend::symbols::{
-    ClassInfo, EnumInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, SymbolKind,
-    TraitInfo, TypeInfo, resolve_type,
+    CallableParam, ClassInfo, EnumInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType,
+    SymbolKind, TraitInfo, TypeInfo, resolve_type,
 };
 use crate::frontend::typechecker::TypeChecker;
 
@@ -41,7 +41,7 @@ pub struct CheckedMethod {
     pub name: String,
     pub type_params: Vec<CheckedTypeParam>,
     pub receiver: Option<crate::frontend::ast::Receiver>,
-    pub params: Vec<(String, ResolvedType)>,
+    pub params: Vec<CallableParam>,
     pub return_type: ResolvedType,
     pub is_async: bool,
     pub has_body: bool,
@@ -51,7 +51,7 @@ pub struct CheckedMethod {
 pub struct CheckedFunctionExport {
     pub name: String,
     pub type_params: Vec<CheckedTypeParam>,
-    pub params: Vec<(String, ResolvedType)>,
+    pub params: Vec<CallableParam>,
     pub return_type: ResolvedType,
     pub is_async: bool,
 }

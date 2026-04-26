@@ -7,7 +7,7 @@
 //! This module prevents that by providing a macro that the compiler emits into every generated `main.rs`:
 //!
 //! ```rust,ignore
-//! incan_stdlib::__incan_stdlib_version_check!("0.3.0-dev.3");
+//! incan_stdlib::__incan_stdlib_version_check!("0.3.0-dev.4");
 //! ```
 //!
 //! The macro expands into a `const` assertion that compares the compiler version (baked in as a string literal) against
@@ -46,7 +46,7 @@ pub const fn const_str_eq(a: &[u8], b: &[u8]) -> bool {
 /// (= compile error) when the versions differ. Example output on mismatch:
 ///
 /// ```text
-/// Incan compiler/std lib version mismatch: compiler 0.3.0-dev.4, stdlib 0.3.0-dev.3
+/// Incan compiler/std lib version mismatch: compiler 0.3.0-dev.5, stdlib 0.3.0-dev.4
 /// ```
 #[doc(hidden)]
 #[macro_export]

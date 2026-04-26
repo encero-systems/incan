@@ -14,7 +14,7 @@
 //! Unknown methods (e.g., Rust interop) remain string-based via `MethodCall`.
 
 use super::decl::IrInteropAdapterKind;
-use super::{IrSpan, IrType, Ownership};
+use super::{FunctionSignature, IrSpan, IrType, Ownership};
 use incan_core::interop::CoercionPolicy;
 use incan_core::lang::builtins::{self as core_builtins, BuiltinFnId};
 use incan_core::lang::surface::{dict_methods, list_methods, set_methods, string_methods};
@@ -61,13 +61,28 @@ pub type IrExpr = TypedExpr;
 /// This preserves named-argument information (`foo(x=1)`) so codegen can reorder arguments by parameter name
 /// (or apply targeted policies for known APIs).
 ///
-/// For positional arguments, `name` is `None`.
+/// For positional and unpack arguments, `name` is `None`.
 #[derive(Debug, Clone)]
 pub struct IrCallArg {
     /// Optional argument name (present for `foo(x=1)`, absent for positional args).
     pub name: Option<String>,
+    /// Surface argument kind used by rest-call lowering.
+    pub kind: IrCallArgKind,
     /// Argument expression.
     pub expr: IrExpr,
+}
+
+/// Surface call-argument kind preserved for emission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrCallArgKind {
+    /// Ordinary positional argument.
+    Positional,
+    /// Ordinary named argument.
+    Named,
+    /// Positional unpack argument (`*expr`).
+    PositionalUnpack,
+    /// Keyword unpack argument (`**expr`).
+    KeywordUnpack,
 }
 
 /// Lowering hint for ordinary method-call argument conversions.
@@ -133,6 +148,9 @@ pub enum IrExprKind {
         /// Explicit call-site type arguments (`f[T](...)`) when provided.
         type_args: Vec<IrType>,
         args: Vec<IrCallArg>,
+        /// Resolved callable signature when the callee expression carries metadata that is not represented by the
+        /// flattened IR function type, such as RFC 038 rest-parameter markers.
+        callable_signature: Option<FunctionSignature>,
         /// Canonical callee path when known (e.g. `["std","testing","assert_eq"]`).
         /// This lets emission/type-directed policies resolve calls independent of local import style.
         canonical_path: Option<Vec<String>>,
@@ -153,6 +171,8 @@ pub enum IrExprKind {
         /// Explicit call-site type arguments (`obj.method[T](...)`) when provided.
         type_args: Vec<IrType>,
         args: Vec<IrCallArg>,
+        /// Resolved method signature when rest markers must survive into emission.
+        callable_signature: Option<FunctionSignature>,
         arg_policy: MethodCallArgPolicy,
     },
 

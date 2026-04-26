@@ -322,6 +322,21 @@ mod tests {
     }
 
     #[test]
+    fn test_format_source_rest_params_and_call_unpacking() -> Result<(), FormatError> {
+        let source = r#"def collect(prefix: str, *items: int, **labels: str) -> int:
+  return collect(prefix,*items,**labels)
+"#;
+        let formatted = format_source(source)?;
+        assert_eq!(
+            formatted,
+            r#"def collect(prefix: str, *items: int, **labels: str) -> int:
+    return collect(prefix, *items, **labels)
+"#
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_model() {
         let source = r#"model User:
   name: str

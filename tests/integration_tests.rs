@@ -4403,6 +4403,8 @@ pub def display[T](data: DataSet[T]) -> None:
                 ty: TypeRef::Named {
                     name: "int".to_string(),
                 },
+                kind: incan::library_manifest::ParamKindExport::Normal,
+                has_default: false,
             }],
             return_type: TypeRef::Named {
                 name: "int".to_string(),

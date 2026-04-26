@@ -489,7 +489,10 @@ fn internal_expr_to_public(expr: &ast::Expr) -> Result<incan_vocab::IncanExpr, V
             let mut mapped_args = Vec::new();
             for arg in args {
                 let value = match arg {
-                    ast::CallArg::Positional(expr) | ast::CallArg::Named(_, expr) => expr,
+                    ast::CallArg::Positional(expr)
+                    | ast::CallArg::Named(_, expr)
+                    | ast::CallArg::PositionalUnpack(expr)
+                    | ast::CallArg::KeywordUnpack(expr) => expr,
                 };
                 mapped_args.push(internal_expr_to_public(&value.node)?);
             }

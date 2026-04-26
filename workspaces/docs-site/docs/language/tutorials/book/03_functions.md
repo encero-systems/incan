@@ -44,6 +44,28 @@ def main() -> None:
     `__name__` guard - it's implicit in Incan. It is, however, still good practice to keep “do work” code inside `main`,
     and keep other files as imported helper modules.
 
+## Variadic arguments
+
+Use `*name: T` to capture additional positional arguments as `List[T]`, and `**name: T` to capture additional keyword
+arguments as `Dict[str, T]`:
+
+```incan
+def summarize(title: str, *values: int, **labels: str) -> int:
+    total: int = 0
+    for value in values:
+        total = total + value
+    return total
+
+def main() -> None:
+    extra = [2, 3]
+    labels = {"source": "demo"}
+    total = summarize("numbers", 1, *extra, kind="example", **labels)
+    println(f"total={total}")
+```
+
+Call-site unpacking is static: `*extra` requires a callee with a `*` rest parameter, and `**labels` requires a callee
+with a `**` rest parameter.
+
 ## Docstrings
 
 Use docstrings to describe intent (especially for public helpers):

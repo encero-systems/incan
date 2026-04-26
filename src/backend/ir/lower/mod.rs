@@ -528,15 +528,21 @@ impl AstLowering {
                     .iter()
                     .map(|p| {
                         let base_ty = self.lower_type_with_type_params(&p.node.ty.node, Some(&type_param_names));
+                        let param_ty = match p.node.kind {
+                            ast::ParamKind::Normal => base_ty,
+                            ast::ParamKind::RestPositional => IrType::List(Box::new(base_ty)),
+                            ast::ParamKind::RestKeyword => IrType::Dict(Box::new(IrType::String), Box::new(base_ty)),
+                        };
                         FunctionParam {
                             name: p.node.name.clone(),
-                            ty: base_ty,
+                            ty: param_ty,
                             mutability: if p.node.is_mut {
                                 Mutability::Mutable
                             } else {
                                 Mutability::Immutable
                             },
                             is_self: false,
+                            kind: p.node.kind,
                             default: match &p.node.default {
                                 Some(default_expr) => self.lower_expr_spanned(default_expr).ok(),
                                 None => None,

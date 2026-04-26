@@ -5,11 +5,14 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
+use super::super::super::FunctionSignature;
 use super::super::super::conversions::{BinOpEmitKind, determine_binop_plan};
-use super::super::super::expr::{BinOp, IrCallArg, IrExprKind, TypedExpr, VarAccess, VarRefKind};
+use super::super::super::decl::FunctionParam;
+use super::super::super::expr::{BinOp, IrCallArg, IrCallArgKind, IrExprKind, TypedExpr, VarAccess, VarRefKind};
 use super::super::super::ownership::{ValueUseSite, incan_call_arg_needs_rust_mut_borrow, plan_value_use};
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
+use crate::frontend::ast::ParamKind;
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 
@@ -265,6 +268,7 @@ impl<'a> IrEmitter<'a> {
         func: &TypedExpr,
         type_args: &[IrType],
         args: &[IrCallArg],
+        callable_signature: Option<&FunctionSignature>,
         canonical_path: Option<&[String]>,
     ) -> Result<TokenStream, EmitError> {
         let canonical_name = canonical_path.and_then(|path| path.last()).map(|s| s.as_str());
@@ -276,7 +280,8 @@ impl<'a> IrEmitter<'a> {
         let callee_name = local_name.or(canonical_name);
         let function_sig = local_name
             .and_then(|name| self.function_registry.get(name))
-            .or_else(|| canonical_name.and_then(|name| self.function_registry.get(name)));
+            .or_else(|| canonical_name.and_then(|name| self.function_registry.get(name)))
+            .or(callable_signature);
 
         // The checked-newtype lowering path emits a compiler-internal panic marker call. Render that as the Rust
         // `panic!` macro so generated code stays valid without colliding with user-defined functions that may also be
@@ -323,6 +328,13 @@ impl<'a> IrEmitter<'a> {
             let emitted: Vec<TokenStream> = type_args.iter().map(|ty| self.emit_type(ty)).collect();
             quote! { ::<#(#emitted),*> }
         };
+
+        if let Some(sig) = function_sig
+            && sig.params.iter().any(|param| param.kind != ParamKind::Normal)
+        {
+            let arg_tokens = self.emit_rest_aware_call_args(func, args, sig)?;
+            return Ok(quote! { #f #turbofish (#(#arg_tokens),*) });
+        }
 
         // Order arguments only when keyword args are present (positional-only calls preserve previous behavior,
         // which is important for snapshots + for default-arg lowering work that happens elsewhere).
@@ -481,6 +493,214 @@ impl<'a> IrEmitter<'a> {
         Ok(quote! { #f #turbofish (#(#arg_tokens),*) })
     }
 
+    pub(in super::super) fn emit_rest_aware_call_args(
+        &self,
+        func: &TypedExpr,
+        args: &[IrCallArg],
+        sig: &FunctionSignature,
+    ) -> Result<Vec<TokenStream>, EmitError> {
+        let normal_param_positions: Vec<usize> = sig
+            .params
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, param)| (param.kind == ParamKind::Normal).then_some(idx))
+            .collect();
+        let mut normal_bindings: Vec<Option<&IrCallArg>> = vec![None; normal_param_positions.len()];
+        let mut rest_positional_args: Vec<&IrCallArg> = Vec::new();
+        let mut rest_keyword_args: Vec<&IrCallArg> = Vec::new();
+        let mut positional_index = 0usize;
+
+        for arg in args {
+            match arg.kind {
+                IrCallArgKind::Positional => {
+                    if positional_index < normal_bindings.len() {
+                        normal_bindings[positional_index] = Some(arg);
+                        positional_index += 1;
+                    } else {
+                        rest_positional_args.push(arg);
+                    }
+                }
+                IrCallArgKind::PositionalUnpack => rest_positional_args.push(arg),
+                IrCallArgKind::Named => {
+                    let Some(name) = arg.name.as_deref() else {
+                        rest_keyword_args.push(arg);
+                        continue;
+                    };
+                    if let Some((binding_idx, _)) = normal_param_positions
+                        .iter()
+                        .enumerate()
+                        .find(|(_, param_idx)| sig.params[**param_idx].name == name)
+                    {
+                        normal_bindings[binding_idx] = Some(arg);
+                    } else {
+                        rest_keyword_args.push(arg);
+                    }
+                }
+                IrCallArgKind::KeywordUnpack => rest_keyword_args.push(arg),
+            }
+        }
+
+        let mut normal_binding_index = 0usize;
+        let mut out = Vec::with_capacity(sig.params.len());
+        for (param_idx, param) in sig.params.iter().enumerate() {
+            match param.kind {
+                ParamKind::Normal => {
+                    if let Some(arg) = normal_bindings.get(normal_binding_index).and_then(|binding| *binding) {
+                        out.push(self.emit_regular_call_arg(func, &arg.expr, param_idx, param)?);
+                    } else if let Some(default_arg) = &param.default {
+                        out.push(self.emit_regular_call_arg(func, default_arg, param_idx, param)?);
+                    }
+                    normal_binding_index += 1;
+                }
+                ParamKind::RestPositional => {
+                    let element_ty = match &param.ty {
+                        IrType::List(element_ty) => element_ty.as_ref(),
+                        _ => &param.ty,
+                    };
+                    out.push(self.emit_rest_positional_arg(&rest_positional_args, element_ty)?);
+                }
+                ParamKind::RestKeyword => {
+                    let value_ty = match &param.ty {
+                        IrType::Dict(_, value_ty) => value_ty.as_ref(),
+                        _ => &param.ty,
+                    };
+                    out.push(self.emit_rest_keyword_arg(&rest_keyword_args, value_ty)?);
+                }
+            }
+        }
+
+        Ok(out)
+    }
+
+    fn emit_rest_positional_arg(&self, args: &[&IrCallArg], element_ty: &IrType) -> Result<TokenStream, EmitError> {
+        let mut statements = Vec::with_capacity(args.len());
+        for arg in args {
+            let emitted = match arg.kind {
+                IrCallArgKind::Positional => {
+                    let item = self.emit_expr_for_use(
+                        &arg.expr,
+                        ValueUseSite::CollectionElement {
+                            target_ty: Some(element_ty),
+                        },
+                    )?;
+                    quote! { __incan_rest_args.push(#item); }
+                }
+                IrCallArgKind::PositionalUnpack => {
+                    let unpacked = self.emit_expr(&arg.expr)?;
+                    quote! { __incan_rest_args.extend(#unpacked); }
+                }
+                _ => continue,
+            };
+            statements.push(emitted);
+        }
+        Ok(quote! {{
+            let mut __incan_rest_args = Vec::new();
+            #(#statements)*
+            __incan_rest_args
+        }})
+    }
+
+    fn emit_rest_keyword_arg(&self, args: &[&IrCallArg], value_ty: &IrType) -> Result<TokenStream, EmitError> {
+        let mut statements = Vec::with_capacity(args.len());
+        for arg in args {
+            let emitted = match arg.kind {
+                IrCallArgKind::Named => {
+                    let Some(name) = arg.name.as_deref() else {
+                        continue;
+                    };
+                    let value = self.emit_expr_for_use(
+                        &arg.expr,
+                        ValueUseSite::CollectionElement {
+                            target_ty: Some(value_ty),
+                        },
+                    )?;
+                    quote! { __incan_rest_kwargs.insert(#name.to_string(), #value); }
+                }
+                IrCallArgKind::KeywordUnpack => {
+                    let unpacked = self.emit_expr(&arg.expr)?;
+                    quote! { __incan_rest_kwargs.extend(#unpacked); }
+                }
+                _ => continue,
+            };
+            statements.push(emitted);
+        }
+        Ok(quote! {{
+            let mut __incan_rest_kwargs = HashMap::new();
+            #(#statements)*
+            __incan_rest_kwargs
+        }})
+    }
+
+    fn emit_regular_call_arg(
+        &self,
+        func: &TypedExpr,
+        arg: &TypedExpr,
+        idx: usize,
+        param: &FunctionParam,
+    ) -> Result<TokenStream, EmitError> {
+        let target_ty = Some(&param.ty);
+        let emitted = if let Some(seed) = self.emit_inference_seeded_literal_arg(arg, &param.ty)? {
+            seed
+        } else if Self::is_unresolved_call_seed_type(&param.ty) {
+            if let Some(seed) = self.emit_inference_seeded_literal_arg(arg, &arg.ty)? {
+                seed
+            } else {
+                self.emit_expr(arg)?
+            }
+        } else {
+            self.emit_expr(arg)?
+        };
+
+        if let IrExprKind::Var { access, .. } = &arg.kind {
+            match access {
+                VarAccess::BorrowMut => return Ok(quote! { &mut #emitted }),
+                VarAccess::Borrow => return Ok(quote! { &#emitted }),
+                _ => {}
+            }
+        }
+
+        match &param.ty {
+            IrType::Ref(_) => match &arg.ty {
+                IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
+                _ => return Ok(quote! { &#emitted }),
+            },
+            IrType::RefMut(_) => match &arg.ty {
+                IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
+                _ => return Ok(quote! { &mut #emitted }),
+            },
+            _ => {}
+        }
+
+        let in_return = *self.in_return_context.borrow();
+        let use_site = if let IrExprKind::Var { name, ref_kind, .. } = &func.kind {
+            if matches!(ref_kind, VarRefKind::ExternalRustName) || self.external_rust_functions.contains(name) {
+                ValueUseSite::ExternalCallArg { target_ty }
+            } else {
+                ValueUseSite::IncanCallArg {
+                    target_ty,
+                    callee_param: Some(param),
+                    in_return,
+                }
+            }
+        } else {
+            ValueUseSite::IncanCallArg {
+                target_ty,
+                callee_param: Some(param),
+                in_return,
+            }
+        };
+
+        let mut tokens = plan_value_use(arg, use_site).apply(emitted);
+        if incan_call_arg_needs_rust_mut_borrow(param) {
+            match &arg.ty {
+                IrType::Ref(_) | IrType::RefMut(_) => {}
+                _ => tokens = quote! { &mut #tokens },
+            }
+        }
+        let _ = idx;
+        Ok(tokens)
+    }
+
     fn emit_canonical_callee_path(&self, canonical_path: &[String]) -> Result<Option<TokenStream>, EmitError> {
         if canonical_path.len() < 3 || canonical_path.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
             return Ok(None);
@@ -634,6 +854,7 @@ mod tests {
                 ty: IrType::Ref(Box::new(IrType::Struct("demo::Thing".to_string()))),
                 mutability: Mutability::Immutable,
                 is_self: false,
+                kind: ParamKind::Normal,
                 default: None,
             }],
             IrType::Unit,
@@ -642,7 +863,17 @@ mod tests {
         let func = rust_call_target("takes_ref");
         let arg = local_arg("thing", IrType::Struct("demo::Thing".to_string()));
         let tokens = emitter
-            .emit_call_expr(&func, &[], &[IrCallArg { name: None, expr: arg }], None)
+            .emit_call_expr(
+                &func,
+                &[],
+                &[IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: arg,
+                }],
+                None,
+                None,
+            )
             .map_err(|err| {
                 std::io::Error::other(format!(
                     "emit_call_expr should succeed for borrowed rust arg regression: {err:?}"
@@ -662,6 +893,7 @@ mod tests {
                 ty: IrType::RefMut(Box::new(IrType::Struct("demo::Thing".to_string()))),
                 mutability: Mutability::Mutable,
                 is_self: false,
+                kind: ParamKind::Normal,
                 default: None,
             }],
             IrType::Unit,
@@ -670,7 +902,17 @@ mod tests {
         let func = rust_call_target("takes_ref_mut");
         let arg = local_arg("thing", IrType::Struct("demo::Thing".to_string()));
         let tokens = emitter
-            .emit_call_expr(&func, &[], &[IrCallArg { name: None, expr: arg }], None)
+            .emit_call_expr(
+                &func,
+                &[],
+                &[IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: arg,
+                }],
+                None,
+                None,
+            )
             .map_err(|err| {
                 std::io::Error::other(format!(
                     "emit_call_expr should succeed for mutable borrowed rust arg regression: {err:?}"
@@ -690,6 +932,7 @@ mod tests {
                 ty: IrType::Ref(Box::new(IrType::Int)),
                 mutability: Mutability::Immutable,
                 is_self: false,
+                kind: ParamKind::Normal,
                 default: None,
             }],
             IrType::Unit,
@@ -698,7 +941,17 @@ mod tests {
         let func = rust_call_target("takes_ref");
         let arg = local_arg("value", IrType::Int);
         let tokens = emitter
-            .emit_call_expr(&func, &[], &[IrCallArg { name: None, expr: arg }], None)
+            .emit_call_expr(
+                &func,
+                &[],
+                &[IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: arg,
+                }],
+                None,
+                None,
+            )
             .map_err(|err| {
                 std::io::Error::other(format!("emit_call_expr should borrow copy args for rust refs: {err:?}"))
             })?;
@@ -726,10 +979,16 @@ mod tests {
                 &[
                     IrCallArg {
                         name: None,
+                        kind: IrCallArgKind::Positional,
                         expr: state,
                     },
-                    IrCallArg { name: None, expr: plan },
+                    IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr: plan,
+                    },
                 ],
+                None,
                 None,
             )
             .map_err(|err| {
