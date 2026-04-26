@@ -137,11 +137,23 @@ incan test [OPTIONS] [PATH]
 
 Test runner flags:
 
-- `-k <KEYWORD>`: Filter tests by keyword expression.
+- `-k <KEYWORD>`: Filter tests by stable test id substring.
+- `-m <EXPR>` / `--markers <EXPR>`: Filter tests by marker expression (`and`, `or`, `not`, parentheses).
 - `-v`: Verbose output (include timing).
 - `-x`: Stop on first failure.
 - `--slow`: Include slow tests (marked `@slow`).
+- `--strict-markers`: Reject unknown marker names during collection unless they are registered in `TEST_MARKERS`.
+- `-j <N>` / `--jobs <N>`: Set the runner job count. The current implementation passes this through to Cargo job scheduling while preserving single-threaded per-file test execution.
+- `--timeout <DURATION>`: Fail a test batch that exceeds a duration such as `250ms`, `5s`, or `2m`.
+- `--nocapture`: Print child test output even for passing tests.
 - `--fail-on-empty`: Return exit code 1 if no tests are collected.
+- `--list`: List collected tests after filters and do not execute them.
+- `--format console|json`: Choose human console output or JSON Lines result output. JSON records use `schema_version: "incan.test.v1"`.
+- `--junit <PATH>`: Write a JUnit XML report.
+- `--durations <N>`: Print the slowest `N` test durations.
+- `--shuffle`: Shuffle test execution order.
+- `--seed <N>`: Seed for `--shuffle`.
+- `--run-xfail`: Run `@xfail` tests as ordinary tests.
 
 Dependency flags (same as `build`):
 
@@ -159,6 +171,9 @@ incan test .
 # Filter tests by keyword expression
 incan test -k "addition"
 
+# List matching tests without running them
+incan test --list -k "test_math"
+
 # Verbose output (include timing)
 incan test -v
 
@@ -168,8 +183,26 @@ incan test -x
 # Include slow tests
 incan test --slow
 
+# Select marker-tagged tests
+incan test -m "smoke and not slow" tests/
+
+# Validate marker names in CI
+incan test --strict-markers tests/
+
+# Enforce a default timeout
+incan test --timeout 5s tests/
+
+# Show passing-test output
+incan test --nocapture tests/
+
 # Fail if no tests are collected
 incan test --fail-on-empty
+
+# Emit JSON Lines and a JUnit report for CI
+incan test --format json --junit reports/junit.xml tests/
+
+# Reproduce a shuffled run
+incan test --shuffle --seed 12345 tests/
 
 # Strict mode for CI
 incan test --locked

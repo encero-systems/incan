@@ -46,20 +46,30 @@ impl std::error::Error for TestingMarkerLoadError {}
 /// Supported `std.testing` marker kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TestingMarkerKind {
+    Test,
     Fixture,
     Skip,
     XFail,
     Slow,
+    Mark,
+    Resource,
+    Serial,
+    Timeout,
     Parametrize,
 }
 
 impl TestingMarkerKind {
     fn from_str(value: &str) -> Option<Self> {
         match value {
+            "test" => Some(Self::Test),
             "fixture" => Some(Self::Fixture),
             "skip" => Some(Self::Skip),
             "xfail" => Some(Self::XFail),
             "slow" => Some(Self::Slow),
+            "mark" => Some(Self::Mark),
+            "resource" => Some(Self::Resource),
+            "serial" => Some(Self::Serial),
+            "timeout" => Some(Self::Timeout),
             "parametrize" => Some(Self::Parametrize),
             _ => None,
         }
@@ -80,10 +90,15 @@ pub struct TestingMarkerSemantics {
 impl Default for TestingMarkerSemantics {
     fn default() -> Self {
         let mut marker_kinds = HashMap::new();
+        marker_kinds.insert("test".to_string(), TestingMarkerKind::Test);
         marker_kinds.insert("fixture".to_string(), TestingMarkerKind::Fixture);
         marker_kinds.insert("skip".to_string(), TestingMarkerKind::Skip);
         marker_kinds.insert("xfail".to_string(), TestingMarkerKind::XFail);
         marker_kinds.insert("slow".to_string(), TestingMarkerKind::Slow);
+        marker_kinds.insert("mark".to_string(), TestingMarkerKind::Mark);
+        marker_kinds.insert("resource".to_string(), TestingMarkerKind::Resource);
+        marker_kinds.insert("serial".to_string(), TestingMarkerKind::Serial);
+        marker_kinds.insert("timeout".to_string(), TestingMarkerKind::Timeout);
         marker_kinds.insert("parametrize".to_string(), TestingMarkerKind::Parametrize);
 
         Self {

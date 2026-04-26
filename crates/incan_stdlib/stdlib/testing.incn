@@ -8,7 +8,7 @@ A pytest-like testing library for Incan.
 Example:
 
 ```incan
-from std.testing import fixture, parametrize, skip, xfail
+from std.testing import fixture, parametrize, skip, test, xfail
 
 @fixture
 def database() -> Database:
@@ -88,6 +88,25 @@ pub def skip(reason: str = "") -> None:
     ...
 
 
+@rust.extern(metadata={"marker_kind": "test", "runner_only": true})
+pub def test() -> None:
+    """
+    Mark a function as a test even when its name does not start with `test_`.
+
+    Example:
+
+    ```incan
+    @test
+    def checks_total() -> None:
+        assert_eq(total(), 42)
+    ```
+
+    Note: Marker decorators are consumed by `incan test` during discovery.
+          Their runtime implementation stays a host boundary so metadata remains parseable in this declaration surface.
+    """
+    ...
+
+
 @rust.extern(metadata={"marker_kind": "xfail", "runner_only": true})
 pub def xfail(reason: str = "") -> None:
     """
@@ -128,6 +147,42 @@ pub def slow() -> None:
 
     Note: Marker decorators are consumed by `incan test` during discovery.
           Their runtime implementation stays a host boundary so metadata remains parseable in this declaration surface.
+    """
+    ...
+
+
+@rust.extern(metadata={"marker_kind": "mark", "runner_only": true})
+pub def mark(name: str) -> None:
+    """
+    Attach a named marker to a test for `incan test -m` selection.
+
+    Marker names should use snake_case. With `--strict-markers`, names must be registered by TEST_MARKERS.
+    """
+    ...
+
+
+@rust.extern(metadata={"marker_kind": "resource", "runner_only": true})
+pub def resource(name: str) -> None:
+    """
+    Declare an exclusive named resource used by a test.
+
+    Tests using the same resource are not run concurrently when `incan test --jobs` is greater than one.
+    """
+    ...
+
+
+@rust.extern(metadata={"marker_kind": "serial", "runner_only": true})
+pub def serial() -> None:
+    """
+    Force a test to run without overlapping other test batches.
+    """
+    ...
+
+
+@rust.extern(metadata={"marker_kind": "timeout", "runner_only": true})
+pub def timeout(duration: str) -> None:
+    """
+    Set a per-test timeout such as "250ms", "5s", or "2m".
     """
     ...
 
@@ -199,6 +254,14 @@ pub def parametrize[T](argnames: str, argvalues: List[T]) -> None:
     test_add[-1-1-0] ... PASSED
     test_add[100-200-300] ... PASSED
     ```
+    """
+    ...
+
+
+@rust.extern
+pub def param_case[T](value: T, marks: List[str] = [], id: str = "") -> T:
+    """
+    Attach metadata to one parameter set inside `parametrize`.
     """
     ...
 

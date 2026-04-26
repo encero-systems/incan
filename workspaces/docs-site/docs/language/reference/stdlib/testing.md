@@ -70,6 +70,10 @@ Fails if `result` is `Ok(...)`; otherwise returns the `Err(...)` value.
 
 The following decorators are recognized by the test runner:
 
+### `@test`
+
+Marks a function as a test even when its name does not start with `test_`.
+
 ### `@skip(reason: str = "")`
 
 Marks a test as skipped.
@@ -81,6 +85,22 @@ Marks a test as expected to fail.
 ### `@slow`
 
 Marks a test as slow (excluded by default unless enabled via tooling flags).
+
+### `@mark(name: str)`
+
+Attaches a user-defined marker for `incan test -m` selection.
+
+### `@resource(name: str)`
+
+Declares an exclusive resource key for scheduling.
+
+### `@serial`
+
+Marks a test as requiring serial execution.
+
+### `@timeout(duration: str)`
+
+Overrides the default timeout for a test. Durations use strings such as `"250ms"`, `"5s"`, or `"2m"`.
 
 ## `assert_raises`
 
@@ -96,6 +116,15 @@ The `testing` module also defines the surface API for:
 
 - `@fixture` (fixtures + dependency injection)
 - `@parametrize` (parameterized tests)
+- `param_case(...)` (per-case ids and marks for parameterized tests)
 
 These are implemented by the `incan test` runner. For current behavior and CLI support, see:
 [Tooling → Testing].
+
+Built-in fixtures are provided by parameter name:
+
+- `tmp_path`
+- `tmp_workdir`
+- `env`
+
+`env` is backed by `incan_stdlib::testing::TestEnv`, which restores environment changes when dropped.

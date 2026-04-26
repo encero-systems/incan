@@ -48,7 +48,7 @@ incan test tests/
 Tests are discovered automatically:
 
 - **Files**: Named `test_*.incn` or `*_test.incn`
-- **Functions**: Named `def test_*()`
+- **Functions**: Named `def test_*()` or decorated with `@test`
 
 ```bash
 my_project/
@@ -114,6 +114,18 @@ def test_integration() -> None:
 
 Slow tests are excluded by default. Include with `--slow`.
 
+### @test - Explicitly mark a test
+
+```incan
+from std.testing import test
+
+@test
+def checks_total() -> None:
+    assert_eq(total(), 42)
+```
+
+Use `@test` when the function name should not start with `test_`.
+
 ## CLI Options
 
 ```bash
@@ -126,6 +138,9 @@ incan test tests/test_math.incn
 # Filter by keyword
 incan test -k "addition"
 
+# List collected tests without running them
+incan test --list tests/
+
 # Verbose output (show timing)
 incan test -v
 
@@ -135,9 +150,35 @@ incan test -x
 # Include slow tests
 incan test --slow
 
+# Select by marker expression
+incan test -m "smoke and not slow" tests/
+
+# Enforce marker registration
+incan test --strict-markers tests/
+
+# Fail long-running tests
+incan test --timeout 5s tests/
+
+# Print passing-test output
+incan test --nocapture tests/
+
 # Fail if no tests are collected
 incan test --fail-on-empty
+
+# Run expected-failure tests as ordinary tests
+incan test --run-xfail tests/
+
+# Show the slowest tests
+incan test --durations 10 tests/
+
+# Shuffle with a reproducible seed
+incan test --shuffle --seed 12345 tests/
 ```
+
+`-k` matches the stable test id shown by `--list`, for example `tests/test_math.incn::test_addition` or `tests/test_math.incn::test_add[1-2-3]`.
+
+`-m` matches marker names from decorators such as `@slow` and `@mark("smoke")`, plus default marks from `TEST_MARKS`.
+Use `TEST_MARKERS` with `--strict-markers` to make unknown marker names a collection error.
 
 ## Output Format
 
@@ -177,9 +218,20 @@ ___________ test_division ___________
   run: incan test --fail-on-empty tests/
 ```
 
+For machine-readable CI output, use JSON Lines, JUnit XML, or both:
+
+```bash
+incan test --format json --junit reports/junit.xml tests/
+```
+
+Each JSON result record includes `schema_version: "incan.test.v1"`, a stable `test_id`, status, file, name, and duration. A final summary record closes the stream.
+
 ## Fixtures
 
 Fixtures provide setup/teardown and dependency injection for tests.
+
+Shared fixtures can live in `tests/**/conftest.incn`; the runner loads matching conftest files for tests in that
+directory subtree. The runner also provides built-in `tmp_path`, `tmp_workdir`, and `env` fixtures by parameter name.
 
 ### Basic Fixture
 

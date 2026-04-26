@@ -1,8 +1,9 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::cli::commands;
@@ -28,6 +29,14 @@ use super::types::{TestInfo, TestResult};
 
 /// Generated `#[cfg(test)]` module that wraps Incan test functions as Rust `#[test]` cases, one `cargo test` per file.
 const INCAN_FILE_TEST_MOD: &str = "__incan_file_tests";
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct TestExecutionOptions {
+    pub fail_fast: bool,
+    pub no_capture: bool,
+    pub timeout: Option<Duration>,
+    pub jobs: usize,
+}
 
 fn parse_isolated_target_env(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1" | "true" | "yes" | "on"))
@@ -82,6 +91,28 @@ fn absolute_project_root(path: &Path) -> PathBuf {
         path.to_path_buf()
     };
     fs::canonicalize(&absolute).unwrap_or(absolute)
+}
+
+fn read_applicable_conftest_sources(test_file: &Path) -> Result<Vec<String>, String> {
+    let mut files = Vec::new();
+    let mut cursor = test_file.parent().map(Path::to_path_buf);
+    while let Some(dir) = cursor {
+        let candidate = dir.join("conftest.incn");
+        if candidate.is_file() {
+            files.push(candidate);
+        }
+        cursor = dir.parent().map(Path::to_path_buf);
+    }
+    files.reverse();
+
+    let mut sources = Vec::new();
+    for file in files {
+        match fs::read_to_string(&file) {
+            Ok(source) => sources.push(source),
+            Err(err) => return Err(format!("Failed to read conftest {}: {}", file.display(), err)),
+        }
+    }
+    Ok(sources)
 }
 
 /// Infer a package root for manifest-less test runs.
@@ -282,6 +313,154 @@ fn harness_fn_name(test: &TestInfo, index: usize) -> String {
     format!("incan_harness_{index}_{slug}")
 }
 
+fn rust_string_literal(value: &str) -> String {
+    format!("{value:?}")
+}
+
+fn builtin_fixture_arg(name: &str, index: usize, setup: &mut String) -> Option<String> {
+    let safe_name: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    let ident = format!("__incan_fixture_{index}_{safe_name}");
+    match name {
+        "tmp_path" => {
+            setup.push_str(&format!(
+                "        let {ident} = std::env::temp_dir().join(format!(\"incan-test-{{}}-{index}-tmp-path\", std::process::id()));\n"
+            ));
+            setup.push_str(&format!(
+                "        if let Err(err) = std::fs::create_dir_all(&{ident}) {{ panic!(\"failed to create tmp_path fixture: {{}}\", err); }}\n"
+            ));
+            Some(format!("{ident}.clone()"))
+        }
+        "tmp_workdir" => {
+            setup.push_str(&format!(
+                "        let {ident} = std::env::temp_dir().join(format!(\"incan-test-{{}}-{index}-tmp-workdir\", std::process::id()));\n"
+            ));
+            setup.push_str(&format!(
+                "        if let Err(err) = std::fs::create_dir_all(&{ident}) {{ panic!(\"failed to create tmp_workdir fixture: {{}}\", err); }}\n"
+            ));
+            setup.push_str(&format!(
+                "        if let Err(err) = std::env::set_current_dir(&{ident}) {{ panic!(\"failed to enter tmp_workdir fixture: {{}}\", err); }}\n"
+            ));
+            Some(format!("{ident}.clone()"))
+        }
+        "env" => {
+            setup.push_str(&format!(
+                "        let mut {ident} = incan_stdlib::testing::TestEnv::new();\n"
+            ));
+            Some(ident)
+        }
+        _ => None,
+    }
+}
+
+fn harness_call(test: &TestInfo, index: usize) -> String {
+    let mut setup = String::new();
+    let mut args = Vec::new();
+    let parametrize = test.parametrize_call.as_ref();
+
+    for param_name in &test.parameter_names {
+        if let Some(call) = parametrize
+            && let Some(pos) = call.argument_names.iter().position(|name| name == param_name)
+            && let Some(value) = call.rust_arguments.get(pos)
+        {
+            args.push(value.clone());
+            continue;
+        }
+
+        if test.required_fixtures.iter().any(|fixture| fixture == param_name) {
+            if let Some(expr) = builtin_fixture_arg(param_name, index, &mut setup) {
+                args.push(expr);
+            } else {
+                args.push(format!("super::{param_name}()"));
+            }
+        }
+    }
+
+    if test.parameter_names.is_empty() {
+        if let Some(call) = parametrize {
+            args.extend(call.rust_arguments.clone());
+        }
+        for fixture in &test.required_fixtures {
+            if let Some(expr) = builtin_fixture_arg(fixture, index, &mut setup) {
+                args.push(expr);
+            } else {
+                args.push(format!("super::{fixture}()"));
+            }
+        }
+    }
+
+    let joined = args.join(", ");
+    format!("{setup}        super::{}({joined});\n", test.function_name)
+}
+
+fn normalize_runner_pub_vocab_assert_calls(rust_code: String) -> String {
+    const PREFIX: &str = "crate::__incan_std::testing::assert(";
+
+    let mut out = String::with_capacity(rust_code.len());
+    let mut cursor = 0;
+
+    while let Some(relative_start) = rust_code[cursor..].find(PREFIX) {
+        let start = cursor + relative_start;
+        out.push_str(&rust_code[cursor..start]);
+
+        let args_start = start + PREFIX.len();
+        let args = &rust_code[args_start..];
+        let mut depth = 1usize;
+        let mut top_level_comma = false;
+        let mut string_quote = None;
+        let mut escaped = false;
+        let mut call_end = None;
+
+        for (offset, ch) in args.char_indices() {
+            if let Some(quote) = string_quote {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == quote {
+                    string_quote = None;
+                }
+                continue;
+            }
+
+            match ch {
+                '"' | '\'' => string_quote = Some(ch),
+                '(' | '[' | '{' => depth += 1,
+                ')' if depth == 1 => {
+                    call_end = Some(offset);
+                    break;
+                }
+                ')' | ']' | '}' => depth = depth.saturating_sub(1),
+                ',' if depth == 1 => top_level_comma = true,
+                _ => {}
+            }
+        }
+
+        let Some(call_end) = call_end else {
+            out.push_str(PREFIX);
+            cursor = args_start;
+            continue;
+        };
+
+        let after_call = args_start + call_end + 1;
+        if rust_code[after_call..].starts_with(';') && !top_level_comma {
+            let inner = &rust_code[args_start..args_start + call_end];
+            out.push_str("assert!(");
+            out.push_str(inner);
+            out.push_str(");");
+            cursor = after_call + 1;
+        } else {
+            out.push_str(&rust_code[start..after_call]);
+            cursor = after_call;
+        }
+    }
+
+    out.push_str(&rust_code[cursor..]);
+    out
+}
+
 /// Append a `#[cfg(test)]` module with one `#[test]` per collected case so `cargo test` runs an entire file in one
 /// shot.
 ///
@@ -289,21 +468,28 @@ fn harness_fn_name(test: &TestInfo, index: usize) -> String {
 /// the same way as ordinary `incan run/build/test` entrypoints rather than inheriting the generated temp crate path.
 fn inject_file_test_harness(rust_code: &str, tests: &[TestInfo], project_root: &Path) -> String {
     let mut out = rust_code.to_string();
-    let project_root_literal = format!("{:?}", project_root.to_string_lossy());
+    let project_root_literal = project_root.to_string_lossy().to_string();
     out.push_str("\n\n#[cfg(test)]\nmod ");
     out.push_str(INCAN_FILE_TEST_MOD);
     out.push_str(" {\nuse super::*;\n");
+    out.push_str(
+        "struct __IncanCwdGuard(Option<std::path::PathBuf>);\n\
+         impl Drop for __IncanCwdGuard {\n\
+             fn drop(&mut self) {\n\
+                 if let Some(path) = self.0.as_ref() { let _ = std::env::set_current_dir(path); }\n\
+             }\n\
+         }\n",
+    );
     for (index, t) in tests.iter().enumerate() {
         let fname = harness_fn_name(t, index);
-        let call = match &t.parametrize_call {
-            Some(pc) => format!("    super::{}({});\n", t.function_name, pc.rust_args),
-            None => format!("    super::{}();\n", t.function_name),
-        };
+        let call = harness_call(t, index);
         out.push_str("    #[test]\n    fn ");
         out.push_str(&fname);
         out.push_str("() {\n");
+        out.push_str("        let __incan_cwd_guard = __IncanCwdGuard(std::env::current_dir().ok());\n");
+        out.push_str("        let _ = &__incan_cwd_guard;\n");
         out.push_str("        if let Err(err) = std::env::set_current_dir(");
-        out.push_str(&project_root_literal);
+        out.push_str(&rust_string_literal(&project_root_literal));
         out.push_str(") {\n");
         out.push_str("            panic!(\"failed to set generated test cwd: {}\", err);\n");
         out.push_str("        }\n");
@@ -317,8 +503,15 @@ fn inject_file_test_harness(rust_code: &str, tests: &[TestInfo], project_root: &
 /// Parse `cargo test` / libtest lines: `test <name> ... ok|FAILED`.
 fn parse_libtest_outcomes(combined: &str) -> HashMap<String, bool> {
     let mut map = HashMap::new();
+    let mut pending_name: Option<String> = None;
     for line in combined.lines() {
         let line = line.trim();
+        if line == "ok" {
+            if let Some(name) = pending_name.take() {
+                map.insert(name, true);
+            }
+            continue;
+        }
         let Some(rest) = line.strip_prefix("test ") else {
             continue;
         };
@@ -330,6 +523,8 @@ fn parse_libtest_outcomes(combined: &str) -> HashMap<String, bool> {
         let failed = status.starts_with("FAILED");
         if passed || failed {
             map.insert(normalize_libtest_test_name(name), passed);
+        } else {
+            pending_name = Some(normalize_libtest_test_name(name));
         }
     }
     map
@@ -427,6 +622,24 @@ fn map_batch_results(
         .collect()
 }
 
+fn run_command_with_timeout(mut command: Command, timeout: Option<Duration>) -> std::io::Result<(Output, bool)> {
+    let Some(timeout) = timeout else {
+        return command.output().map(|output| (output, false));
+    };
+    let start = Instant::now();
+    let mut child = command.spawn()?;
+    loop {
+        if child.try_wait()?.is_some() {
+            return child.wait_with_output().map(|output| (output, false));
+        }
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            return child.wait_with_output().map(|output| (output, true));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 /// Run every collected test in `tests` that lives in the same `.incn` file with **one** `cargo test` invocation (#271).
 ///
 /// Returns an empty vector when `tests` is empty. Otherwise every entry must share the same [`TestInfo::file_path`].
@@ -440,7 +653,7 @@ pub(super) fn run_file_tests_batch(
     cargo_features: &[String],
     cargo_no_default_features: bool,
     cargo_all_features: bool,
-    fail_fast: bool,
+    options: TestExecutionOptions,
 ) -> Vec<(TestInfo, TestResult)> {
     if tests.is_empty() {
         return Vec::new();
@@ -458,7 +671,7 @@ pub(super) fn run_file_tests_batch(
     let first = &tests[0];
 
     // ---- Context: load test source, discover manifest, parse and vocab-desugar the test file ----
-    let source = match fs::read_to_string(&first.file_path) {
+    let test_source = match fs::read_to_string(&first.file_path) {
         Ok(s) => s,
         Err(e) => {
             return tests
@@ -469,6 +682,21 @@ pub(super) fn run_file_tests_batch(
                         TestResult::Failed(start.elapsed(), format!("Failed to read file: {}", e)),
                     )
                 })
+                .collect();
+        }
+    };
+    let source = match read_applicable_conftest_sources(&first.file_path) {
+        Ok(conftests) if conftests.is_empty() => test_source,
+        Ok(conftests) => {
+            let mut combined = conftests.join("\n");
+            combined.push('\n');
+            combined.push_str(&test_source);
+            combined
+        }
+        Err(message) => {
+            return tests
+                .iter()
+                .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), message.clone())))
                 .collect();
         }
     };
@@ -777,6 +1005,7 @@ pub(super) fn run_file_tests_batch(
             Ok(code) => code,
             Err(e) => return gen_err(format!("Code generation error: {}", e)),
         };
+        let rust_code = normalize_runner_pub_vocab_assert_calls(rust_code);
         let rust_code = inject_file_test_harness(&rust_code, tests, &prepared.project_root);
         if let Err(e) = generator.generate(&rust_code) {
             return gen_err(format!("Failed to generate project: {}", e));
@@ -791,6 +1020,7 @@ pub(super) fn run_file_tests_batch(
             Ok(result) => result,
             Err(e) => return gen_err(format!("Code generation error: {}", e)),
         };
+        let main_code = normalize_runner_pub_vocab_assert_calls(main_code);
         let main_code = inject_file_test_harness(&main_code, tests, &prepared.project_root);
         if let Err(e) = generator.generate_nested(&main_code, &rust_modules) {
             return gen_err(format!("Failed to generate project: {}", e));
@@ -798,8 +1028,12 @@ pub(super) fn run_file_tests_batch(
     }
 
     let shared_target_dir = shared_cargo_target_dir(&prepared.project_root);
-    let mut command = std::process::Command::new("cargo");
+    let mut command = Command::new("cargo");
     command.arg("test");
+    if options.jobs > 1 {
+        command.arg("--jobs");
+        command.arg(options.jobs.to_string());
+    }
     command.arg("--manifest-path");
     command.arg(&manifest_path);
     for flag in common::cargo_command_flags(locked, frozen, &cargo_feature_selection) {
@@ -810,17 +1044,19 @@ pub(super) fn run_file_tests_batch(
     // isolation assumptions for tests that use shared global runtime state.
     command.arg("--");
     command.arg("--test-threads=1");
-    if fail_fast {
+    if options.fail_fast {
         command.arg("--fail-fast");
     }
+    if options.no_capture {
+        command.arg("--nocapture");
+    }
 
-    let output = match command
-        .env("CARGO_TARGET_DIR", &shared_target_dir)
-        // Keep runtime-relative fixture paths anchored to the caller's project, not the generated test crate.
-        .current_dir(&prepared.project_root)
-        .output()
-    {
-        Ok(o) => o,
+    command.env("CARGO_TARGET_DIR", &shared_target_dir);
+    // Keep runtime-relative fixture paths anchored to the caller's project, not the generated test crate.
+    command.current_dir(&prepared.project_root);
+
+    let (output, timed_out) = match run_command_with_timeout(command, options.timeout) {
+        Ok(result) => result,
         Err(e) => {
             return tests
                 .iter()
@@ -838,6 +1074,20 @@ pub(super) fn run_file_tests_batch(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{stdout}\n{stderr}");
+    if options.no_capture && !combined.trim().is_empty() {
+        print!("{combined}");
+    }
+
+    if timed_out {
+        let message = match options.timeout {
+            Some(timeout) => format!("test batch timed out after {:.3}s", timeout.as_secs_f64()),
+            None => "test batch timed out".to_string(),
+        };
+        return tests
+            .iter()
+            .map(|t| (t.clone(), TestResult::Failed(elapsed, message.clone())))
+            .collect();
+    }
 
     let compile_failed = !output.status.success()
         && (combined.contains("could not compile")
@@ -943,11 +1193,35 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_one_arg_pub_vocab_assert_without_touching_std_testing_helpers() {
+        let rust = "fn test_vocab() { crate::__incan_std::testing::assert(true); }\n\
+                    fn test_std() { crate::__incan_std::testing::assert(true, \"message\".to_string()); }\n\
+                    fn test_eq() { crate::__incan_std::testing::assert_eq(1, 1, \"message\".to_string()); }";
+        let result = normalize_runner_pub_vocab_assert_calls(rust.to_string());
+
+        assert!(
+            result.contains("fn test_vocab() { assert!(true); }"),
+            "one-arg pub vocab assert should become a Rust assert macro:\n{result}"
+        );
+        assert!(
+            result.contains("crate::__incan_std::testing::assert(true, \"message\".to_string());"),
+            "two-arg std.testing assert helper must stay intact:\n{result}"
+        );
+        assert!(
+            result.contains("crate::__incan_std::testing::assert_eq(1, 1, \"message\".to_string());"),
+            "other std.testing helpers must stay intact:\n{result}"
+        );
+    }
+
+    #[test]
     fn inject_main_parametrized_int_args() {
         let rust = "fn test_add(x: i64, y: i64, expected: i64) { assert_eq!(x + y, expected); }";
         let pc = ParametrizeCall {
             display_id: "test_add[1-2-3]".to_string(),
             rust_args: "1, 2, 3".to_string(),
+            argument_names: vec!["x".to_string(), "y".to_string(), "expected".to_string()],
+            rust_arguments: vec!["1".to_string(), "2".to_string(), "3".to_string()],
+            parameters: vec!["1".to_string(), "2".to_string(), "3".to_string()],
         };
         let result = inject_test_main(rust, "test_add", Some(&pc));
         assert!(result.contains("fn main()"), "should inject fn main()");
@@ -960,6 +1234,9 @@ mod tests {
         let pc = ParametrizeCall {
             display_id: "test_len[hello-5]".to_string(),
             rust_args: "\"hello\".to_string(), 5".to_string(),
+            argument_names: vec!["input".to_string(), "expected".to_string()],
+            rust_arguments: vec!["\"hello\".to_string()".to_string(), "5".to_string()],
+            parameters: vec!["hello".to_string(), "5".to_string()],
         };
         let result = inject_test_main(rust, "test_len", Some(&pc));
         assert!(
@@ -974,6 +1251,9 @@ mod tests {
         let pc = ParametrizeCall {
             display_id: "test_sub[-1-1-0]".to_string(),
             rust_args: "-1, 1, 0".to_string(),
+            argument_names: vec!["a".to_string(), "b".to_string(), "expected".to_string()],
+            rust_arguments: vec!["-1".to_string(), "1".to_string(), "0".to_string()],
+            parameters: vec!["-1".to_string(), "1".to_string(), "0".to_string()],
         };
         let result = inject_test_main(rust, "test_sub", Some(&pc));
         assert!(
@@ -1153,6 +1433,8 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
                 function_name: "test_a".to_string(),
                 markers: vec![],
                 required_fixtures: vec![],
+                parameter_names: vec![],
+                timeout: None,
                 parametrize_call: None,
             },
             TestInfo {
@@ -1160,6 +1442,8 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
                 function_name: "test_b".to_string(),
                 markers: vec![],
                 required_fixtures: vec![],
+                parameter_names: vec![],
+                timeout: None,
                 parametrize_call: None,
             },
         ];
