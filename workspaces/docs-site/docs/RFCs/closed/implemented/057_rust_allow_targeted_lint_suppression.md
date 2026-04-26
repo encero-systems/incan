@@ -1,6 +1,6 @@
 # RFC 057: `@rust.allow(...)` — targeted Rust lint suppression for generated code
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-04-13
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -11,9 +11,9 @@
     - RFC 036 (user-defined decorators and compiler built-ins)
     - RFC 041 (first-class Rust interop authoring)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/337
-- **RFC PR:** —
+- **RFC PR:** https://github.com/dannys-code-corner/incan/pull/409
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -261,7 +261,7 @@ Some Incan declarations expand into more than one Rust item. If a helper exists 
 - Add user-facing docs and release notes that explain when targeted Rust lint suppression is appropriate.
 - Bump the active development version for the implementation.
 
-## Progress Checklist
+## Implementation log
 
 ### Spec / design
 
