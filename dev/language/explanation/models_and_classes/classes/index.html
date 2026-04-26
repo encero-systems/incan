@@ -4607,8 +4607,7 @@
 
 <h1 id="classes">Classes<a class="headerlink" href="#classes" title="Permanent link">&para;</a></h1>
 <p>A <code>class</code> is Incan’s <strong>behavior-first</strong> type: it models an object with methods, mutable state, and inheritance.</p>
-<p>If you’re deciding between <code>model</code> and <code>class</code>, start with the <a href="../">Models &amp; classes overview</a>. This page focuses
-on how classes behave once you’ve chosen them.</p>
+<p>If you’re deciding between <code>model</code> and <code>class</code>, start with the <a href="../">Models &amp; classes overview</a>. This page focuses on how classes behave once you’ve chosen them.</p>
 <h2 id="quick-start">Quick start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Counter</span><span class="p">:</span>
     <span class="n">value</span><span class="p">:</span> <span class="nb">int</span>  <span class="c1"># (1)</span>
@@ -4672,20 +4671,24 @@ on how classes behave once you’ve chosen them.</p>
 <ul>
 <li><code>self</code> is the object (roughly like JS/TS <code>this</code>).</li>
 <li>Construction is keyword-only (<code>Point(x=..., y=...)</code>); there is no <code>constructor(...)</code> method.</li>
-<li><code>extends</code> does <strong>not</strong> introduce subtyping (a child value can’t be used where the parent type is required);
-  use traits/enums for polymorphism.</li>
+<li><code>extends</code> does <strong>not</strong> introduce subtyping (a child value can’t be used where the parent type is required); use traits/enums for polymorphism.</li>
 </ul>
 </details>
 <h2 id="defining-fields">Defining fields<a class="headerlink" href="#defining-fields" title="Permanent link">&para;</a></h2>
 <p>A <code>class</code> declares object state as typed fields.</p>
 <ul>
 <li>Syntax: <code>name: Type</code></li>
+<li>Public field syntax: <code>pub name: Type</code></li>
 <li>Optional defaults: <code>name: Type = expr</code></li>
 </ul>
+<p>Fields are private by default, even when the class itself is <code>pub</code>. A private field may be accessed from methods on the declaring class, but external code and child classes must use <code>pub</code> fields or methods.</p>
 <p>Field metadata and aliases (<code>[alias="..."]</code>, <code>[description="..."]</code>, or <code>as "..."</code>) are <strong>not supported</strong> on classes.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">UserService</span><span class="p">:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">class</span><span class="w"> </span><span class="nc">UserService</span><span class="p">:</span>
     <span class="n">repo</span><span class="p">:</span> <span class="nc">UserRepository</span>
-    <span class="n">logger_name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="k">pub</span> <span class="n">logger_name</span><span class="p">:</span> <span class="nb">str</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">repository</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">UserRepository</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">repo</span>
 </code></pre></div>
 <h2 id="constructing-a-class">Constructing a class<a class="headerlink" href="#constructing-a-class" title="Permanent link">&para;</a></h2>
 <p>Class construction is <strong>keyword-only</strong> (named arguments).</p>
@@ -4700,8 +4703,7 @@ on how classes behave once you’ve chosen them.</p>
 <p>Constructor keys are the declared field names (including inherited fields).</p>
 <details class="tip">
 <summary>Coming from Python?</summary>
-<p>In Incan you don’t write an <code>__init__</code>/init method for classes; the declared fields (including inherited fields)
-define the constructor keys.</p>
+<p>In Incan you don’t write an <code>__init__</code>/init method for classes; the declared fields (including inherited fields) define the constructor keys.</p>
 </details>
 <p>Rules:</p>
 <ul>
@@ -4716,8 +4718,7 @@ define the constructor keys.</p>
     <span class="n">c</span> <span class="o">=</span> <span class="nc">Counter</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
 <span class="hll">    <span class="nb">println</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Because classes don’t support field aliases/metadata (the way a <code>model</code> would), member access always uses the canonical
-field name.</p>
+<p>Because classes don’t support field aliases/metadata (the way a <code>model</code> would), member access always uses the canonical field name. Private fields can only be read or written from methods on the declaring class; use <code>pub</code> for fields that are part of the public object surface.</p>
 <h2 id="methods-and-receivers-self-vs-mut-self">Methods and receivers (<code>self</code> vs <code>mut self</code>)<a class="headerlink" href="#methods-and-receivers-self-vs-mut-self" title="Permanent link">&para;</a></h2>
 <p>Use <code>self</code> for read-only methods and <code>mut self</code> for methods that modify the object.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Counter</span><span class="p">:</span>
@@ -4808,8 +4809,7 @@ field name.</p>
     <span class="k">def</span><span class="w"> </span><span class="nf">log</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p>Traits are behavior-only (no storage). A trait default method may assume certain fields exist on the adopter; use
-<code>@requires(...)</code> to declare that contract in a trait.</p>
+<p>Traits are behavior-only (no storage). A trait default method may assume certain fields exist on the adopter; use <code>@requires(...)</code> to declare that contract in a trait.</p>
 <p>See:</p>
 <ul>
 <li><a href="../../traits_as_language_hooks/">Traits as language hooks (Explanation)</a></li>
@@ -4857,8 +4857,7 @@ field name.</p>
 <li><code>__class_name__() -&gt; str</code></li>
 <li><code>__fields__() -&gt; FrozenList[FieldInfo]</code></li>
 </ul>
-<p>Unlike models, classes do not support per-field aliases/metadata, so <code>FieldInfo.alias</code> and <code>FieldInfo.description</code> are
-always <code>None</code> and <code>FieldInfo.wire_name == FieldInfo.name</code>.</p>
+<p>Unlike models, classes do not support per-field aliases/metadata, so <code>FieldInfo.alias</code> and <code>FieldInfo.description</code> are always <code>None</code> and <code>FieldInfo.wire_name == FieldInfo.name</code>.</p>
 <p>See: <a href="../../../reference/reflection/">Reflection (Reference)</a></p>
 <h2 id="common-pitfalls">Common pitfalls<a class="headerlink" href="#common-pitfalls" title="Permanent link">&para;</a></h2>
 <ul>
