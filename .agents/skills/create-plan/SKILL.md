@@ -16,6 +16,7 @@ Apply when scoping **implementation** (not RFC-only drafting): bugs, features, c
 Produce a **single markdown plan** (paste into Plan mode or a `.plan.md` file):
 
 - **Goal** or **root cause** (1–3 sentences).
+- **Pattern intake**: active area, 2-3 local precedent files to read, source-of-truth boundary/registry, and required verification path.
 - **TDD** (red → green → refine) when behavior is testable.
 - **Concrete file paths** as markdown links to real paths in that repo.
 - **Documentation** subsection when the change is user-visible (see below).
@@ -28,6 +29,17 @@ Produce a **single markdown plan** (paste into Plan mode or a `.plan.md` file):
 Do **not** edit the plan file after the user asks to **execute** the plan unless they explicitly request plan updates.
 
 If the task is clearly parallelizable after planning, hand off execution to `orchestrate-parallel-work` rather than embedding full worker-orchestration rules in the plan itself.
+
+## Pattern intake
+
+Before selecting files to edit, identify the local pattern that should govern the work:
+
+- Active area: parser, typechecker, lowering, emission, stdlib, CLI/tooling, docs, tests, or a named combination.
+- Precedents: 2-3 nearby files that already implement the same behavior shape. Prefer same-stage and same-domain examples.
+- Source of truth: the RFC, docs contract, diagnostics catalog, stdlib registry, ownership policy, CLI reference, or other boundary that owns the behavior.
+- Verification path: the narrow red test plus any broader proof needed to cover downstream stages or build modes.
+
+Plans should name these items explicitly. If there is no close precedent, say so and explain which boundary document or implementation shape is being used instead.
 
 ## TDD (default when tests exist)
 
