@@ -12,7 +12,22 @@ use super::super::{IrSpan, Mutability, TypedExpr};
 use super::AstLowering;
 use super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
+use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_semantics_core::SurfaceStmtLoweringAction;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssertIsPatternKind {
+    Some,
+    None,
+    Ok,
+    Err,
+}
+
+struct AssertIsPattern<'a> {
+    kind: AssertIsPatternKind,
+    scrutinee: &'a Spanned<ast::Expr>,
+    binding: Option<String>,
+}
 
 impl AstLowering {
     fn resolve_named_assign_target(&self, name: &str) -> AssignTarget {
@@ -668,6 +683,9 @@ impl AstLowering {
                 span: IrSpan::default(),
             });
         };
+        if let Some(pattern) = Self::assert_is_pattern_from_expr(condition_expr) {
+            return self.lower_assert_is_pattern_stmt(pattern, args.get(1));
+        }
         let condition = self.lower_expr_spanned(condition_expr)?;
         let message = args.get(1).map(|m| self.lower_expr_spanned(m)).transpose()?;
         let lowered = super::super::surface_semantics::desugar_assert_statement(condition, message);
@@ -695,6 +713,111 @@ impl AstLowering {
             IrType::Unit,
         );
         Ok(IrStmtKind::Expr(call))
+    }
+
+    /// Lower RFC 018 `assert value is Some/None/Ok/Err` forms to typed assertion helper calls.
+    fn lower_assert_is_pattern_stmt(
+        &mut self,
+        pattern: AssertIsPattern<'_>,
+        message: Option<&Spanned<ast::Expr>>,
+    ) -> Result<IrStmtKind, LoweringError> {
+        let scrutinee = self.lower_expr_spanned(pattern.scrutinee)?;
+        let return_ty = match (&pattern.kind, &scrutinee.ty) {
+            (AssertIsPatternKind::Some, IrType::Option(inner)) => inner.as_ref().clone(),
+            (AssertIsPatternKind::Ok, IrType::Result(ok, _)) => ok.as_ref().clone(),
+            (AssertIsPatternKind::Err, IrType::Result(_, err)) => err.as_ref().clone(),
+            (AssertIsPatternKind::None, _) => IrType::Unit,
+            _ => IrType::Unknown,
+        };
+        let helper_name = match pattern.kind {
+            AssertIsPatternKind::Some => "assert_is_some",
+            AssertIsPatternKind::None => "assert_is_none",
+            AssertIsPatternKind::Ok => "assert_is_ok",
+            AssertIsPatternKind::Err => "assert_is_err",
+        };
+        let mut call_args = vec![IrCallArg {
+            name: None,
+            expr: scrutinee,
+        }];
+        if let Some(message) = message {
+            call_args.push(IrCallArg {
+                name: None,
+                expr: self.lower_expr_spanned(message)?,
+            });
+        }
+
+        let callee = TypedExpr::new(
+            IrExprKind::Var {
+                name: helper_name.to_string(),
+                access: VarAccess::Copy,
+                ref_kind: VarRefKind::Value,
+            },
+            self.lookup_var(helper_name),
+        );
+        let call = TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(callee),
+                type_args: Vec::new(),
+                args: call_args,
+                canonical_path: Some(vec!["std".to_string(), "testing".to_string(), helper_name.to_string()]),
+            },
+            return_ty.clone(),
+        );
+
+        if let Some(binding) = pattern.binding {
+            self.define_local_binding(binding.clone(), return_ty.clone(), false);
+            return Ok(IrStmtKind::Let {
+                name: binding,
+                ty: return_ty,
+                mutability: Mutability::Immutable,
+                value: call,
+            });
+        }
+
+        Ok(IrStmtKind::Expr(call))
+    }
+
+    fn assert_is_pattern_from_expr(expr: &Spanned<ast::Expr>) -> Option<AssertIsPattern<'_>> {
+        let ast::Expr::Binary(scrutinee, ast::BinaryOp::Is, pattern_expr) = &expr.node else {
+            return None;
+        };
+        match &pattern_expr.node {
+            ast::Expr::Literal(ast::Literal::None) => Some(AssertIsPattern {
+                kind: AssertIsPatternKind::None,
+                scrutinee,
+                binding: None,
+            }),
+            ast::Expr::Ident(name) if name == constructors::as_str(ConstructorId::None) => Some(AssertIsPattern {
+                kind: AssertIsPatternKind::None,
+                scrutinee,
+                binding: None,
+            }),
+            ast::Expr::Call(callee, type_args, args) if type_args.is_empty() => {
+                let ast::Expr::Ident(name) = &callee.node else {
+                    return None;
+                };
+                let kind = match name.as_str() {
+                    n if n == constructors::as_str(ConstructorId::Some) => AssertIsPatternKind::Some,
+                    n if n == constructors::as_str(ConstructorId::Ok) => AssertIsPatternKind::Ok,
+                    n if n == constructors::as_str(ConstructorId::Err) => AssertIsPatternKind::Err,
+                    _ => return None,
+                };
+                let [ast::CallArg::Positional(arg)] = args.as_slice() else {
+                    return None;
+                };
+                let binding = match &arg.node {
+                    ast::Expr::Ident(name) if name == "_" => None,
+                    ast::Expr::Ident(name) => Some(name.clone()),
+                    _ => return None,
+                };
+                Some(AssertIsPattern {
+                    kind,
+                    scrutinee,
+                    binding,
+                })
+            }
+            _ => None,
+        }
     }
 
     /// Bump the number of ident reads for a given name.

@@ -41,7 +41,7 @@
 | Return | `return` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
 | Yield | `yield` |  | Hard | - | ControlFlow | Statement, Expression | RFC 001 | 0.1 | Stable |
 | Pass | `pass` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| Assert | `assert` |  | Soft | `std.testing` | ControlFlow | Statement | RFC 018 | 0.2 | Draft |
+| Assert | `assert` |  | Hard | - | ControlFlow | Statement | RFC 018 | 0.3 | Draft |
 | Def | `def` | `fn` | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
 | Async | `async` |  | Soft | `std.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
 | Await | `await` |  | Soft | `std.async` | Definition | Expression | RFC 000 | 0.1 | Stable |
@@ -85,7 +85,6 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 
 | Id | Canonical | Activated by | Category | Usage | RFC | Since | Stability |
 |---|---|---|---|---|---|---|---|
-| Assert | `assert` | `std.testing` | ControlFlow | Statement | RFC 018 | 0.2 | Draft |
 | Async | `async` | `std.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
 | Await | `await` | `std.async` | Definition | Expression | RFC 000 | 0.1 | Stable |
 
@@ -94,7 +93,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | Namespace | Feature gate | Submodules | Activates soft keywords |
 |---|---|---|---|
 | `std.web` | `web` | `std.web.app`, `std.web.routing`, `std.web.request`, `std.web.response`, `std.web.macros`, `std.web.prelude` | - |
-| `std.testing` | - | - | `assert` |
+| `std.testing` | - | - | - |
 | `std.async` | `async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.select`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
 | `std.serde` | `json` | `std.serde.json` | - |
 | `std.reflection` | - | - | - |

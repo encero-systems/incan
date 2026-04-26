@@ -267,6 +267,10 @@ impl<'a> IrEmitter<'a> {
         args: &[IrCallArg],
         canonical_path: Option<&[String]>,
     ) -> Result<TokenStream, EmitError> {
+        if let Some(tokens) = self.try_emit_testing_assert_call(canonical_path, args)? {
+            return Ok(tokens);
+        }
+
         let canonical_name = canonical_path.and_then(|path| path.last()).map(|s| s.as_str());
         let local_name = if let IrExprKind::Var { name, .. } = &func.kind {
             Some(name.as_str())
@@ -481,6 +485,188 @@ impl<'a> IrEmitter<'a> {
         Ok(quote! { #f #turbofish (#(#arg_tokens),*) })
     }
 
+    /// Emit canonical RFC 018 assertion helper calls without requiring a source-level `std.testing` import.
+    ///
+    /// Plain `assert` is a language primitive, so its lowered helper calls must remain available even when the
+    /// explicit stdlib testing module was not imported into the user's source file.
+    fn try_emit_testing_assert_call(
+        &self,
+        canonical_path: Option<&[String]>,
+        args: &[IrCallArg],
+    ) -> Result<Option<TokenStream>, EmitError> {
+        let Some(path) = canonical_path else {
+            return Ok(None);
+        };
+        if path.len() != 3
+            || path.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT)
+            || path.get(1).map(String::as_str) != Some("testing")
+        {
+            return Ok(None);
+        }
+        let Some(name) = path.last().map(String::as_str) else {
+            return Ok(None);
+        };
+
+        match name {
+            "assert" => {
+                let condition = Self::canonical_assert_arg(name, args, 0)?;
+                let condition_tokens = self.emit_expr(condition)?;
+                let failure = self.emit_assert_failure("AssertionError", args.get(1).map(|arg| &arg.expr))?;
+                Ok(Some(quote! {
+                    if !(#condition_tokens) {
+                        #failure
+                    }
+                }))
+            }
+            "assert_false" => {
+                let condition = Self::canonical_assert_arg(name, args, 0)?;
+                let condition_tokens = self.emit_expr(condition)?;
+                let failure = self.emit_assert_failure("AssertionError", args.get(1).map(|arg| &arg.expr))?;
+                Ok(Some(quote! {
+                    if #condition_tokens {
+                        #failure
+                    }
+                }))
+            }
+            "assert_eq" | "assert_ne" => self.emit_assert_comparison(name, args).map(Some),
+            "assert_is_some" => self.emit_assert_option_some(args).map(Some),
+            "assert_is_none" => self.emit_assert_option_none(args).map(Some),
+            "assert_is_ok" => self.emit_assert_result_ok(args).map(Some),
+            "assert_is_err" => self.emit_assert_result_err(args).map(Some),
+            _ => Ok(None),
+        }
+    }
+
+    fn canonical_assert_arg<'b>(
+        helper_name: &str,
+        args: &'b [IrCallArg],
+        index: usize,
+    ) -> Result<&'b TypedExpr, EmitError> {
+        args.get(index).map(|arg| &arg.expr).ok_or_else(|| {
+            EmitError::Unsupported(format!(
+                "canonical std.testing.{helper_name} call missing argument {}",
+                index + 1
+            ))
+        })
+    }
+
+    fn emit_assert_failure(
+        &self,
+        default_message: &'static str,
+        message: Option<&TypedExpr>,
+    ) -> Result<TokenStream, EmitError> {
+        if let Some(message) = message {
+            let message_tokens = self.emit_expr(message)?;
+            return Ok(quote! {{
+                let __incan_assert_msg = #message_tokens;
+                if __incan_assert_msg.is_empty() {
+                    panic!(#default_message);
+                } else {
+                    panic!("AssertionError: {}", __incan_assert_msg);
+                }
+            }});
+        }
+        Ok(quote! { panic!(#default_message); })
+    }
+
+    fn emit_assert_comparison(&self, name: &str, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
+        let left = Self::canonical_assert_arg(name, args, 0)?;
+        let right = Self::canonical_assert_arg(name, args, 1)?;
+        let left_tokens = self.emit_expr(left)?;
+        let right_tokens = self.emit_expr(right)?;
+        if let Some(message) = args.get(2).map(|arg| &arg.expr) {
+            let message_tokens = self.emit_expr(message)?;
+            if name == "assert_eq" {
+                Ok(quote! {{
+                    let __incan_assert_msg = #message_tokens;
+                    if __incan_assert_msg.is_empty() {
+                        assert_eq!(#left_tokens, #right_tokens)
+                    } else {
+                        assert_eq!(#left_tokens, #right_tokens, "AssertionError: {}", __incan_assert_msg)
+                    }
+                }})
+            } else {
+                Ok(quote! {{
+                    let __incan_assert_msg = #message_tokens;
+                    if __incan_assert_msg.is_empty() {
+                        assert_ne!(#left_tokens, #right_tokens)
+                    } else {
+                        assert_ne!(#left_tokens, #right_tokens, "AssertionError: {}", __incan_assert_msg)
+                    }
+                }})
+            }
+        } else if name == "assert_eq" {
+            Ok(quote! { assert_eq!(#left_tokens, #right_tokens) })
+        } else {
+            Ok(quote! { assert_ne!(#left_tokens, #right_tokens) })
+        }
+    }
+
+    fn emit_assert_option_some(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
+        let option = Self::canonical_assert_arg("assert_is_some", args, 0)?;
+        let option_tokens = self.emit_expr(option)?;
+        let failure = self.emit_assert_failure(
+            "AssertionError: expected Some, got None",
+            args.get(1).map(|arg| &arg.expr),
+        )?;
+        Ok(quote! {{
+            let __incan_assert_value = #option_tokens;
+            match __incan_assert_value {
+                Some(__incan_assert_inner) => __incan_assert_inner,
+                None => {
+                    #failure
+                }
+            }
+        }})
+    }
+
+    fn emit_assert_option_none(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
+        let option = Self::canonical_assert_arg("assert_is_none", args, 0)?;
+        let option_tokens = self.emit_expr(option)?;
+        let failure = self.emit_assert_failure(
+            "AssertionError: expected None, got Some",
+            args.get(1).map(|arg| &arg.expr),
+        )?;
+        Ok(quote! {{
+            let __incan_assert_value = #option_tokens;
+            if __incan_assert_value.is_some() {
+                #failure
+            }
+        }})
+    }
+
+    fn emit_assert_result_ok(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
+        let result = Self::canonical_assert_arg("assert_is_ok", args, 0)?;
+        let result_tokens = self.emit_expr(result)?;
+        let failure =
+            self.emit_assert_failure("AssertionError: expected Ok, got Err", args.get(1).map(|arg| &arg.expr))?;
+        Ok(quote! {{
+            let __incan_assert_value = #result_tokens;
+            match __incan_assert_value {
+                Ok(__incan_assert_inner) => __incan_assert_inner,
+                Err(_) => {
+                    #failure
+                }
+            }
+        }})
+    }
+
+    fn emit_assert_result_err(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
+        let result = Self::canonical_assert_arg("assert_is_err", args, 0)?;
+        let result_tokens = self.emit_expr(result)?;
+        let failure =
+            self.emit_assert_failure("AssertionError: expected Err, got Ok", args.get(1).map(|arg| &arg.expr))?;
+        Ok(quote! {{
+            let __incan_assert_value = #result_tokens;
+            match __incan_assert_value {
+                Err(__incan_assert_inner) => __incan_assert_inner,
+                Ok(_) => {
+                    #failure
+                }
+            }
+        }})
+    }
+
     fn emit_canonical_callee_path(&self, canonical_path: &[String]) -> Result<Option<TokenStream>, EmitError> {
         if canonical_path.len() < 3 || canonical_path.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
             return Ok(None);
@@ -622,6 +808,97 @@ mod tests {
                 ret: Box::new(IrType::Unit),
             },
         )
+    }
+
+    fn canonical_testing_path(name: &str) -> Vec<String> {
+        vec!["std".to_string(), "testing".to_string(), name.to_string()]
+    }
+
+    #[test]
+    fn emit_canonical_assert_eq_uses_rust_assert_macro() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let func = rust_call_target("assert_eq");
+        let left = local_arg("left", IrType::Int);
+        let right = local_arg("right", IrType::Int);
+        let path = canonical_testing_path("assert_eq");
+        let tokens = emitter
+            .emit_call_expr(
+                &func,
+                &[],
+                &[
+                    IrCallArg { name: None, expr: left },
+                    IrCallArg {
+                        name: None,
+                        expr: right,
+                    },
+                ],
+                Some(&path),
+            )
+            .map_err(|err| std::io::Error::other(format!("canonical assert_eq should emit: {err:?}")))?;
+        assert_eq!(render(tokens), "assert_eq!(left,right)");
+        Ok(())
+    }
+
+    #[test]
+    fn emit_canonical_assert_eq_message_preserves_empty_message_semantics() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let func = rust_call_target("assert_eq");
+        let left = local_arg("left", IrType::Int);
+        let right = local_arg("right", IrType::Int);
+        let msg = local_arg("msg", IrType::String);
+        let path = canonical_testing_path("assert_eq");
+        let tokens = emitter
+            .emit_call_expr(
+                &func,
+                &[],
+                &[
+                    IrCallArg { name: None, expr: left },
+                    IrCallArg {
+                        name: None,
+                        expr: right,
+                    },
+                    IrCallArg { name: None, expr: msg },
+                ],
+                Some(&path),
+            )
+            .map_err(|err| std::io::Error::other(format!("canonical assert_eq with message should emit: {err:?}")))?;
+        assert_eq!(
+            render(tokens),
+            "{let__incan_assert_msg=msg;if__incan_assert_msg.is_empty(){assert_eq!(left,right)}else{assert_eq!(left,right,\"AssertionError:{}\",__incan_assert_msg)}}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn emit_canonical_assert_is_some_returns_unwrapped_value() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let func = rust_call_target("assert_is_some");
+        let option = local_arg("maybe", IrType::Option(Box::new(IrType::Int)));
+        let path = canonical_testing_path("assert_is_some");
+        let tokens = emitter
+            .emit_call_expr(
+                &func,
+                &[],
+                &[IrCallArg {
+                    name: None,
+                    expr: option,
+                }],
+                Some(&path),
+            )
+            .map_err(|err| std::io::Error::other(format!("canonical assert_is_some should emit: {err:?}")))?;
+        let rendered = render(tokens);
+        assert!(
+            rendered.contains("match__incan_assert_value{Some(__incan_assert_inner)=>__incan_assert_inner"),
+            "Expected assert_is_some match expression, got {rendered}"
+        );
+        assert!(
+            rendered.contains("panic!(\"AssertionError:expectedSome,gotNone\")"),
+            "Expected default assertion failure, got {rendered}"
+        );
+        Ok(())
     }
 
     #[test]

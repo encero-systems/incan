@@ -244,12 +244,12 @@ pub def assert_ne[T](left: T, right: T, msg: str = "assertion failed: left == ri
         fail(msg)
 
 
-pub def assert_true(condition: bool, msg: str = "") -> None:
+pub def assert_true(condition: bool, msg: str = "assertion failed: expected true") -> None:
     """Assert condition is true."""
     assert(condition, msg)
 
 
-pub def assert_false(condition: bool, msg: str = "") -> None:
+pub def assert_false(condition: bool, msg: str = "assertion failed: expected false") -> None:
     """Assert condition is false."""
     assert(not condition, msg)
 
@@ -303,7 +303,10 @@ pub def assert_is_err[T, E](result: Result[T, E], msg: str = "assertion failed: 
 # TODO: structured `assert ... raises ...` support is not implemented yet.
 pub def assert_raises[E](block: () -> None, msg: str = "") -> E:
     """
-    Assert that a block raises/panics with error type E.
+    Reserved helper for asserting that a block raises/panics with error type E.
+
+    This currently fails immediately. Full support is blocked on compiler integration for
+    `assert call() raises ErrorType` and runtime panic-payload matching/construction.
 
     Example:
 

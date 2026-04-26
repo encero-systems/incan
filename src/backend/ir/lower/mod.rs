@@ -943,6 +943,43 @@ def main() -> None:
     }
 
     #[test]
+    fn test_lower_rfc018_assert_is_some_binding_to_helper_let() {
+        let ir = must_ok(lower_source(
+            r#"
+import std.testing
+
+def unwrap_value(value: Option[int]) -> int:
+    assert value is Some(inner)
+    return inner
+"#,
+        ));
+        let Some(function) = ir.declarations.iter().find_map(|decl| match &decl.kind {
+            IrDeclKind::Function(function) if function.name == "unwrap_value" => Some(function),
+            _ => None,
+        }) else {
+            panic!("Expected unwrap_value function");
+        };
+        let Some(first_stmt) = function.body.first() else {
+            panic!("Expected assert lowering statement");
+        };
+        let IrStmtKind::Let { name, value, .. } = &first_stmt.kind else {
+            panic!("Expected assert Some binding to lower as let");
+        };
+        assert_eq!(name, "inner");
+        let IrExprKind::Call {
+            canonical_path: Some(path),
+            ..
+        } = &value.kind
+        else {
+            panic!("Expected canonical assert_is_some helper call");
+        };
+        assert_eq!(
+            path,
+            &vec!["std".to_string(), "testing".to_string(), "assert_is_some".to_string()]
+        );
+    }
+
+    #[test]
     fn test_lower_if_statement() {
         let ir = must_ok(lower_source(
             r#"

@@ -5,12 +5,26 @@ use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::*;
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved};
 use incan_core::lang::keywords;
+use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::{NumericTy, result_numeric_type};
 use incan_semantics_core::SurfaceStmtTypeCheck;
 
 use super::TypeChecker;
 use crate::frontend::typechecker::helpers::{collection_type_id, ensure_bool_condition};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssertIsPatternKind {
+    Some,
+    None,
+    Ok,
+    Err,
+}
+
+struct AssertIsPattern {
+    kind: AssertIsPatternKind,
+    binding: Option<(String, Span)>,
+}
 
 impl TypeChecker {
     // ========================================================================
@@ -653,10 +667,21 @@ impl TypeChecker {
         }
     }
 
-    fn check_assert_stmt(&mut self, assert_stmt: &AssertStmt) {
-        let cond_ty = self.check_expr(&assert_stmt.condition);
+    /// Validate an RFC 018 `assert` condition and introduce supported `is` pattern bindings.
+    fn check_assert_condition(&mut self, condition: &Spanned<Expr>) {
+        if let Expr::Binary(scrutinee, BinaryOp::Is, pattern_expr) = &condition.node {
+            self.check_assert_is_pattern(scrutinee, pattern_expr, condition.span);
+            self.record_expr_type(condition.span, ResolvedType::Bool);
+            return;
+        }
+
+        let cond_ty = self.check_expr(condition);
         let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
-        ensure_bool_condition(&cond_ty, assert_stmt.condition.span, is_compatible, &mut self.errors);
+        ensure_bool_condition(&cond_ty, condition.span, is_compatible, &mut self.errors);
+    }
+
+    fn check_assert_stmt(&mut self, assert_stmt: &AssertStmt) {
+        self.check_assert_condition(&assert_stmt.condition);
 
         if let Some(message) = &assert_stmt.message {
             let msg_ty = self.check_expr(message);
@@ -667,6 +692,97 @@ impl TypeChecker {
                     message.span,
                 ));
             }
+        }
+    }
+
+    /// Validate the restricted RFC 018 `assert value is Some/None/Ok/Err` pattern subset.
+    fn check_assert_is_pattern(
+        &mut self,
+        scrutinee: &Spanned<Expr>,
+        pattern_expr: &Spanned<Expr>,
+        condition_span: Span,
+    ) {
+        let scrutinee_ty = self.check_expr(scrutinee);
+        let Some(pattern) = Self::assert_is_pattern_from_expr(pattern_expr) else {
+            self.errors.push(errors::expected_token_message(
+                "Expected assert `is` pattern Some(name), Some(_), None, Ok(name), Ok(_), Err(name), or Err(_)",
+                &format!("{:?}", pattern_expr.node),
+                pattern_expr.span,
+            ));
+            return;
+        };
+
+        let expected = match pattern.kind {
+            AssertIsPatternKind::Some | AssertIsPatternKind::None => "Option[_]",
+            AssertIsPatternKind::Ok | AssertIsPatternKind::Err => "Result[_, _]",
+        };
+        let compatible = match pattern.kind {
+            AssertIsPatternKind::Some | AssertIsPatternKind::None => scrutinee_ty.is_option(),
+            AssertIsPatternKind::Ok | AssertIsPatternKind::Err => scrutinee_ty.is_result(),
+        };
+        if !compatible && !matches!(scrutinee_ty, ResolvedType::Unknown) {
+            self.errors.push(errors::type_mismatch(
+                expected,
+                &scrutinee_ty.to_string(),
+                condition_span,
+            ));
+            return;
+        }
+
+        if let Some((name, span)) = pattern.binding {
+            let ty = match pattern.kind {
+                AssertIsPatternKind::Some => scrutinee_ty
+                    .option_inner_type()
+                    .cloned()
+                    .unwrap_or(ResolvedType::Unknown),
+                AssertIsPatternKind::Ok => scrutinee_ty.result_ok_type().cloned().unwrap_or(ResolvedType::Unknown),
+                AssertIsPatternKind::Err => scrutinee_ty.result_err_type().cloned().unwrap_or(ResolvedType::Unknown),
+                AssertIsPatternKind::None => ResolvedType::Unit,
+            };
+            self.symbols.define(Symbol {
+                name,
+                kind: SymbolKind::Variable(VariableInfo {
+                    ty,
+                    is_mutable: false,
+                    is_used: false,
+                }),
+                span,
+                scope: 0,
+            });
+        }
+    }
+
+    fn assert_is_pattern_from_expr(pattern_expr: &Spanned<Expr>) -> Option<AssertIsPattern> {
+        match &pattern_expr.node {
+            Expr::Literal(Literal::None) => Some(AssertIsPattern {
+                kind: AssertIsPatternKind::None,
+                binding: None,
+            }),
+            Expr::Ident(name) if name == constructors::as_str(ConstructorId::None) => Some(AssertIsPattern {
+                kind: AssertIsPatternKind::None,
+                binding: None,
+            }),
+            Expr::Call(callee, type_args, args) if type_args.is_empty() => {
+                let Expr::Ident(name) = &callee.node else {
+                    return None;
+                };
+                let kind = match name.as_str() {
+                    n if n == constructors::as_str(ConstructorId::Some) => AssertIsPatternKind::Some,
+                    n if n == constructors::as_str(ConstructorId::Ok) => AssertIsPatternKind::Ok,
+                    n if n == constructors::as_str(ConstructorId::Err) => AssertIsPatternKind::Err,
+                    _ => return None,
+                };
+                let [CallArg::Positional(arg)] = args.as_slice() else {
+                    return None;
+                };
+                let binding = match &arg.node {
+                    Expr::Ident(name) if name == "_" => None,
+                    Expr::Ident(name) => Some((name.clone(), arg.span)),
+                    _ => return None,
+                };
+                Some(AssertIsPattern { kind, binding })
+            }
+            _ => None,
         }
     }
 
