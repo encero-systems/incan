@@ -48,7 +48,7 @@ fn test_function_calls() {
     );
     let numbers = vec![1, 2, 3];
     numbers.push(4);
-    let popped = incan_stdlib::collections::list_pop(&mut numbers);
+    let popped = incan_stdlib::collections::__private::list_pop(&mut numbers);
     let data = [("a".to_string(), 1), ("b".to_string(), 2)]
         .into_iter()
         .collect::<HashMap<_, _>>();

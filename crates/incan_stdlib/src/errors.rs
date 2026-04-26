@@ -17,6 +17,22 @@ pub fn raise(err: impl Display) -> ! {
     panic!("{err}");
 }
 
+/// Compiler-only runtime helpers used by generated Rust.
+#[doc(hidden)]
+pub mod __private {
+    /// Raise an explicit panic-hosted runtime-misuse boundary.
+    ///
+    /// This is reserved for generated or stdlib-backed surfaces that are intentionally not ordinary Incan
+    /// exceptions, such as runner-only markers or proc-macro-backed decorator placeholders that cannot execute as
+    /// normal runtime functions. Keep these behind named helpers so generated Rust does not embed ad hoc `panic!`
+    /// stubs inline.
+    #[cold]
+    #[track_caller]
+    pub fn raise_runtime_misuse(message: &str) -> ! {
+        panic!("{message}");
+    }
+}
+
 /// Raise a canonical `Kind: ...` error without allocating an intermediate `String`.
 #[cold]
 #[track_caller]

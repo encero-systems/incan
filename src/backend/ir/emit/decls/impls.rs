@@ -80,7 +80,7 @@ impl<'a> IrEmitter<'a> {
                 regular_methods.push(quote! {
                     /// Serialize this model to a JSON string
                     pub fn to_json(&self) -> String {
-                        incan_stdlib::json::stringify_or_raise(self, stringify!(#target_type))
+                        incan_stdlib::json::__private::stringify_or_raise(self, stringify!(#target_type))
                     }
                 });
             }

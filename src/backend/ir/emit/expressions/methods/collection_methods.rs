@@ -116,8 +116,8 @@ pub(super) fn emit_collection_method(
         CollectionMethodKind::Pop => {
             // Incan types `pop()` as `T`, not `Option<T>`. Route through the runtime helper so generated Rust does not
             // encode the empty-list fallback itself while preserving the canonical Python-like error message.
-            let list_mut = emit_list_mut_receiver(receiver, r);
-            Ok(quote! { incan_stdlib::collections::list_pop(#list_mut) })
+            let list_mut = plan_collection_receiver(&receiver.ty, true).apply(r.clone());
+            Ok(quote! { incan_stdlib::collections::__private::list_pop(#list_mut) })
         }
         CollectionMethodKind::Swap => {
             if args.len() >= 2 {

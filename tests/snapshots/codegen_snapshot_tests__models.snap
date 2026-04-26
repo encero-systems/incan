@@ -205,7 +205,7 @@ impl ApiRequest {
     }
     /// Serialize this model to a JSON string
     pub fn to_json(&self) -> String {
-        incan_stdlib::json::stringify_or_raise(self, stringify!(ApiRequest))
+        incan_stdlib::json::__private::stringify_or_raise(self, stringify!(ApiRequest))
     }
     /// Deserialize a JSON string into this model
     pub fn from_json(json_str: String) -> Result<Self, String> {

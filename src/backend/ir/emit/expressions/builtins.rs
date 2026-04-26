@@ -17,10 +17,12 @@ use incan_core::lang::types::collections::{self, CollectionTypeId};
 fn list_elem_type(ty: &IrType) -> &IrType {
     match ty {
         IrType::List(elem) => elem.as_ref(),
-        IrType::Ref(inner) | IrType::RefMut(inner) => match inner.as_ref() {
-            IrType::List(elem) => elem.as_ref(),
-            other => other,
-        },
+        IrType::NamedGeneric(name, args)
+            if collections::from_str(name.as_str()) == Some(CollectionTypeId::FrozenList) =>
+        {
+            args.first().unwrap_or(ty)
+        }
+        IrType::Ref(inner) | IrType::RefMut(inner) => list_elem_type(inner),
         other => other,
     }
 }
@@ -96,11 +98,11 @@ impl<'a> IrEmitter<'a> {
                     let a = self.emit_expr(arg)?;
                     let elem_type = list_elem_type(&arg.ty);
                     let tokens = match elem_type {
-                        IrType::Float => quote! { incan_stdlib::collections::list_min_f64(&#a) },
+                        IrType::Float => quote! { incan_stdlib::collections::__private::list_min_f64(&#a) },
                         IrType::String | IrType::FrozenStr => {
-                            quote! { incan_stdlib::collections::list_min_clone(&#a) }
+                            quote! { incan_stdlib::collections::__private::list_min_clone(&#a) }
                         }
-                        _ => quote! { incan_stdlib::collections::list_min_copy(&#a) },
+                        _ => quote! { incan_stdlib::collections::__private::list_min_copy(&#a) },
                     };
                     Ok(tokens)
                 } else {
@@ -112,11 +114,11 @@ impl<'a> IrEmitter<'a> {
                     let a = self.emit_expr(arg)?;
                     let elem_type = list_elem_type(&arg.ty);
                     let tokens = match elem_type {
-                        IrType::Float => quote! { incan_stdlib::collections::list_max_f64(&#a) },
+                        IrType::Float => quote! { incan_stdlib::collections::__private::list_max_f64(&#a) },
                         IrType::String | IrType::FrozenStr => {
-                            quote! { incan_stdlib::collections::list_max_clone(&#a) }
+                            quote! { incan_stdlib::collections::__private::list_max_clone(&#a) }
                         }
-                        _ => quote! { incan_stdlib::collections::list_max_copy(&#a) },
+                        _ => quote! { incan_stdlib::collections::__private::list_max_copy(&#a) },
                     };
                     Ok(tokens)
                 } else {
@@ -268,7 +270,7 @@ impl<'a> IrEmitter<'a> {
                 if let Some(arg) = args.first() {
                     let value = self.emit_expr(arg)?;
                     Ok(quote! {
-                        incan_stdlib::json::stringify_or_raise(&#value, std::any::type_name_of_val(&#value))
+                        incan_stdlib::json::__private::stringify_or_raise(&#value, std::any::type_name_of_val(&#value))
                     })
                 } else {
                     Ok(quote! { String::from("null") })
@@ -327,11 +329,11 @@ impl<'a> IrEmitter<'a> {
                     let a = self.emit_expr(arg)?;
                     let elem_type = list_elem_type(&arg.ty);
                     let tokens = match elem_type {
-                        IrType::Float => quote! { incan_stdlib::collections::list_min_f64(&#a) },
+                        IrType::Float => quote! { incan_stdlib::collections::__private::list_min_f64(&#a) },
                         IrType::String | IrType::FrozenStr => {
-                            quote! { incan_stdlib::collections::list_min_clone(&#a) }
+                            quote! { incan_stdlib::collections::__private::list_min_clone(&#a) }
                         }
-                        _ => quote! { incan_stdlib::collections::list_min_copy(&#a) },
+                        _ => quote! { incan_stdlib::collections::__private::list_min_copy(&#a) },
                     };
                     Ok(Some(tokens))
                 } else {
@@ -343,11 +345,11 @@ impl<'a> IrEmitter<'a> {
                     let a = self.emit_expr(arg)?;
                     let elem_type = list_elem_type(&arg.ty);
                     let tokens = match elem_type {
-                        IrType::Float => quote! { incan_stdlib::collections::list_max_f64(&#a) },
+                        IrType::Float => quote! { incan_stdlib::collections::__private::list_max_f64(&#a) },
                         IrType::String | IrType::FrozenStr => {
-                            quote! { incan_stdlib::collections::list_max_clone(&#a) }
+                            quote! { incan_stdlib::collections::__private::list_max_clone(&#a) }
                         }
-                        _ => quote! { incan_stdlib::collections::list_max_copy(&#a) },
+                        _ => quote! { incan_stdlib::collections::__private::list_max_copy(&#a) },
                     };
                     Ok(Some(tokens))
                 } else {
@@ -497,7 +499,7 @@ impl<'a> IrEmitter<'a> {
                 if let Some(arg) = args.first() {
                     let value = self.emit_expr(arg)?;
                     Ok(Some(quote! {
-                        incan_stdlib::json::stringify_or_raise(&#value, std::any::type_name_of_val(&#value))
+                        incan_stdlib::json::__private::stringify_or_raise(&#value, std::any::type_name_of_val(&#value))
                     }))
                 } else {
                     Ok(None)

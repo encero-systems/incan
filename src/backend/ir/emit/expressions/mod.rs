@@ -748,7 +748,7 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::FieldsList(fields) => Ok(quote! { vec![#(#fields),*] }),
 
             IrExprKind::SerdeToJson => {
-                Ok(quote! { incan_stdlib::json::stringify_or_raise(self, std::any::type_name::<Self>()) })
+                Ok(quote! { incan_stdlib::json::__private::stringify_or_raise(self, std::any::type_name::<Self>()) })
             }
 
             IrExprKind::SerdeFromJson(type_name) => {

@@ -32,8 +32,8 @@ fn test_sum_builtin() {
 }
 fn test_min_max_builtins() {
     let values = vec![3, 1, 4, 1, 5, 9];
-    let minimum = incan_stdlib::collections::list_min_copy(&values);
-    let maximum = incan_stdlib::collections::list_max_copy(&values);
+    let minimum = incan_stdlib::collections::__private::list_min_copy(&values);
+    let maximum = incan_stdlib::collections::__private::list_max_copy(&values);
     println!("{}", minimum);
     println!("{}", maximum);
 }

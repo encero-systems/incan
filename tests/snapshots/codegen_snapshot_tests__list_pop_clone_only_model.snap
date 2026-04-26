@@ -41,7 +41,7 @@ impl PopRegressItem {
 fn drain_items() {
     let mut xs = vec![PopRegressItem { id : 1 }];
     while ::std::convert::identity(xs.len() as i64) > 0 {
-        let item = incan_stdlib::collections::list_pop(&mut xs);
+        let item = incan_stdlib::collections::__private::list_pop(&mut xs);
         println!("{}", item.id);
     }
 }

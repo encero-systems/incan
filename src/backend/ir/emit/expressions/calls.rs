@@ -278,9 +278,10 @@ impl<'a> IrEmitter<'a> {
             .and_then(|name| self.function_registry.get(name))
             .or_else(|| canonical_name.and_then(|name| self.function_registry.get(name)));
 
-        // The checked-newtype lowering path emits a compiler-internal panic marker call. Render that as the Rust
-        // `panic!` macro so generated code stays valid without colliding with user-defined functions that may also be
-        // named `panic`.
+        // The checked-newtype lowering path emits a compiler-internal panic marker call. This remains the narrow,
+        // explicitly-tracked generated `panic!` exemption that issue #351 left to a separate follow-up. Render it as
+        // the Rust `panic!` macro so generated code stays valid without colliding with user-defined functions that may
+        // also be named `panic`.
         if matches!(callee_name, Some(name) if name == INTERNAL_PANIC_FN)
             && canonical_path.is_none()
             && args.len() == 1

@@ -1199,6 +1199,58 @@ fn runtime_error_list_swap_out_of_range_is_canonical() -> Result<(), Box<dyn std
 }
 
 #[test]
+fn runtime_error_route_marker_runtime_misuse_is_explicit() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let web_macros_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("crates")
+        .join("incan_web_macros");
+    let manifest = format!(
+        "[project]\nname = \"route_runtime_misuse\"\nversion = \"0.3.0-dev.1\"\n\n[rust-dependencies]\nincan_web_macros = {{ path = \"{}\" }}\n",
+        web_macros_path.display()
+    );
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(tmp.path().join("incan.toml"), manifest)?;
+    let main_path = src_dir.join("main.incn");
+    fs::write(
+        &main_path,
+        "from std.web import route\n\ndef main() -> None:\n  route(\"/users\", methods=[\"GET\"])\n",
+    )?;
+
+    let check_output = Command::new(incan_debug_binary())
+        .arg("--check")
+        .arg(&main_path)
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+    assert!(
+        check_output.status.success(),
+        "expected --check to succeed so the failure is runtime.\nstderr:\n{}",
+        String::from_utf8_lossy(&check_output.stderr)
+    );
+
+    let run_output = Command::new(incan_debug_binary())
+        .arg("run")
+        .arg(&main_path)
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+    assert!(
+        !run_output.status.success(),
+        "expected runtime failure, stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run_output.stdout),
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+
+    let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&run_output.stdout));
+    let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&run_output.stderr));
+    let combined = format!("{stdout}\n{stderr}");
+    assert!(
+        combined.contains("decorator marker 'incan_web_macros::route' cannot be called at runtime"),
+        "expected explicit decorator misuse runtime diagnostic, got:\n{combined}"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_fail_on_empty_collection() {
     let dir = make_temp_test_dir();
     let test_file = dir.join("test_empty.incn");
@@ -4535,7 +4587,7 @@ mod rfc031_pub_import_integration_tests {
         let tmp = tempfile::tempdir()?;
         let main_path = write_project_files(
             tmp.path(),
-            "[project]\nname = \"generated_runtime_helpers\"\nversion = \"0.3.0-dev.0\"\n",
+            "[project]\nname = \"generated_runtime_helpers\"\nversion = \"0.3.0-dev.1\"\n",
             "from std.serde.json import Serialize\n\nmodel Payload with Serialize:\n  value: int\n\ndef main() -> None:\n  mut xs = [3, 1, 4]\n  println(xs.pop())\n  println(min(xs))\n  println(max(xs))\n  println(Payload(value=2).to_json())\n",
         )?;
 
@@ -4573,6 +4625,43 @@ mod rfc031_pub_import_integration_tests {
             lines.get(3).copied(),
             Some("{\"value\":2}"),
             "expected Payload.to_json() output, got:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn generated_runtime_helpers_support_frozen_float_list_min_max() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"generated_runtime_helpers_frozen_float\"\nversion = \"0.3.0-dev.1\"\n",
+            "const NUMBERS: FrozenList[float] = [3.0, 1.5, 4.25]\n\ndef main() -> None:\n  println(min(NUMBERS))\n  println(max(NUMBERS))\n",
+        )?;
+
+        let output = Command::new(incan_bin_path())
+            .arg("run")
+            .arg(&main_path)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "expected frozen-list min/max helper path project to run successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = stdout.lines().collect();
+        assert_eq!(
+            lines.first().copied(),
+            Some("1.5"),
+            "expected min(NUMBERS) output first, got:\n{stdout}"
+        );
+        assert_eq!(
+            lines.get(1).copied(),
+            Some("4.25"),
+            "expected max(NUMBERS) output second, got:\n{stdout}"
         );
         Ok(())
     }
