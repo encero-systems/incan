@@ -4574,7 +4574,7 @@
 (<code>type_</code>) remains the stable field name in code. See <a href="../../../explanation/models_and_classes/models/#using-aliases-in-code">Models: Using aliases in code</a>.</p>
 <p><code>class</code> does not support field metadata/aliases, so class JSON keys always match the canonical field names.</p>
 <h2 id="enums">Enums<a class="headerlink" href="#enums" title="Permanent link">&para;</a></h2>
-<p>Enums support <code>Serialize</code> and <code>Deserialize</code> just like models:</p>
+<p>Ordinary enums support <code>Serialize</code> and <code>Deserialize</code> just like models:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
 <span class="k">enum</span> <span class="nc">Status</span><span class="p">:</span>
     <span class="nc">Pending</span>
@@ -4586,6 +4586,19 @@
     <span class="nc">Success</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
     <span class="nc">Error</span><span class="p">(</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span>
 </code></pre></div>
+<p>Value enums serialize and deserialize through their declared raw value rather than the variant name:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<span class="k">enum</span> <span class="nc">Environment</span><span class="p">(</span><span class="nb">str</span><span class="p">):</span>
+    <span class="nc">Development</span> <span class="o">=</span> <span class="s2">&quot;development&quot;</span>
+    <span class="nc">Production</span> <span class="o">=</span> <span class="s2">&quot;production&quot;</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<span class="k">enum</span> <span class="nc">HttpStatus</span><span class="p">(</span><span class="nb">int</span><span class="p">):</span>
+    <span class="nb">Ok</span> <span class="o">=</span> <span class="mi">200</span>
+    <span class="nc">NotFound</span> <span class="o">=</span> <span class="mi">404</span>
+</code></pre></div>
+<p><code>Environment.Production</code> serializes as <code>"production"</code> and deserializes only from known raw values. <code>HttpStatus.NotFound</code>
+serializes as <code>404</code>.</p>
 <p>When a model references an enum in its fields, the compiler automatically propagates <code>Serialize</code>/<code>Deserialize</code> derives
 to the enum:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
@@ -4652,8 +4665,12 @@ to the enum:</p>
 <td>object</td>
 </tr>
 <tr>
-<td><code>enum</code></td>
+<td>ordinary <code>enum</code></td>
 <td>variant encoding</td>
+</tr>
+<tr>
+<td>value <code>enum</code></td>
+<td>backing <code>str</code> / <code>int</code></td>
 </tr>
 <tr>
 <td><code>newtype</code></td>

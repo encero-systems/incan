@@ -2608,6 +2608,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#value-enums" class="md-nav__link">
+    <span class="md-ellipsis">
+      Value enums
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#generic-enums" class="md-nav__link">
     <span class="md-ellipsis">
       Generic enums
@@ -4643,6 +4652,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#value-enums" class="md-nav__link">
+    <span class="md-ellipsis">
+      Value enums
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#generic-enums" class="md-nav__link">
     <span class="md-ellipsis">
       Generic enums
@@ -4834,12 +4852,10 @@
 <h1 id="enums-in-incan">Enums in Incan<a class="headerlink" href="#enums-in-incan" title="Permanent link">&para;</a></h1>
 <p>Enums in Incan are <strong>algebraic data types</strong> (ADTs): a type with a <strong>closed set</strong> of variants, where each variant can carry
 different data.</p>
-<p>You use enums when a value can be <strong>one of a few well-defined shapes</strong> and you want the compiler to enforce that you handle
-every case.</p>
+<p>You use enums when a value can be <strong>one of a few well-defined shapes</strong> and you want the compiler to enforce that you handle every case.</p>
 <details class="info">
 <summary>Coming from Python?</summary>
-<p>Python’s <code>Enum</code> is mainly “named constants”. When Python code needs variants <em>with data</em> it often ends up using class
-hierarchies and <code>isinstance(...)</code> checks, which are not exhaustive and are easy to break during refactors.</p>
+<p>Python’s <code>Enum</code> is mainly “named constants”. When Python code needs variants <em>with data</em> it often ends up using class hierarchies and <code>isinstance(...)</code> checks, which are not exhaustive and are easy to break during refactors.</p>
 <p>Here’s one representative before/after:</p>
 <p><strong>Python (common workaround)</strong>:</p>
 <div class="language-python highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Shape</span><span class="p">:</span>
@@ -4930,6 +4946,38 @@ hierarchies and <code>isinstance(...)</code> checks, which are not exhaustive an
     <span class="nc">Write</span><span class="p">(</span><span class="n">text</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Message: </span><span class="si">{</span><span class="n">text</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
     <span class="nc">ChangeColor</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">g</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;RGB(</span><span class="si">{</span><span class="n">r</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">g</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">b</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
 </code></pre></div>
+<hr />
+<h2 id="value-enums">Value enums<a class="headerlink" href="#value-enums" title="Permanent link">&para;</a></h2>
+<p>Use a value enum when each variant needs one canonical external <code>str</code> or <code>int</code> representation:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Environment</span><span class="p">(</span><span class="nb">str</span><span class="p">):</span>
+    <span class="nc">Development</span> <span class="o">=</span> <span class="s2">&quot;development&quot;</span>
+    <span class="nc">Production</span> <span class="o">=</span> <span class="s2">&quot;production&quot;</span>
+
+<span class="k">enum</span> <span class="nc">HttpStatus</span><span class="p">(</span><span class="nb">int</span><span class="p">):</span>
+    <span class="nb">Ok</span> <span class="o">=</span> <span class="mi">200</span>
+    <span class="nc">NotFound</span> <span class="o">=</span> <span class="mi">404</span>
+</code></pre></div>
+<p>Value enum variants are still enum values, not primitive values. <code>Environment.Production</code> has type <code>Environment</code>, not <code>str</code>, and <code>HttpStatus.NotFound</code> has type <code>HttpStatus</code>, not <code>int</code>.</p>
+<p>Value enums gain two helper methods that cover both directions between typed enum variants and their external values, <code>value</code> and <code>from_value</code>; <code>value()</code> returns the backing primitive type. <code>from_value(...)</code> accepts the backing primitive type and returns <code>Option[Enum]</code> so unknown external values are explicit.</p>
+<p>For example:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">status_code</span><span class="p">(</span><span class="n">status</span><span class="p">:</span> <span class="nc">HttpStatus</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">status</span><span class="o">.</span><span class="n">value</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_status</span><span class="p">(</span><span class="n">code</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">HttpStatus</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="nc">HttpStatus</span><span class="o">.</span><span class="n">from_value</span><span class="p">(</span><span class="n">code</span><span class="p">)</span>
+</code></pre></div>
+<p>Value enums are for closed value tables, not for variants that carry additional data. Each variant is a single named case with one raw <code>str</code> or <code>int</code> value:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Environment</span><span class="p">(</span><span class="nb">str</span><span class="p">):</span>
+    <span class="nc">Development</span> <span class="o">=</span> <span class="s2">&quot;development&quot;</span>
+    <span class="nc">Production</span> <span class="o">=</span> <span class="s2">&quot;production&quot;</span>
+</code></pre></div>
+<p>If a variant needs payload fields, use a regular enum instead:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">JobState</span><span class="p">:</span>
+    <span class="nc">Queued</span>
+    <span class="nc">Running</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>      <span class="c1"># worker id</span>
+    <span class="nc">Failed</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">)</span>  <span class="c1"># message, retry count</span>
+</code></pre></div>
+<p>Value enums also cannot be generic. The backing value table is concrete, so every variant value must be explicit, must match the declared backing type, and must be unique within the enum.</p>
 <hr />
 <h2 id="generic-enums">Generic enums<a class="headerlink" href="#generic-enums" title="Permanent link">&para;</a></h2>
 <p>Enums can be generic — parameterized over types:</p>
@@ -5030,16 +5078,17 @@ hierarchies and <code>isinstance(...)</code> checks, which are not exhaustive an
 <p>For serialization details, see <a href="../../reference/derives/serialization/">Derives: Serialization</a>.</p>
 <hr />
 <h2 id="common-pitfall-enums-are-not-lookup-tables">Common pitfall: enums are not lookup tables<a class="headerlink" href="#common-pitfall-enums-are-not-lookup-tables" title="Permanent link">&para;</a></h2>
-<p>Incan enums are <strong>algebraic types</strong> — each variant is a fixed tag, optionally carrying data.
-They are <strong>not</strong> key-value mappings or integer-valued constants.</p>
+<p>Incan enums are <strong>algebraic types</strong> — each variant is a fixed tag, optionally carrying data. Ordinary enums are <strong>not</strong> key-value mappings or integer-valued constants. If you need one canonical string or integer representation per variant, use a <a href="#value-enums">value enum</a>.</p>
 <p>The compiler will catch the mistake early with a targeted error message:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># ✗ These are all rejected with clear diagnostics:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Rejected: ordinary enums cannot have mapped values.</span>
 <span class="k">enum</span> <span class="nc">Categories</span><span class="p">:</span>
     <span class="nc">GROCERIES</span> <span class="o">=&gt;</span> <span class="nc">Category</span><span class="p">(</span><span class="s2">&quot;Groceries&quot;</span><span class="p">)</span>   <span class="c1"># &quot;cannot have mapped values&quot;</span>
 
+<span class="c1"># Rejected: variants cannot contain dotted names.</span>
 <span class="k">enum</span> <span class="nc">FlowType</span><span class="p">:</span>
     <span class="nc">Cash</span><span class="o">.</span><span class="nc">Inflow</span>                           <span class="c1"># &quot;cannot contain dots&quot;</span>
 
+<span class="c1"># Rejected: ordinary enums cannot assign raw values.</span>
 <span class="k">enum</span> <span class="nc">Color</span><span class="p">:</span>
     <span class="nc">Red</span> <span class="o">=</span> <span class="mi">1</span>                               <span class="c1"># &quot;cannot have assigned values&quot;</span>
 </code></pre></div>
@@ -5185,6 +5234,10 @@ They are <strong>not</strong> key-value mappings or integer-valued constants.</p
 <tr>
 <td>Variants</td>
 <td>Each case of an enum, optionally with data</td>
+</tr>
+<tr>
+<td>Value enum</td>
+<td>Enum with canonical <code>str</code> / <code>int</code> raw values</td>
 </tr>
 <tr>
 <td>Generic enum</td>
