@@ -243,7 +243,7 @@ def boot_runtime() -> Runtime:
     return Runtime.from_env().unwrap()
 ```
 
-In v1, `@rust.allow(...)` is item-only. It can be used on functions, methods, models, classes, enums, and newtypes, because those declarations lower to concrete Rust items. It cannot be used as a module-level directive, on imports, local bindings, expressions, or declarations that do not own a stable generated Rust item boundary.
+`@rust.allow(...)` is item-only: it can be used on functions, methods, models, classes, enums, and newtypes, because those declarations lower to concrete Rust items. It cannot be used as a module-level directive, on imports, local bindings, expressions, or declarations that do not own a stable generated Rust item boundary.
 
 The decorator takes one or more string literal lint names. Bare rustc lints such as `"deprecated"` and tool-prefixed lints such as `"clippy::unwrap_used"` are accepted. Empty lists, non-string arguments, empty names, duplicate names, and obvious broad lint groups are rejected. The initial broad-group blocklist is `"warnings"`, `"unused"`, `"clippy::all"`, `"clippy::pedantic"`, `"clippy::nursery"`, `"clippy::restriction"`, and `"clippy::cargo"`.
 
