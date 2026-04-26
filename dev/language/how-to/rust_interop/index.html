@@ -1458,6 +1458,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#targeted-generated-rust-lint-suppression" class="md-nav__link">
+    <span class="md-ellipsis">
+      Targeted generated-Rust lint suppression
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#coercions-at-explicit-rust-boundaries" class="md-nav__link">
     <span class="md-ellipsis">
       Coercions at explicit Rust boundaries
@@ -4793,6 +4802,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#targeted-generated-rust-lint-suppression" class="md-nav__link">
+    <span class="md-ellipsis">
+      Targeted generated-Rust lint suppression
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#coercions-at-explicit-rust-boundaries" class="md-nav__link">
     <span class="md-ellipsis">
       Coercions at explicit Rust boundaries
@@ -5242,6 +5260,20 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
     <span class="k">pass</span>
 </code></pre></div>
 <p>These are Incan-syntax bounds that lower to Rust-native predicates in generated code.</p>
+<h2 id="targeted-generated-rust-lint-suppression">Targeted generated-Rust lint suppression<a class="headerlink" href="#targeted-generated-rust-lint-suppression" title="Permanent link">&para;</a></h2>
+<p>Use <code>@rust.allow(...)</code> when one Incan declaration is expected to generate Rust that triggers a specific rustc or Clippy lint that is legitimate but not avoidable from Incan source. This is narrow Rust-emission metadata: it emits a Rust <code>#[allow(...)]</code> on the generated item for that declaration. It is not a general Rust attribute escape hatch, and it is not a way to set project-wide lint policy.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="n">allow</span><span class="p">(</span><span class="s2">&quot;deprecated&quot;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_legacy_record</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Record</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">legacy</span><span class="o">.</span><span class="n">load_record</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+</code></pre></div>
+<p>Multiple specific lint names can be listed when the same generated item needs more than one suppression:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="n">allow</span><span class="p">(</span><span class="s2">&quot;deprecated&quot;</span><span class="p">,</span> <span class="s2">&quot;clippy::unwrap_used&quot;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">boot_runtime</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Runtime</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nc">Runtime</span><span class="o">.</span><span class="n">from_env</span><span class="p">()</span><span class="o">.</span><span class="nb">unwrap</span><span class="p">()</span>
+</code></pre></div>
+<p><code>@rust.allow(...)</code> is item-only: it can be used on functions, methods, models, classes, enums, and newtypes, because those declarations lower to concrete Rust items. It cannot be used as a module-level directive, on imports, local bindings, expressions, or declarations that do not own a stable generated Rust item boundary.</p>
+<p>The decorator takes one or more string literal lint names. Bare rustc lints such as <code>"deprecated"</code> and tool-prefixed lints such as <code>"clippy::unwrap_used"</code> are accepted. Empty lists, non-string arguments, empty names, duplicate names, and obvious broad lint groups are rejected. The initial broad-group blocklist is <code>"warnings"</code>, <code>"unused"</code>, <code>"clippy::all"</code>, <code>"clippy::pedantic"</code>, <code>"clippy::nursery"</code>, <code>"clippy::restriction"</code>, and <code>"clippy::cargo"</code>.</p>
+<p>Prefer fixing the source or tightening the generated lowering when a warning is avoidable. Use <code>@rust.allow(...)</code> only when the Rust warning is real, local, and intentionally accepted for that declaration.</p>
 <h2 id="coercions-at-explicit-rust-boundaries">Coercions at explicit Rust boundaries<a class="headerlink" href="#coercions-at-explicit-rust-boundaries" title="Permanent link">&para;</a></h2>
 <p>When calling Rust functions or methods, the compiler can apply a bounded, compiler-managed coercion model for built-in types:</p>
 <table>
@@ -5521,6 +5553,7 @@ compiler automatically passes it as a borrowed <code>&amp;str</code> — the mos
 <ul>
 <li><a href="../../../tooling/how-to/dependencies/">Managing dependencies</a> - Adding crates, locking, CI</li>
 <li><a href="../../../tooling/reference/project_configuration/">Project configuration reference</a> - Full <code>incan.toml</code> format</li>
+<li><a href="/dev/RFCs/closed/implemented/057_rust_allow_targeted_lint_suppression">RFC 057</a> - <code>@rust.allow(...)</code> targeted generated-Rust lint suppression</li>
 <li><a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a> - <code>rusttype</code>, <code>interop</code>, capability bounds</li>
 <li><a href="../../explanation/error_handling/">Error Handling</a> - Working with <code>Result</code> types</li>
 <li><a href="../../reference/derives_and_traits/">Derives &amp; Traits</a> - Drop trait for custom cleanup</li>
