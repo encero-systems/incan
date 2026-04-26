@@ -51,30 +51,36 @@ pub trait FromJson: for<'de> Deserialize<'de> {
 impl<T: Serialize> ToJson for T {}
 impl<T: for<'de> Deserialize<'de>> FromJson for T {}
 
-/// Serialize a value to JSON or raise Incan's canonical runtime error.
-///
-/// This is used by compiler-generated code for value-returning JSON paths (`json_stringify`, synthesized `to_json`,
-/// and trait-backed wrappers) so the emitted Rust does not inline fallback/panic extraction.
-#[must_use]
-pub fn stringify_or_raise<T>(value: &T, type_name: &str) -> String
-where
-    T: Serialize + ?Sized,
-{
-    match serde_json::to_string(value) {
-        Ok(json) => json,
-        Err(_) => raise_json_serialization_error(type_name),
-    }
-}
+/// Compiler-only JSON helpers used by generated Rust.
+#[doc(hidden)]
+pub mod __private {
+    use super::{Serialize, raise_json_serialization_error};
 
-/// Serialize a value to pretty JSON or raise Incan's canonical runtime error.
-#[must_use]
-pub fn stringify_pretty_or_raise<T>(value: &T, type_name: &str) -> String
-where
-    T: Serialize + ?Sized,
-{
-    match serde_json::to_string_pretty(value) {
-        Ok(json) => json,
-        Err(_) => raise_json_serialization_error(type_name),
+    /// Serialize a value to JSON or raise Incan's canonical runtime error.
+    ///
+    /// This is used by compiler-generated code for value-returning JSON paths (`json_stringify`, synthesized
+    /// `to_json`, and trait-backed wrappers) so the emitted Rust does not inline fallback/panic extraction.
+    #[must_use]
+    pub fn stringify_or_raise<T>(value: &T, type_name: &str) -> String
+    where
+        T: Serialize + ?Sized,
+    {
+        match serde_json::to_string(value) {
+            Ok(json) => json,
+            Err(_) => raise_json_serialization_error(type_name),
+        }
+    }
+
+    /// Serialize a value to pretty JSON or raise Incan's canonical runtime error.
+    #[must_use]
+    pub fn stringify_pretty_or_raise<T>(value: &T, type_name: &str) -> String
+    where
+        T: Serialize + ?Sized,
+    {
+        match serde_json::to_string_pretty(value) {
+            Ok(json) => json,
+            Err(_) => raise_json_serialization_error(type_name),
+        }
     }
 }
 
@@ -97,12 +103,12 @@ mod tests {
 
     #[test]
     fn stringify_or_raise_serializes_successfully() {
-        assert_eq!(stringify_or_raise(&vec![1, 2, 3], "Vec"), "[1,2,3]");
+        assert_eq!(__private::stringify_or_raise(&vec![1, 2, 3], "Vec"), "[1,2,3]");
     }
 
     #[test]
     #[should_panic(expected = "TypeError: Object of type AlwaysFails is not JSON serializable")]
     fn stringify_or_raise_uses_canonical_runtime_error() {
-        let _ = stringify_or_raise(&AlwaysFails, "AlwaysFails");
+        let _ = __private::stringify_or_raise(&AlwaysFails, "AlwaysFails");
     }
 }

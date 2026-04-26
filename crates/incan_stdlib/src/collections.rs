@@ -56,21 +56,6 @@ pub fn list_remove<T>(list: &mut Vec<T>, index: i64) {
     let _ = list.remove(idx);
 }
 
-/// Pop the last element from a list.
-///
-/// This preserves Incan's `list.pop()` return type (`T`, not `Option<T>`) while keeping the empty-list failure on the
-/// runtime side instead of in compiler-emitted extraction code.
-///
-/// ## Panics
-/// - `IndexError: pop from empty list` if the list is empty.
-#[inline]
-pub fn list_pop<T>(list: &mut Vec<T>) -> T {
-    match list.pop() {
-        Some(value) => value,
-        None => raise(IncanError::list_pop_empty()),
-    }
-}
-
 /// Swap two list elements by Python-style indices (supports negative indices).
 ///
 /// ## Panics
@@ -113,93 +98,115 @@ where
     list.iter().filter(|item| *item == value).count() as i64
 }
 
-/// Return the minimum float value in a list.
-///
-/// ## Panics
-/// - `ValueError: min() arg is an empty sequence` if the list is empty.
-#[inline]
-#[must_use]
-pub fn list_min_f64(list: &[f64]) -> f64 {
-    match list.iter().copied().reduce(f64::min) {
-        Some(value) => value,
-        None => raise_value_error("min() arg is an empty sequence"),
-    }
-}
+/// Compiler-only collection helpers used by generated Rust.
+#[doc(hidden)]
+pub mod __private {
+    use super::{IncanError, raise, raise_value_error};
 
-/// Return the maximum float value in a list.
-///
-/// ## Panics
-/// - `ValueError: max() arg is an empty sequence` if the list is empty.
-#[inline]
-#[must_use]
-pub fn list_max_f64(list: &[f64]) -> f64 {
-    match list.iter().copied().reduce(f64::max) {
-        Some(value) => value,
-        None => raise_value_error("max() arg is an empty sequence"),
+    /// Pop the last element from a list.
+    ///
+    /// This preserves Incan's `list.pop()` return type (`T`, not `Option<T>`) while keeping the empty-list failure on
+    /// the runtime side instead of in compiler-emitted extraction code.
+    ///
+    /// ## Panics
+    /// - `IndexError: pop from empty list` if the list is empty.
+    #[inline]
+    #[must_use]
+    pub fn list_pop<T>(list: &mut Vec<T>) -> T {
+        match list.pop() {
+            Some(value) => value,
+            None => raise(IncanError::list_pop_empty()),
+        }
     }
-}
 
-/// Return the minimum copied value in a list.
-///
-/// ## Panics
-/// - `ValueError: min() arg is an empty sequence` if the list is empty.
-#[inline]
-#[must_use]
-pub fn list_min_copy<T>(list: &[T]) -> T
-where
-    T: Copy + Ord,
-{
-    match list.iter().min() {
-        Some(value) => *value,
-        None => raise_value_error("min() arg is an empty sequence"),
+    /// Return the minimum float value in a list.
+    ///
+    /// ## Panics
+    /// - `ValueError: min() arg is an empty sequence` if the list is empty.
+    #[inline]
+    #[must_use]
+    pub fn list_min_f64(list: &[f64]) -> f64 {
+        match list.iter().copied().reduce(f64::min) {
+            Some(value) => value,
+            None => raise_value_error("min() arg is an empty sequence"),
+        }
     }
-}
 
-/// Return the maximum copied value in a list.
-///
-/// ## Panics
-/// - `ValueError: max() arg is an empty sequence` if the list is empty.
-#[inline]
-#[must_use]
-pub fn list_max_copy<T>(list: &[T]) -> T
-where
-    T: Copy + Ord,
-{
-    match list.iter().max() {
-        Some(value) => *value,
-        None => raise_value_error("max() arg is an empty sequence"),
+    /// Return the maximum float value in a list.
+    ///
+    /// ## Panics
+    /// - `ValueError: max() arg is an empty sequence` if the list is empty.
+    #[inline]
+    #[must_use]
+    pub fn list_max_f64(list: &[f64]) -> f64 {
+        match list.iter().copied().reduce(f64::max) {
+            Some(value) => value,
+            None => raise_value_error("max() arg is an empty sequence"),
+        }
     }
-}
 
-/// Return the minimum cloned value in a list.
-///
-/// ## Panics
-/// - `ValueError: min() arg is an empty sequence` if the list is empty.
-#[inline]
-#[must_use]
-pub fn list_min_clone<T>(list: &[T]) -> T
-where
-    T: Clone + Ord,
-{
-    match list.iter().min() {
-        Some(value) => value.clone(),
-        None => raise_value_error("min() arg is an empty sequence"),
+    /// Return the minimum copied value in a list.
+    ///
+    /// ## Panics
+    /// - `ValueError: min() arg is an empty sequence` if the list is empty.
+    #[inline]
+    #[must_use]
+    pub fn list_min_copy<T>(list: &[T]) -> T
+    where
+        T: Copy + Ord,
+    {
+        match list.iter().min() {
+            Some(value) => *value,
+            None => raise_value_error("min() arg is an empty sequence"),
+        }
     }
-}
 
-/// Return the maximum cloned value in a list.
-///
-/// ## Panics
-/// - `ValueError: max() arg is an empty sequence` if the list is empty.
-#[inline]
-#[must_use]
-pub fn list_max_clone<T>(list: &[T]) -> T
-where
-    T: Clone + Ord,
-{
-    match list.iter().max() {
-        Some(value) => value.clone(),
-        None => raise_value_error("max() arg is an empty sequence"),
+    /// Return the maximum copied value in a list.
+    ///
+    /// ## Panics
+    /// - `ValueError: max() arg is an empty sequence` if the list is empty.
+    #[inline]
+    #[must_use]
+    pub fn list_max_copy<T>(list: &[T]) -> T
+    where
+        T: Copy + Ord,
+    {
+        match list.iter().max() {
+            Some(value) => *value,
+            None => raise_value_error("max() arg is an empty sequence"),
+        }
+    }
+
+    /// Return the minimum cloned value in a list.
+    ///
+    /// ## Panics
+    /// - `ValueError: min() arg is an empty sequence` if the list is empty.
+    #[inline]
+    #[must_use]
+    pub fn list_min_clone<T>(list: &[T]) -> T
+    where
+        T: Clone + Ord,
+    {
+        match list.iter().min() {
+            Some(value) => value.clone(),
+            None => raise_value_error("min() arg is an empty sequence"),
+        }
+    }
+
+    /// Return the maximum cloned value in a list.
+    ///
+    /// ## Panics
+    /// - `ValueError: max() arg is an empty sequence` if the list is empty.
+    #[inline]
+    #[must_use]
+    pub fn list_max_clone<T>(list: &[T]) -> T
+    where
+        T: Clone + Ord,
+    {
+        match list.iter().max() {
+            Some(value) => value.clone(),
+            None => raise_value_error("max() arg is an empty sequence"),
+        }
     }
 }
 
@@ -315,7 +322,7 @@ mod tests {
     #[test]
     fn list_pop_returns_last_value() {
         let mut v = vec![10, 20, 30];
-        assert_eq!(list_pop(&mut v), 30);
+        assert_eq!(__private::list_pop(&mut v), 30);
         assert_eq!(v, vec![10, 20]);
     }
 
@@ -323,7 +330,7 @@ mod tests {
     #[should_panic(expected = "IndexError: pop from empty list")]
     fn list_pop_empty_panics_with_index_error() {
         let mut v: Vec<i64> = Vec::new();
-        let _ = list_pop(&mut v);
+        let _ = __private::list_pop(&mut v);
     }
 
     #[test]
@@ -412,26 +419,32 @@ mod tests {
 
     #[test]
     fn list_min_max_helpers_return_expected_values() {
-        assert_eq!(list_min_copy(&[4, 2, 8]), 2);
-        assert_eq!(list_max_copy(&[4, 2, 8]), 8);
-        assert_eq!(list_min_clone(&["pear".to_string(), "apple".to_string()]), "apple");
-        assert_eq!(list_max_clone(&["pear".to_string(), "apple".to_string()]), "pear");
-        assert_eq!(list_min_f64(&[4.0, 2.5, 8.0]), 2.5);
-        assert_eq!(list_max_f64(&[4.0, 2.5, 8.0]), 8.0);
+        assert_eq!(__private::list_min_copy(&[4, 2, 8]), 2);
+        assert_eq!(__private::list_max_copy(&[4, 2, 8]), 8);
+        assert_eq!(
+            __private::list_min_clone(&["pear".to_string(), "apple".to_string()]),
+            "apple"
+        );
+        assert_eq!(
+            __private::list_max_clone(&["pear".to_string(), "apple".to_string()]),
+            "pear"
+        );
+        assert_eq!(__private::list_min_f64(&[4.0, 2.5, 8.0]), 2.5);
+        assert_eq!(__private::list_max_f64(&[4.0, 2.5, 8.0]), 8.0);
     }
 
     #[test]
     #[should_panic(expected = "ValueError: min() arg is an empty sequence")]
     fn list_min_copy_empty_panics_with_value_error() {
         let empty: [i64; 0] = [];
-        let _ = list_min_copy(&empty);
+        let _ = __private::list_min_copy(&empty);
     }
 
     #[test]
     #[should_panic(expected = "ValueError: max() arg is an empty sequence")]
     fn list_max_clone_empty_panics_with_value_error() {
         let empty: Vec<String> = Vec::new();
-        let _ = list_max_clone(&empty);
+        let _ = __private::list_max_clone(&empty);
     }
 
     #[test]

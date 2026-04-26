@@ -223,8 +223,9 @@ impl<'a> IrEmitter<'a> {
         };
         let static_init_stmt = self.emit_module_static_init_call();
 
-        // Proc-macro crates expose macros, not callable Rust functions. Keep decorator marker declarations compilable
-        // by emitting a panic stub instead of a delegation call.
+        // Proc-macro crates expose macros, not callable Rust functions. Keep these decorator placeholders compilable,
+        // but route runtime misuse through a named internal stdlib helper instead of emitting an open-coded `panic!`
+        // stub.
         if module_path == "incan_web_macros" {
             let generics = self.emit_type_params(&func.type_params);
             let panic_message = format!(
@@ -235,7 +236,7 @@ impl<'a> IrEmitter<'a> {
             if ret_ty_is_unit {
                 return Ok(quote! {
                     #vis #async_kw fn #name #generics (#(#params),*) {
-                        panic!(#panic_message)
+                        incan_stdlib::errors::__private::raise_runtime_misuse(#panic_message)
                     }
                 });
             }
@@ -243,7 +244,7 @@ impl<'a> IrEmitter<'a> {
             let ret_ty = self.emit_type(&func.return_type);
             return Ok(quote! {
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
-                    panic!(#panic_message)
+                    incan_stdlib::errors::__private::raise_runtime_misuse(#panic_message)
                 }
             });
         }

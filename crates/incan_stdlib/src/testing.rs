@@ -9,11 +9,13 @@
 ///
 /// Always panics with the provided `msg`.
 pub fn fail_t<T>(msg: String) -> T {
-    panic!("{}", msg);
+    crate::errors::__private::raise_runtime_misuse(&msg)
 }
 
 fn marker_runtime_misuse(marker: &str) -> ! {
-    panic!("std.testing.{marker} is marker metadata for `incan test` and is not executable runtime logic");
+    crate::errors::__private::raise_runtime_misuse(&format!(
+        "std.testing.{marker} is marker metadata for `incan test` and is not executable runtime logic"
+    ));
 }
 
 /// Marker runtime for `@std.testing.skip`.

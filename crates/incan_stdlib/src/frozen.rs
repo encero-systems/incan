@@ -198,6 +198,20 @@ impl<T: 'static> FrozenList<T> {
     }
 }
 
+impl<T: 'static> AsRef<[T]> for FrozenList<T> {
+    fn as_ref(&self) -> &[T] {
+        self.data
+    }
+}
+
+impl<T: 'static> core::ops::Deref for FrozenList<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        self.data
+    }
+}
+
 impl<T: fmt::Debug> fmt::Debug for FrozenList<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("FrozenList").field(&self.data).finish()
@@ -251,6 +265,23 @@ impl<T: 'static> IntoIterator for FrozenList<T> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.data.iter()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FrozenList;
+    use crate::collections::__private::{list_max_copy, list_min_copy};
+
+    static NUMS: [i64; 3] = [3, 1, 4];
+
+    #[test]
+    fn frozen_list_coerces_to_slice_for_runtime_helpers() {
+        let numbers = FrozenList::new(&NUMS);
+
+        assert_eq!(numbers.as_ref(), &[3, 1, 4]);
+        assert_eq!(list_min_copy(&numbers), 1);
+        assert_eq!(list_max_copy(&numbers), 4);
     }
 }
 
