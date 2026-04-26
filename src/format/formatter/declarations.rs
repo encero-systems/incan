@@ -33,6 +33,7 @@ impl Formatter {
             Declaration::Newtype(nt) => self.format_newtype(nt),
             Declaration::Enum(en) => self.format_enum(en),
             Declaration::Function(func) => self.format_function(func),
+            Declaration::TestModule(test_module) => self.format_test_module(test_module),
             Declaration::Docstring(doc) => self.format_docstring(doc),
         }
     }
@@ -59,6 +60,20 @@ impl Formatter {
         self.writer.write(" = ");
         self.format_expr(&static_decl.value.node);
         self.writer.newline();
+    }
+
+    fn format_test_module(&mut self, test_module: &TestModuleDecl) {
+        self.writer.write("module ");
+        self.writer.write(&test_module.name);
+        self.writer.writeln(":");
+        self.writer.indent();
+        for decl in &test_module.body {
+            self.format_declaration(&decl.node);
+        }
+        if test_module.body.is_empty() {
+            self.writer.writeln("pass");
+        }
+        self.writer.dedent();
     }
 
     pub(super) fn format_docstring(&mut self, doc: &str) {

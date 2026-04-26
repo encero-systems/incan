@@ -96,6 +96,16 @@ mod tests {
         }
     }
 
+    fn require_test_module_decl(decl: &Spanned<Declaration>) -> Result<&TestModuleDecl, Vec<CompileError>> {
+        match &decl.node {
+            Declaration::TestModule(t) => Ok(t),
+            _ => Err(vec![CompileError::new(
+                "parser test internal error: expected test module declaration".to_string(),
+                decl.span,
+            )]),
+        }
+    }
+
     #[test]
     fn test_parse_trait_method_named_from() -> Result<(), Vec<CompileError>> {
         let source = r#"
@@ -109,6 +119,232 @@ trait From[T]:
         assert_eq!(trait_decl.methods.len(), 1);
         assert_eq!(trait_decl.methods[0].node.name, "from");
         Ok(())
+    }
+
+    #[test]
+    fn test_assert_keyword_lexes_as_identifier() -> Result<(), Vec<CompileError>> {
+        let tokens = lexer::lex("assert value\n").map_err(|_| {
+            vec![CompileError::new(
+                "parser test internal error: lex failed".to_string(),
+                Span::default(),
+            )]
+        })?;
+
+        assert!(matches!(&tokens[0].kind, TokenKind::Ident(name) if name == "assert"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_assert_statement_without_testing_import() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def check(value: int) -> None:
+  assert value > 0
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::Assert(assert_stmt) = &func.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected assert statement".to_string(),
+                func.body[0].span,
+            )]);
+        };
+
+        assert!(matches!(assert_stmt.kind, AssertKind::Condition(_)));
+        assert!(assert_stmt.message.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_assert_statement_with_message() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def check(value: int) -> None:
+  assert value > 0, "positive required"
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::Assert(assert_stmt) = &func.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected assert statement".to_string(),
+                func.body[0].span,
+            )]);
+        };
+
+        assert!(matches!(assert_stmt.kind, AssertKind::Condition(_)));
+        assert!(matches!(
+            assert_stmt.message.as_ref().map(|msg| &msg.node),
+            Some(Expr::Literal(Literal::String(msg))) if msg == "positive required"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_assert_raises_statement() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def check() -> None:
+  assert explode() raises AssertionError, "boom"
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::Assert(assert_stmt) = &func.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected assert statement".to_string(),
+                func.body[0].span,
+            )]);
+        };
+
+        let AssertKind::Raises { call, error_type } = &assert_stmt.kind else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected raises assert".to_string(),
+                func.body[0].span,
+            )]);
+        };
+        assert!(matches!(call.node, Expr::Call(_, _, _)));
+        assert!(matches!(error_type.node, Type::Simple(ref name) if name == "AssertionError"));
+        assert!(assert_stmt.message.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_assert_is_some_pattern_statement() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def check(user: Option[str]) -> None:
+  assert user is Some(value), "user required"
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::Assert(assert_stmt) = &func.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected assert statement".to_string(),
+                func.body[0].span,
+            )]);
+        };
+
+        let AssertKind::IsPattern { value, pattern } = &assert_stmt.kind else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected pattern assert".to_string(),
+                func.body[0].span,
+            )]);
+        };
+        assert!(matches!(value.node, Expr::Ident(ref name) if name == "user"));
+        assert!(matches!(
+            &pattern.node,
+            Pattern::Constructor(name, args)
+                if name == "Some"
+                    && matches!(args.first(), Some(PatternArg::Positional(arg)) if matches!(&arg.node, Pattern::Binding(binding) if binding == "value"))
+        ));
+        assert!(assert_stmt.message.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_assert_is_none_pattern_statement() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def check(user: Option[str]) -> None:
+  assert user is None
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::Assert(assert_stmt) = &func.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected assert statement".to_string(),
+                func.body[0].span,
+            )]);
+        };
+
+        assert!(matches!(
+            &assert_stmt.kind,
+            AssertKind::IsPattern { pattern, .. }
+                if matches!(&pattern.node, Pattern::Constructor(name, args) if name == "None" && args.is_empty())
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_assert_is_ok_and_err_pattern_statements() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def check(result: Result[int, str]) -> None:
+  assert result is Ok(value)
+  assert result is Err(_), "error required"
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+
+        let Statement::Assert(ok_assert) = &func.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected Ok assert statement".to_string(),
+                func.body[0].span,
+            )]);
+        };
+        assert!(matches!(
+            &ok_assert.kind,
+            AssertKind::IsPattern { pattern, .. }
+                if matches!(
+                    &pattern.node,
+                    Pattern::Constructor(name, args)
+                        if name == "Ok"
+                            && matches!(args.first(), Some(PatternArg::Positional(arg)) if matches!(&arg.node, Pattern::Binding(binding) if binding == "value"))
+                )
+        ));
+
+        let Statement::Assert(err_assert) = &func.body[1].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected Err assert statement".to_string(),
+                func.body[1].span,
+            )]);
+        };
+        assert!(matches!(
+            &err_assert.kind,
+            AssertKind::IsPattern { pattern, .. }
+                if matches!(
+                    &pattern.node,
+                    Pattern::Constructor(name, args)
+                        if name == "Err"
+                            && matches!(args.first(), Some(PatternArg::Positional(arg)) if matches!(arg.node, Pattern::Wildcard))
+                )
+        ));
+        assert!(err_assert.message.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_module_tests_block() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def add(a: int, b: int) -> int:
+  return a + b
+
+module tests:
+  from testing import assert_eq
+
+  def test_add() -> None:
+    assert add(1, 2) == 3
+"#;
+        let program = parse_str(source)?;
+        assert_eq!(program.declarations.len(), 2);
+        let test_module = require_test_module_decl(&program.declarations[1])?;
+        assert_eq!(test_module.name, "tests");
+        assert_eq!(test_module.body.len(), 2);
+        assert!(matches!(test_module.body[0].node, Declaration::Import(_)));
+        assert!(matches!(test_module.body[1].node, Declaration::Function(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_duplicate_module_tests_block_is_error() {
+        let source = r#"
+module tests:
+  pass
+
+module tests:
+  pass
+"#;
+        let errors = parse_str_err(source, "duplicate module tests block should fail");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("Only one `module tests:` block is allowed")),
+            "expected duplicate module tests error, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -776,23 +1012,19 @@ def value(async: int) -> int:
     }
 
     #[test]
-    fn test_parse_assert_requires_std_testing_import() {
+    fn test_parse_assert_without_std_testing_import_ok() -> Result<(), Vec<CompileError>> {
         let source = r#"
 def f(x: int) -> None:
   assert x > 0
 "#;
-        let Err(err) = parse_str(source) else {
-            panic!("Expected assert statement without std.testing import to fail");
-        };
-        assert!(
-            err[0].message.contains("only available after importing `std.testing`"),
-            "Unexpected error: {}",
-            err[0].message
-        );
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        assert!(matches!(&func.body[0].node, Statement::Assert(_)));
+        Ok(())
     }
 
     #[test]
-    fn test_parse_assert_with_std_testing_import_ok() -> Result<(), Vec<CompileError>> {
+    fn test_parse_assert_with_std_testing_import_still_uses_core_assert_ast() -> Result<(), Vec<CompileError>> {
         let source = r#"
 import std.testing
 
@@ -800,18 +1032,15 @@ def f(x: int) -> None:
   assert x > 0, "x must be positive"
 "#;
         let program = parse_str(source)?;
-        let func = match &program.declarations[1].node {
-            Declaration::Function(f) => f,
-            _ => panic!("Expected function declaration"),
+        let func = require_function_decl(&program.declarations[1])?;
+        let Statement::Assert(assert_stmt) = &func.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected assert statement".to_string(),
+                func.body[0].span,
+            )]);
         };
-        assert!(matches!(
-            &func.body[0].node,
-            Statement::Surface(surface)
-                if matches!(
-                    surface.payload,
-                    SurfaceStmtPayload::KeywordArgs(_)
-                )
-        ));
+        assert!(matches!(assert_stmt.kind, AssertKind::Condition(_)));
+        assert!(assert_stmt.message.is_some());
         Ok(())
     }
 

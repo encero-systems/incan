@@ -7,37 +7,49 @@ This page covers what `std.testing` provides and how to use it in your tests.
 
 ## Assertion helpers
 
+The language `assert` statement is always available. You do not import `std.testing` to enable it:
+
 ```incan
-from std.testing import assert, assert_eq, assert_ne, assert_true, assert_false, fail
+def test_addition() -> None:
+    assert 1 + 1 == 2
+    assert 3 > 2, "math ordering changed"
+```
+
+`std.testing` provides function-call helpers that mirror the assertion behavior when a helper call is clearer or when you need an unwrap-style return value:
+
+```incan
+import std.testing as testing
+from std.testing import assert_eq, assert_ne, assert_true, assert_false, fail
 from std.testing import assert_is_some, assert_is_none, assert_is_ok, assert_is_err
 ```
 
-|            Function             |           Fails when           | Returns |
-| ------------------------------- | ------------------------------ | ------- |
-| `assert(condition, msg?)`       | `condition` is false           | —       |
-| `assert_true(condition, msg?)`  | `condition` is false           | —       |
-| `assert_false(condition, msg?)` | `condition` is true            | —       |
-| `assert_eq(left, right, msg?)`  | `left != right`                | —       |
-| `assert_ne(left, right, msg?)`  | `left == right`                | —       |
-| `assert_is_some(option, msg?)`  | `option` is `None`             | `T`     |
-| `assert_is_none(option, msg?)`  | `option` is `Some(...)`        | —       |
-| `assert_is_ok(result, msg?)`    | `result` is `Err(...)`         | `T`     |
-| `assert_is_err(result, msg?)`   | `result` is `Ok(...)`          | `E`     |
-| `fail(msg)`                     | Always (unconditional failure) | —       |
+|              Function               |           Fails when           | Returns |
+| ----------------------------------- | ------------------------------ | ------- |
+| `testing.assert(condition, msg?)`   | `condition` is false           | —       |
+| `assert_true(condition, msg?)`      | `condition` is false           | —       |
+| `assert_false(condition, msg?)`     | `condition` is true            | —       |
+| `assert_eq(left, right, msg?)`      | `left != right`                | —       |
+| `assert_ne(left, right, msg?)`      | `left == right`                | —       |
+| `assert_is_some(option, msg?)`      | `option` is `None`             | `T`     |
+| `assert_is_none(option, msg?)`      | `option` is `Some(...)`        | —       |
+| `assert_is_ok(result, msg?)`        | `result` is `Err(...)`         | `T`     |
+| `assert_is_err(result, msg?)`       | `result` is `Ok(...)`          | `E`     |
+| `fail(msg)`                         | Always (unconditional failure) | —       |
 
 All `msg` parameters are optional. When omitted, a sensible default message is used.
 
 ## `assert_raises`
 
-`std.testing.assert_raises` is not available for ordinary use yet.
+Use `std.testing.assert_raises[E](block, msg = "")` when a test needs to assert that a zero-argument callable raises
+or panics with runtime error kind `E`.
 
-- The name remains part of the public testing surface.
-- Calling it currently fails with a clear "not implemented yet" diagnostic.
-- For now, prefer the available helpers such as `assert_is_err(...)` or test the `Result` value directly.
+- `assert call() raises ErrorType[, msg]` is the statement form for single-call checks.
+- `assert_raises[E](helper, msg?)` is the helper form for named zero-argument functions or closures.
+- Panic payloads match either the exact error kind name, such as `ValueError`, or the standard `Kind: message` prefix.
 
-## Assert statement syntax (planned)
+## Assert statement syntax
 
-Incan will support `assert` as a statement keyword. When available, the mapping will be:
+Incan supports `assert` as a language statement. It is part of the language, not a marker or decorator, and it does not require `import std.testing`.
 
 |        Statement        |              Desugars to              |
 | ----------------------- | ------------------------------------- |
@@ -49,7 +61,7 @@ Incan will support `assert` as a statement keyword. When available, the mapping 
 | `assert res is Ok(v)`   | `v = std.testing.assert_is_ok(res)`   |
 | `assert res is Err(e)`  | `e = std.testing.assert_is_err(res)`  |
 
-Until then, use the function-call forms directly.
+The mapping is semantic. The compiler may implement the language statement as an intrinsic, but the `std.testing.assert_*` helpers must keep matching behavior and message propagation.
 
 ## Markers and decorators
 
@@ -62,6 +74,8 @@ Test markers control how `incan test` discovers and runs tests:
 | `@slow`                             | Excludes the test by default; include with `incan test --slow`. |
 | `@fixture`                          | Declares a test fixture (see below).                            |
 | `@parametrize(argnames, argvalues)` | Runs the test once per parameter set.                           |
+
+Unlike the language `assert` statement, markers are `std.testing` APIs. Import the marker decorators you use.
 
 Markers are declared in `testing.incn` with marker metadata, and `incan test` consumes that metadata during discovery.
 This keeps marker behavior in the runner and prevents regular runtime calls to marker functions.

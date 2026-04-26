@@ -400,7 +400,7 @@ pub fn exported_symbols(ast: &Program) -> Vec<ExportedSymbol> {
                     }
                 }
             }
-            Declaration::Docstring(_) => {}
+            Declaration::Docstring(_) | Declaration::TestModule(_) => {}
         }
     }
 

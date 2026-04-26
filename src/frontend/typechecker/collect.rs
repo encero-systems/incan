@@ -71,7 +71,7 @@ impl TypeChecker {
                 self.validate_root_namespace(&func.name, decl.span);
                 self.collect_function(func, decl.span);
             }
-            Declaration::Docstring(_) => {} // Docstrings don't need collection
+            Declaration::Docstring(_) | Declaration::TestModule(_) => {} // Docstrings/tests don't need root collection
         }
     }
 

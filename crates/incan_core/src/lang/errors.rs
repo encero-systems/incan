@@ -13,6 +13,19 @@ pub type ExceptionInfo = LangItemInfo<ErrorKind>;
 /// Registry of builtin exception kinds.
 pub const EXCEPTIONS: &[ExceptionInfo] = &[
     info(
+        ErrorKind::AssertionError,
+        "AssertionError",
+        "Raised when a language assertion or std.testing assertion helper fails.",
+        RFC::_018,
+        Since(0, 3),
+        &[Example {
+            code: r#"def main() -> None:
+    assert 1 == 2, "math broke"
+"#,
+            note: Some("Panics at runtime with `AssertionError: math broke`."),
+        }],
+    ),
+    info(
         ErrorKind::ValueError,
         "ValueError",
         "Raised when an operation receives a value of the right type but an invalid value.",
@@ -175,12 +188,13 @@ pub fn from_str(name: &str) -> Option<ErrorKind> {
 /// time.
 pub fn info_for(kind: ErrorKind) -> ExceptionInfo {
     match kind {
-        ErrorKind::ValueError => EXCEPTIONS[0],
-        ErrorKind::TypeError => EXCEPTIONS[1],
-        ErrorKind::ZeroDivisionError => EXCEPTIONS[2],
-        ErrorKind::IndexError => EXCEPTIONS[3],
-        ErrorKind::KeyError => EXCEPTIONS[4],
-        ErrorKind::JsonDecodeError => EXCEPTIONS[5],
+        ErrorKind::AssertionError => EXCEPTIONS[0],
+        ErrorKind::ValueError => EXCEPTIONS[1],
+        ErrorKind::TypeError => EXCEPTIONS[2],
+        ErrorKind::ZeroDivisionError => EXCEPTIONS[3],
+        ErrorKind::IndexError => EXCEPTIONS[4],
+        ErrorKind::KeyError => EXCEPTIONS[5],
+        ErrorKind::JsonDecodeError => EXCEPTIONS[6],
     }
 }
 

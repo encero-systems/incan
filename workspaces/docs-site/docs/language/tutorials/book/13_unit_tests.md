@@ -8,7 +8,7 @@ This chapter shows how to write and run **unit tests** in a way that’s friendl
     If you have pytest muscle memory:
 
     - **Discovery**: test files are found by name (e.g. `test_*.incn`) and test functions by name (`def test_*()`).
-    - **Assertions**: import assertion helpers from `std.testing` (they are normal functions):
+    - **Assertions**: the language `assert` statement is always available; import assertion helpers from `std.testing` when a function-call helper is clearer:
       `from std.testing import assert_eq, assert_ne, assert_true, assert_false, fail`.
     - **Markers/fixtures**: `@skip`, `@xfail`, `@fixture`, and `@parametrize` are provided by the `std.testing` module.
 
@@ -22,10 +22,10 @@ This chapter shows how to write and run **unit tests** in a way that’s friendl
 Test assertions and helpers are imported from the `std.testing` module:
 
 ```incan
-from std.testing import assert, assert_eq, assert_ne, assert_true, assert_false, fail
+from std.testing import assert_eq, assert_ne, assert_true, assert_false, fail
 ```
 
-These are normal functions (not language keywords), which makes them easy for tooling to understand.
+The statement form `assert expr[, msg]` is a language primitive and does not require importing `std.testing`. The helper functions mirror that behavior when a call form is useful.
 
 For the full API reference, see:
 [Standard library reference: `std.testing`](../../reference/stdlib/testing.md).
@@ -44,6 +44,7 @@ def add(a: int, b: int) -> int:
 
 def test_addition() -> None:
     assert_eq(add(2, 3), 5)
+    assert add(2, 3) == 5
 ```
 
 Run it:
@@ -68,10 +69,11 @@ The exact discovery and CLI flags are documented here: [Tooling → Testing](../
 ### Boolean assertions
 
 ```incan
-from std.testing import assert, assert_true, assert_false
+from std.testing import assert_true, assert_false
 
 def test_flags() -> None:
-    assert(True)
+    assert True
+    assert 1 < 2, "ordering check failed"
     assert_true(1 < 2)
     assert_false(2 < 1)
 ```

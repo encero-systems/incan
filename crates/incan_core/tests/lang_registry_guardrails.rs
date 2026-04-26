@@ -125,7 +125,7 @@ fn builtins_spellings_unique_and_resolvable() {
 fn exceptions_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "exception",
-        expected_len: 6,
+        expected_len: 7,
         items: errors::EXCEPTIONS,
         id_of: |info| info.id,
         canonical_of: |info| info.canonical,

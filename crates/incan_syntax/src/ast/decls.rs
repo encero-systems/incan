@@ -96,6 +96,19 @@ pub struct TypeAliasDecl {
 }
 
 // ============================================================================
+// Inline Test Modules (RFC 018)
+// ============================================================================
+
+/// Reserved inline test-only scope introduced by `module tests:`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TestModuleDecl {
+    /// The reserved module name. RFC 018 only permits `tests`.
+    pub name: Ident,
+    /// Top-level declarations scoped inside the inline test module.
+    pub body: Vec<Spanned<super::Declaration>>,
+}
+
+// ============================================================================
 // Newtypes (zero-cost wrappers with invariants)
 // ============================================================================
 

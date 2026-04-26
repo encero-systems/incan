@@ -25,6 +25,7 @@ pub trait Visitor {
             Declaration::Newtype(n) => self.visit_newtype(n),
             Declaration::Enum(e) => self.visit_enum(e),
             Declaration::Function(f) => self.visit_function(f),
+            Declaration::TestModule(t) => self.visit_test_module(t),
             Declaration::Docstring(d) => self.visit_docstring(d),
         }
     }
@@ -40,6 +41,7 @@ pub trait Visitor {
     fn visit_newtype(&mut self, _newtype: &NewtypeDecl) {}
     fn visit_enum(&mut self, _enum: &EnumDecl) {}
     fn visit_function(&mut self, _func: &FunctionDecl) {}
+    fn visit_test_module(&mut self, _test_module: &TestModuleDecl) {}
     fn visit_statement(&mut self, _stmt: &Spanned<Statement>) {}
     fn visit_expr(&mut self, _expr: &Spanned<Expr>) {}
     fn visit_type(&mut self, _ty: &Spanned<Type>) {}

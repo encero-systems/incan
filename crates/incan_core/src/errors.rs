@@ -23,6 +23,7 @@ use crate::strings::StringAccessError;
 /// - Keep this enum focused on identity; avoid duplicating docs/meaning here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ErrorKind {
+    AssertionError,
     ValueError,
     TypeError,
     ZeroDivisionError,

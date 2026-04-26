@@ -602,8 +602,8 @@ impl AstLowering {
                         Err(e) => errors.push(e),
                     }
                 }
-                ast::Declaration::Docstring(_) => {
-                    // Module-level docstrings are not part of IR; ignore silently
+                ast::Declaration::Docstring(_) | ast::Declaration::TestModule(_) => {
+                    // Module-level docstrings and inline test modules are not part of production IR.
                     continue;
                 }
                 ast::Declaration::Class(c) => {
@@ -940,6 +940,125 @@ def main() -> None:
 "#,
         ));
         assert_eq!(ir.entry_point, Some("main".to_string()));
+    }
+
+    #[test]
+    fn test_lower_rfc018_assert_is_some_binding_to_helper_let() {
+        let ir = must_ok(lower_source(
+            r#"
+import std.testing
+
+def unwrap_value(value: Option[int]) -> int:
+    assert value is Some(inner)
+    return inner
+"#,
+        ));
+        let Some(function) = ir.declarations.iter().find_map(|decl| match &decl.kind {
+            IrDeclKind::Function(function) if function.name == "unwrap_value" => Some(function),
+            _ => None,
+        }) else {
+            panic!("Expected unwrap_value function");
+        };
+        let Some(first_stmt) = function.body.first() else {
+            panic!("Expected assert lowering statement");
+        };
+        let IrStmtKind::Let { name, value, .. } = &first_stmt.kind else {
+            panic!("Expected assert Some binding to lower as let");
+        };
+        assert_eq!(name, "inner");
+        let IrExprKind::Call {
+            canonical_path: Some(path),
+            ..
+        } = &value.kind
+        else {
+            panic!("Expected canonical assert_is_some helper call");
+        };
+        assert_eq!(
+            path,
+            &vec!["std".to_string(), "testing".to_string(), "assert_is_some".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_lower_rfc018_assert_raises_to_canonical_helper_call() {
+        let ir = must_ok(lower_source(
+            r#"
+def explode() -> None:
+    pass
+
+def check() -> None:
+    assert explode() raises ValueError, "expected failure"
+"#,
+        ));
+        let Some(function) = ir.declarations.iter().find_map(|decl| match &decl.kind {
+            IrDeclKind::Function(function) if function.name == "check" => Some(function),
+            _ => None,
+        }) else {
+            panic!("Expected check function");
+        };
+        let Some(first_stmt) = function.body.first() else {
+            panic!("Expected assert raises lowering statement");
+        };
+        let IrStmtKind::Expr(expr) = &first_stmt.kind else {
+            panic!("Expected assert raises to lower as an expression statement");
+        };
+        let IrExprKind::Call {
+            canonical_path: Some(path),
+            args,
+            ..
+        } = &expr.kind
+        else {
+            panic!("Expected canonical assert_raises helper call");
+        };
+        assert_eq!(
+            path,
+            &vec!["std".to_string(), "testing".to_string(), "assert_raises".to_string()]
+        );
+        assert_eq!(args.len(), 3);
+    }
+
+    #[test]
+    fn test_lower_imported_assert_raises_injects_error_type_name() {
+        let ir = must_ok(lower_source(
+            r#"
+from std.testing import assert_raises
+
+def explode() -> None:
+    pass
+
+def check() -> None:
+    assert_raises[ValueError](explode, "expected failure")
+"#,
+        ));
+        let Some(function) = ir.declarations.iter().find_map(|decl| match &decl.kind {
+            IrDeclKind::Function(function) if function.name == "check" => Some(function),
+            _ => None,
+        }) else {
+            panic!("Expected check function");
+        };
+        let Some(first_stmt) = function.body.first() else {
+            panic!("Expected assert_raises call statement");
+        };
+        let IrStmtKind::Expr(expr) = &first_stmt.kind else {
+            panic!("Expected assert_raises to lower as an expression statement");
+        };
+        let IrExprKind::Call {
+            canonical_path: Some(path),
+            args,
+            ..
+        } = &expr.kind
+        else {
+            panic!("Expected canonical assert_raises helper call");
+        };
+        assert_eq!(
+            path,
+            &vec!["std".to_string(), "testing".to_string(), "assert_raises".to_string()]
+        );
+        assert_eq!(args.len(), 3);
+        assert!(matches!(
+            args.get(1).map(|arg| &arg.expr.kind),
+            Some(IrExprKind::Literal(crate::backend::ir::expr::Literal::StaticStr(name))) if name == "ValueError"
+        ));
     }
 
     #[test]
