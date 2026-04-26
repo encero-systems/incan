@@ -1,0 +1,21 @@
+"""RFC 032 value enum declarations"""
+
+enum Env(str):
+    Dev = "development"
+    Prod = "production"
+
+pub enum HttpStatus(int):
+    Ok = 200
+    NotFound = 404
+
+def env_wire(env: Env) -> str:
+    return env.value()
+
+def parse_env(value: str) -> Option[Env]:
+    return Env.from_value(value)
+
+def status_wire(status: HttpStatus) -> int:
+    return status.value()
+
+def parse_status(value: int) -> Option[HttpStatus]:
+    return HttpStatus.from_value(value)
