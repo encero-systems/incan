@@ -7,7 +7,7 @@
     - RFC 013 (Rust crate dependencies)
     - RFC 020 (Cargo offline/locked policy)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/73
-- **RFC PR:** —
+- **RFC PR:** https://github.com/dannys-code-corner/incan/pull/400
 - **Written against:** v0.1
 - **Shipped in:** v0.3
 
