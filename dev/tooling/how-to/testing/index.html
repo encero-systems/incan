@@ -1223,7 +1223,7 @@
         
   
   <span class="md-ellipsis">
-    std.testing guide
+    Testing
   </span>
   
 
@@ -3193,6 +3193,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#inline-module-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Inline module tests:
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#assertions" class="md-nav__link">
     <span class="md-ellipsis">
       Assertions
@@ -4613,6 +4622,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#inline-module-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Inline module tests:
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#assertions" class="md-nav__link">
     <span class="md-ellipsis">
       Assertions
@@ -4820,11 +4838,10 @@
 
 
 <h1 id="testing-in-incan">Testing in Incan<a class="headerlink" href="#testing-in-incan" title="Permanent link">&para;</a></h1>
-<p>Incan provides a pytest-like testing experience with <code>incan test</code>.</p>
-<p>For the <strong>testing API</strong> (assertions, markers, fixtures, parametrization), see:
-<a href="../../../language/reference/stdlib/testing/">Standard library reference → <code>std.testing</code></a>.</p>
-<p>For a guided walkthrough, see:
-<a href="../../../language/tutorials/book/13_unit_tests/">The Incan Book → Unit tests</a>.</p>
+<p>Incan provides a pytest-like test runner with <code>incan test</code>.</p>
+<p>For the <strong>language model for writing tests</strong> (inline <code>module tests:</code>, assertions, markers, fixtures, parametrization), see: <a href="../../../language/how-to/testing_stdlib/">Language → Testing in Incan</a>.</p>
+<p>For the <strong>API reference</strong> only, see: <a href="../../../language/reference/stdlib/testing/">Standard library reference → <code>std.testing</code></a>.</p>
+<p>For a guided walkthrough, see: <a href="../../../language/tutorials/book/13_unit_tests/">The Incan Book → Unit tests</a>.</p>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <div class="admonition note">
 <p class="admonition-title">No-install fallback</p>
@@ -4845,7 +4862,13 @@
 <p>If you run into errors, see <a href="../troubleshooting/">Troubleshooting</a>.
 If it still looks like a bug, please <a href="https://github.com/dannys-code-corner/incan/issues">file an issue on GitHub</a>.</p>
 </div>
-<p>Create a test file (must be named <code>test_*.incn</code> or <code>*_test.incn</code>):</p>
+<p>You can write tests in either of two places:</p>
+<ul>
+<li>a conventional test file named <code>test_*.incn</code> or <code>*_test.incn</code></li>
+<li>an inline <code>module tests:</code> block inside a production <code>.incn</code> source file</li>
+</ul>
+<p>Use a conventional test file when the test is mostly black-box or spans multiple modules. Use an inline <code>module tests:</code> block when the test belongs next to the implementation or needs same-file private helpers.</p>
+<p>Create a conventional test file, for example <code>tests/test_math.incn</code>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;Test file for math operations&quot;&quot;&quot;</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span>
@@ -4867,29 +4890,88 @@ If it still looks like a bug, please <a href="https://github.com/dannys-code-cor
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests/
 </code></pre></div>
 <h2 id="test-discovery">Test Discovery<a class="headerlink" href="#test-discovery" title="Permanent link">&para;</a></h2>
-<p>Tests are discovered automatically:</p>
+<p>Tests are discovered automatically from two sources:</p>
 <ul>
-<li><strong>Files</strong>: Named <code>test_*.incn</code> or <code>*_test.incn</code></li>
-<li><strong>Functions</strong>: Named <code>def test_*()</code></li>
+<li><strong>Conventional test files</strong>: files named <code>test_*.incn</code> or <code>*_test.incn</code></li>
+<li><strong>Inline test modules</strong>: non-test <code>.incn</code> source files that contain a parsed <code>module tests:</code> block</li>
+<li><strong>Test functions</strong>: functions named <code>def test_*()</code> in the active test context</li>
 </ul>
 <div class="language-bash highlight"><pre><span></span><code>my_project/
 ├──<span class="w"> </span>src/
-│<span class="w">   </span>└──<span class="w"> </span>main.incn
+│<span class="w">   </span>├──<span class="w"> </span>main.incn<span class="w">           </span><span class="c1"># ✗ not discovered unless it contains module tests:</span>
+│<span class="w">   </span>└──<span class="w"> </span>math.incn<span class="w">           </span><span class="c1"># ✓ discovered if it contains module tests:</span>
 └──<span class="w"> </span>tests/
 <span class="w">    </span>├──<span class="w"> </span>test_math.incn<span class="w">      </span><span class="c1"># ✓ discovered</span>
 <span class="w">    </span>├──<span class="w"> </span>test_strings.incn<span class="w">   </span><span class="c1"># ✓ discovered</span>
 <span class="w">    </span>└──<span class="w"> </span>helpers.incn<span class="w">        </span><span class="c1"># ✗ not a test file</span>
 </code></pre></div>
+<p>For conventional test files, <code>incan test</code> collects top-level <code>def test_*()</code> functions and top-level fixtures. These files must not contain <code>module tests:</code>; keep them as ordinary test modules.</p>
+<p>For production source files, <code>incan test</code> ignores top-level <code>def test_*()</code> functions and only collects tests and fixtures declared inside the file's <code>module tests:</code> block. That rule keeps accidental production functions from becoming tests.</p>
+<h2 id="inline-module-tests">Inline <code>module tests:</code><a class="headerlink" href="#inline-module-tests" title="Permanent link">&para;</a></h2>
+<p>Inline test modules let you keep unit tests next to the code they exercise:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">normalize_name</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">name</span><span class="o">.</span><span class="nb">strip</span><span class="p">()</span><span class="o">.</span><span class="nb">lower</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">is_internal_name</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">normalize_name</span><span class="p">(</span><span class="n">name</span><span class="p">)</span><span class="o">.</span><span class="nb">startswith</span><span class="p">(</span><span class="s2">&quot;_&quot;</span><span class="p">)</span>
+
+<span class="k">module</span> <span class="k">tests</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_false</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_normalize_name</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nf">assert_eq</span><span class="p">(</span><span class="n">normalize_name</span><span class="p">(</span><span class="s2">&quot;  Alice  &quot;</span><span class="p">),</span> <span class="s2">&quot;alice&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_private_helper</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nf">assert_false</span><span class="p">(</span><span class="n">is_internal_name</span><span class="p">(</span><span class="s2">&quot;public&quot;</span><span class="p">))</span>
+</code></pre></div>
+<p>Run the project or file normally:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>.
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>src/math.incn
+</code></pre></div>
+<p>Inline test modules have test-only scope:</p>
+<ul>
+<li>Names from the enclosing file, including non-<code>pub</code> helpers, are visible inside <code>module tests:</code>.</li>
+<li>Imports and helpers declared inside <code>module tests:</code> do not leak into the production module.</li>
+<li><code>incan build</code> and <code>incan run</code> strip the inline test body from generated production output.</li>
+<li><code>incan test</code> compiles the inline test body as runner-only code and executes its <code>def test_*()</code> functions.</li>
+</ul>
+<p>Put <code>std.testing</code> imports inside <code>module tests:</code> unless production code also needs that module:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">production_value</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="mi">42</span>
+
+<span class="k">module</span> <span class="k">tests</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_production_value</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nf">assert_eq</span><span class="p">(</span><span class="n">production_value</span><span class="p">(),</span> <span class="mi">42</span><span class="p">)</span>
+</code></pre></div>
+<p>Do not place <code>module tests:</code> in a conventional test file:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># tests/test_math.incn</span>
+
+<span class="k">module</span> <span class="k">tests</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_not_valid_here</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">pass</span>
+</code></pre></div>
+<p>Use top-level tests in named test files instead:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># tests/test_math.incn</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_valid_here</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">pass</span>
+</code></pre></div>
 <h2 id="assertions">Assertions<a class="headerlink" href="#assertions" title="Permanent link">&para;</a></h2>
-<p>Use assertion functions from the <code>std.testing</code> module (not Python-style <code>assert expr</code>):</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="k">assert</span><span class="p">,</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_ne</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_false</span><span class="p">,</span> <span class="n">fail</span>
+<p>Use the language <code>assert</code> statement for simple assertions:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_arithmetic</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">assert</span> <span class="mi">1</span> <span class="o">+</span> <span class="mi">1</span> <span class="o">==</span> <span class="mi">2</span>
+    <span class="k">assert</span> <span class="mi">3</span> <span class="o">&gt;</span> <span class="mi">2</span><span class="p">,</span> <span class="s2">&quot;ordering changed&quot;</span>
+</code></pre></div>
+<p>Import assertion helpers from <code>std.testing</code> when a function-call helper is clearer or when you need a returned unwrapped value:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_ne</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_false</span><span class="p">,</span> <span class="n">fail</span>
 
 <span class="c1"># Equality</span>
 <span class="nf">assert_eq</span><span class="p">(</span><span class="n">actual</span><span class="p">,</span> <span class="n">expected</span><span class="p">)</span>
 <span class="nf">assert_ne</span><span class="p">(</span><span class="n">actual</span><span class="p">,</span> <span class="n">other</span><span class="p">)</span>
 
-<span class="c1"># Boolean</span>
-<span class="k">assert</span><span class="p">(</span><span class="n">condition</span><span class="p">)</span>
+<span class="c1"># Boolean helpers</span>
 <span class="nf">assert_true</span><span class="p">(</span><span class="n">condition</span><span class="p">)</span>
 <span class="nf">assert_false</span><span class="p">(</span><span class="n">condition</span><span class="p">)</span>
 

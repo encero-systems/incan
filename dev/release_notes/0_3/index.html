@@ -1219,7 +1219,7 @@
         
   
   <span class="md-ellipsis">
-    std.testing guide
+    Testing
   </span>
   
 
@@ -4412,6 +4412,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#rfc-018-testing-language-primitives" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 018 testing language primitives
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4563,6 +4572,10 @@
 <h3 id="rfc-057-targeted-generated-rust-lint-suppression">RFC 057 targeted generated-Rust lint suppression<a class="headerlink" href="#rfc-057-targeted-generated-rust-lint-suppression" title="Permanent link">&para;</a></h3>
 <p>Incan now supports <code>@rust.allow(...)</code> for narrow suppression of specific rustc or Clippy lints on the generated Rust item for one declaration. This is Rust-emission metadata for unavoidable generated-Rust warnings, not arbitrary Rust attribute injection and not project-wide lint configuration.</p>
 <p>The decorator is item-only and covers functions, methods, models, classes, enums, and newtypes. Module-level <code>rust.allow(...)</code> directives are not supported. The compiler also rejects obvious broad lint groups including <code>warnings</code>, <code>unused</code>, <code>clippy::all</code>, <code>clippy::pedantic</code>, <code>clippy::nursery</code>, <code>clippy::restriction</code>, and <code>clippy::cargo</code>.</p>
+<h3 id="rfc-018-testing-language-primitives">RFC 018 testing language primitives<a class="headerlink" href="#rfc-018-testing-language-primitives" title="Permanent link">&para;</a></h3>
+<p>The language <code>assert</code> statement is now an always-on language primitive. Use <code>assert expr[, msg]</code> directly for ordinary checks; import <code>std.testing</code> when you need helper functions such as <code>assert_eq</code>, <code>assert_is_some</code>, <code>fail</code>, fixtures, parametrization, or marker decorators.</p>
+<p>Testing decorators remain <code>std.testing</code> APIs rather than magic global names. <code>@skip</code>, <code>@xfail</code>, <code>@slow</code>, <code>@fixture</code>, and <code>@parametrize</code> must resolve through <code>std.testing</code>, and runner/discovery behavior remains part of RFC 019 rather than RFC 018.</p>
+<p><code>assert call() raises ErrorType[, msg]</code> and compiler-recognized <code>std.testing.assert_raises[E](block, msg?)</code> calls now share runtime panic-payload matching. Error payloads match either the exact kind name, such as <code>ValueError</code>, or the canonical <code>Kind: message</code> prefix.</p>
 <h2 id="detailed-inventory">Detailed inventory<a class="headerlink" href="#detailed-inventory" title="Permanent link">&para;</a></h2>
 <p>The sections above are the release story. The list below is the detailed inventory of language, compiler, runtime, tooling, and docs changes that have landed for <code>0.3</code>, grouped roughly by theme rather than by the order work happened to land.</p>
 <h3 id="control-flow">Control flow<a class="headerlink" href="#control-flow" title="Permanent link">&para;</a></h3>
@@ -4584,11 +4597,13 @@
 <ul>
 <li><strong>Language/Compiler</strong>: Incan now supports <code>if let PATTERN = VALUE:</code> and <code>while let PATTERN = VALUE:</code> for single-pattern control flow. Parsing, formatter round-trips, typechecking, scoping, lowering, and Rust emission now follow the same pattern semantics as <code>match</code>, while <code>if let</code> stays single-arm only and rejects <code>else</code> / <code>elif</code> branches in v1 (<a href="/dev/RFCs/closed/implemented/049_single_arm_conditional_match">RFC 049</a>, #333).</li>
 <li><strong>Compiler/Parser</strong>: Multiline function and method parameter lists now accept a trailing comma before <code>)</code>, including receiver-only method signatures such as <code>def get(self,) -&gt; int</code> when written across lines (#394).</li>
+<li><strong>Language/Testing</strong>: RFC 018's <code>assert expr[, msg]</code> language primitive is always available without importing <code>std.testing</code>. The <code>std.testing</code> helpers mirror assertion failure behavior for call-style checks, raises checks, and unwrap-style <code>Option</code> / <code>Result</code> helpers, while marker decorators remain imported <code>std.testing</code> APIs.</li>
+<li><strong>Language/Testing</strong>: Inline <code>module tests:</code> blocks in production source files are now discovered and executed by <code>incan test</code>, while production build/run output still strips those test-only declarations and imports (<a href="/dev/RFCs/018_testing">RFC 018</a>, #76).</li>
 </ul>
 <h3 id="versioning-and-release-track">Versioning and release track<a class="headerlink" href="#versioning-and-release-track" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Project lifecycle tooling</strong>: Added lifecycle commands for interactive <code>incan new</code> / <code>incan init</code>, <code>incan version</code>, and <code>incan env</code>, plus project lifecycle documentation and <code>incan.toml</code> environment metadata support (#73).</li>
-<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.5</code>.</li>
+<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.6</code>.</li>
 </ul>
 <h2 id="known-limitations-03">Known limitations (0.3)<a class="headerlink" href="#known-limitations-03" title="Permanent link">&para;</a></h2>
 <ul>
@@ -4599,6 +4614,7 @@
 <ul>
 <li>Hatch-like tooling and project lifecycle CLI: <a href="/dev/RFCs/closed/implemented/015_hatch_like_tooling">RFC 015</a></li>
 <li>Loop expressions and break values: <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a></li>
+<li>Testing language primitives: <a href="/dev/RFCs/018_testing">RFC 018</a></li>
 <li><code>if let</code> and <code>while let</code> pattern control flow: <a href="/dev/RFCs/closed/implemented/049_single_arm_conditional_match">RFC 049</a></li>
 <li>Formatter vertical spacing buckets: <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a></li>
 <li>Targeted generated-Rust lint suppression: <a href="/dev/RFCs/closed/implemented/057_rust_allow_targeted_lint_suppression">RFC 057</a></li>

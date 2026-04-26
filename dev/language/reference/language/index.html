@@ -1225,7 +1225,7 @@
         
   
   <span class="md-ellipsis">
-    std.testing guide
+    Testing
   </span>
   
 
@@ -1532,6 +1532,15 @@
   
     <nav class="md-nav" aria-label="Examples">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#assertionerror" class="md-nav__link">
+    <span class="md-ellipsis">
+      AssertionError
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#valueerror" class="md-nav__link">
@@ -4837,6 +4846,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#assertionerror" class="md-nav__link">
+    <span class="md-ellipsis">
+      AssertionError
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#valueerror" class="md-nav__link">
     <span class="md-ellipsis">
       ValueError
@@ -5188,6 +5206,7 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 <li><a href="#surface-methods">Surface methods</a></li>
 </ul>
 <h2 id="keywords">Keywords<a class="headerlink" href="#keywords" title="Permanent link">&para;</a></h2>
+<p>Reservation describes how a spelling is reserved: <code>Hard</code> keywords are always reserved by the lexer, <code>Contextual</code> keywords are recognized only in parser-owned syntactic positions, and <code>Soft</code> keywords are reserved after importing their activating <code>std.*</code> namespace.</p>
 <table>
 <thead>
 <tr>
@@ -5364,12 +5383,12 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 <td>Assert</td>
 <td><code>assert</code></td>
 <td></td>
-<td>Soft</td>
-<td><code>std.testing</code></td>
+<td>Contextual</td>
+<td>-</td>
 <td>ControlFlow</td>
 <td>Statement</td>
 <td>RFC 018</td>
-<td>0.2</td>
+<td>0.3</td>
 <td>Draft</td>
 </tr>
 <tr>
@@ -5777,16 +5796,6 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 </thead>
 <tbody>
 <tr>
-<td>Assert</td>
-<td><code>assert</code></td>
-<td><code>std.testing</code></td>
-<td>ControlFlow</td>
-<td>Statement</td>
-<td>RFC 018</td>
-<td>0.2</td>
-<td>Draft</td>
-</tr>
-<tr>
 <td>Async</td>
 <td><code>async</code></td>
 <td><code>std.async</code></td>
@@ -5829,7 +5838,7 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 <td><code>std.testing</code></td>
 <td>-</td>
 <td>-</td>
-<td><code>assert</code></td>
+<td>-</td>
 </tr>
 <tr>
 <td><code>std.async</code></td>
@@ -5890,6 +5899,15 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 </thead>
 <tbody>
 <tr>
+<td>AssertionError</td>
+<td><code>AssertionError</code></td>
+<td></td>
+<td>Raised when a language assertion or std.testing assertion helper fails.</td>
+<td>RFC 018</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
 <td>ValueError</td>
 <td><code>ValueError</code></td>
 <td></td>
@@ -5947,6 +5965,11 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 </table>
 <h3 id="examples_1">Examples<a class="headerlink" href="#examples_1" title="Permanent link">&para;</a></h3>
 <p>Only exceptions with examples are listed here.</p>
+<h4 id="assertionerror"><code>AssertionError</code><a class="headerlink" href="#assertionerror" title="Permanent link">&para;</a></h4>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">assert</span> <span class="mi">1</span> <span class="o">==</span> <span class="mi">2</span><span class="p">,</span> <span class="s2">&quot;math broke&quot;</span>
+</code></pre></div>
+<p>Panics at runtime with <code>AssertionError: math broke</code>.</p>
 <h4 id="valueerror"><code>ValueError</code><a class="headerlink" href="#valueerror" title="Permanent link">&para;</a></h4>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;abc&quot;</span><span class="p">[</span><span class="mi">0</span><span class="p">:</span><span class="mi">3</span><span class="p">:</span><span class="mi">0</span><span class="p">])</span>  <span class="c1"># step 0</span>

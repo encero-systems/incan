@@ -1338,7 +1338,7 @@
         
   
   <span class="md-ellipsis">
-    std.testing guide
+    Testing
   </span>
   
 
@@ -4552,54 +4552,73 @@
 <p class="admonition-title">Coming from Python?</p>
 <p>If you have pytest muscle memory:</p>
 <ul>
-<li><strong>Discovery</strong>: test files are found by name (e.g. <code>test_*.incn</code>) and test functions by name (<code>def test_*()</code>).</li>
-<li><strong>Assertions</strong>: import assertion helpers from <code>std.testing</code> (they are normal functions):
+<li><strong>Discovery</strong>: tests can live in named test files (<code>test_*.incn</code>) or in inline <code>module tests:</code> blocks.</li>
+<li><strong>Assertions</strong>: the language <code>assert</code> statement is always available; import assertion helpers from <code>std.testing</code> when a function-call helper is clearer:
   <code>from std.testing import assert_eq, assert_ne, assert_true, assert_false, fail</code>.</li>
 <li><strong>Markers/fixtures</strong>: <code>@skip</code>, <code>@xfail</code>, <code>@fixture</code>, and <code>@parametrize</code> are provided by the <code>std.testing</code> module.</li>
 </ul>
 <p>References:</p>
 <ul>
-<li>CLI and discovery rules: <a href="../../../../tooling/how-to/testing/">Tooling → Testing</a></li>
+<li>Language testing guide: <a href="../../../how-to/testing_stdlib/">Testing in Incan</a></li>
+<li>CLI flags and output: <a href="../../../../tooling/how-to/testing/">Tooling → Testing</a></li>
 <li>API signatures: <a href="../../../reference/stdlib/testing/">Standard library reference: <code>std.testing</code></a></li>
 </ul>
 </div>
 <h2 id="the-testing-module">The testing module<a class="headerlink" href="#the-testing-module" title="Permanent link">&para;</a></h2>
-<p>Test assertions and helpers are imported from the <code>std.testing</code> module:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="k">assert</span><span class="p">,</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_ne</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_false</span><span class="p">,</span> <span class="n">fail</span>
+<p>Additional assertion helpers are imported from the <code>std.testing</code> module:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_ne</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_false</span><span class="p">,</span> <span class="n">fail</span>
 </code></pre></div>
-<p>These are normal functions (not language keywords), which makes them easy for tooling to understand.</p>
-<p>For the full API reference, see:
-<a href="../../../reference/stdlib/testing/">Standard library reference: <code>std.testing</code></a>.</p>
+<p>The statement form <code>assert expr[, msg]</code> is a language primitive and does not require importing <code>std.testing</code>. The helper functions mirror that behavior when a call form is useful.</p>
+<p>For the full API reference, see: <a href="../../../reference/stdlib/testing/">Standard library reference: <code>std.testing</code></a>.</p>
 <h2 id="your-first-unit-test">Your first unit test<a class="headerlink" href="#your-first-unit-test" title="Permanent link">&para;</a></h2>
-<p>Create a test file, for example <code>tests/test_math.incn</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;Unit tests for math utilities.&quot;&quot;&quot;</span>
-
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span>
+<p>Create a production file with an inline <code>module tests:</code> block, for example <code>src/math.incn</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;Math utilities.&quot;&quot;&quot;</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">test_addition</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="nf">assert_eq</span><span class="p">(</span><span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="mi">5</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">is_even</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">value</span> <span class="o">%</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">0</span>
+
+<span class="k">module</span> <span class="k">tests</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_false</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_addition</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nf">assert_eq</span><span class="p">(</span><span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="mi">5</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="o">==</span> <span class="mi">5</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_private_helper</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nf">assert_false</span><span class="p">(</span><span class="n">is_even</span><span class="p">(</span><span class="mi">3</span><span class="p">))</span>
 </code></pre></div>
 <p>Run it:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>src/math.incn
+</code></pre></div>
+<p>Inline tests are useful for focused unit tests because the test block can call same-file helpers that are not exported with <code>pub</code>. The block is stripped from <code>incan build</code> and <code>incan run</code>, so test-only imports stay out of production output.</p>
+<p>You can also write conventional test files under <code>tests/</code>, for example <code>tests/test_math.incn</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_addition</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nf">assert_eq</span><span class="p">(</span><span class="mi">2</span> <span class="o">+</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>
+</code></pre></div>
+<p>Run those with:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests/
 </code></pre></div>
 <h2 id="organizing-tests">Organizing tests<a class="headerlink" href="#organizing-tests" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Put tests under a <code>tests/</code> directory.</li>
-<li>Test files are discovered by name (e.g. <code>test_*.incn</code>).</li>
-<li>Test functions are discovered by name (e.g. <code>def test_*()</code>).</li>
+<li>Use <code>module tests:</code> for unit tests that belong next to production code.</li>
+<li>Put black-box or cross-module tests under a <code>tests/</code> directory.</li>
+<li>Conventional test files are discovered by name (e.g. <code>test_*.incn</code>).</li>
+<li>Test functions are discovered by name (e.g. <code>def test_*()</code>) inside the active test context.</li>
 </ul>
-<p>If you use inline tests (<code>module tests:</code> inside a production file), keep <code>from std.testing import ...</code> <strong>inside</strong> the
-<code>module tests:</code> block so test-only imports don’t leak into the production module scope.</p>
-<p>The exact discovery and CLI flags are documented here: <a href="../../../../tooling/how-to/testing/">Tooling → Testing</a>.</p>
+<p>Do not put <code>module tests:</code> inside a conventional <code>test_*.incn</code> or <code>*_test.incn</code> file. In named test files, write test functions at top level. In production source files, write test functions inside the single <code>module tests:</code> block.</p>
+<p>The full language model is documented here: <a href="../../../how-to/testing_stdlib/">Testing in Incan</a>. CLI flags and output are documented here: <a href="../../../../tooling/how-to/testing/">Tooling → Testing</a>.</p>
 <h2 id="common-patterns">Common patterns<a class="headerlink" href="#common-patterns" title="Permanent link">&para;</a></h2>
 <h3 id="boolean-assertions">Boolean assertions<a class="headerlink" href="#boolean-assertions" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="k">assert</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_false</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_false</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">test_flags</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="k">assert</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="kc">True</span>
+    <span class="k">assert</span> <span class="mi">1</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">,</span> <span class="s2">&quot;ordering check failed&quot;</span>
     <span class="nf">assert_true</span><span class="p">(</span><span class="mi">1</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">)</span>
     <span class="nf">assert_false</span><span class="p">(</span><span class="mi">2</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">)</span>
 </code></pre></div>

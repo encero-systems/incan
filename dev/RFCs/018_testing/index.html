@@ -1219,7 +1219,7 @@
         
   
   <span class="md-ellipsis">
-    std.testing guide
+    Testing
   </span>
   
 
@@ -4634,6 +4634,126 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#implementation-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation Plan
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-parser-ast-and-formatting" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 1: Parser, AST, and formatting
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-typechecking-and-scope-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 2: Typechecking and scope rules
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-lowering-emission-and-runtime-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 3: Lowering, emission, and runtime behavior
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-stdlib-docs-and-release-readiness" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 4: Stdlib, docs, and release readiness
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#progress-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      Progress Checklist
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Progress Checklist">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#spec-rfc-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      Spec / RFC lifecycle
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parser-ast-formatter" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parser / AST / formatter
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#typechecker-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      Typechecker / scope
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lowering-emission-runtime" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lowering / emission / runtime
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Tests
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docs-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      Docs / release
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       Design Decisions
@@ -4671,7 +4791,7 @@
 
 <h1 id="rfc-018-language-primitives-for-testing">RFC 018: language primitives for testing<a class="headerlink" href="#rfc-018-language-primitives-for-testing" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Planned</li>
+<li><strong>Status:</strong> In Progress</li>
 <li><strong>Created:</strong> 2026-01-14</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong> RFC 019 (test runner and CLI), RFC 001 (language portions; superseded), RFC 002 (language portions; superseded)</li>
@@ -4912,7 +5032,7 @@ resolver can prove the symbol originates from <code>testing</code>. Otherwise it
 <li>On failure, assertion output must include the optional message (if provided) and enough detail to diagnose the failing
 condition.</li>
 <li>For equality/inequality assertions (<code>assert a == b</code> / <code>assert a != b</code>), the minimum guarantee is that the output
-includes both “left” and “right” values (via <code>Debug</code>-style formatting) plus the optional message.</li>
+identifies the failed comparison kind and includes the optional message when one is provided.</li>
 </ul>
 <p>Runtime error model:</p>
 <ul>
@@ -5000,22 +5120,22 @@ includes both “left” and “right” values (via <code>Debug</code>-style fo
 </tbody>
 </table>
 <p>Full signatures (required <code>testing</code> API surface for this RFC):</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">assert</span><span class="p">(</span><span class="n">condition</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
-<span class="nf">assert_true</span><span class="p">(</span><span class="n">condition</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
-<span class="nf">assert_false</span><span class="p">(</span><span class="n">condition</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
-<span class="nf">assert_eq</span><span class="p">[</span><span class="nc">T</span><span class="p">:</span> <span class="kt">Debug</span><span class="p">](</span><span class="n">left</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="n">right</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
-<span class="nf">assert_ne</span><span class="p">[</span><span class="nc">T</span><span class="p">:</span> <span class="kt">Debug</span><span class="p">](</span><span class="n">left</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="n">right</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
-<span class="nf">assert_is_some</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="kt">option</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">T</span><span class="p">],</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span>
-<span class="nf">assert_is_none</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="kt">option</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">T</span><span class="p">],</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
-<span class="nf">assert_is_ok</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">E</span><span class="p">](</span><span class="kt">result</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">E</span><span class="p">],</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span>
-<span class="nf">assert_is_err</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">E</span><span class="p">](</span><span class="kt">result</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">E</span><span class="p">],</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">E</span>
-<span class="nf">assert_raises</span><span class="p">[</span><span class="nc">E</span><span class="p">](</span><span class="n">block</span><span class="p">:</span> <span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">E</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">assert</span><span class="p">(</span><span class="n">condition</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;assertion failed&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+<span class="nf">assert_true</span><span class="p">(</span><span class="n">condition</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;assertion failed: expected true&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+<span class="nf">assert_false</span><span class="p">(</span><span class="n">condition</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;assertion failed: expected false&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+<span class="nf">assert_eq</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="n">left</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="n">right</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;assertion failed: left != right&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+<span class="nf">assert_ne</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="n">left</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="n">right</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;assertion failed: left == right&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+<span class="nf">assert_is_some</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="kt">option</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">T</span><span class="p">],</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;assertion failed: expected Some, got None&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span>
+<span class="nf">assert_is_none</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="kt">option</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">T</span><span class="p">],</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;assertion failed: expected None, got Some&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+<span class="nf">assert_is_ok</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">E</span><span class="p">](</span><span class="kt">result</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">E</span><span class="p">],</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;assertion failed: expected Ok, got Err&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span>
+<span class="nf">assert_is_err</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">E</span><span class="p">](</span><span class="kt">result</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">E</span><span class="p">],</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;assertion failed: expected Err, got Ok&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">E</span>
+<span class="nf">assert_raises</span><span class="p">[</span><span class="nc">E</span><span class="p">](</span><span class="n">block</span><span class="p">:</span> <span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
 </code></pre></div>
-<p>Trait bounds for formatting:</p>
+<p>Trait bounds:</p>
 <ul>
-<li><code>assert_eq</code> and <code>assert_ne</code> require <code>T: Debug</code> so that failure output can render both values.</li>
-<li>If <code>T</code> does not implement <code>Debug</code>, the compiler must emit a diagnostic suggesting <code>@derive(Debug)</code> on the type.</li>
-<li>Other assertion helpers do not require <code>Debug</code> on their type parameters (they only report success/failure, not values).</li>
+<li><code>assert_eq</code> and <code>assert_ne</code> require the comparison operation to typecheck for <code>T</code>.</li>
+<li>Assertion failure messages report the assertion kind and optional custom message. They do not require <code>Debug</code> formatting of compared values.</li>
+<li>Other assertion helpers do not require extra trait bounds on their type parameters.</li>
 </ul>
 <p>Desugaring rule used by the compiler:</p>
 <p>Let the optional message be <code>msg</code> when present (i.e. <code>assert &lt;expr&gt;, msg</code>).</p>
@@ -5228,12 +5348,87 @@ to keep test-only imports/helpers contained.</li>
 </table>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Lexer</strong> — <code>assert</code> must be treated as a soft keyword activated by <code>std.testing</code> imports, not a hard keyword. The lexer emits <code>Ident("assert")</code>; the parser promotes it via the keyword registry.</li>
+<li><strong>Lexer</strong> — <code>assert</code> must be treated as a soft keyword in statement position, not as a hard reserved word. The lexer emits <code>Ident("assert")</code>; the parser promotes it to the assertion statement form without requiring a <code>std.testing</code> import.</li>
 <li><strong>Parser</strong> — must parse the <code>assert &lt;expr&gt;</code> form, the <code>assert &lt;expr&gt;, &lt;msg&gt;</code> form, and the <code>assert &lt;expr&gt; raises &lt;Type&gt;</code> form as distinct AST nodes; must parse and validate <code>module tests:</code> as a reserved inline block producing a <code>TestModule</code> AST node; must enforce that <code>module tests:</code> appears at most once per file at module scope.</li>
 <li><strong>Typechecker</strong> — must gate resolution of test-only decorators and helpers behind <code>testing</code>-activated import context; must validate that names inside <code>module tests:</code> are not visible outside and that the block has read access to private module members.</li>
 <li><strong>Lowering</strong> — must lower <code>assert &lt;expr&gt;</code> to the appropriate <code>testing.assert_*</code> call based on expression shape (equality, inequality, option/result, pattern binding); must lower <code>assert &lt;expr&gt; raises &lt;Type&gt;</code> to <code>testing.assert_raises</code>; must strip <code>module tests:</code> bodies from non-test compilation modes.</li>
 <li><strong>Stdlib (<code>std.testing</code>)</strong> — <code>assert_eq</code>, <code>assert_ne</code>, <code>assert_is_some</code>, <code>assert_is_none</code>, <code>assert_raises</code>, <code>assert</code>, and their message-accepting overloads must conform to the desugaring rules specified in this RFC.</li>
 <li><strong>CLI</strong> — <code>incan build</code> and <code>incan run</code> must strip <code>module tests:</code> bodies; <code>incan --check</code> must typecheck them; <code>incan test</code> must include them in the compilation unit.</li>
+</ul>
+<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-parser-ast-and-formatting">Phase 1: Parser, AST, and formatting<a class="headerlink" href="#phase-1-parser-ast-and-formatting" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Parse <code>assert</code>, optional assertion messages, <code>assert ... raises</code>, and the supported <code>is Some/None/Ok/Err</code> pattern-binding forms without requiring a <code>std.testing</code> import.</li>
+<li>Represent inline <code>module tests:</code> blocks in the AST with stable spans and enforce the file-level placement/cardinality rules.</li>
+<li>Keep formatter and LSP syntax behavior aligned with the parsed surface.</li>
+</ul>
+<h3 id="phase-2-typechecking-and-scope-rules">Phase 2: Typechecking and scope rules<a class="headerlink" href="#phase-2-typechecking-and-scope-rules" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Typecheck assertion expressions, assertion messages, raises targets, and limited pattern bindings with span-precise diagnostics for unsupported forms.</li>
+<li>Enforce inline test-module scoping: enclosing names are visible inside <code>module tests:</code>, and names/imports declared inside do not leak out.</li>
+<li>Preserve <code>std.testing</code>-gated recognition for runner-facing decorators and helpers while keeping the language <code>assert</code> primitive always-on.</li>
+</ul>
+<h3 id="phase-3-lowering-emission-and-runtime-behavior">Phase 3: Lowering, emission, and runtime behavior<a class="headerlink" href="#phase-3-lowering-emission-and-runtime-behavior" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Lower each assertion form to the corresponding <code>std.testing</code> helper or intrinsic-compatible runtime behavior, including message propagation and equality/inequality value formatting.</li>
+<li>Strip inline <code>module tests:</code> bodies from build/run emission while keeping them available to check/test compilation modes.</li>
+<li>Ensure generated Rust compiles for production assertions and inline test modules.</li>
+</ul>
+<h3 id="phase-4-stdlib-docs-and-release-readiness">Phase 4: Stdlib, docs, and release readiness<a class="headerlink" href="#phase-4-stdlib-docs-and-release-readiness" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Align <code>std.testing</code> helper signatures and Rust backing functions with the RFC surface.</li>
+<li>Add parser, typechecker, codegen, integration, and docs coverage for the accepted language behavior.</li>
+<li>Update user-facing docs, release notes, RFC progress state, and the active development version.</li>
+</ul>
+<h2 id="progress-checklist">Progress Checklist<a class="headerlink" href="#progress-checklist" title="Permanent link">&para;</a></h2>
+<h3 id="spec-rfc-lifecycle">Spec / RFC lifecycle<a class="headerlink" href="#spec-rfc-lifecycle" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Review RFC 018 for lifecycle readiness and resolve stale wording that conflicted with always-on <code>assert</code> semantics.</li>
+<li>[x] Move RFC 018 from <code>Planned</code> to <code>In Progress</code> because implementation work has been picked up.</li>
+<li>[x] Keep RFC 018 checklist current as implementation phases land.</li>
+</ul>
+<h3 id="parser-ast-formatter">Parser / AST / formatter<a class="headerlink" href="#parser-ast-formatter" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Parser: parse <code>assert &lt;expr&gt;</code> without requiring <code>std.testing</code>.</li>
+<li>[x] Parser: parse optional assertion messages.</li>
+<li>[x] Parser: parse and validate <code>assert &lt;call-expr&gt; raises &lt;ErrorType&gt;</code>.</li>
+<li>[x] Parser/AST: represent supported assertion pattern-binding forms.</li>
+<li>[x] Parser/AST: represent inline <code>module tests:</code> blocks and enforce cardinality/placement rules.</li>
+<li>[x] Formatter/LSP: preserve syntax and diagnostics for the new statement forms.</li>
+</ul>
+<h3 id="typechecker-scope">Typechecker / scope<a class="headerlink" href="#typechecker-scope" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Typechecker: require assert conditions to typecheck as <code>bool</code>.</li>
+<li>[x] Typechecker: require assertion messages to typecheck as <code>str</code>.</li>
+<li>[x] Typechecker: validate raises target/runtime-error requirements or reject unsupported targets explicitly.</li>
+<li>[x] Typechecker: introduce allowed <code>Some</code>/<code>Ok</code>/<code>Err</code> assertion bindings into the current lexical scope.</li>
+<li>[x] Typechecker: reject unsupported nested/multi-binding assertion patterns.</li>
+<li>[x] Typechecker: enforce inline test-module scope visibility and non-leakage.</li>
+<li>[x] Typechecker: keep <code>std.testing</code> decorator/helper recognition gated by resolved <code>std.testing</code> imports.</li>
+</ul>
+<h3 id="lowering-emission-runtime">Lowering / emission / runtime<a class="headerlink" href="#lowering-emission-runtime" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Lowering: map boolean, equality, inequality, option/result, and raises assertions to the RFC-defined helper behavior.</li>
+<li>[x] Emission: generate compiling Rust for assertion helper calls and assertion failure paths.</li>
+<li>[x] Emission/CLI: strip inline <code>module tests:</code> bodies from build/run outputs.</li>
+<li>[x] Check/test modes: typecheck inline <code>module tests:</code> blocks in the appropriate contexts.</li>
+<li>[x] Runtime/std.testing: align helper message defaults, panic behavior, and value formatting with RFC 018.</li>
+</ul>
+<h3 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Parser tests cover accepted and rejected assertion syntax.</li>
+<li>[x] Parser tests cover inline <code>module tests:</code> placement/cardinality.</li>
+<li>[x] Typechecker tests cover assertion typing, message typing, binding scope, and unsupported patterns.</li>
+<li>[x] Codegen snapshots cover the primary assertion lowering forms.</li>
+<li>[x] Integration tests cover runtime assertion failures, optional messages, inline <code>module tests:</code> execution, and inline test stripping behavior.</li>
+<li>[x] Existing <code>std.testing</code> marker/runner tests continue to pass.</li>
+</ul>
+<h3 id="docs-release">Docs / release<a class="headerlink" href="#docs-release" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Update language tutorial/reference docs for always-on <code>assert</code> and inline <code>module tests:</code>.</li>
+<li>[x] Update <code>std.testing</code> docs to separate language assertions from helper APIs and runner-facing decorators.</li>
+<li>[x] Update current release notes for RFC 018.</li>
+<li>[x] Bump the active <code>0.3.0-dev.N</code> version by one before closeout.</li>
 </ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
