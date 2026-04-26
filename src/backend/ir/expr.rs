@@ -244,6 +244,11 @@ pub enum IrExprKind {
         value: Option<Box<IrExpr>>,
     },
 
+    // Loop expression (`loop { ... break value; }`)
+    Loop {
+        body: Vec<super::IrStmt>,
+    },
+
     // Await expression (async)
     Await(Box<IrExpr>),
 

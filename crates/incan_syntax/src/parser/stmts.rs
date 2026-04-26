@@ -65,6 +65,8 @@ impl<'a> Parser<'a> {
             self.return_stmt()?
         } else if self.check_keyword(KeywordId::If) {
             self.if_stmt()?
+        } else if self.check_keyword(KeywordId::Loop) {
+            self.loop_stmt()?
         } else if self.check_keyword(KeywordId::While) {
             self.while_stmt()?
         } else if self.check_keyword(KeywordId::For) {
@@ -74,8 +76,7 @@ impl<'a> Parser<'a> {
         } else if let Some(surface_stmt) = self.try_surface_keyword_statement()? {
             surface_stmt
         } else if self.check_keyword(KeywordId::Break) {
-            self.advance();
-            Statement::Break
+            self.break_stmt()?
         } else if self.check_keyword(KeywordId::Continue) {
             self.advance();
             Statement::Continue
@@ -118,6 +119,8 @@ impl<'a> Parser<'a> {
                 None
             };
             Statement::Return(expr)
+        } else if self.check_keyword(KeywordId::Break) {
+            self.break_stmt()?
         } else if self.check_keyword(KeywordId::Pass) || self.check(&TokenKind::Punctuation(PunctuationId::Ellipsis)) {
             self.advance();
             Statement::Pass
@@ -336,6 +339,19 @@ impl<'a> Parser<'a> {
         Ok(Statement::Return(expr))
     }
 
+    fn break_stmt(&mut self) -> Result<Statement, CompileError> {
+        self.expect(&TokenKind::Keyword(KeywordId::Break), "Expected 'break'")?;
+        let value = if !self.check(&TokenKind::Newline)
+            && !self.check(&TokenKind::Dedent)
+            && !self.check(&TokenKind::Keyword(KeywordId::Case))
+        {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        Ok(Statement::Break(value))
+    }
+
     /// Parse an `if` / `while` condition, including RFC 049 let-pattern forms.
     ///
     /// Ordinary boolean conditions stay as expression-backed conditions, while
@@ -428,6 +444,20 @@ impl<'a> Parser<'a> {
         self.expect(&TokenKind::Dedent, "Expected dedent after while body")?;
 
         Ok(Statement::While(WhileStmt { condition, body }))
+    }
+
+    fn loop_stmt(&mut self) -> Result<Statement, CompileError> {
+        self.expect(&TokenKind::Keyword(KeywordId::Loop), "Expected 'loop'")?;
+        self.expect(
+            &TokenKind::Punctuation(PunctuationId::Colon),
+            "Expected ':' after loop",
+        )?;
+        self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
+        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        let body = self.block()?;
+        self.expect(&TokenKind::Dedent, "Expected dedent after loop body")?;
+
+        Ok(Statement::Loop(LoopStmt { body }))
     }
 
     fn for_stmt(&mut self) -> Result<Statement, CompileError> {

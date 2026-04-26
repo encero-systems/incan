@@ -1788,6 +1788,13 @@ fn test_trait_bound_inference_more_codegen() {
     insta::assert_snapshot!("trait_bound_inference_more", rust_code);
 }
 
+#[test]
+fn test_loop_expressions_codegen() {
+    let source = load_test_file("loop_expressions");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("loop_expressions", rust_code);
+}
+
 /// RFC 023: Generic bounds in return types (issue #196).
 ///
 /// Verifies that trait bounds from return types (e.g., `impl BoundedDataSet<T>`) are properly inferred and emitted in

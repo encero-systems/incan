@@ -96,6 +96,32 @@ for name in items:
         break
 ```
 
+## `while` loops
+
+Use `while` when the condition should be re-checked before each iteration:
+
+```incan
+def countdown(start: int) -> None:
+    mut current = start
+    while current > 0:
+        println(current)
+        current -= 1
+```
+
+## `loop:` and `break <value>`
+
+Use `loop:` for explicit infinite loops and for loops that need to return a value:
+
+```incan
+def find_value(flag: bool) -> int:
+    return loop:
+        if flag:
+            break 42
+        break 7
+```
+
+`break <value>` completes the surrounding `loop:` expression. For `for` and `while`, use plain `break`.
+
 ## Try it
 
 1. Write a function `classify(n: int) -> str` using `if/elif/else`.
@@ -103,6 +129,7 @@ for name in items:
 3. Use `match` on a `Result` and print either the value or the error.
 4. Write a `while let` loop that consumes messages until a channel closes.
 5. Loop over a list and stop early with `break`.
+6. Write a `loop:` expression that returns an `int` with `break <value>`.
 
 ??? example "One possible solution"
 
@@ -149,6 +176,13 @@ for name in items:
             if name == "Bob":
                 break
             println(name)
+
+        # 6) loop expression with break value
+        value = loop:
+            if len(items) > 0:
+                break 42
+            break 0
+        println(value)
     ```
 
 ## Where to learn more

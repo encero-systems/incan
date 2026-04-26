@@ -116,6 +116,33 @@ for name in items:
         break
 ```
 
+## Looping with `while`
+
+Use `while` when the loop condition should be checked before each iteration:
+
+```incan
+def countdown(start: int) -> None:
+    mut current = start
+
+    while current > 0:
+        println(current)
+        current -= 1
+```
+
+## Looping with `loop`
+
+Use `loop:` for explicit infinite loops and for loops that produce a value with `break <expr>`.
+
+```incan
+def find_value(flag: bool) -> int:
+    return loop:
+        if flag:
+            break 42
+        break 7
+```
+
+`break <expr>` is only valid for `loop:`. Plain `break` remains valid for `for`, `while`, and `loop:`.
+
 ## See also
 
 - Book chapter: [4. Control flow](../tutorials/book/04_control_flow.md)

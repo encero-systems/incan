@@ -2950,4 +2950,35 @@ def bad(f: Callable[int]) -> None:
         assert_eq!(items[0].node, Pattern::Binding("idx".to_string()));
         assert_eq!(items[1].node, Pattern::Binding("name".to_string()));
     }
+
+    #[test]
+    fn test_parse_loop_expression_with_break_value() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def run() -> int:
+  return loop:
+    break 1
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        let Statement::Return(Some(expr)) = &function.body[0].node else {
+            return Err(vec![CompileError::new(
+                "expected return statement with loop expression".to_string(),
+                function.body[0].span,
+            )]);
+        };
+        let Expr::Loop(loop_expr) = &expr.node else {
+            return Err(vec![CompileError::new(
+                "expected loop expression".to_string(),
+                expr.span,
+            )]);
+        };
+        let Statement::Break(Some(value)) = &loop_expr.body[0].node else {
+            return Err(vec![CompileError::new(
+                "expected break with value inside loop expression".to_string(),
+                loop_expr.body[0].span,
+            )]);
+        };
+        assert!(matches!(value.node, Expr::Literal(Literal::Int(_))));
+        Ok(())
+    }
 }

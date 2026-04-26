@@ -378,7 +378,10 @@ impl AstLowering {
                             let body_expr = self.lower_block_expr(&w.body, true)?;
                             let break_expr = TypedExpr::new(
                                 IrExprKind::Block {
-                                    stmts: vec![IrStmt::new(IrStmtKind::Break(None))],
+                                    stmts: vec![IrStmt::new(IrStmtKind::Break {
+                                        label: None,
+                                        value: None,
+                                    })],
                                     value: None,
                                 },
                                 IrType::Unit,
@@ -407,6 +410,17 @@ impl AstLowering {
                 })();
                 self.non_linear_context_depth -= 1;
                 loop_stmt?
+            }
+
+            ast::Statement::Loop(l) => {
+                self.push_scope();
+                self.non_linear_context_depth += 1;
+                let body_result = self.lower_statements(&l.body);
+                self.non_linear_context_depth -= 1;
+                let body = body_result?;
+                self.pop_scope();
+
+                IrStmtKind::Loop { label: None, body }
             }
 
             ast::Statement::For(f) => {
@@ -451,7 +465,10 @@ impl AstLowering {
             }
 
             ast::Statement::Pass => IrStmtKind::Expr(TypedExpr::new(IrExprKind::Unit, IrType::Unit)),
-            ast::Statement::Break => IrStmtKind::Break(None),
+            ast::Statement::Break(value) => IrStmtKind::Break {
+                label: None,
+                value: value.as_ref().map(|value| self.lower_expr_spanned(value)).transpose()?,
+            },
             ast::Statement::Continue => IrStmtKind::Continue(None),
 
             ast::Statement::CompoundAssignment(ca) => {
@@ -775,6 +792,11 @@ impl AstLowering {
                     self.count_statement_ident_reads(&stmt.node, counts);
                 }
             }
+            ast::Statement::Loop(l) => {
+                for stmt in &l.body {
+                    self.count_statement_ident_reads(&stmt.node, counts);
+                }
+            }
             ast::Statement::Surface(surface_stmt) => match &surface_stmt.payload {
                 ast::SurfaceStmtPayload::KeywordArgs(args) => {
                     for arg in args {
@@ -791,7 +813,8 @@ impl AstLowering {
                 }
             }
             ast::Statement::Expr(expr) => self.count_expr_ident_reads(&expr.node, counts),
-            ast::Statement::Pass | ast::Statement::Break | ast::Statement::Continue => {}
+            ast::Statement::Break(Some(expr)) => self.count_expr_ident_reads(&expr.node, counts),
+            ast::Statement::Pass | ast::Statement::Break(None) | ast::Statement::Continue => {}
             ast::Statement::CompoundAssignment(ca) => {
                 Self::bump_ident_read(counts, &ca.name);
                 self.count_expr_ident_reads(&ca.value.node, counts);
@@ -879,6 +902,11 @@ impl AstLowering {
                     for stmt in else_body {
                         self.count_statement_ident_reads(&stmt.node, counts);
                     }
+                }
+            }
+            ast::Expr::Loop(loop_expr) => {
+                for stmt in &loop_expr.body {
+                    self.count_statement_ident_reads(&stmt.node, counts);
                 }
             }
             ast::Expr::ListComp(comp) => {

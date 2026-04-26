@@ -71,7 +71,12 @@ impl<'a> IrEmitter<'a> {
             }
             IrStmtKind::Expr(e) => self.scan_expr_for_param_writes(e, param_names, mutated),
             IrStmtKind::Return(Some(e)) => self.scan_expr_for_param_writes(e, param_names, mutated),
-            IrStmtKind::Return(None) | IrStmtKind::Break(_) | IrStmtKind::Continue(_) => {}
+            IrStmtKind::Break { label: _, value } => {
+                if let Some(value) = value {
+                    self.scan_expr_for_param_writes(value, param_names, mutated);
+                }
+            }
+            IrStmtKind::Return(None) | IrStmtKind::Continue(_) => {}
             IrStmtKind::While { condition, body, .. } => {
                 self.scan_expr_for_param_writes(condition, param_names, mutated);
                 for s in body {

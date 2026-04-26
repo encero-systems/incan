@@ -47,6 +47,8 @@ pub enum Expr {
     Match(Box<Spanned<Expr>>, Vec<Spanned<MatchArm>>),
     /// If expression
     If(Box<IfExpr>),
+    /// Loop expression
+    Loop(Box<LoopExpr>),
     /// List comprehension: `[expr for x in iter if cond]`
     ListComp(Box<ListComp>),
     /// Dict comprehension: `{k: v for x in iter if cond}`
@@ -255,9 +257,21 @@ pub enum Pattern {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IfExpr {
+    /// Condition that decides whether the `then` body executes.
     pub condition: Spanned<Expr>,
+    /// Statements evaluated when the condition is truthy.
     pub then_body: Vec<Spanned<Statement>>,
+    /// Optional fallback statements evaluated when the condition is false.
     pub else_body: Option<Vec<Spanned<Statement>>>,
+}
+
+/// Explicit infinite-loop expression (`loop:`).
+///
+/// Unlike `while`, this form is allowed in expression position and may yield a value via `break <expr>`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoopExpr {
+    /// Statements that execute for each loop iteration until a `break` exits the loop.
+    pub body: Vec<Spanned<Statement>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

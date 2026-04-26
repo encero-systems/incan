@@ -563,7 +563,19 @@ fn collect_backend_clone_bounds_in_stmt(
                 collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
             }
         }
-        IrStmtKind::Return(None) | IrStmtKind::Break(_) | IrStmtKind::Continue(_) => {}
+        IrStmtKind::Break { value: Some(expr), .. } => {
+            collect_backend_clone_bounds_for_value_use(
+                expr,
+                ValueUseSite::ReturnValue {
+                    target_ty: Some(&expr.ty),
+                },
+                type_param_names,
+                self_clone_params,
+                clone_params,
+            );
+            collect_backend_clone_bounds_in_expr(expr, type_param_names, self_clone_params, clone_params);
+        }
+        IrStmtKind::Return(None) | IrStmtKind::Break { label: _, value: None } | IrStmtKind::Continue(_) => {}
     }
 }
 
@@ -805,6 +817,11 @@ fn collect_backend_clone_bounds_in_expr(
             }
             if let Some(value) = value {
                 collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+            }
+        }
+        IrExprKind::Loop { body } => {
+            for stmt in body {
+                collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
             }
         }
         IrExprKind::Match { scrutinee, arms } => {
@@ -1174,7 +1191,12 @@ fn scan_stmt_for_bounds(
             scan_expr_for_bounds(value, type_params, params, bounds_map);
         }
         IrStmtKind::Return(Some(expr)) => scan_expr_for_bounds(expr, type_params, params, bounds_map),
-        IrStmtKind::Return(None) | IrStmtKind::Break(_) | IrStmtKind::Continue(_) => {}
+        IrStmtKind::Break { label: _, value } => {
+            if let Some(expr) = value {
+                scan_expr_for_bounds(expr, type_params, params, bounds_map);
+            }
+        }
+        IrStmtKind::Return(None) | IrStmtKind::Continue(_) => {}
         IrStmtKind::While { condition, body, .. } => {
             scan_expr_for_bounds(condition, type_params, params, bounds_map);
             for s in body {
@@ -1360,6 +1382,11 @@ fn scan_expr_for_bounds(
             }
             if let Some(v) = value {
                 scan_expr_for_bounds(v, type_params, params, bounds_map);
+            }
+        }
+        IrExprKind::Loop { body } => {
+            for stmt in body {
+                scan_stmt_for_bounds(stmt, type_params, params, bounds_map);
             }
         }
 
@@ -1868,7 +1895,12 @@ fn collect_calls_in_stmt(
             recurse_expr(value, result)
         }
         IrStmtKind::Return(Some(expr)) => recurse_expr(expr, result),
-        IrStmtKind::Return(None) | IrStmtKind::Break(_) | IrStmtKind::Continue(_) => {}
+        IrStmtKind::Break { label: _, value } => {
+            if let Some(expr) = value {
+                recurse_expr(expr, result);
+            }
+        }
+        IrStmtKind::Return(None) | IrStmtKind::Continue(_) => {}
         IrStmtKind::While { condition, body, .. } => {
             recurse_expr(condition, result);
             for s in body {
@@ -2028,6 +2060,11 @@ fn collect_calls_in_expr(
             }
             if let Some(v) = value {
                 recurse_expr(v, result);
+            }
+        }
+        IrExprKind::Loop { body } => {
+            for stmt in body {
+                recurse_stmt(stmt, result);
             }
         }
         IrExprKind::InteropCoerce { expr, .. } => {

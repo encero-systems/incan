@@ -59,6 +59,7 @@ impl Formatter {
                 self.writer.newline();
             }
             Statement::If(if_stmt) => self.format_if(if_stmt),
+            Statement::Loop(loop_stmt) => self.format_loop(loop_stmt),
             Statement::While(while_stmt) => self.format_while(while_stmt),
             Statement::For(for_stmt) => self.format_for(for_stmt),
             Statement::Surface(surface_stmt) => match (&surface_stmt.key, &surface_stmt.payload) {
@@ -101,7 +102,14 @@ impl Formatter {
                 self.writer.dedent();
             }
             Statement::Pass => self.writer.writeln("pass"),
-            Statement::Break => self.writer.writeln("break"),
+            Statement::Break(value) => {
+                self.writer.write("break");
+                if let Some(value) = value {
+                    self.writer.write(" ");
+                    self.format_expr(&value.node);
+                }
+                self.writer.newline();
+            }
             Statement::Continue => self.writer.writeln("continue"),
             Statement::TupleUnpack(unpack) => {
                 match unpack.binding {
@@ -203,6 +211,18 @@ impl Formatter {
             }
             self.writer.dedent();
         }
+    }
+
+    fn format_loop(&mut self, loop_stmt: &LoopStmt) {
+        self.writer.writeln("loop:");
+        self.writer.indent();
+        for stmt in &loop_stmt.body {
+            self.format_statement(stmt);
+        }
+        if loop_stmt.body.is_empty() {
+            self.writer.writeln("pass");
+        }
+        self.writer.dedent();
     }
 
     fn format_while(&mut self, while_stmt: &WhileStmt) {
