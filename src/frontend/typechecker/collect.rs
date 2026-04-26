@@ -16,6 +16,22 @@ mod stdlib_imports;
 
 use self::decl_helpers::{collect_fields, collect_methods, inject_json_methods, inject_validate_methods};
 
+/// Convert parsed value enum backing syntax into symbol-table metadata.
+fn value_enum_backing(value_type: ValueEnumType) -> ValueEnumBacking {
+    match value_type {
+        ValueEnumType::Str => ValueEnumBacking::Str,
+        ValueEnumType::Int => ValueEnumBacking::Int,
+    }
+}
+
+/// Convert parsed value enum raw literals into symbol-table metadata.
+fn value_enum_value_from_literal(value: &ValueEnumLiteral) -> ValueEnumValue {
+    match value {
+        ValueEnumLiteral::Str(value) => ValueEnumValue::Str(value.clone()),
+        ValueEnumLiteral::Int(value) => ValueEnumValue::Int(value.value),
+    }
+}
+
 impl TypeChecker {
     // ========================================================================
     // First pass: collect declarations
@@ -479,12 +495,27 @@ impl TypeChecker {
     fn collect_enum(&mut self, en: &EnumDecl, span: Span) {
         let variants: Vec<_> = en.variants.iter().map(|v| v.node.name.clone()).collect();
         let derives = self.extract_derive_names(&en.decorators);
+        let value_enum = en.value_type.as_ref().map(|value_type| ValueEnumInfo {
+            value_type: value_enum_backing(value_type.node),
+            values: en
+                .variants
+                .iter()
+                .filter_map(|variant| {
+                    variant
+                        .node
+                        .value
+                        .as_ref()
+                        .map(|value| (variant.node.name.clone(), value_enum_value_from_literal(&value.node)))
+                })
+                .collect(),
+        });
 
         self.symbols.define(Symbol {
             name: en.name.clone(),
             kind: SymbolKind::Type(TypeInfo::Enum(EnumInfo {
                 type_params: en.type_params.iter().map(|tp| tp.name.clone()).collect(),
                 variants: variants.clone(),
+                value_enum,
                 derives,
             })),
             span,

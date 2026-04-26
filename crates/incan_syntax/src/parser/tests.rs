@@ -2631,6 +2631,98 @@ def main() -> int:
     }
 
     #[test]
+    fn test_parse_value_enum_with_string_values() -> Result<(), Vec<CompileError>> {
+        let source = "enum Color(str):\n    Red = \"red\"\n    Blue = \"blue\"\n";
+        let program = parse_str(source)?;
+        let en = require_enum_decl(&program.declarations[0])?;
+
+        assert!(matches!(en.value_type.as_ref().map(|ty| ty.node), Some(ValueEnumType::Str)));
+        assert_eq!(en.variants.len(), 2);
+        assert_eq!(en.variants[0].node.name, "Red");
+        assert!(en.variants[0].node.fields.is_empty());
+        assert!(matches!(
+            en.variants[0].node.value.as_ref().map(|value| &value.node),
+            Some(ValueEnumLiteral::Str(value)) if value == "red"
+        ));
+        assert!(matches!(
+            en.variants[1].node.value.as_ref().map(|value| &value.node),
+            Some(ValueEnumLiteral::Str(value)) if value == "blue"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_value_enum_with_integer_values() -> Result<(), Vec<CompileError>> {
+        let source = "enum Status(int):\n    Pending = 1\n    Done = 2\n";
+        let program = parse_str(source)?;
+        let en = require_enum_decl(&program.declarations[0])?;
+
+        assert!(matches!(en.value_type.as_ref().map(|ty| ty.node), Some(ValueEnumType::Int)));
+        assert_eq!(en.variants.len(), 2);
+        assert!(matches!(
+            en.variants[0].node.value.as_ref().map(|value| &value.node),
+            Some(ValueEnumLiteral::Int(value)) if value.value == 1
+        ));
+        assert!(matches!(
+            en.variants[1].node.value.as_ref().map(|value| &value.node),
+            Some(ValueEnumLiteral::Int(value)) if value.value == 2
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_value_enum_variant_requires_explicit_value() {
+        let source = "enum Color(str):\n    Red\n";
+        let Err(err) = parse_str(source) else {
+            panic!("Value enum variant without assigned value should be rejected");
+        };
+        let msg = format!("{:?}", err);
+        assert!(
+            msg.contains("explicit literal values"),
+            "Expected hint about explicit literal values, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_value_enum_variant_payload_rejected() {
+        let source = "enum Color(str):\n    Red(str) = \"red\"\n";
+        let Err(err) = parse_str(source) else {
+            panic!("Value enum variant payload should be rejected");
+        };
+        let msg = format!("{:?}", err);
+        assert!(
+            msg.contains("cannot carry tuple or struct payloads"),
+            "Expected hint about value enum payloads, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_value_enum_variant_literal_type_must_match_header() {
+        let source = "enum Color(str):\n    Red = 1\n";
+        let Err(err) = parse_str(source) else {
+            panic!("Value enum variant with wrong literal type should be rejected");
+        };
+        let msg = format!("{:?}", err);
+        assert!(
+            msg.contains("Expected string literal value"),
+            "Expected hint about string literal values, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_value_enum_header_type_must_be_str_or_int() {
+        let source = "enum Color(float):\n    Red = 1\n";
+        let Err(err) = parse_str(source) else {
+            panic!("Value enum with unsupported backing type should be rejected");
+        };
+        let msg = format!("{:?}", err);
+        assert!(
+            msg.contains("must be 'str' or 'int'"),
+            "Expected hint about value enum backing types, got: {msg}"
+        );
+    }
+
+    #[test]
     fn test_enum_colon_annotation_rejected_with_hint() {
         let source = "enum Fields:\n    Name: str\n";
         let Err(err) = parse_str(source) else {
@@ -2652,10 +2744,12 @@ def main() -> int:
         assert_eq!(program.declarations.len(), 1);
         match &program.declarations[0].node {
             Declaration::Enum(e) => {
+                assert!(e.value_type.is_none());
                 assert_eq!(e.variants.len(), 3);
                 assert_eq!(e.variants[0].node.name, "Pending");
                 assert_eq!(e.variants[1].node.name, "Active");
                 assert_eq!(e.variants[2].node.name, "Done");
+                assert!(e.variants.iter().all(|variant| variant.node.value.is_none()));
                 assert_eq!(e.variants[2].node.fields.len(), 1);
             }
             _ => panic!("Expected enum"),

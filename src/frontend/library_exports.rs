@@ -10,8 +10,8 @@ use crate::frontend::ast::{
     TypeAliasDecl, TypeParam, Visibility,
 };
 use crate::frontend::symbols::{
-    ClassInfo, EnumInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, SymbolKind,
-    TraitInfo, TypeInfo, resolve_type,
+    ClassInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, SymbolKind, TraitInfo,
+    TypeInfo, ValueEnumBacking, ValueEnumValue, resolve_type,
 };
 use crate::frontend::typechecker::TypeChecker;
 
@@ -100,12 +100,14 @@ pub struct CheckedTraitExport {
 pub struct CheckedEnumVariant {
     pub name: String,
     pub fields: Vec<ResolvedType>,
+    pub value: Option<ValueEnumValue>,
 }
 
 #[derive(Debug, Clone)]
 pub struct CheckedEnumExport {
     pub name: String,
     pub type_params: Vec<CheckedTypeParam>,
+    pub value_type: Option<ValueEnumBacking>,
     pub variants: Vec<CheckedEnumVariant>,
     pub derives: Vec<String>,
 }
@@ -337,9 +339,10 @@ fn checked_trait_export(trait_decl: &TraitDecl, checker: &TypeChecker) -> Option
     })
 }
 
+/// Extract the checked public enum contract, including value-enum metadata when present.
 fn checked_enum_export(enum_decl: &EnumDecl, checker: &TypeChecker) -> Option<CheckedEnumExport> {
     let symbol = checker.lookup_symbol(enum_decl.name.as_str())?;
-    let SymbolKind::Type(TypeInfo::Enum(EnumInfo { .. })) = &symbol.kind else {
+    let SymbolKind::Type(TypeInfo::Enum(enum_info)) = &symbol.kind else {
         return None;
     };
 
@@ -363,12 +366,17 @@ fn checked_enum_export(enum_decl: &EnumDecl, checker: &TypeChecker) -> Option<Ch
         variants.push(CheckedEnumVariant {
             name: variant.node.name.clone(),
             fields,
+            value: enum_info
+                .value_enum
+                .as_ref()
+                .and_then(|value_enum| value_enum.values.get(&variant.node.name).cloned()),
         });
     }
 
     Some(CheckedEnumExport {
         name: enum_decl.name.clone(),
         type_params: checked_type_params(&enum_decl.type_params, checker),
+        value_type: enum_info.value_enum.as_ref().map(|value_enum| value_enum.value_type),
         variants,
         derives: checker.extract_derive_names(&enum_decl.decorators),
     })

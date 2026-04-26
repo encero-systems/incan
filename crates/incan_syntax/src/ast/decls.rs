@@ -4,7 +4,7 @@
 use incan_core::lang::keywords::KeywordId;
 use incan_semantics_core::SurfaceFeatureKey;
 
-use super::{Expr, Ident, ImportPath, Spanned, Statement, Type, Visibility};
+use super::{Expr, Ident, ImportPath, IntLiteral, Spanned, Statement, Type, Visibility};
 
 // ============================================================================
 // Models (data containers with validation)
@@ -171,9 +171,25 @@ pub struct EnumDecl {
     pub decorators: Vec<Spanned<Decorator>>,
     pub name: Ident,
     pub type_params: Vec<TypeParam>,
+    /// Backing value type for RFC 032 value enums (`enum Name(str):` / `enum Name(int):`).
+    pub value_type: Option<Spanned<ValueEnumType>>,
     /// Docstring at the start of the enum body (surface `"""..."""`), when present.
     pub docstring: Option<String>,
     pub variants: Vec<Spanned<VariantDecl>>,
+}
+
+/// The allowed backing literal types for a value enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueEnumType {
+    Str,
+    Int,
+}
+
+/// A literal assigned to a value enum variant.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ValueEnumLiteral {
+    Str(String),
+    Int(IntLiteral),
 }
 
 /// A single variant of an enum declaration, with optional tuple fields.
@@ -181,6 +197,7 @@ pub struct EnumDecl {
 pub struct VariantDecl {
     pub name: Ident,
     pub fields: Vec<Spanned<Type>>,
+    pub value: Option<Spanned<ValueEnumLiteral>>,
 }
 
 // ============================================================================

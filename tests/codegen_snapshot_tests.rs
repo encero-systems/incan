@@ -1239,6 +1239,13 @@ fn test_enums_codegen() {
     insta::assert_snapshot!("enums", rust_code);
 }
 
+#[test]
+fn test_value_enums_codegen() {
+    let source = load_test_file("value_enums");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("value_enums", rust_code);
+}
+
 // ============================================================================
 // Additional migration tests
 // ============================================================================

@@ -19,6 +19,93 @@ pub fn duplicate_definition(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Duplicate definition of '{}'", name), span)
 }
 
+/// Report a value enum declaration that attempts to use type parameters.
+pub fn value_enum_type_params_not_supported(enum_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Value enum '{}' cannot declare type parameters", enum_name),
+        span,
+    )
+    .with_hint("Value enums are concrete; remove the type parameters")
+}
+
+/// Report a value enum variant without its required raw literal value.
+pub fn value_enum_variant_missing_value(enum_name: &str, variant_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Value enum variant '{}.{}' must have an explicit literal value",
+            enum_name, variant_name
+        ),
+        span,
+    )
+    .with_hint(format!("Assign a value, for example: {variant_name} = ..."))
+}
+
+/// Report a value enum variant that carries tuple or struct payload fields.
+pub fn value_enum_variant_payload_not_allowed(enum_name: &str, variant_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Value enum variant '{}.{}' cannot carry tuple or struct payloads",
+            enum_name, variant_name
+        ),
+        span,
+    )
+    .with_hint("Value enum variants are simple value variants only")
+}
+
+/// Report a value enum raw literal whose kind does not match the enum backing type.
+pub fn value_enum_literal_type_mismatch(enum_name: &str, expected: &str, found: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Value enum '{}' expects '{}' literal values, found '{}'",
+            enum_name, expected, found
+        ),
+        span,
+    )
+    .with_hint(format!("Use a {expected} literal for each variant value"))
+}
+
+/// Report two value enum variants that declare the same raw value.
+pub fn value_enum_duplicate_value(
+    enum_name: &str,
+    value: &str,
+    first_variant: &str,
+    second_variant: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Duplicate value enum value {} in '{}' for variants '{}' and '{}'",
+            value, enum_name, first_variant, second_variant
+        ),
+        span,
+    )
+    .with_hint("Each value enum raw value must be unique")
+}
+
+/// Report a value enum variant name that conflicts with generated helper names.
+pub fn value_enum_reserved_generated_name(enum_name: &str, name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Value enum '{}' cannot use generated member name '{}' as a variant",
+            enum_name, name
+        ),
+        span,
+    )
+    .with_hint("Rename the variant; 'value' and 'from_value' are reserved for generated helpers")
+}
+
+/// Report an assigned raw value on an ordinary non-value enum variant.
+pub fn regular_enum_variant_value_not_allowed(enum_name: &str, variant_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Regular enum variant '{}.{}' cannot assign a raw value",
+            enum_name, variant_name
+        ),
+        span,
+    )
+    .with_hint("Use `enum Name(str):` or `enum Name(int):` for value enums")
+}
+
 // -- Decorators & namespaces -------------------------------------------------
 
 pub fn unknown_decorator(path: &str, span: Span) -> CompileError {

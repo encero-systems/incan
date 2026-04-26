@@ -11,11 +11,15 @@ use std::path::{Component, Path};
 use semver::Version;
 
 use super::wire::{RawLibraryExports, RawLibraryManifest};
-use super::{LIBRARY_MANIFEST_FORMAT, LibraryManifestError, VocabProviderManifest};
+use super::{
+    EnumExport, EnumValueExport, EnumValueTypeExport, LIBRARY_MANIFEST_FORMAT, LibraryManifestError,
+    VocabProviderManifest,
+};
 
 /// Validate one raw manifest payload before it is written or decoded into the semantic model.
 pub(super) fn validate_raw_manifest(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
     validate_manifest_version(raw)?;
+    validate_value_enum_exports(&raw.exports)?;
     validate_vocab_payload(raw)?;
     validate_soft_keyword_activations(raw)?;
     Ok(())
@@ -118,6 +122,96 @@ fn validate_vocab_payload(raw: &RawLibraryManifest) -> Result<(), LibraryManifes
         ));
     }
     validate_sha256_hex(&desugarer.sha256)
+}
+
+/// Validate RFC 032 value-enum metadata before import code trusts the manifest enum surface.
+fn validate_value_enum_exports(exports: &RawLibraryExports) -> Result<(), LibraryManifestError> {
+    for enum_export in &exports.enums {
+        validate_value_enum_export(enum_export)?;
+    }
+    Ok(())
+}
+
+/// Validate one exported enum's value metadata.
+fn validate_value_enum_export(enum_export: &EnumExport) -> Result<(), LibraryManifestError> {
+    let Some(value_type) = enum_export.value_type else {
+        for variant in &enum_export.variants {
+            if variant.value.is_some() {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "enum `{}` variant `{}` has a value but no enum value_type",
+                    enum_export.name, variant.name
+                )));
+            }
+        }
+        return Ok(());
+    };
+
+    if !enum_export.type_params.is_empty() {
+        return Err(LibraryManifestError::Invalid(format!(
+            "value enum `{}` cannot have type parameters",
+            enum_export.name
+        )));
+    }
+
+    let mut seen_values = HashSet::new();
+    for variant in &enum_export.variants {
+        if !variant.fields.is_empty() {
+            return Err(LibraryManifestError::Invalid(format!(
+                "value enum `{}.{}` cannot carry payload fields",
+                enum_export.name, variant.name
+            )));
+        }
+
+        let Some(value) = &variant.value else {
+            return Err(LibraryManifestError::Invalid(format!(
+                "value enum `{}.{}` is missing a raw value",
+                enum_export.name, variant.name
+            )));
+        };
+
+        if !value_matches_enum_type(value, value_type) {
+            return Err(LibraryManifestError::Invalid(format!(
+                "value enum `{}.{}` has a raw value that does not match backing type `{}`",
+                enum_export.name,
+                variant.name,
+                enum_value_type_name(value_type)
+            )));
+        }
+
+        if !seen_values.insert(value.clone()) {
+            return Err(LibraryManifestError::Invalid(format!(
+                "value enum `{}` has duplicate raw value `{}`",
+                enum_export.name,
+                enum_value_display(value)
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Return whether a raw variant value matches its enum's declared backing type.
+fn value_matches_enum_type(value: &EnumValueExport, value_type: EnumValueTypeExport) -> bool {
+    matches!(
+        (value_type, value),
+        (EnumValueTypeExport::Str, EnumValueExport::Str(_)) | (EnumValueTypeExport::Int, EnumValueExport::Int(_))
+    )
+}
+
+/// Display name for a manifest value-enum backing type.
+fn enum_value_type_name(value_type: EnumValueTypeExport) -> &'static str {
+    match value_type {
+        EnumValueTypeExport::Str => "str",
+        EnumValueTypeExport::Int => "int",
+    }
+}
+
+/// User-facing display for duplicate manifest value-enum values.
+fn enum_value_display(value: &EnumValueExport) -> String {
+    match value {
+        EnumValueExport::Str(value) => value.clone(),
+        EnumValueExport::Int(value) => value.to_string(),
+    }
 }
 
 /// Validate soft-keyword activation declarations exported by the library.

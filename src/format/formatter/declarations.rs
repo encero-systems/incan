@@ -444,6 +444,7 @@ impl Formatter {
 
     // ---- Enums and newtypes ----
 
+    /// Format an enum declaration, including optional value-enum backing metadata.
     fn format_enum(&mut self, en: &EnumDecl) {
         for dec in &en.decorators {
             self.format_decorator(&dec.node);
@@ -453,6 +454,11 @@ impl Formatter {
         self.writer.write("enum ");
         self.writer.write(&en.name);
         self.format_type_params(&en.type_params);
+        if let Some(value_type) = &en.value_type {
+            self.writer.write("(");
+            self.format_value_enum_type(value_type.node);
+            self.writer.write(")");
+        }
         self.writer.writeln(":");
         self.writer.indent();
 
@@ -477,6 +483,7 @@ impl Formatter {
         self.writer.dedent();
     }
 
+    /// Format one enum variant with optional payload fields and raw value assignment.
     fn format_enum_variant(&mut self, variant: &VariantDecl) {
         self.writer.write(&variant.name);
         if !variant.fields.is_empty() {
@@ -489,7 +496,31 @@ impl Formatter {
             }
             self.writer.write(")");
         }
+        if let Some(value) = &variant.value {
+            self.writer.write(" = ");
+            self.format_value_enum_literal(&value.node);
+        }
         self.writer.newline();
+    }
+
+    /// Format the backing type specifier used by a value enum.
+    fn format_value_enum_type(&mut self, value_type: ValueEnumType) {
+        match value_type {
+            ValueEnumType::Str => self.writer.write("str"),
+            ValueEnumType::Int => self.writer.write("int"),
+        }
+    }
+
+    /// Format the raw literal assigned to a value enum variant.
+    fn format_value_enum_literal(&mut self, value: &ValueEnumLiteral) {
+        match value {
+            ValueEnumLiteral::Str(value) => {
+                self.writer.write("\"");
+                self.writer.write(&escape_value_enum_string(value));
+                self.writer.write("\"");
+            }
+            ValueEnumLiteral::Int(value) => self.writer.write(&value.repr),
+        }
     }
 
     fn format_type_alias(&mut self, alias: &TypeAliasDecl) {
@@ -846,6 +877,22 @@ impl Formatter {
             self.writer.write("]");
         }
     }
+}
+
+/// Escape a value enum string literal for formatter round-tripping.
+fn escape_value_enum_string(s: &str) -> String {
+    let mut result = String::new();
+    for c in s.chars() {
+        match c {
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            '\\' => result.push_str("\\\\"),
+            '"' => result.push_str("\\\""),
+            c => result.push(c),
+        }
+    }
+    result
 }
 
 fn strip_common_indent(line: &str, indent: usize) -> &str {

@@ -1464,6 +1464,52 @@ def main() -> None:
 }
 
 #[test]
+fn test_rfc032_value_enums_run() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+enum Environment(str):
+  Development = "development"
+  Production = "production"
+
+enum HttpStatus(int):
+  Ok = 200
+  NotFound = 404
+
+def main() -> None:
+  env = Environment.Production
+  status = HttpStatus.NotFound
+  println(env.value())
+  println(status.value())
+  match Environment.from_value("development"):
+    Some(parsed_env) => println(parsed_env.value())
+    None => println("missing env")
+  match HttpStatus.from_value(404):
+    Some(parsed_status) => println(parsed_status.value())
+    None => println(0)
+"#;
+    let output = Command::new(incan_debug_binary())
+        .args(["run", "-c", source])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "expected value enum program to run.\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    assert_eq!(
+        lines,
+        vec!["production", "404", "development", "404"],
+        "unexpected value enum output.\nstdout:\n{stdout}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn test_list_extend_method_runs_without_consuming_source() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def main() -> None:
