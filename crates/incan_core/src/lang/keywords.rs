@@ -1,8 +1,7 @@
 //! Define the reserved keyword vocabulary for the Incan language.
 //!
-//! This module is the single source of truth for reserved words: a stable identifier
-//! ([`KeywordId`]) plus a const metadata table ([`KEYWORDS`]) that records canonical spellings,
-//! aliases, categories, provenance, and examples.
+//! This module is the single source of truth for reserved words: a stable identifier ([`KeywordId`]) plus a const
+//! metadata table ([`KEYWORDS`]) that records canonical spellings, aliases, categories, provenance, and examples.
 //!
 //! ## Notes
 //! - Lookup via [`from_str`] is **case-sensitive**, except where explicit aliases are defined.
@@ -132,6 +131,8 @@ pub enum KeywordUsage {
 pub enum KeywordActivation {
     /// Hard keyword: always reserved.
     Hard,
+    /// Contextual keyword: always available in a parser-owned syntactic position without being reserved elsewhere.
+    Contextual,
     /// Soft keyword: reserved only after importing the activating stdlib namespace.
     Soft { namespace: &'static str },
 }
@@ -289,15 +290,14 @@ pub const KEYWORDS: &[KeywordDescriptor] = &[
         RFC::_000,
         Since(0, 1),
     ),
-    info_soft(
+    info_contextual(
         KeywordId::Assert,
         "assert",
-        "testing",
         KeywordSurfaceKind::StatementKeywordArgs,
         KeywordCategory::ControlFlow,
         &[KeywordUsage::Statement],
         RFC::_018,
-        Since(0, 2),
+        Since(0, 3),
         Stability::Draft,
     ),
     // Definitions / declarations
@@ -657,10 +657,11 @@ pub fn supports_surface_kind(id: KeywordId, kind: KeywordSurfaceKind) -> bool {
 ///
 /// ## Returns
 /// - `Some("namespace")` if this keyword is import-activated.
-/// - `None` if this is a hard keyword.
+/// - `None` if this keyword is hard or contextual.
 pub fn activation(id: KeywordId) -> Option<&'static str> {
     match info_for(id).activation {
         KeywordActivation::Hard => None,
+        KeywordActivation::Contextual => None,
         KeywordActivation::Soft { namespace } => Some(namespace),
     }
 }
@@ -670,9 +671,20 @@ pub fn activation_kind(id: KeywordId) -> KeywordActivation {
     info_for(id).activation
 }
 
-/// Whether a keyword is soft (import-activated).
+/// Whether a keyword is soft at the lexer layer.
+///
+/// Contextual and import-activated keywords both lex as identifiers until the parser accepts them in an allowed
+/// context.
 pub fn is_soft(id: KeywordId) -> bool {
-    matches!(activation_kind(id), KeywordActivation::Soft { .. })
+    matches!(
+        activation_kind(id),
+        KeywordActivation::Contextual | KeywordActivation::Soft { .. }
+    )
+}
+
+/// Whether a keyword is lexically reserved in all contexts.
+pub fn is_hard(id: KeywordId) -> bool {
+    matches!(activation_kind(id), KeywordActivation::Hard)
 }
 
 /// Full metadata.
@@ -716,11 +728,11 @@ pub fn from_str(s: &str) -> Option<KeywordId> {
         .map(|k| k.id)
 }
 
-/// Lookup by spelling, excluding soft keywords.
+/// Lookup by spelling, excluding contextual and soft keywords.
 ///
 /// Used by the lexer to reserve only hard keywords globally.
 pub fn from_str_hard_only(s: &str) -> Option<KeywordId> {
-    from_str(s).filter(|id| !is_soft(*id))
+    from_str(s).filter(|id| is_hard(*id))
 }
 
 /// Resolve soft keywords activated by a stdlib namespace.
@@ -738,6 +750,7 @@ pub fn soft_keywords_for_namespace(namespace: &str) -> Vec<KeywordId> {
 
 // --- helpers -----------------------------------------------------------------
 
+/// Build metadata for a hard keyword without aliases or examples.
 const fn info(
     id: KeywordId,
     canonical: &'static str,
@@ -762,6 +775,7 @@ const fn info(
     }
 }
 
+/// Build metadata for a hard keyword with accepted aliases.
 const fn info_with_aliases(
     id: KeywordId,
     canonical: &'static str,
@@ -775,6 +789,7 @@ const fn info_with_aliases(
 }
 
 #[allow(clippy::too_many_arguments)] // const table constructor mirrors `info()` — a struct param would be awkward here
+/// Build metadata for an import-activated soft keyword.
 const fn info_soft(
     id: KeywordId,
     canonical: &'static str,
@@ -800,5 +815,51 @@ const fn info_soft(
         since,
         stability,
         examples: &[],
+    }
+}
+
+#[allow(clippy::too_many_arguments)] // const table constructor mirrors the keyword metadata shape
+/// Build metadata for an always-available contextual keyword.
+const fn info_contextual(
+    id: KeywordId,
+    canonical: &'static str,
+    surface_kind: KeywordSurfaceKind,
+    category: KeywordCategory,
+    usage: &'static [KeywordUsage],
+    introduced_in_rfc: RfcId,
+    since: Since,
+    stability: Stability,
+) -> KeywordDescriptor {
+    KeywordDescriptor {
+        id,
+        canonical,
+        aliases: &[],
+        activation: KeywordActivation::Contextual,
+        surface_kind: Some(surface_kind),
+        category,
+        usage,
+        introduced_in_rfc,
+        since,
+        stability,
+        examples: &[],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assert_keyword_is_contextual_and_not_import_activated() {
+        assert_eq!(activation_kind(KeywordId::Assert), KeywordActivation::Contextual);
+        assert_eq!(activation(KeywordId::Assert), None);
+        assert!(is_soft(KeywordId::Assert));
+        assert!(!soft_keywords_for_namespace("testing").contains(&KeywordId::Assert));
+    }
+
+    #[test]
+    fn hard_only_lookup_excludes_contextual_assert() {
+        assert_eq!(from_str("assert"), Some(KeywordId::Assert));
+        assert_eq!(from_str_hard_only("assert"), None);
     }
 }

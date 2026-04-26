@@ -29,6 +29,7 @@ use incan_core::lang::{
     builtins, decorators, derives, errors, keywords, operators, punctuation, stdlib, surface, traits,
 };
 
+/// Reduce trailing blank lines in generated Markdown to at most one empty line.
 fn trim_trailing_newlines_to_at_most_two(out: &mut String) {
     let mut count = 0usize;
     for ch in out.chars().rev() {
@@ -44,12 +45,14 @@ fn trim_trailing_newlines_to_at_most_two(out: &mut String) {
     }
 }
 
+/// Remove all trailing newline characters from generated Markdown.
 fn trim_trailing_newlines(out: &mut String) {
     while out.ends_with('\n') {
         out.pop();
     }
 }
 
+/// Ensure the generated Markdown buffer ends with exactly one blank line when it already has content.
 fn ensure_single_blank_line(out: &mut String) {
     trim_trailing_newlines_to_at_most_two(out);
     if out.is_empty() {
@@ -65,6 +68,7 @@ fn ensure_single_blank_line(out: &mut String) {
     }
 }
 
+/// Append a Markdown section heading after normalizing preceding blank lines.
 fn start_section(out: &mut String, heading: &str) {
     ensure_single_blank_line(out);
     out.push_str(heading);
@@ -137,8 +141,11 @@ fn write_language_reference(path: &Path) {
     }
 }
 
+/// Render the keyword registry table and examples.
 fn render_keywords_section(out: &mut String) {
     start_section(out, "## Keywords");
+
+    out.push_str("Reservation describes how a spelling is reserved: `Hard` keywords are always reserved by the lexer, `Contextual` keywords are recognized only in parser-owned syntactic positions, and `Soft` keywords are reserved after importing their activating `std.*` namespace.\n\n");
 
     out.push_str(
         "| Id | Canonical | Aliases | Reservation | Activation | Category | Usage | RFC | Since | Stability |\n",
@@ -160,7 +167,11 @@ fn render_keywords_section(out: &mut String) {
         let activation = keywords::activation(k.id)
             .map(|ns| format!("`std.{}`", ns))
             .unwrap_or_else(|| "-".to_string());
-        let reservation = if keywords::is_soft(k.id) { "Soft" } else { "Hard" };
+        let reservation = match k.activation {
+            keywords::KeywordActivation::Hard => "Hard",
+            keywords::KeywordActivation::Contextual => "Contextual",
+            keywords::KeywordActivation::Soft { .. } => "Soft",
+        };
         let category = format!("{:?}", k.category);
         let usage = if k.usage.is_empty() {
             String::new()
@@ -200,6 +211,7 @@ fn render_keywords_section(out: &mut String) {
     }
 }
 
+/// Render import-activated soft keywords.
 fn render_soft_keywords_section(out: &mut String) {
     start_section(out, "## Soft keywords");
     out.push_str("Soft keywords are only reserved when their activating `std.*` namespace is imported.\n\n");
@@ -238,6 +250,7 @@ fn render_soft_keywords_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render standard-library namespaces and the soft keywords they activate.
 fn render_stdlib_namespaces_section(out: &mut String) {
     start_section(out, "## Standard library namespaces");
     out.push_str("| Namespace | Feature gate | Submodules | Activates soft keywords |\n");
@@ -273,6 +286,7 @@ fn render_stdlib_namespaces_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render builtin exception metadata and examples.
 fn render_exceptions_section(out: &mut String) {
     start_section(out, "## Builtin exceptions");
 
@@ -321,6 +335,7 @@ fn render_exceptions_section(out: &mut String) {
     }
 }
 
+/// Render builtin function metadata.
 fn render_builtins_section(out: &mut String) {
     start_section(out, "## Builtin functions");
 
@@ -351,6 +366,7 @@ fn render_builtins_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render builtin decorator metadata.
 fn render_decorators_section(out: &mut String) {
     start_section(out, "## Decorators");
 
@@ -381,6 +397,7 @@ fn render_decorators_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render builtin derive metadata.
 fn render_derives_section(out: &mut String) {
     start_section(out, "## Derives");
 
@@ -411,6 +428,7 @@ fn render_derives_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render builtin trait metadata.
 fn render_traits_section(out: &mut String) {
     start_section(out, "## Builtin traits");
 
@@ -441,6 +459,7 @@ fn render_traits_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render operator metadata and explanatory notes.
 fn render_operators_section(out: &mut String) {
     start_section(out, "## Operators");
 
@@ -482,6 +501,7 @@ fn render_operators_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render punctuation metadata.
 fn render_punctuation_section(out: &mut String) {
     start_section(out, "## Punctuation");
 
@@ -512,6 +532,7 @@ fn render_punctuation_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render builtin type metadata grouped by type family.
 fn render_types_section(out: &mut String) {
     start_section(out, "## Builtin types");
 
@@ -591,6 +612,7 @@ fn render_types_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render compiler-recognized surface constructor metadata.
 fn render_surface_constructors_section(out: &mut String) {
     start_section(out, "## Surface constructors");
 
@@ -621,6 +643,7 @@ fn render_surface_constructors_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render compiler-recognized surface function metadata.
 fn render_surface_functions_section(out: &mut String) {
     start_section(out, "## Surface functions");
 
@@ -650,6 +673,7 @@ fn render_surface_functions_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render compiler-recognized string method metadata.
 fn render_surface_string_methods_section(out: &mut String) {
     start_section(out, "## Surface string methods");
 
@@ -679,6 +703,7 @@ fn render_surface_string_methods_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render compiler-recognized surface type metadata.
 fn render_surface_types_section(out: &mut String) {
     start_section(out, "## Surface types");
 
@@ -710,7 +735,9 @@ fn render_surface_types_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render compiler-recognized surface methods grouped by receiver type.
 fn render_surface_methods_section(out: &mut String) {
+    /// Return the common surface-method table header.
     fn table_header() -> &'static str {
         "| Id | Canonical | Aliases | Description | RFC | Since | Stability |\n|---|---|---|---|---|---|---|\n"
     }

@@ -27,6 +27,8 @@
 
 ## Keywords
 
+Reservation describes how a spelling is reserved: `Hard` keywords are always reserved by the lexer, `Contextual` keywords are recognized only in parser-owned syntactic positions, and `Soft` keywords are reserved after importing their activating `std.*` namespace.
+
 | Id | Canonical | Aliases | Reservation | Activation | Category | Usage | RFC | Since | Stability |
 |----|---|---|---|---|---|---|---|---|---|
 | If | `if` |  | Hard | - | ControlFlow | Statement, Expression | RFC 000 | 0.1 | Stable |
@@ -42,7 +44,7 @@
 | Return | `return` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
 | Yield | `yield` |  | Hard | - | ControlFlow | Statement, Expression | RFC 001 | 0.1 | Stable |
 | Pass | `pass` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| Assert | `assert` |  | Hard | - | ControlFlow | Statement | RFC 018 | 0.3 | Draft |
+| Assert | `assert` |  | Contextual | - | ControlFlow | Statement | RFC 018 | 0.3 | Draft |
 | Def | `def` | `fn` | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
 | Async | `async` |  | Soft | `std.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
 | Await | `await` |  | Soft | `std.async` | Definition | Expression | RFC 000 | 0.1 | Stable |
@@ -107,6 +109,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
 |---|---|---|---|---|---|---|
+| AssertionError | `AssertionError` |  | Raised when a language assertion or std.testing assertion helper fails. | RFC 018 | 0.3 | Stable |
 | ValueError | `ValueError` |  | Raised when an operation receives a value of the right type but an invalid value. | RFC 000 | 0.1 | Stable |
 | TypeError | `TypeError` |  | Raised when an operation receives a value of an inappropriate type. | RFC 000 | 0.1 | Stable |
 | ZeroDivisionError | `ZeroDivisionError` |  | Raised when dividing or taking modulo by zero (Python-like numeric semantics). | RFC 000 | 0.1 | Stable |
@@ -117,6 +120,16 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 ### Examples
 
 Only exceptions with examples are listed here.
+
+#### `AssertionError`
+
+```incan
+def main() -> None:
+    assert 1 == 2, "math broke"
+
+```
+
+Panics at runtime with `AssertionError: math broke`.
 
 #### `ValueError`
 
