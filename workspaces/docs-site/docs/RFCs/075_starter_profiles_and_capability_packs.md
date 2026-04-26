@@ -13,7 +13,7 @@
     - RFC 073 (environment matrices and toolchain constraints)
     - RFC 074 (template rendering and boilerplate provenance)
     - RFC 076 (project mutation policy and recovery)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/403
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —

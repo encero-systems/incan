@@ -14,7 +14,7 @@
     - RFC 077 (workspace and multi-package projects)
     - RFC 078 (tool execution and typed workflow actions)
     - RFC 080 (AI assets and agent metadata)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/407
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —

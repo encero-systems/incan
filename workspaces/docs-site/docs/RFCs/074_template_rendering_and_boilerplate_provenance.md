@@ -10,7 +10,7 @@
     - RFC 034 (`incan.pub` package registry)
     - RFC 075 (starter profiles and capability packs)
     - RFC 076 (project mutation policy and recovery)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/402
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
