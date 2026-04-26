@@ -213,6 +213,37 @@ pub fn await_outside_async(span: Span) -> CompileError {
     .with_hint("Declare the enclosing function or method with the `async` keyword (after importing `std.async`)")
 }
 
+/// `break` appeared outside any enclosing loop body.
+pub fn break_outside_loop(span: Span) -> CompileError {
+    CompileError::type_error("`break` is only valid inside loops".to_string(), span)
+        .with_hint("Use `break` only inside `for`, `while`, or `loop:` bodies")
+}
+
+/// `break <value>` appeared inside a loop form that does not yield a value.
+pub fn break_value_requires_loop_expression(span: Span) -> CompileError {
+    CompileError::type_error(
+        "`break <value>` is only valid inside `loop:` expressions".to_string(),
+        span,
+    )
+    .with_hint("Use plain `break` for `for`, `while`, and statement-form `loop:`")
+    .with_note("Only `loop:` expressions can produce a value for the surrounding expression")
+}
+
+/// `continue` appeared outside any enclosing loop body.
+pub fn continue_outside_loop(span: Span) -> CompileError {
+    CompileError::type_error("`continue` is only valid inside loops".to_string(), span)
+        .with_hint("Use `continue` only inside `for`, `while`, or `loop:` bodies")
+}
+
+/// A `loop:` expression never produced a reachable `break`, so its result type cannot be determined yet.
+pub fn loop_expression_requires_break(span: Span) -> CompileError {
+    CompileError::type_error("loop expression must contain at least one `break`".to_string(), span)
+        .with_hint("Add `break <expr>` to produce a value, or use statement-form `loop:` if the loop never returns")
+        .with_note(
+            "Incan does not define a bottom (`Never`) type yet, so non-terminating loop expressions are rejected",
+        )
+}
+
 // -- Mutability --------------------------------------------------------------
 
 pub fn mutation_without_mut(name: &str, span: Span) -> CompileError {

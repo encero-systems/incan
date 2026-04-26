@@ -65,6 +65,8 @@ impl<'a> Parser<'a> {
             self.return_stmt()?
         } else if self.check_keyword(KeywordId::If) {
             self.if_stmt()?
+        } else if self.check_keyword(KeywordId::Loop) {
+            self.loop_stmt()?
         } else if self.check_keyword(KeywordId::While) {
             self.while_stmt()?
         } else if self.check_keyword(KeywordId::For) {
@@ -74,8 +76,7 @@ impl<'a> Parser<'a> {
         } else if let Some(surface_stmt) = self.try_surface_keyword_statement()? {
             surface_stmt
         } else if self.check_keyword(KeywordId::Break) {
-            self.advance();
-            Statement::Break
+            self.break_stmt()?
         } else if self.check_keyword(KeywordId::Continue) {
             self.advance();
             Statement::Continue
@@ -118,6 +119,8 @@ impl<'a> Parser<'a> {
                 None
             };
             Statement::Return(expr)
+        } else if self.check_keyword(KeywordId::Break) {
+            self.break_stmt()?
         } else if self.check_keyword(KeywordId::Pass) || self.check(&TokenKind::Punctuation(PunctuationId::Ellipsis)) {
             self.advance();
             Statement::Pass
@@ -336,9 +339,41 @@ impl<'a> Parser<'a> {
         Ok(Statement::Return(expr))
     }
 
+    fn break_stmt(&mut self) -> Result<Statement, CompileError> {
+        self.expect(&TokenKind::Keyword(KeywordId::Break), "Expected 'break'")?;
+        let value = if !self.check(&TokenKind::Newline)
+            && !self.check(&TokenKind::Dedent)
+            && !self.check(&TokenKind::Keyword(KeywordId::Case))
+        {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        Ok(Statement::Break(value))
+    }
+
+    /// Parse an `if` / `while` condition, including RFC 049 let-pattern forms.
+    ///
+    /// Ordinary boolean conditions stay as expression-backed conditions, while
+    /// `let PATTERN = VALUE` is captured explicitly so later stages can apply
+    /// match-equivalent semantics without reparsing the surface spelling.
+    fn control_flow_condition(&mut self) -> Result<Condition, CompileError> {
+        if self.match_token(&TokenKind::Keyword(KeywordId::Let)) {
+            let pattern = self.pattern()?;
+            self.expect(
+                &TokenKind::Operator(OperatorId::Eq),
+                "Expected '=' after let pattern in control-flow condition",
+            )?;
+            let value = self.expression()?;
+            Ok(Condition::Let { pattern, value })
+        } else {
+            Ok(Condition::Expr(self.expression()?))
+        }
+    }
+
     fn if_stmt(&mut self) -> Result<Statement, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::If), "Expected 'if'")?;
-        let condition = self.expression()?;
+        let condition = self.control_flow_condition()?;
         self.expect(
             &TokenKind::Punctuation(PunctuationId::Colon),
             "Expected ':' after if condition",
@@ -347,6 +382,21 @@ impl<'a> Parser<'a> {
         self.expect_suite_indent("Expected indented block")?;
         let then_body = self.block()?;
         self.expect(&TokenKind::Dedent, "Expected dedent after if body")?;
+
+        if matches!(condition, Condition::Let { .. })
+            && (self.check_keyword(KeywordId::Elif) || self.check_keyword(KeywordId::Else))
+        {
+            let branch = if self.check_keyword(KeywordId::Elif) {
+                "`elif`"
+            } else {
+                "`else`"
+            };
+            return Err(CompileError::syntax(
+                format!("`if let` does not support {branch} branches"),
+                self.current_span(),
+            )
+            .with_hint("Use `match` when the non-match case matters"));
+        }
 
         let mut elif_branches = vec![];
         while self.match_token(&TokenKind::Keyword(KeywordId::Elif)) {
@@ -383,7 +433,7 @@ impl<'a> Parser<'a> {
 
     fn while_stmt(&mut self) -> Result<Statement, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::While), "Expected 'while'")?;
-        let condition = self.expression()?;
+        let condition = self.control_flow_condition()?;
         self.expect(
             &TokenKind::Punctuation(PunctuationId::Colon),
             "Expected ':' after while condition",
@@ -394,6 +444,20 @@ impl<'a> Parser<'a> {
         self.expect(&TokenKind::Dedent, "Expected dedent after while body")?;
 
         Ok(Statement::While(WhileStmt { condition, body }))
+    }
+
+    fn loop_stmt(&mut self) -> Result<Statement, CompileError> {
+        self.expect(&TokenKind::Keyword(KeywordId::Loop), "Expected 'loop'")?;
+        self.expect(
+            &TokenKind::Punctuation(PunctuationId::Colon),
+            "Expected ':' after loop",
+        )?;
+        self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
+        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        let body = self.block()?;
+        self.expect(&TokenKind::Dedent, "Expected dedent after loop body")?;
+
+        Ok(Statement::Loop(LoopStmt { body }))
     }
 
     fn for_stmt(&mut self) -> Result<Statement, CompileError> {

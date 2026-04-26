@@ -286,7 +286,7 @@ fn main() {
     let err_msg = handle_result(err_result);
     println!("{}", ok_msg);
     println!("{}", err_msg);
-    let quit_msg = Message::Quit;
+    let quit_msg = Message::Quit.clone();
     let move_msg = Message::Move(10, 20);
     let write_msg = Message::Write("Hello".to_string());
     let color_msg = Message::ChangeColor(255, 0, 0);
@@ -323,11 +323,13 @@ fn main() {
         Vec < String > = vec![format!("{}", priority_level)];
         incan_stdlib::strings::fstring(& __parts, & __args) }
     );
-    let empty = DataContainer::Empty;
+    let empty = DataContainer::Empty.clone();
     let single = DataContainer::Single(42);
     let multiple = DataContainer::Multiple(vec![1, 2, 3, 4, 5]);
     let mapped = DataContainer::Mapped(
-        [("a", 1), ("b", 2), ("c", 3)].into_iter().collect::<HashMap<_, _>>(),
+        [("a".to_string(), 1), ("b".to_string(), 2), ("c".to_string(), 3)]
+            .into_iter()
+            .collect::<HashMap<_, _>>(),
     );
     println!(
         "{}", { let __parts : [& str; 2usize] = ["Empty count: ", ""]; let __args : Vec <

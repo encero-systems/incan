@@ -132,6 +132,7 @@ impl TypeChecker {
             Expr::Try(inner) => self.check_try(inner, expr.span),
             Expr::Match(subject, arms) => self.check_match(subject, arms, expr.span),
             Expr::If(if_expr) => self.check_if_expr(if_expr, expr.span),
+            Expr::Loop(loop_expr) => self.check_loop_expr(loop_expr, None, expr.span),
             Expr::ListComp(comp) => self.check_list_comp(comp, expr.span),
             Expr::DictComp(comp) => self.check_dict_comp(comp, expr.span),
             Expr::Closure(params, body) => self.check_closure(params, body, expr.span),
@@ -181,6 +182,7 @@ impl TypeChecker {
         let ty = match (&expr.node, expected) {
             (Expr::Paren(inner), Some(expected_ty)) => self.check_expr_with_expected(inner, Some(expected_ty)),
             (Expr::List(elems), expected_ty) => self.check_list_with_expected(elems, expected_ty),
+            (Expr::Loop(loop_expr), expected_ty) => self.check_loop_expr(loop_expr, expected_ty, expr.span),
             _ => return self.check_expr(expr),
         };
 

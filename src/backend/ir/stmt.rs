@@ -53,8 +53,11 @@ pub enum IrStmtKind {
     /// Return statement
     Return(Option<IrExpr>),
 
-    /// Break statement (with optional label)
-    Break(Option<String>),
+    /// Break statement (with optional label and value)
+    Break {
+        label: Option<String>,
+        value: Option<IrExpr>,
+    },
 
     /// Continue statement (with optional label)
     Continue(Option<String>),

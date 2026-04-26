@@ -21,6 +21,7 @@ const FLOW_KEYWORDS: &[KeywordId] = &[
     KeywordId::If,
     KeywordId::Else,
     KeywordId::Elif,
+    KeywordId::Loop,
     KeywordId::While,
     KeywordId::For,
     KeywordId::Match,

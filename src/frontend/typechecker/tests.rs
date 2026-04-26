@@ -4140,6 +4140,47 @@ def foo() -> int:
 }
 
 #[test]
+fn test_if_let_statement_typechecks() {
+    let source = r#"
+def first(opt: Option[int]) -> int:
+  if let Some(value) = opt:
+    return value
+  return 0
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_while_let_statement_typechecks() {
+    let source = r#"
+def sum_once(opt: Option[int]) -> int:
+  mut total = 0
+  mut current = opt
+  while let Some(value) = current:
+    total = total + value
+    current = None
+  return total
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_if_let_rejects_impossible_pattern() {
+    let source = r#"
+def first(count: int) -> int:
+  if let Some(value) = count:
+    return value
+  return 0
+"#;
+    let errs = check_str_err(source, "expected impossible `if let` pattern to fail");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Constructor pattern 'Some' does not resolve")),
+        "unexpected errors: {errs:?}"
+    );
+}
+
+#[test]
 fn test_for_loop() {
     let source = r#"
 def foo() -> int:
@@ -6523,5 +6564,66 @@ def run() -> int:
         errs.iter()
             .any(|e| e.message.contains("not supported for this call form")),
         "expected unsupported call-site type args diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn loop_expression_infers_break_value_type() {
+    assert_check_ok(
+        r#"
+def run() -> int:
+  return loop:
+    break 42
+"#,
+    );
+}
+
+#[test]
+fn break_value_requires_loop_expression() {
+    let errs = check_str_err(
+        r#"
+def run(xs: list[int]) -> None:
+  for x in xs:
+    break x
+"#,
+        "expected break-value diagnostic in for loop",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("only valid inside `loop:` expressions")),
+        "expected loop-expression-only diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn loop_expression_without_break_is_rejected() {
+    let errs = check_str_err(
+        r#"
+def run() -> int:
+  return loop:
+    pass
+"#,
+        "expected missing-break diagnostic for loop expression",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("loop expression must contain at least one `break`")),
+        "expected missing-break diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn break_outside_loop_uses_typed_diagnostic() {
+    let errs = check_str_err(
+        r#"
+def run() -> None:
+  break
+"#,
+        "expected break-outside-loop diagnostic",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("`break` is only valid inside loops")),
+        "expected break-outside-loop diagnostic, got {errs:?}"
     );
 }

@@ -134,6 +134,7 @@ nav:
           - Imports and modules: language/how-to/imports_and_modules.md
           - Module state: language/how-to/module_state.md
           - Modeling with enums: language/how-to/modeling_with_enums.md
+          - Project lifecycle: language/how-to/project_lifecycle.md
           - std.testing guide: language/how-to/testing_stdlib.md
           - String processing: language/how-to/string_processing.md
           - Performance: language/how-to/performance.md
@@ -148,6 +149,7 @@ nav:
           - Imports and modules: language/reference/imports_and_modules.md
           - Static storage: language/reference/static_storage.md
           - Numeric semantics: language/reference/numeric_semantics.md
+          - Project lifecycle: language/reference/project_lifecycle.md
           - Strings and Bytes: language/reference/strings.md
           - Reflection: language/reference/reflection.md
           - Derives & traits (reference): language/reference/derives_and_traits.md
@@ -216,6 +218,9 @@ nav:
           - CLI reference: tooling/reference/cli_reference.md
           - Project configuration: tooling/reference/project_configuration.md
           - LSP protocol support: tooling/reference/lsp_protocol_support.md
+  - Whitepapers:
+      - Overview: whitepapers/index.md
+      - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md
   - Contributing:
       - Start here: contributing/index.md
       - Tutorials:
@@ -237,6 +242,7 @@ nav:
           - Writing RFCs: contributing/how-to/writing_rfcs.md
       - Explanation:
           - Architecture: contributing/explanation/architecture.md
+          - Duckborrowing: contributing/explanation/duckborrowing.md
           - Layering rules: contributing/explanation/layering.md
           - Readable, maintainable Rust: contributing/explanation/readable-maintainable-rust.md
           - "std.testing internals": contributing/explanation/stdlib_testing_internals.md

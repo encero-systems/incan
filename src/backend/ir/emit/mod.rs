@@ -282,7 +282,7 @@ impl<'a> IrEmitter<'a> {
     pub(super) fn type_is_user_enum(&self, ty: &IrType) -> bool {
         match ty {
             IrType::Enum(_) => true,
-            IrType::Struct(name) => {
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) => {
                 self.enum_variant_fields.keys().any(|(enum_name, _)| enum_name == name)
                     || self.dependency_enum_types.contains(name)
             }

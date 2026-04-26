@@ -1,30 +1,30 @@
 //! Compile-time version compatibility check between the Incan compiler and its stdlib.
 //!
 //! When the Incan compiler generates a Rust project from user code, that project depends on the `incan_stdlib` crate.
-//! If the compiler and stdlib versions drift apart (e.g. a cached stdlib from a previous install), the generated code
-//! could break in subtle ways at runtime.
+//! If the compiler and stdlib versions drift apart, for example because a cached stdlib from a previous install is
+//! still in use, the generated code could break in subtle ways at runtime.
 //!
 //! This module prevents that by providing a macro that the compiler emits into every generated `main.rs`:
 //!
 //! ```rust,ignore
-//! incan_stdlib::__incan_stdlib_version_check!("0.2.0");
+//! incan_stdlib::__incan_stdlib_version_check!("X.Y.Z");
 //! ```
 //!
-//! The macro expands into a `const` assertion that compares the compiler version (baked in as a string literal) against
-//! the stdlib version (read from `Cargo.toml` via `env!`). A mismatch becomes a **compile-time error** in the generated
+//! The macro expands into a `const` assertion that compares the compiler version, baked in as a string literal, against
+//! the stdlib version read from `Cargo.toml` via `env!`. A mismatch becomes a **compile-time error** in the generated
 //! Rust code, surfacing the problem before anything runs.
 
 /// The version of this stdlib crate, read from `Cargo.toml` at compile time.
 ///
-/// The compiler embeds its own version as a literal in the generated code, and the [`__incan_stdlib_version_check`]
+/// The compiler embeds its own version as a literal in the generated code, and the `__incan_stdlib_version_check!`
 /// macro compares the two.
 pub const INCAN_STDLIB_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Byte-level string equality usable in `const` contexts.
 ///
-/// Rust nightly currently does not stabilise `PartialEq` as a const trait, so `a == b` on `&str` inside a `const` block
-/// is a compiler error. This unction works around that by comparing raw `&[u8]` slices element by element — primitive
-/// `u8` equality is always const-stable.
+/// Rust nightly currently does not stabilise `PartialEq` as a const trait, so `a == b` on `&str` inside a `const`
+/// block is a compiler error. This function works around that by comparing raw `&[u8]` slices element by element, and
+/// primitive `u8` equality is const-stable.
 #[doc(hidden)]
 pub const fn const_str_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
@@ -42,11 +42,11 @@ pub const fn const_str_eq(a: &[u8], b: &[u8]) -> bool {
 
 /// Compile-time assertion that the compiler and stdlib versions match.
 ///
-/// Emitted by the Incan compiler into every generated `main.rs`. Expands to a `const _: () = { ... }` block that panics
-/// (= compile error) when the versions differ. Example output on mismatch:
+/// Emitted by the Incan compiler into every generated `main.rs`. Expands to a `const _: () = { ... }` block that
+/// panics, which becomes a compile error, when the versions differ. Example output on mismatch:
 ///
 /// ```text
-/// Incan compiler/std lib version mismatch: compiler 0.2.1, stdlib 0.2.0
+/// Incan compiler/std lib version mismatch: compiler X.Y.Z, stdlib X.Y.Z
 /// ```
 #[doc(hidden)]
 #[macro_export]

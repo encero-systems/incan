@@ -38,6 +38,92 @@ fn lowered_generic_arg_or_unknown(lowered_params: &[IrType], idx: usize) -> IrTy
 }
 
 impl AstLowering {
+    /// Merge a typechecker-derived IR type with an already-lowered IR type without erasing in-scope generic
+    /// placeholders that the typechecker may have normalized to nominal names.
+    pub(super) fn merge_inferred_ir_type(existing: &IrType, inferred: IrType) -> IrType {
+        match (existing, inferred) {
+            (IrType::Generic(existing_name), IrType::Struct(inferred_name)) if existing_name == &inferred_name => {
+                existing.clone()
+            }
+            (IrType::Ref(existing_inner), IrType::Ref(inferred_inner)) => {
+                IrType::Ref(Box::new(Self::merge_inferred_ir_type(existing_inner, *inferred_inner)))
+            }
+            (IrType::Ref(existing_inner), inferred_inner) => {
+                IrType::Ref(Box::new(Self::merge_inferred_ir_type(existing_inner, inferred_inner)))
+            }
+            (IrType::RefMut(existing_inner), IrType::RefMut(inferred_inner)) => {
+                IrType::RefMut(Box::new(Self::merge_inferred_ir_type(existing_inner, *inferred_inner)))
+            }
+            (IrType::RefMut(existing_inner), inferred_inner) => {
+                IrType::RefMut(Box::new(Self::merge_inferred_ir_type(existing_inner, inferred_inner)))
+            }
+            (IrType::List(existing_inner), IrType::List(inferred_inner)) => {
+                IrType::List(Box::new(Self::merge_inferred_ir_type(existing_inner, *inferred_inner)))
+            }
+            (IrType::Set(existing_inner), IrType::Set(inferred_inner)) => {
+                IrType::Set(Box::new(Self::merge_inferred_ir_type(existing_inner, *inferred_inner)))
+            }
+            (IrType::Option(existing_inner), IrType::Option(inferred_inner)) => {
+                IrType::Option(Box::new(Self::merge_inferred_ir_type(existing_inner, *inferred_inner)))
+            }
+            (IrType::Dict(existing_key, existing_value), IrType::Dict(inferred_key, inferred_value)) => IrType::Dict(
+                Box::new(Self::merge_inferred_ir_type(existing_key, *inferred_key)),
+                Box::new(Self::merge_inferred_ir_type(existing_value, *inferred_value)),
+            ),
+            (IrType::Result(existing_ok, existing_err), IrType::Result(inferred_ok, inferred_err)) => IrType::Result(
+                Box::new(Self::merge_inferred_ir_type(existing_ok, *inferred_ok)),
+                Box::new(Self::merge_inferred_ir_type(existing_err, *inferred_err)),
+            ),
+            (IrType::Tuple(existing_items), IrType::Tuple(inferred_items))
+                if existing_items.len() == inferred_items.len() =>
+            {
+                IrType::Tuple(
+                    existing_items
+                        .iter()
+                        .cloned()
+                        .zip(inferred_items)
+                        .map(|(existing_item, inferred_item)| {
+                            Self::merge_inferred_ir_type(&existing_item, inferred_item)
+                        })
+                        .collect(),
+                )
+            }
+            (
+                IrType::NamedGeneric(existing_name, existing_args),
+                IrType::NamedGeneric(inferred_name, inferred_args),
+            ) if existing_name == &inferred_name && existing_args.len() == inferred_args.len() => IrType::NamedGeneric(
+                inferred_name,
+                existing_args
+                    .iter()
+                    .cloned()
+                    .zip(inferred_args)
+                    .map(|(existing_arg, inferred_arg)| Self::merge_inferred_ir_type(&existing_arg, inferred_arg))
+                    .collect(),
+            ),
+            (
+                IrType::Function {
+                    params: existing_params,
+                    ret: existing_ret,
+                },
+                IrType::Function {
+                    params: inferred_params,
+                    ret: inferred_ret,
+                },
+            ) if existing_params.len() == inferred_params.len() => IrType::Function {
+                params: existing_params
+                    .iter()
+                    .cloned()
+                    .zip(inferred_params)
+                    .map(|(existing_param, inferred_param)| {
+                        Self::merge_inferred_ir_type(&existing_param, inferred_param)
+                    })
+                    .collect(),
+                ret: Box::new(Self::merge_inferred_ir_type(existing_ret, *inferred_ret)),
+            },
+            (_, inferred) => inferred,
+        }
+    }
+
     /// Lower an AST type in a `const` context, applying RFC 008 freezing rules.
     ///
     /// Maps container/string annotations to their frozen/static IR equivalents:
@@ -203,7 +289,14 @@ impl AstLowering {
                         args.iter().map(|t| self.lower_resolved_type(t)).collect(),
                     )
                 }
-                GenericBaseKind::Other => IrType::Struct(name.clone()),
+                GenericBaseKind::Other => {
+                    let lowered_args: Vec<IrType> = args.iter().map(|t| self.lower_resolved_type(t)).collect();
+                    if lowered_args.is_empty() {
+                        IrType::Struct(name.clone())
+                    } else {
+                        IrType::NamedGeneric(name.clone(), lowered_args)
+                    }
+                }
             },
             ResolvedType::Function(params, ret) => IrType::Function {
                 params: params.iter().map(|p| self.lower_resolved_type(p)).collect(),
@@ -436,5 +529,57 @@ impl AstLowering {
             }
         }
         IrType::Unknown
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AstLowering;
+    use crate::backend::ir::types::IrType;
+    use crate::frontend::symbols::ResolvedType;
+
+    #[test]
+    fn lower_resolved_type_preserves_named_generic_args_for_nominal_types() {
+        let lowering = AstLowering::new();
+        let lowered = lowering.lower_resolved_type(&ResolvedType::Generic(
+            "Box".to_string(),
+            vec![ResolvedType::Named("Node".to_string())],
+        ));
+
+        assert_eq!(
+            lowered,
+            IrType::NamedGeneric("Box".to_string(), vec![IrType::Struct("Node".to_string())])
+        );
+    }
+
+    #[test]
+    fn merge_inferred_ir_type_preserves_existing_generic_placeholders() {
+        let merged = AstLowering::merge_inferred_ir_type(
+            &IrType::NamedGeneric(
+                "Box".to_string(),
+                vec![IrType::NamedGeneric(
+                    "Node".to_string(),
+                    vec![IrType::Generic("T".to_string())],
+                )],
+            ),
+            IrType::NamedGeneric(
+                "Box".to_string(),
+                vec![IrType::NamedGeneric(
+                    "Node".to_string(),
+                    vec![IrType::Struct("T".to_string())],
+                )],
+            ),
+        );
+
+        assert_eq!(
+            merged,
+            IrType::NamedGeneric(
+                "Box".to_string(),
+                vec![IrType::NamedGeneric(
+                    "Node".to_string(),
+                    vec![IrType::Generic("T".to_string())]
+                )]
+            )
+        );
     }
 }

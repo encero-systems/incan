@@ -124,6 +124,49 @@ fn assert_runtime_error_cli(
     Ok(())
 }
 
+#[test]
+fn bare_incan_run_uses_project_main_script() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        r#"[project]
+name = "bare_run_project"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+"#,
+    )?;
+    fs::write(
+        src_dir.join("main.incn"),
+        r#"def main() -> None:
+  println("bare run works")
+"#,
+    )?;
+
+    let output = Command::new(incan_debug_binary())
+        .arg("run")
+        .current_dir(tmp.path())
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "expected bare `incan run` to succeed from project root.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("bare run works"),
+        "expected bare `incan run` to execute [project.scripts].main, got:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    Ok(())
+}
+
 /// Locate the `incan` binary for subprocess tests.
 ///
 /// Uses `CARGO_BIN_EXE_incan` when present (integration tests under `cargo test`) so we always run the artifact from
@@ -535,10 +578,8 @@ fn test_invalid_fixtures() {
 }
 
 #[test]
-fn test_help_is_banner_free() {
-    let Ok(output) = Command::new(incan_debug_binary()).arg("--help").output() else {
-        panic!("failed to run incan --help");
-    };
+fn test_help_is_banner_free() -> Result<(), Box<dyn std::error::Error>> {
+    let output = Command::new(incan_debug_binary()).arg("--help").output()?;
     assert!(
         output.status.success(),
         "incan --help failed: status={:?} stderr={}",
@@ -551,13 +592,12 @@ fn test_help_is_banner_free() {
         !stdout.contains("░░███") && !stderr.contains("░░███"),
         "logo leaked into help output"
     );
+    Ok(())
 }
 
 #[test]
-fn test_version_is_single_line_and_banner_free() {
-    let Ok(output) = Command::new(incan_debug_binary()).arg("--version").output() else {
-        panic!("failed to run incan --version");
-    };
+fn test_version_is_single_line_and_banner_free() -> Result<(), Box<dyn std::error::Error>> {
+    let output = Command::new(incan_debug_binary()).arg("--version").output()?;
     assert!(
         output.status.success(),
         "incan --version failed: status={:?} stderr={}",
@@ -571,6 +611,455 @@ fn test_version_is_single_line_and_banner_free() {
         "logo leaked into version output"
     );
     assert_eq!(stdout.lines().count(), 1, "expected single-line version output");
+    Ok(())
+}
+
+#[test]
+fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_dir = tmp.path().join("greeter");
+
+    let new_output = Command::new(incan_debug_binary())
+        .args(["new", "greeter", "--yes", "--dir"])
+        .arg(&project_dir)
+        .args([
+            "--description",
+            "A generated greeting app",
+            "--author",
+            "Danny <danny@example.com>",
+            "--license",
+            "MIT",
+        ])
+        .output()?;
+    assert!(
+        new_output.status.success(),
+        "incan new failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&new_output.stdout),
+        String::from_utf8_lossy(&new_output.stderr)
+    );
+
+    let manifest_path = project_dir.join("incan.toml");
+    let initial_manifest = fs::read_to_string(&manifest_path)?;
+    assert!(initial_manifest.contains(r#"name = "greeter""#));
+    assert!(initial_manifest.contains(r#"description = "A generated greeting app""#));
+    assert!(initial_manifest.contains(r#"authors = ["Danny <danny@example.com>"]"#));
+    assert!(initial_manifest.contains(r#"license = "MIT""#));
+    assert!(project_dir.join("src/main.incn").exists());
+    assert!(project_dir.join("tests/test_main.incn").exists());
+
+    let empty_list_output = Command::new(incan_debug_binary())
+        .args(["env", "list"])
+        .current_dir(&project_dir)
+        .output()?;
+    assert!(
+        empty_list_output.status.success(),
+        "env list on fresh project failed: {}",
+        String::from_utf8_lossy(&empty_list_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&empty_list_output.stdout).trim(),
+        "default",
+        "fresh projects should expose the ambient default env"
+    );
+
+    let default_overview_output = Command::new(incan_debug_binary())
+        .args(["env", "show"])
+        .current_dir(&project_dir)
+        .output()?;
+    assert!(
+        default_overview_output.status.success(),
+        "env show overview on fresh project failed: {}",
+        String::from_utf8_lossy(&default_overview_output.stderr)
+    );
+    let default_overview_stdout = String::from_utf8_lossy(&default_overview_output.stdout);
+    assert!(default_overview_stdout.contains("Name"));
+    assert!(default_overview_stdout.contains("default"));
+
+    let default_show_output = Command::new(incan_debug_binary())
+        .args(["env", "show", "default"])
+        .current_dir(&project_dir)
+        .output()?;
+    assert!(
+        default_show_output.status.success(),
+        "env show default on fresh project failed: {}",
+        String::from_utf8_lossy(&default_show_output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&default_show_output.stdout).contains("overlay chain: project -> default"),
+        "unexpected env show default output:\n{}",
+        String::from_utf8_lossy(&default_show_output.stdout)
+    );
+
+    let dry_run = Command::new(incan_debug_binary())
+        .args(["version", "patch", "--dry-run"])
+        .current_dir(&project_dir)
+        .output()?;
+    assert!(
+        dry_run.status.success(),
+        "dry-run failed: {}",
+        String::from_utf8_lossy(&dry_run.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&dry_run.stdout).contains("new version: 0.1.1"),
+        "unexpected dry-run output:\n{}",
+        String::from_utf8_lossy(&dry_run.stdout)
+    );
+    assert_eq!(
+        fs::read_to_string(&manifest_path)?,
+        initial_manifest,
+        "dry-run must not modify incan.toml"
+    );
+
+    let version_output = Command::new(incan_debug_binary())
+        .args(["version", "patch"])
+        .current_dir(&project_dir)
+        .output()?;
+    assert!(
+        version_output.status.success(),
+        "version bump failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&version_output.stdout),
+        String::from_utf8_lossy(&version_output.stderr)
+    );
+    assert!(fs::read_to_string(&manifest_path)?.contains(r#"version = "0.1.1""#));
+
+    let set_output = Command::new(incan_debug_binary())
+        .args([
+            "version",
+            "--set",
+            "2.0.0-rc.1",
+            "--project",
+            manifest_path.to_str().ok_or("manifest path is not valid UTF-8")?,
+        ])
+        .current_dir(tmp.path())
+        .output()?;
+    assert!(
+        set_output.status.success(),
+        "version set failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&set_output.stdout),
+        String::from_utf8_lossy(&set_output.stderr)
+    );
+    assert!(fs::read_to_string(&manifest_path)?.contains(r#"version = "2.0.0-rc.1""#));
+
+    let keep_prerelease_output = Command::new(incan_debug_binary())
+        .args([
+            "version",
+            "patch",
+            "--keep-prerelease",
+            "--project",
+            project_dir.to_str().ok_or("project path is not valid UTF-8")?,
+        ])
+        .current_dir(tmp.path())
+        .output()?;
+    assert!(
+        keep_prerelease_output.status.success(),
+        "version keep-prerelease failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&keep_prerelease_output.stdout),
+        String::from_utf8_lossy(&keep_prerelease_output.stderr)
+    );
+    assert!(fs::read_to_string(&manifest_path)?.contains(r#"version = "2.0.1-rc.1""#));
+
+    let missing_request_output = Command::new(incan_debug_binary())
+        .args([
+            "version",
+            "--project",
+            project_dir.to_str().ok_or("project path is not valid UTF-8")?,
+        ])
+        .current_dir(tmp.path())
+        .output()?;
+    assert!(!missing_request_output.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing_request_output.stderr).contains("requires a bump name or `--set <version>`"),
+        "unexpected missing-request stderr:\n{}",
+        String::from_utf8_lossy(&missing_request_output.stderr)
+    );
+
+    let conflicting_request_output = Command::new(incan_debug_binary())
+        .args([
+            "version",
+            "patch",
+            "--set",
+            "3.0.0",
+            "--project",
+            project_dir.to_str().ok_or("project path is not valid UTF-8")?,
+        ])
+        .current_dir(tmp.path())
+        .output()?;
+    assert!(!conflicting_request_output.status.success());
+    assert!(
+        String::from_utf8_lossy(&conflicting_request_output.stderr)
+            .contains("accepts either a bump name or `--set <version>`, not both"),
+        "unexpected conflicting-request stderr:\n{}",
+        String::from_utf8_lossy(&conflicting_request_output.stderr)
+    );
+
+    fs::write(
+        &manifest_path,
+        format!(
+            "{}\n[rust-dependencies.serde]\nversion = \"1.0\"\nfeatures = [\"derive\"]\n\n[tool.incan.envs.default]\nenv-vars = {{ INCAN_NO_BANNER = \"1\" }}\n\n[tool.incan.envs.unit]\ncwd = \".\"\n\n[tool.incan.envs.unit.rust-dependencies.serde]\nversion = \"1.0\"\nfeatures = [\"alloc\"]\n\n[tool.incan.envs.unit.scripts]\nprobe = [\"{}\", \"--version\"]\n",
+            fs::read_to_string(&manifest_path)?,
+            incan_debug_binary().display()
+        ),
+    )?;
+
+    let list_output = Command::new(incan_debug_binary())
+        .args(["env", "list"])
+        .current_dir(project_dir.join("src"))
+        .output()?;
+    assert!(
+        list_output.status.success(),
+        "env list failed: {}",
+        String::from_utf8_lossy(&list_output.stderr)
+    );
+    let list_stdout = String::from_utf8_lossy(&list_output.stdout);
+    assert!(list_stdout.contains("default"));
+    assert!(list_stdout.contains("unit"));
+
+    let list_json_output = Command::new(incan_debug_binary())
+        .args([
+            "env",
+            "list",
+            "--format",
+            "json",
+            "--project",
+            project_dir.to_str().ok_or("project path is not valid UTF-8")?,
+        ])
+        .current_dir(tmp.path())
+        .output()?;
+    assert!(
+        list_json_output.status.success(),
+        "env list json failed: {}",
+        String::from_utf8_lossy(&list_json_output.stderr)
+    );
+    let list_json: serde_json::Value = serde_json::from_slice(&list_json_output.stdout)?;
+    assert_eq!(list_json, serde_json::json!(["default", "unit"]));
+
+    let show_output = Command::new(incan_debug_binary())
+        .args(["env", "show", "unit"])
+        .current_dir(&project_dir)
+        .output()?;
+    assert!(
+        show_output.status.success(),
+        "env show failed: {}",
+        String::from_utf8_lossy(&show_output.stderr)
+    );
+    let show_stdout = String::from_utf8_lossy(&show_output.stdout);
+    assert!(show_stdout.contains("overlay chain: project -> default -> unit"));
+    assert!(show_stdout.contains("INCAN_NO_BANNER=1"));
+    assert!(show_stdout.contains("Dependencies"));
+    assert!(show_stdout.contains("serde"));
+    assert!(show_stdout.contains("alloc"));
+    assert!(show_stdout.contains("derive"));
+
+    let show_overview_output = Command::new(incan_debug_binary())
+        .args(["env", "show"])
+        .current_dir(&project_dir)
+        .output()?;
+    assert!(
+        show_overview_output.status.success(),
+        "env show overview failed: {}",
+        String::from_utf8_lossy(&show_overview_output.stderr)
+    );
+    let show_overview_stdout = String::from_utf8_lossy(&show_overview_output.stdout);
+    assert!(show_overview_stdout.contains("default"));
+    assert!(show_overview_stdout.contains("unit"));
+    assert!(show_overview_stdout.contains("Scripts"));
+
+    let show_overview_json_output = Command::new(incan_debug_binary())
+        .args([
+            "env",
+            "show",
+            "--format",
+            "json",
+            "--project",
+            manifest_path.to_str().ok_or("manifest path is not valid UTF-8")?,
+        ])
+        .current_dir(tmp.path())
+        .output()?;
+    assert!(
+        show_overview_json_output.status.success(),
+        "env show overview json failed: {}",
+        String::from_utf8_lossy(&show_overview_json_output.stderr)
+    );
+    let show_overview_json: serde_json::Value = serde_json::from_slice(&show_overview_json_output.stdout)?;
+    let show_overview_array = show_overview_json.as_array().ok_or("expected array json output")?;
+    assert_eq!(show_overview_array.len(), 2);
+    assert!(show_overview_array.iter().any(|entry| entry["name"] == "default"));
+    assert!(show_overview_array.iter().any(|entry| entry["name"] == "unit"));
+
+    let show_json_output = Command::new(incan_debug_binary())
+        .args(["env", "show", "unit", "--format", "json"])
+        .current_dir(&project_dir)
+        .output()?;
+    assert!(
+        show_json_output.status.success(),
+        "env show json failed: {}",
+        String::from_utf8_lossy(&show_json_output.stderr)
+    );
+    let show_json: serde_json::Value = serde_json::from_slice(&show_json_output.stdout)?;
+    assert_eq!(show_json["env"], "unit");
+    assert_eq!(show_json["dependencies"]["serde"]["version"], "1.0");
+
+    let dry_run_env = Command::new(incan_debug_binary())
+        .args(["env", "run", "unit", "probe", "--dry-run"])
+        .current_dir(&project_dir)
+        .output()?;
+    assert!(
+        dry_run_env.status.success(),
+        "env dry-run failed: {}",
+        String::from_utf8_lossy(&dry_run_env.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&dry_run_env.stdout).contains("--version"),
+        "unexpected env dry-run output:\n{}",
+        String::from_utf8_lossy(&dry_run_env.stdout)
+    );
+
+    let run_env = Command::new(incan_debug_binary())
+        .args(["env", "run", "unit", "probe"])
+        .current_dir(&project_dir)
+        .output()?;
+    assert!(
+        run_env.status.success(),
+        "env run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run_env.stdout),
+        String::from_utf8_lossy(&run_env.stderr)
+    );
+    assert!(String::from_utf8_lossy(&run_env.stdout).starts_with("incan "));
+    Ok(())
+}
+
+#[test]
+fn env_run_nested_incan_run_uses_dependency_overlay_override() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_root = tmp.path();
+    fs::create_dir_all(project_root.join("src"))?;
+    fs::write(
+        project_root.join("incan.toml"),
+        format!(
+            r#"[project]
+name = "env_overlay_exec"
+version = "0.1.0"
+
+[rust-dependencies.serde_json]
+version = "999.0.0"
+
+[tool.incan.envs.unit.scripts]
+run = ["{}", "run", "src/main.incn"]
+
+[tool.incan.envs.unit.rust-dependencies.serde_json]
+version = "1.0"
+"#,
+            incan_debug_binary().display()
+        ),
+    )?;
+    fs::write(
+        project_root.join("src/main.incn"),
+        r#"import rust::serde_json as json
+
+def main() -> None:
+  pass
+"#,
+    )?;
+
+    let bare_run = Command::new(incan_debug_binary())
+        .args(["run", "src/main.incn"])
+        .current_dir(project_root)
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+    assert!(
+        !bare_run.status.success(),
+        "plain run unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&bare_run.stdout),
+        String::from_utf8_lossy(&bare_run.stderr)
+    );
+    let bare_stderr = strip_ansi_escapes(&String::from_utf8_lossy(&bare_run.stderr));
+    assert!(
+        bare_stderr.contains("serde_json") && bare_stderr.contains("999.0.0"),
+        "expected invalid pinned dependency diagnostic, got:\n{}",
+        bare_stderr
+    );
+
+    let env_run = Command::new(incan_debug_binary())
+        .args(["env", "run", "unit", "run"])
+        .current_dir(project_root)
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+    assert!(
+        env_run.status.success(),
+        "env-backed nested run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&env_run.stdout),
+        String::from_utf8_lossy(&env_run.stderr)
+    );
+    let env_stderr = strip_ansi_escapes(&String::from_utf8_lossy(&env_run.stderr));
+    assert!(
+        !env_stderr.contains("999.0.0"),
+        "nested env-backed run should use the overlay manifest instead of the broken base pin, got:\n{}",
+        env_stderr
+    );
+    Ok(())
+}
+
+#[test]
+fn env_run_nested_incan_env_show_prefers_parent_project_override() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_root = tmp.path();
+    fs::create_dir_all(project_root.join("child"))?;
+    fs::write(
+        project_root.join("incan.toml"),
+        format!(
+            r#"[project]
+name = "parent_project"
+version = "0.1.0"
+
+[tool.incan.envs.unit]
+cwd = "child"
+env-vars = {{ PARENT = "1" }}
+
+[tool.incan.envs.unit.scripts]
+inspect = ["{}", "env", "show", "unit", "--format", "json"]
+"#,
+            incan_debug_binary().display()
+        ),
+    )?;
+    fs::write(
+        project_root.join("child/incan.toml"),
+        r#"[project]
+name = "child_project"
+version = "0.1.0"
+
+[tool.incan.envs.unit]
+env-vars = { CHILD = "1" }
+"#,
+    )?;
+
+    let bare_show = Command::new(incan_debug_binary())
+        .args(["env", "show", "unit", "--format", "json"])
+        .current_dir(project_root.join("child"))
+        .output()?;
+    assert!(
+        bare_show.status.success(),
+        "bare child env show failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&bare_show.stdout),
+        String::from_utf8_lossy(&bare_show.stderr)
+    );
+    let bare_json: serde_json::Value = serde_json::from_slice(&bare_show.stdout)?;
+    assert_eq!(bare_json["env_vars"]["CHILD"], "1");
+    assert!(bare_json["env_vars"].get("PARENT").is_none());
+
+    let env_show = Command::new(incan_debug_binary())
+        .args(["env", "run", "unit", "inspect"])
+        .current_dir(project_root)
+        .output()?;
+    assert!(
+        env_show.status.success(),
+        "env-backed nested env show failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&env_show.stdout),
+        String::from_utf8_lossy(&env_show.stderr)
+    );
+    let nested_json: serde_json::Value = serde_json::from_slice(&env_show.stdout)?;
+    assert_eq!(nested_json["env_vars"]["PARENT"], "1");
+    assert!(nested_json["env_vars"].get("CHILD").is_none());
+    Ok(())
 }
 
 #[test]
@@ -881,6 +1370,42 @@ def main() -> None:
         vec!["2", "2", "4", "1", "4"],
         "expected concatenated list output 2/2/4/1/4.\nstdout:\n{}",
         stdout
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_rfc016_loop_expression_runs() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def find_value(flag: bool) -> int:
+  return loop:
+    if flag:
+      break 42
+    break 7
+
+def main() -> None:
+  println(find_value(True))
+  println(find_value(False))
+"#;
+    let output = Command::new(incan_debug_binary())
+        .args(["run", "-c", source])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "expected loop expression program to run.\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    assert_eq!(
+        lines,
+        vec!["42", "7"],
+        "unexpected loop expression output.\nstdout:\n{stdout}"
     );
 
     Ok(())
@@ -1327,6 +1852,420 @@ def main() -> None:
         let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
         let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
         assert_eq!(lines, vec!["orders"], "unexpected clone(self)->Self output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_field_backed_by_value_method_args_do_not_require_user_clone_issue241()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+class Cursor:
+    def join(self, other: Self, on: bool) -> Self:
+        return Cursor()
+
+@derive(Clone)
+class Wrapper:
+    _cursor: Cursor
+
+    def merge(self, other: Self) -> Self:
+        return Wrapper(_cursor=self._cursor.join(other._cursor, true))
+
+def main() -> None:
+    left = Wrapper(_cursor=Cursor())
+    right = Wrapper(_cursor=Cursor())
+    _ = left.merge(right)
+    println("ok")
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "field-backed by-value method arg regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["ok"], "unexpected issue241 output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_issue241_generic_field_backed_method_args_infer_clone_bounds() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+class Cursor[T]:
+    value: T
+
+    def join(self, other: Self, on: bool) -> Self:
+        return self
+
+@derive(Clone)
+class Wrapper[T]:
+    _cursor: Cursor[T]
+
+    def merge(self, other: Self) -> Self:
+        return Wrapper(_cursor=self._cursor.join(other._cursor, true))
+
+def main() -> None:
+    left = Wrapper(_cursor=Cursor(value=1))
+    right = Wrapper(_cursor=Cursor(value=2))
+    println(left.merge(right)._cursor.value)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "generic issue241 regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["1"], "unexpected generic issue241 output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_returning_tuple_with_reused_field_materializes_owned_items() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+class Pred:
+    name: str
+
+@derive(Clone)
+class Node:
+    filter_predicate: Pred
+
+def pair(node: Node) -> tuple[Pred, Pred]:
+    return (node.filter_predicate, node.filter_predicate)
+
+def main() -> None:
+    left, right = pair(Node(filter_predicate=Pred(name="x")))
+    println(left.name)
+    println(right.name)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "tuple field reuse ownership regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["x", "x"], "unexpected tuple field reuse output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_generic_tuple_return_with_reused_field_infers_clone_bound() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+class Node[T]:
+    value: T
+
+def pair[T](node: Node[T]) -> tuple[T, T]:
+    return (node.value, node.value)
+
+def main() -> None:
+    left, right = pair(Node(value=1))
+    println(left)
+    println(right)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "generic tuple field reuse regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["1", "1"],
+            "unexpected generic tuple field reuse output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_incan_call_materializes_owned_value_from_box_as_ref() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from rust::std::boxed import Box
+
+@derive(Clone)
+class Node:
+    value: int
+
+def take(node: Node) -> int:
+    return node.value
+
+def from_box(child: Box[Node]) -> int:
+    return take(child.as_ref())
+
+def main() -> None:
+    println(from_box(Box.new(Node(value=4))))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "borrowed box as_ref call regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["4"], "unexpected box as_ref output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_generic_incan_call_materializes_owned_value_from_box_as_ref() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from rust::std::boxed import Box
+
+@derive(Clone)
+class Node[T]:
+    value: T
+
+def take[T](node: Node[T]) -> T:
+    return node.value
+
+def from_box[T](child: Box[Node[T]]) -> T:
+    return take(child.as_ref())
+
+def main() -> None:
+    println(from_box(Box.new(Node(value=4))))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "generic borrowed box as_ref call regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["4"], "unexpected generic box as_ref output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_match_on_shared_self_option_field_materializes_owned_scrutinee() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+pub class Node:
+    value: int
+
+@derive(Clone)
+pub class Wrapper:
+    child: Option[Node]
+
+    def read(self) -> int:
+        match self.child:
+            Some(child) => return child.value
+            None => return 0
+
+def main() -> None:
+    println(Wrapper(child=Some(Node(value=4))).read())
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "shared self option-field match regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["4"],
+            "unexpected shared self option-field match output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_match_on_shared_self_option_box_field_materializes_owned_scrutinee()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from rust::std::boxed import Box
+
+@derive(Clone)
+pub class Node:
+    value: int
+
+@derive(Clone)
+pub class Wrapper:
+    child: Option[Box[Node]]
+
+    def read(self) -> int:
+        match self.child:
+            Some(child) => return child.as_ref().value
+            None => return 0
+
+def main() -> None:
+    println(Wrapper(child=Some(Box.new(Node(value=4)))).read())
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "shared self option-box-field match regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["4"],
+            "unexpected shared self option-box-field match output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_generic_match_on_shared_self_option_field_infers_clone_bound() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+pub class Wrapper[T]:
+    child: Option[T]
+
+    def read_or(self, fallback: T) -> T:
+        match self.child:
+            Some(child) => return child
+            None => return fallback
+
+def main() -> None:
+    println(Wrapper(child=Some(4)).read_or(0))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "generic shared self option-field match regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["4"],
+            "unexpected generic shared self option-field match output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_trait_supertraits_runtime_with_backend_clone_bounds() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+trait Collection[T]:
+    def first(self) -> T: ...
+
+trait OrderedCollection[T] with Collection[T]:
+    def sorted(self) -> Self: ...
+
+model BoxedValue[T] with OrderedCollection:
+    value: T
+
+    def first(self) -> T:
+        return self.value
+
+    def sorted(self) -> Self:
+        return self
+
+def take_first(values: Collection[int]) -> int:
+    return values.first()
+
+def take_sorted(values: OrderedCollection[int]) -> OrderedCollection[int]:
+    return values.sorted()
+
+def main() -> None:
+    println(take_first(BoxedValue(value=1)))
+    println(take_sorted(BoxedValue(value=2)).first())
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "trait-supertrait ownership regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["1", "2"], "unexpected trait-supertrait output:\n{stdout}");
         Ok(())
     }
 
@@ -4693,6 +5632,44 @@ def main() -> None:\n  columns([\"orders_total\"])\n",
             String::from_utf8_lossy(&project_build.stdout),
             String::from_utf8_lossy(&project_build.stderr)
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_and_run_rfc049_if_let_while_let() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"rfc049_if_let_while_let\"\nversion = \"0.1.0\"\n",
+            "def maybe_double(opt: Option[int]) -> int:\n  if let Some(value) = opt:\n    return value * 2\n  return 0\n\n\
+def next_value(values: list[Option[int]], idx: int) -> Option[int]:\n  if idx < len(values):\n    return values[idx]\n  return None\n\n\
+def sum_values(values: list[Option[int]]) -> int:\n  mut idx = 0\n  mut total = 0\n  while let Some(value) = next_value(values, idx):\n    total = total + value\n    idx = idx + 1\n  return total\n\n\
+def main() -> None:\n  println(maybe_double(Some(21)))\n  println(maybe_double(None))\n  println(sum_values([Some(1), Some(2), None, Some(99)]))\n",
+        )?;
+
+        let out_dir = tmp.path().join("out");
+        let build_output = run_build(&main_path, &out_dir)?;
+        assert!(
+            build_output.status.success(),
+            "expected RFC 049 sample project to build successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
+
+        let run_output = Command::new(incan_bin_path())
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            run_output.status.success(),
+            "expected RFC 049 sample project to run successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&run_output.stdout),
+            String::from_utf8_lossy(&run_output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&run_output.stdout);
+        assert_eq!(stdout.lines().collect::<Vec<_>>(), vec!["42", "0", "3"]);
 
         Ok(())
     }

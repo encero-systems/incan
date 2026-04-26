@@ -10,6 +10,7 @@
 //! - `debug` — Debug commands (lex, parse, check, emit)
 //! - `format` — Source formatting
 //! - `init` — Project scaffolding
+//! - `lifecycle` — Project lifecycle commands (`version` and `env`)
 //! - `lock` — Lock file generation and resolution
 //! - `stdlib_loader` — RFC 023: Stdlib module loading for compilation
 
@@ -18,6 +19,7 @@ pub mod common;
 pub mod debug;
 pub mod format;
 pub mod init;
+pub mod lifecycle;
 pub mod lock;
 pub mod stdlib_loader;
 pub(crate) mod vocab_extraction;
@@ -28,6 +30,7 @@ pub use common::{collect_modules, read_source};
 pub use debug::{check_file, emit_rust, lex_file, parse_file};
 pub use format::format_files;
 pub use init::init_project;
+pub use lifecycle::{env_list, env_run, env_show, version_project};
 pub use lock::lock_project;
 
 // Crate-internal API (used by test_runner and other CLI modules)

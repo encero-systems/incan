@@ -18,17 +18,31 @@ fn test_collections() {
     let numbers = vec![1, 2, 3, 4, 5];
     let strings = vec!["a".to_string(), "b".to_string(), "c".to_string()];
     let matrix = vec![vec![1, 2], vec![3, 4]];
-    let simple_dict = [("a", 1), ("b", 2)].into_iter().collect::<HashMap<_, _>>();
-    let int_keys = [(1, "one"), (2, "two")].into_iter().collect::<HashMap<_, _>>();
+    let simple_dict = [("a".to_string(), 1), ("b".to_string(), 2)]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+    let int_keys = [(1, "one".to_string()), (2, "two".to_string())]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
     let nested = [
-        ("first", [("x", 1), ("y", 2)].into_iter().collect::<HashMap<_, _>>()),
-        ("second", [("x", 3), ("y", 4)].into_iter().collect::<HashMap<_, _>>()),
+        (
+            "first".to_string(),
+            [("x".to_string(), 1), ("y".to_string(), 2)]
+                .into_iter()
+                .collect::<HashMap<_, _>>(),
+        ),
+        (
+            "second".to_string(),
+            [("x".to_string(), 3), ("y".to_string(), 4)]
+                .into_iter()
+                .collect::<HashMap<_, _>>(),
+        ),
     ]
         .into_iter()
         .collect::<HashMap<_, _>>();
-    let pair = (1, "one");
+    let pair = (1, "one".to_string());
     let triple = (1, 2, 3);
-    let multiple = ("a", pair, "b", triple, 42);
+    let multiple = ("a".to_string(), pair, "b".to_string(), triple, 42);
     let first = *incan_stdlib::collections::list_get(&numbers, (0) as i64);
     let last = *incan_stdlib::collections::list_get(&numbers, (-1) as i64);
     let value = *incan_stdlib::collections::dict_get(

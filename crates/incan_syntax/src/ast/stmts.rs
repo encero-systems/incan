@@ -20,6 +20,8 @@ pub enum Statement {
     Return(Option<Spanned<Expr>>),
     /// `if expr: ... [else: ...]`
     If(IfStmt),
+    /// `loop: ...`
+    Loop(LoopStmt),
     /// `while expr: ...`
     While(WhileStmt),
     /// `for x in expr: ...`
@@ -28,8 +30,8 @@ pub enum Statement {
     Expr(Spanned<Expr>),
     /// `pass` or `...`
     Pass,
-    /// `break` - exit the innermost loop
-    Break,
+    /// `break` / `break expr` - exit the innermost loop, optionally producing a loop-expression value
+    Break(Option<Spanned<Expr>>),
     /// `continue` - skip to next iteration
     Continue,
     /// Compound assignment: `x += value`, `x -= value`, etc.
@@ -124,8 +126,34 @@ pub enum CompoundOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum Condition {
+    /// Ordinary boolean condition: `if expr:` / `while expr:`
+    Expr(Spanned<Expr>),
+    /// Pattern condition: `if let PATTERN = VALUE:` / `while let PATTERN = VALUE:`
+    Let {
+        pattern: Spanned<Pattern>,
+        value: Spanned<Expr>,
+    },
+}
+
+impl Condition {
+    /// Return the source span that covers the full control-flow condition.
+    ///
+    /// For `if let` / `while let`, this spans from the pattern start through the
+    /// scrutinee expression so downstream diagnostics and tooling can treat the
+    /// let-pattern condition as one surface unit.
+    #[must_use]
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Expr(expr) => expr.span,
+            Self::Let { pattern, value } => Span::new(pattern.span.start, value.span.end),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct IfStmt {
-    pub condition: Spanned<Expr>,
+    pub condition: Condition,
     pub then_body: Vec<Spanned<Statement>>,
     pub elif_branches: Vec<(Spanned<Expr>, Vec<Spanned<Statement>>)>,
     pub else_body: Option<Vec<Spanned<Statement>>>,
@@ -133,7 +161,12 @@ pub struct IfStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WhileStmt {
-    pub condition: Spanned<Expr>,
+    pub condition: Condition,
+    pub body: Vec<Spanned<Statement>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoopStmt {
     pub body: Vec<Spanned<Statement>>,
 }
 

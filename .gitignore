@@ -44,6 +44,8 @@ pnpm-debug.log*
 
 # Local AI agent instructions
 .claude/
+.agents/state/*
+!.agents/state/.gitkeep
 
 # MkDocs build output
 site/

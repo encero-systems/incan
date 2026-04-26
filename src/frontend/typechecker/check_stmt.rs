@@ -9,7 +9,7 @@ use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::{NumericTy, result_numeric_type};
 use incan_semantics_core::SurfaceStmtTypeCheck;
 
-use super::TypeChecker;
+use super::{LoopContextKind, TypeChecker};
 use crate::frontend::typechecker::helpers::{collection_type_id, ensure_bool_condition};
 
 impl TypeChecker {
@@ -29,6 +29,7 @@ impl TypeChecker {
             Statement::IndexAssignment(index_assign) => self.check_index_assignment(index_assign, stmt.span),
             Statement::Return(expr) => self.check_return(expr.as_ref(), stmt.span),
             Statement::If(if_stmt) => self.check_if_stmt(if_stmt),
+            Statement::Loop(loop_stmt) => self.check_loop_stmt(loop_stmt),
             Statement::While(while_stmt) => self.check_while_stmt(while_stmt),
             Statement::For(for_stmt) => self.check_for_stmt(for_stmt),
             Statement::VocabBlock(vocab_block) => {
@@ -45,8 +46,8 @@ impl TypeChecker {
                 self.check_expr(expr);
             }
             Statement::Pass => {}
-            Statement::Break => {}
-            Statement::Continue => {}
+            Statement::Break(value) => self.check_break_stmt(value.as_ref(), stmt.span),
+            Statement::Continue => self.check_continue_stmt(stmt.span),
             Statement::CompoundAssignment(compound) => {
                 // Check that the variable exists and is mutable (search all scopes)
                 let var_info_opt = self
@@ -537,15 +538,7 @@ impl TypeChecker {
     }
 
     fn check_if_stmt(&mut self, if_stmt: &IfStmt) {
-        let cond_ty = self.check_expr(&if_stmt.condition);
-        let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
-        ensure_bool_condition(&cond_ty, if_stmt.condition.span, is_compatible, &mut self.errors);
-
-        self.symbols.enter_scope(ScopeKind::Block);
-        for stmt in &if_stmt.then_body {
-            self.check_statement(stmt);
-        }
-        self.symbols.exit_scope();
+        self.check_condition_body(&if_stmt.condition, &if_stmt.then_body);
 
         for (elif_cond, elif_body) in &if_stmt.elif_branches {
             let elif_cond_ty = self.check_expr(elif_cond);
@@ -569,14 +562,47 @@ impl TypeChecker {
     }
 
     fn check_while_stmt(&mut self, while_stmt: &WhileStmt) {
-        let cond_ty = self.check_expr(&while_stmt.condition);
-        let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
-        ensure_bool_condition(&cond_ty, while_stmt.condition.span, is_compatible, &mut self.errors);
+        match &while_stmt.condition {
+            // ---- Context: ordinary boolean `while` condition ----
+            Condition::Expr(expr) => {
+                let cond_ty = self.check_expr(expr);
+                let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
+                ensure_bool_condition(&cond_ty, expr.span, is_compatible, &mut self.errors);
 
+                self.symbols.enter_scope(ScopeKind::Block);
+                self.push_loop_context(LoopContextKind::Statement, None);
+                for stmt in &while_stmt.body {
+                    self.check_statement(stmt);
+                }
+                let _ = self.pop_loop_context();
+                self.symbols.exit_scope();
+            }
+            // ---- Context: pattern-driven `while let` loop ----
+            Condition::Let { pattern, value } => {
+                let value_ty = self.check_expr(value);
+                self.symbols.enter_scope(ScopeKind::Block);
+                self.check_pattern(pattern, &value_ty);
+                self.push_loop_context(LoopContextKind::Statement, None);
+                for stmt in &while_stmt.body {
+                    self.check_statement(stmt);
+                }
+                let _ = self.pop_loop_context();
+                self.symbols.exit_scope();
+            }
+        }
+    }
+
+    /// Type-check a statement-form `loop:` body.
+    ///
+    /// Statement loops share the same loop context stack as `for` / `while`, but they do not accept `break <value>`
+    /// because no surrounding expression consumes a result.
+    fn check_loop_stmt(&mut self, loop_stmt: &LoopStmt) {
         self.symbols.enter_scope(ScopeKind::Block);
-        for stmt in &while_stmt.body {
+        self.push_loop_context(LoopContextKind::Statement, None);
+        for stmt in &loop_stmt.body {
             self.check_statement(stmt);
         }
+        let _ = self.pop_loop_context();
         self.symbols.exit_scope();
     }
 
@@ -588,11 +614,64 @@ impl TypeChecker {
 
         self.symbols.enter_scope(ScopeKind::Block);
         self.define_for_pattern_bindings(&for_stmt.pattern, &elem_ty);
+        self.push_loop_context(LoopContextKind::Statement, None);
 
         for stmt in &for_stmt.body {
             self.check_statement(stmt);
         }
+        let _ = self.pop_loop_context();
         self.symbols.exit_scope();
+    }
+
+    /// Validate a `break` statement against the innermost active loop context.
+    ///
+    /// For expression-form `loop:` bodies this records the break value type so the loop result can be resolved after
+    /// the body finishes checking. For statement loops it rejects `break <value>` while still type-checking the
+    /// provided expression to surface any nested errors.
+    fn check_break_stmt(&mut self, value: Option<&Spanned<Expr>>, span: Span) {
+        let Some((loop_kind, expected_break_ty)) = self
+            .loop_stack
+            .last()
+            .map(|ctx| (ctx.kind, ctx.expected_break_ty.clone()))
+        else {
+            if let Some(value) = value {
+                self.check_expr(value);
+            }
+            self.errors.push(errors::break_outside_loop(span));
+            return;
+        };
+
+        let break_ty = match (loop_kind, value) {
+            (LoopContextKind::Statement, Some(value)) => {
+                let value_ty = self.check_expr(value);
+                self.errors
+                    .push(errors::break_value_requires_loop_expression(value.span));
+                Some((value_ty, value.span))
+            }
+            (LoopContextKind::Statement, None) => None,
+            (LoopContextKind::Expression, Some(value)) => {
+                let value_ty = if let Some(expected) = expected_break_ty.as_ref() {
+                    self.check_expr_with_expected(value, Some(expected))
+                } else {
+                    self.check_expr(value)
+                };
+                Some((value_ty, value.span))
+            }
+            (LoopContextKind::Expression, None) => Some((ResolvedType::Unit, span)),
+        };
+
+        if let Some(break_ty) = break_ty
+            && let Some(loop_ctx) = self.current_loop_context_mut()
+        {
+            loop_ctx.break_types.push(break_ty);
+        }
+    }
+
+    /// Validate that `continue` appears inside some active loop context.
+    fn check_continue_stmt(&mut self, span: Span) {
+        if self.loop_stack.is_empty() {
+            self.errors.push(errors::continue_outside_loop(span));
+        }
     }
 
     /// Define loop-scope bindings introduced by a `for` header pattern.
@@ -640,6 +719,31 @@ impl TypeChecker {
                     &format!("{:?}", pattern.node),
                     pattern.span,
                 ));
+            }
+        }
+    }
+
+    fn check_condition_body(&mut self, condition: &Condition, body: &[Spanned<Statement>]) {
+        match condition {
+            Condition::Expr(expr) => {
+                let cond_ty = self.check_expr(expr);
+                let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
+                ensure_bool_condition(&cond_ty, expr.span, is_compatible, &mut self.errors);
+
+                self.symbols.enter_scope(ScopeKind::Block);
+                for stmt in body {
+                    self.check_statement(stmt);
+                }
+                self.symbols.exit_scope();
+            }
+            Condition::Let { pattern, value } => {
+                let value_ty = self.check_expr(value);
+                self.symbols.enter_scope(ScopeKind::Block);
+                self.check_pattern(pattern, &value_ty);
+                for stmt in body {
+                    self.check_statement(stmt);
+                }
+                self.symbols.exit_scope();
             }
         }
     }

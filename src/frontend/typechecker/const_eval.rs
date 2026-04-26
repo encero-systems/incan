@@ -648,6 +648,7 @@ impl TypeChecker {
             | Expr::DictComp(_)
             | Expr::Match(_, _)
             | Expr::If(_)
+            | Expr::Loop(_)
             | Expr::Closure(_, _)
             | Expr::Yield(_)
             | Expr::Range { .. }

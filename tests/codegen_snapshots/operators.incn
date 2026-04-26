@@ -28,6 +28,13 @@ def test_operators() -> None:
     # Compound expressions
     complex: int = (1 + 2) * (3 - 4)
 
+    # String membership probes should work against owned list/set storage
+    words: list[str] = ["alpha", "beta"]
+    has_alpha: bool = "alpha" in words
+    vowels = {"a", "e", "i"}
+    has_a: bool = "a" in vowels
+    lacks_z: bool = "z" not in vowels
+
 
 def main() -> None:
     test_operators()

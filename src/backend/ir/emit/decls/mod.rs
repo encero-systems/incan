@@ -26,9 +26,9 @@ use quote::{format_ident, quote};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::stdlib;
 
-use super::super::conversions::{ConversionContext, determine_conversion};
 use super::super::decl::{IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier};
 use super::super::expr::IrExprKind;
+use super::super::ownership::{ValueUseSite, plan_value_use};
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
 
@@ -107,8 +107,8 @@ impl<'a> IrEmitter<'a> {
         let emitted_value = self.emit_expr(value);
         self.in_static_initializer.replace(previous);
         let emitted_value = emitted_value?;
-        let conversion = determine_conversion(value, Some(ty), ConversionContext::Assignment);
-        let converted_value = conversion.apply(emitted_value);
+        let converted_value =
+            plan_value_use(value, ValueUseSite::Assignment { target_ty: Some(ty) }).apply(emitted_value);
 
         Ok(quote! {
             #vis static #name_ident: std::sync::LazyLock<incan_stdlib::storage::StaticCell<#ty_tokens>> =

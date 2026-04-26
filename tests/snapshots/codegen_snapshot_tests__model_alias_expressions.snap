@@ -77,10 +77,10 @@ fn create_account() -> Account {
     };
 }
 fn get_type(a: Account) -> String {
-    return a.type_;
+    return a.type_.clone();
 }
 fn get_class(a: Account) -> String {
-    return a.class_;
+    return a.class_.clone();
 }
 fn describe_account(a: Account) -> String {
     match a {
@@ -96,7 +96,7 @@ fn describe_account(a: Account) -> String {
     };
 }
 fn mixed_access(a: Account) -> String {
-    let t = a.type_;
+    let t = a.type_.clone();
     let n = a.name;
     return {
         let __parts: [&str; 3usize] = ["", ": ", ""];

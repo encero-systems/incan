@@ -7,8 +7,8 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashSet;
 
-use super::super::conversions::{ConversionContext, determine_conversion};
 use super::super::expr::{IrExprKind, Pattern, TypedExpr};
+use super::super::ownership::{ValueUseSite, plan_for_loop_iteration, plan_value_use};
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::IrType;
 use super::super::types::Mutability;
@@ -56,6 +56,7 @@ fn for_body_needs_mut_iteration(pattern: &Pattern, body: &[IrStmt]) -> bool {
                 stmts.iter().any(|s| stmt_mutates_var(s, var))
                     || value.as_ref().is_some_and(|v| expr_contains_mutation(v, var))
             }
+            IrExprKind::Loop { body } => body.iter().any(|stmt| stmt_mutates_var(stmt, var)),
             _ => false,
         }
     }
@@ -79,6 +80,9 @@ fn for_body_needs_mut_iteration(pattern: &Pattern, body: &[IrStmt]) -> bool {
             IrStmtKind::Loop { body, .. } => body.iter().any(|s| stmt_mutates_var(s, var)),
             IrStmtKind::Block(stmts) => stmts.iter().any(|s| stmt_mutates_var(s, var)),
             IrStmtKind::Match { arms, .. } => arms.iter().any(|arm| expr_contains_mutation(&arm.body, var)),
+            IrStmtKind::Break { label: _, value } => {
+                value.as_ref().is_some_and(|value| expr_contains_mutation(value, var))
+            }
             _ => false,
         }
     }
@@ -332,7 +336,7 @@ fn stmt_mutates_storage_binding(stmt: &IrStmt, names: &mut HashSet<String>) {
         }
         // ---- Context: terminal/unsupported statement kinds ----
         IrStmtKind::Return(None)
-        | IrStmtKind::Break(_)
+        | IrStmtKind::Break { label: _, value: _ }
         | IrStmtKind::Continue(_)
         | IrStmtKind::CompoundAssign { .. } => {}
     }
@@ -489,10 +493,7 @@ impl<'a> IrEmitter<'a> {
             } => {
                 let n = Self::rust_ident(name);
                 let v = self.emit_assignment_value(value, Some(ty))?;
-
-                // Apply conversion if needed based on variable type
-                let conversion = determine_conversion(value, Some(ty), ConversionContext::Assignment);
-                let converted_v = conversion.apply(v);
+                let converted_v = plan_value_use(value, ValueUseSite::Assignment { target_ty: Some(ty) }).apply(v);
 
                 let needs_mut = matches!(mutability, Mutability::Mutable)
                     || matches!(value.kind, IrExprKind::StaticBinding { .. })
@@ -535,8 +536,24 @@ impl<'a> IrEmitter<'a> {
                     && matches!(&object.ty, IrType::Dict(_, _) | IrType::Unknown)
                 {
                     let o = self.emit_expr(object)?;
-                    let k = self.emit_expr(index)?;
-                    let v = self.emit_assignment_value(value, None)?;
+                    let (key_target_ty, value_target_ty) = match &object.ty {
+                        IrType::Dict(key_ty, value_ty) => (Some(key_ty.as_ref()), Some(value_ty.as_ref())),
+                        _ => (None, None),
+                    };
+                    let k = self.emit_expr_for_use(
+                        index,
+                        ValueUseSite::CollectionElement {
+                            target_ty: key_target_ty,
+                        },
+                    )?;
+                    let v = self.emit_assignment_value(value, value_target_ty)?;
+                    let v = plan_value_use(
+                        value,
+                        ValueUseSite::CollectionElement {
+                            target_ty: value_target_ty,
+                        },
+                    )
+                    .apply(v);
                     return Ok(quote! { #o.insert(#k, #v); });
                 }
                 let t = self.emit_assign_target(target)?;
@@ -546,24 +563,36 @@ impl<'a> IrEmitter<'a> {
             IrStmtKind::Return(Some(expr)) => {
                 // Set return context so function calls inside can use move semantics
                 *self.in_return_context.borrow_mut() = true;
-                let e = self.emit_expr(expr)?;
-                *self.in_return_context.borrow_mut() = false;
-
-                // Apply conversion if needed based on function return type
                 let converted = if let Some(return_type) = self.current_function_return_type.borrow().as_ref() {
-                    let conversion = determine_conversion(expr, Some(return_type), ConversionContext::ReturnValue);
-                    conversion.apply(e)
+                    self.emit_expr_for_use(
+                        expr,
+                        ValueUseSite::ReturnValue {
+                            target_ty: Some(return_type),
+                        },
+                    )?
                 } else {
-                    e
+                    self.emit_expr(expr)?
                 };
+                *self.in_return_context.borrow_mut() = false;
 
                 Ok(quote! { return #converted; })
             }
             IrStmtKind::Return(None) => Ok(quote! { return; }),
-            IrStmtKind::Break(label) => {
+            IrStmtKind::Break { label, value } => {
+                let break_value = if let Some(value) = value {
+                    Some(self.emit_expr(value)?)
+                } else {
+                    None
+                };
                 if let Some(l) = label {
                     let label_lifetime = syn::Lifetime::new(&format!("'{}", l), proc_macro2::Span::call_site());
-                    Ok(quote! { break #label_lifetime; })
+                    if let Some(value) = break_value {
+                        Ok(quote! { break #label_lifetime #value; })
+                    } else {
+                        Ok(quote! { break #label_lifetime; })
+                    }
+                } else if let Some(value) = break_value {
+                    Ok(quote! { break #value; })
                 } else {
                     Ok(quote! { break; })
                 }
@@ -615,79 +644,21 @@ impl<'a> IrEmitter<'a> {
                     &iterable.kind,
                     IrExprKind::Var { .. } | IrExprKind::Field { .. } | IrExprKind::Index { .. }
                 );
-                let iter_expr = match &iterable.ty {
-                    // If the iterable is a mutable reference to a collection, use .iter_mut() for non-Copy types
-                    IrType::RefMut(inner) => {
-                        match inner.as_ref() {
-                            IrType::List(elem_ty) => {
-                                // For primitive types, use .iter().copied() to get values
-                                // For non-Copy types (structs), use .iter_mut() to allow mutation
-                                match elem_ty.as_ref() {
-                                    IrType::Int | IrType::Float | IrType::Bool => {
-                                        quote! { #iter.iter().copied() }
-                                    }
-                                    _ => quote! { #iter.iter_mut() },
-                                }
-                            }
-                            IrType::Set(_) | IrType::Dict(_, _) => {
-                                quote! { #iter.iter_mut() }
-                            }
-                            _ => quote! { #iter },
-                        }
-                    }
-                    // If the iterable is an immutable reference, use .iter()
-                    IrType::Ref(inner) => match inner.as_ref() {
-                        IrType::List(elem_ty) => match elem_ty.as_ref() {
-                            IrType::Int | IrType::Float | IrType::Bool => {
-                                quote! { #iter.iter().copied() }
-                            }
-                            // Imported enums lower to nominal `Struct(name)` types in consumer modules, so rely on
-                            // centralized enum metadata instead of local declaration shape.
-                            e if self.type_is_user_enum(e) => quote! { #iter.iter().cloned() },
-                            _ => quote! { #iter.iter() },
-                        },
-                        IrType::Set(_) | IrType::Dict(_, _) => {
-                            quote! { #iter.iter() }
-                        }
-                        _ => quote! { #iter },
+                let item_is_user_enum = match &iterable.ty {
+                    IrType::Ref(inner) | IrType::RefMut(inner) => match inner.as_ref() {
+                        IrType::List(elem_ty) => self.type_is_user_enum(elem_ty),
+                        _ => false,
                     },
-                    IrType::List(elem_ty) => {
-                        // If it's a borrowable lvalue (var/field/index), iterate by reference to avoid moving.
-                        if iterable_is_borrowable_lvalue {
-                            // For primitive types, use .iter().copied() to avoid reference issues
-                            match elem_ty.as_ref() {
-                                IrType::Int | IrType::Float | IrType::Bool => {
-                                    quote! { #iter.iter().copied() }
-                                }
-                                e if self.type_is_user_enum(e) => {
-                                    if needs_mut_items {
-                                        quote! { #iter.iter_mut() }
-                                    } else {
-                                        quote! { #iter.iter().cloned() }
-                                    }
-                                }
-                                // For non-Copy types (structs), use .iter_mut() to allow mutation
-                                _ => {
-                                    if needs_mut_items {
-                                        quote! { #iter.iter_mut() }
-                                    } else {
-                                        quote! { #iter.iter() }
-                                    }
-                                }
-                            }
-                        } else {
-                            quote! { #iter }
-                        }
-                    }
-                    IrType::Set(_) | IrType::Dict(_, _) => {
-                        if iterable_is_borrowable_lvalue {
-                            quote! { &#iter }
-                        } else {
-                            quote! { #iter }
-                        }
-                    }
-                    _ => quote! { #iter },
+                    IrType::List(elem_ty) => self.type_is_user_enum(elem_ty),
+                    _ => false,
                 };
+                let iter_plan = plan_for_loop_iteration(
+                    &iterable.ty,
+                    iterable_is_borrowable_lvalue,
+                    needs_mut_items,
+                    item_is_user_enum,
+                );
+                let iter_expr = iter_plan.apply(iter);
                 Ok(quote! {
                     for #pat in #iter_expr {
                         #(#body_stmts)*
@@ -727,7 +698,12 @@ impl<'a> IrEmitter<'a> {
                 }
             }
             IrStmtKind::Match { scrutinee, arms } => {
-                let scrut = self.emit_expr(scrutinee)?;
+                let scrut = self.emit_expr_for_use(
+                    scrutinee,
+                    ValueUseSite::MatchScrutinee {
+                        target_ty: Some(&scrutinee.ty),
+                    },
+                )?;
                 let arm_tokens: Vec<TokenStream> = arms
                     .iter()
                     .map(|arm| {

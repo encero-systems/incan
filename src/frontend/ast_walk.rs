@@ -23,7 +23,7 @@
 //! - import-path traversal
 
 use crate::frontend::ast::{
-    CallArg, Declaration, DecoratorArg, DecoratorArgValue, Expr, MatchBody, Program, Spanned, Statement,
+    CallArg, Condition, Declaration, DecoratorArg, DecoratorArgValue, Expr, MatchBody, Program, Spanned, Statement,
 };
 
 /// Returns `true` if any expression in `program` satisfies `pred`.
@@ -196,7 +196,7 @@ where
 
         // ---- Context: control-flow statements ----
         Statement::If(s) => {
-            if expr_has(&s.condition.node, pred) || any_expr_in_body_impl(&s.then_body, pred) {
+            if condition_has_expr(&s.condition, pred) || any_expr_in_body_impl(&s.then_body, pred) {
                 return true;
             }
 
@@ -210,10 +210,21 @@ where
                 .as_ref()
                 .is_some_and(|else_body| any_expr_in_body_impl(else_body, pred))
         }
-        Statement::While(s) => expr_has(&s.condition.node, pred) || any_expr_in_body_impl(&s.body, pred),
+        Statement::Loop(s) => any_expr_in_body_impl(&s.body, pred),
+        Statement::While(s) => condition_has_expr(&s.condition, pred) || any_expr_in_body_impl(&s.body, pred),
         Statement::For(s) => expr_has(&s.iter.node, pred) || any_expr_in_body_impl(&s.body, pred),
+        Statement::Break(Some(expr)) => expr_has(&expr.node, pred),
+        Statement::Return(None) | Statement::Break(None) | Statement::Pass | Statement::Continue => false,
+    }
+}
 
-        Statement::Return(None) | Statement::Pass | Statement::Break | Statement::Continue => false,
+fn condition_has_expr<F>(condition: &Condition, pred: &mut F) -> bool
+where
+    F: FnMut(&Expr) -> bool,
+{
+    match condition {
+        Condition::Expr(expr) => expr_has(&expr.node, pred),
+        Condition::Let { value, .. } => expr_has(&value.node, pred),
     }
 }
 
@@ -287,6 +298,7 @@ where
                     .as_ref()
                     .is_some_and(|else_body| any_expr_in_body_impl(else_body, pred))
         }
+        Expr::Loop(loop_expr) => any_expr_in_body_impl(&loop_expr.body, pred),
         Expr::ListComp(comp) => {
             expr_has(&comp.expr.node, pred)
                 || expr_has(&comp.iter.node, pred)

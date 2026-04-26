@@ -624,7 +624,10 @@ fn main() {
     let student = StudentData {
         name: "Bob".to_string(),
         grades: vec![85, 90, 88, 92],
-        metadata: [("school", "MIT"), ("year", "2024")]
+        metadata: [
+            ("school".to_string(), "MIT".to_string()),
+            ("year".to_string(), "2024".to_string()),
+        ]
             .into_iter()
             .collect::<HashMap<_, _>>(),
     };

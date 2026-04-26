@@ -5,11 +5,9 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use super::super::super::conversions::{
-    BinOpEmitKind, ConversionContext, determine_binop_plan, determine_conversion_for_incan_call,
-    incan_mutable_param_passed_as_rust_mut_ref,
-};
+use super::super::super::conversions::{BinOpEmitKind, determine_binop_plan};
 use super::super::super::expr::{BinOp, IrCallArg, IrExprKind, TypedExpr, VarAccess, VarRefKind};
+use super::super::super::ownership::{ValueUseSite, incan_call_arg_needs_rust_mut_borrow, plan_value_use};
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 use incan_core::lang::stdlib;
@@ -449,24 +447,27 @@ impl<'a> IrEmitter<'a> {
 
                 // Determine conversion context based on whether this is an Incan or Rust function
                 let in_return = *self.in_return_context.borrow();
-                let context = if let IrExprKind::Var { name, ref_kind, .. } = &func.kind {
+                let use_site = if let IrExprKind::Var { name, ref_kind, .. } = &func.kind {
                     if matches!(ref_kind, VarRefKind::ExternalRustName) || self.external_rust_functions.contains(name) {
-                        ConversionContext::ExternalFunctionArg
-                    } else if in_return {
-                        ConversionContext::IncanFunctionArgInReturn
+                        ValueUseSite::ExternalCallArg { target_ty }
                     } else {
-                        ConversionContext::IncanFunctionArg
+                        ValueUseSite::IncanCallArg {
+                            target_ty,
+                            callee_param: sig_param,
+                            in_return,
+                        }
                     }
-                } else if in_return {
-                    ConversionContext::IncanFunctionArgInReturn
                 } else {
-                    ConversionContext::IncanFunctionArg
+                    ValueUseSite::IncanCallArg {
+                        target_ty,
+                        callee_param: sig_param,
+                        in_return,
+                    }
                 };
 
-                let conversion = determine_conversion_for_incan_call(a, target_ty, context, sig_param);
-                let mut tokens = conversion.apply(emitted);
+                let mut tokens = plan_value_use(a, use_site).apply(emitted);
                 if let Some(param) = sig_param
-                    && incan_mutable_param_passed_as_rust_mut_ref(param)
+                    && incan_call_arg_needs_rust_mut_borrow(param)
                 {
                     match &a.ty {
                         IrType::Ref(_) | IrType::RefMut(_) => {}

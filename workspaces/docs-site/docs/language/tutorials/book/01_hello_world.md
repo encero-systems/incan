@@ -34,6 +34,35 @@ If you used the no-install fallback:
 ./target/release/incan run hello.incn
 ```
 
+## When to make it a project
+
+A single `hello.incn` file is the fastest way to try the language. Once you want tests, dependencies, a stable source root, release metadata, or repeatable project commands, create an Incan project. This is easy to do using the incan cli:
+
+```bash
+mkdir hello_project
+cd hello_project
+incan init --name hello_project --yes
+```
+
+This creates `incan.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. The manifest is the project metadata file; it names the project, records the project version, and declares the default entry point under `[project.scripts]`.
+
+```toml title="incan.toml"
+[project]
+name = "hello_project"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+```
+
+Run the project entry point:
+
+```bash
+incan run
+```
+
+For the full lifecycle workflow, see [Project lifecycle](../../how-to/project_lifecycle.md).
+
 ## Try it
 
 1. Change the message you print.
