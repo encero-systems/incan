@@ -557,6 +557,80 @@ impl TypeChecker {
             .collect()
     }
 
+    /// Return whether a callee base expression names an enum type for static helper calls.
+    fn is_enum_type_name_expr_for_call(&self, expr: &Spanned<Expr>) -> bool {
+        let Expr::Ident(name) = &expr.node else {
+            return false;
+        };
+        self.lookup_symbol(name)
+            .is_some_and(|sym| matches!(sym.kind, SymbolKind::Type(TypeInfo::Enum(_))))
+    }
+
+    /// Typecheck `Enum.from_value(...)` against the value enum backing type.
+    fn check_value_enum_from_value_call(
+        &mut self,
+        enum_name: &str,
+        value_enum: &ValueEnumInfo,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) -> ResolvedType {
+        if !type_args.is_empty() {
+            self.errors
+                .push(errors::explicit_call_site_type_args_not_supported(span));
+        }
+
+        let expected = value_enum.value_type.resolved_type();
+        let params = vec![("value".to_string(), expected.clone())];
+        let arg_types = self.check_call_arg_types_for_params(args, &params);
+        if args.len() != 1 {
+            self.errors.push(errors::builtin_arity(
+                &format!("{enum_name}.from_value()"),
+                1,
+                args.len(),
+                span,
+            ));
+            return ResolvedType::Unknown;
+        }
+        if let Some((arg_ty, arg)) = arg_types.first().zip(args.first()) {
+            let expr = Self::call_arg_expr(arg);
+            if !self.types_compatible(arg_ty, &expected) {
+                self.errors.push(errors::type_mismatch(
+                    &expected.to_string(),
+                    &arg_ty.to_string(),
+                    expr.span,
+                ));
+            }
+        }
+        option_ty(ResolvedType::Named(enum_name.to_string()))
+    }
+
+    /// Typecheck `value()` calls on value enum instances.
+    fn check_value_enum_value_call(
+        &mut self,
+        enum_name: &str,
+        value_enum: &ValueEnumInfo,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) -> ResolvedType {
+        if !type_args.is_empty() {
+            self.errors
+                .push(errors::explicit_call_site_type_args_not_supported(span));
+        }
+        self.check_call_args(args);
+        if !args.is_empty() {
+            self.errors.push(errors::builtin_arity(
+                &format!("{enum_name}.value()"),
+                0,
+                args.len(),
+                span,
+            ));
+            return ResolvedType::Unknown;
+        }
+        value_enum.value_type.resolved_type()
+    }
+
     /// Compute the constructor result surface type for a known type symbol.
     ///
     /// Generic constructors return a placeholder `Generic(Name, Unknown...)` so call sites can continue
@@ -1703,11 +1777,23 @@ impl TypeChecker {
         // If callee is a field access where the base resolves to a known enum type
         // and the field name matches a variant, treat this as a constructor and
         // return the enum type.
-        if let Expr::Field(base, variant_name) = &callee.node {
+        if let Expr::Field(base, member_name) = &callee.node {
             let base_ty = self.check_expr(base);
+            let base_is_enum_type_name = self.is_enum_type_name_expr_for_call(base);
             if let ResolvedType::Named(enum_name) = &base_ty
                 && let Some(TypeInfo::Enum(enum_info)) = self.lookup_type_info(enum_name)
-                && enum_info.variants.iter().any(|v| v == variant_name)
+                && let Some(value_enum) = enum_info.value_enum.clone()
+            {
+                if member_name == "from_value" && base_is_enum_type_name {
+                    return self.check_value_enum_from_value_call(enum_name, &value_enum, type_args, args, span);
+                }
+                if member_name == "value" && !base_is_enum_type_name {
+                    return self.check_value_enum_value_call(enum_name, &value_enum, type_args, args, span);
+                }
+            }
+            if let ResolvedType::Named(enum_name) = &base_ty
+                && let Some(TypeInfo::Enum(enum_info)) = self.lookup_type_info(enum_name)
+                && enum_info.variants.iter().any(|v| v == member_name)
             {
                 if !type_args.is_empty() {
                     self.errors

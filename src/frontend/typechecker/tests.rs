@@ -7,9 +7,9 @@ use crate::frontend::library_manifest_index::{
 };
 use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
-    ClassExport, ConstExport, EnumExport, EnumVariantExport, FunctionExport, LibraryExports, LibraryManifest,
-    MethodExport, ModelExport, ParamExport, ReceiverExport, StaticExport, TraitExport, TypeBoundExport,
-    TypeParamExport, TypeRef,
+    ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport, FunctionExport,
+    LibraryExports, LibraryManifest, MethodExport, ModelExport, ParamExport, ReceiverExport, StaticExport, TraitExport,
+    TypeBoundExport, TypeParamExport, TypeRef,
 };
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig, write_borrowed_param_probe_crate, write_substrait_probe_crate};
@@ -180,14 +180,17 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
             enums: vec![EnumExport {
                 name: "Status".to_string(),
                 type_params: Vec::new(),
+                value_type: Some(EnumValueTypeExport::Str),
                 variants: vec![
                     EnumVariantExport {
                         name: "Active".to_string(),
                         fields: Vec::new(),
+                        value: Some(EnumValueExport::Str("active".to_string())),
                     },
                     EnumVariantExport {
                         name: "Disabled".to_string(),
                         fields: Vec::new(),
+                        value: Some(EnumValueExport::Str("disabled".to_string())),
                     },
                 ],
                 derives: Vec::new(),
@@ -4484,6 +4487,167 @@ enum Color:
     assert!(check_str(source).is_ok());
 }
 
+#[test]
+fn test_value_enum_str_generated_surface_typechecks() {
+    let source = r#"
+enum Env(str):
+  Dev = "development"
+  Prod = "production"
+
+def raw(env: Env) -> str:
+  return env.value()
+
+def parse() -> Option[Env]:
+  return Env.from_value("production")
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_value_enum_int_generated_surface_typechecks() {
+    let source = r#"
+enum HttpStatus(int):
+  Ok = 200
+  NotFound = 404
+
+def raw(status: HttpStatus) -> int:
+  return status.value()
+
+def parse() -> Option[HttpStatus]:
+  return HttpStatus.from_value(404)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_value_enum_duplicate_raw_values_rejected() {
+    let source = r#"
+enum Env(str):
+  Dev = "local"
+  Local = "local"
+"#;
+    let errs = check_str_err(source, "duplicate value enum raw values should fail");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Duplicate value enum value") && e.message.contains("Dev")),
+        "expected duplicate value enum diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_value_enum_generated_names_reserved() {
+    let source = r#"
+enum Env(str):
+  value = "value"
+  Prod = "production"
+"#;
+    let errs = check_str_err(source, "generated value enum helper names should be reserved");
+    assert!(
+        errs.iter().any(|e| e.message.contains("generated member name 'value'")),
+        "expected reserved generated member diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_value_enum_type_params_rejected() {
+    let source = r#"
+enum Box[T](str):
+  Value = "value"
+"#;
+    let errs = check_str_err(source, "generic value enum should be rejected");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("cannot declare type parameters")),
+        "expected generic value enum diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_value_enum_from_value_argument_type_checked() {
+    let source = r#"
+enum Env(str):
+  Dev = "development"
+
+def parse() -> Option[Env]:
+  return Env.from_value(1)
+"#;
+    let errs = check_str_err(source, "from_value should require the value enum backing type");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("expected 'str'") && e.message.contains("found 'int'")),
+        "expected from_value argument type mismatch, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_value_enum_from_value_arity_checked() {
+    let source = r#"
+enum Env(str):
+  Dev = "development"
+
+def parse() -> Option[Env]:
+  return Env.from_value()
+"#;
+    let errs = check_str_err(source, "from_value should require one argument");
+    assert!(
+        errs.iter().any(|e| e.message.contains("expects 1 argument")),
+        "expected from_value arity diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_value_enum_value_arity_checked() {
+    let source = r#"
+enum Env(str):
+  Dev = "development"
+
+def raw(env: Env) -> str:
+  return env.value(1)
+"#;
+    let errs = check_str_err(source, "value should not accept arguments");
+    assert!(
+        errs.iter().any(|e| e.message.contains("expects 0 argument")),
+        "expected value arity diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_value_enum_from_value_requires_type_receiver() {
+    let source = r#"
+enum Env(str):
+  Dev = "development"
+
+def parse(env: Env) -> Option[Env]:
+  return env.from_value("development")
+"#;
+    let errs = check_str_err(source, "from_value should require an enum type receiver");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("from_value") || e.message.contains("Unknown")),
+        "expected receiver-shape diagnostic for from_value, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_value_enum_remains_distinct_from_primitive() {
+    let source = r#"
+enum Env(str):
+  Dev = "development"
+
+def raw(env: Env) -> str:
+  return env
+"#;
+    let errs = check_str_err(
+        source,
+        "value enum should not be assignable to its backing primitive type",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("expected 'str'") && e.message.contains("found 'Env'")),
+        "expected nominal value enum mismatch, got {errs:?}"
+    );
+}
+
 // ========================================
 // Option and Result
 // ========================================
@@ -6134,6 +6298,24 @@ def current() -> Status:
     assert!(
         result.is_ok(),
         "expected enum variant pub import to typecheck, got: {result:?}"
+    );
+}
+
+#[test]
+fn test_pub_import_value_enum_generated_surface_typechecks() {
+    let source = r#"
+from pub::mylib import Status
+
+def current_raw(status: Status) -> str:
+  return status.value()
+
+def parse() -> Option[Status]:
+  return Status.from_value("active")
+"#;
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    assert!(
+        result.is_ok(),
+        "expected imported value enum generated helpers to typecheck, got: {result:?}"
     );
 }
 

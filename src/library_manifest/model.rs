@@ -12,7 +12,7 @@ use crate::frontend::library_exports::{
     CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport, CheckedStaticExport, CheckedTraitExport,
     CheckedTypeAliasExport, CheckedTypeBound, CheckedTypeParam,
 };
-use crate::frontend::symbols::ResolvedType;
+use crate::frontend::symbols::{ResolvedType, ValueEnumBacking, ValueEnumValue};
 
 /// Errors surfaced while reading, writing, parsing, serializing, or validating `.incnlib` manifests.
 #[derive(Debug, thiserror::Error)]
@@ -282,17 +282,40 @@ pub struct FieldRequirementExport {
 pub struct EnumExport {
     pub name: String,
     pub type_params: Vec<TypeParamExport>,
+    /// Primitive backing type for RFC 032 value enums.
+    #[serde(default)]
+    pub value_type: Option<EnumValueTypeExport>,
     pub variants: Vec<EnumVariantExport>,
     /// `@derive(...)` names (empty for manifests predating this field).
     #[serde(default)]
     pub derives: Vec<String>,
 }
 
-/// One exported enum variant and its positional payload fields.
+/// Exported backing type for a value enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EnumValueTypeExport {
+    #[serde(rename = "str")]
+    Str,
+    #[serde(rename = "int")]
+    Int,
+}
+
+/// One exported enum variant, including positional payload fields and optional value-enum metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnumVariantExport {
     pub name: String,
     pub fields: Vec<TypeRef>,
+    /// Raw value for RFC 032 value enum variants.
+    #[serde(default)]
+    pub value: Option<EnumValueExport>,
+}
+
+/// Exported raw value for one value enum variant.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EnumValueExport {
+    Str(String),
+    Int(i64),
 }
 
 /// Exported newtype metadata.
@@ -554,19 +577,38 @@ fn trait_export_from_checked(export: &CheckedTraitExport) -> TraitExport {
     }
 }
 
+/// Convert a checked enum export into the manifest enum contract.
 fn enum_export_from_checked(export: &CheckedEnumExport) -> EnumExport {
     EnumExport {
         name: export.name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
+        value_type: export.value_type.map(value_enum_type_from_checked),
         variants: export
             .variants
             .iter()
             .map(|variant| EnumVariantExport {
                 name: variant.name.clone(),
                 fields: variant.fields.iter().map(type_ref_from_resolved).collect(),
+                value: variant.value.as_ref().map(value_enum_value_from_checked),
             })
             .collect(),
         derives: export.derives.clone(),
+    }
+}
+
+/// Convert checked value-enum backing metadata into the manifest representation.
+fn value_enum_type_from_checked(value_type: ValueEnumBacking) -> EnumValueTypeExport {
+    match value_type {
+        ValueEnumBacking::Str => EnumValueTypeExport::Str,
+        ValueEnumBacking::Int => EnumValueTypeExport::Int,
+    }
+}
+
+/// Convert one checked value-enum raw value into the manifest representation.
+fn value_enum_value_from_checked(value: &ValueEnumValue) -> EnumValueExport {
+    match value {
+        ValueEnumValue::Str(value) => EnumValueExport::Str(value.clone()),
+        ValueEnumValue::Int(value) => EnumValueExport::Int(*value),
     }
 }
 

@@ -460,8 +460,58 @@ pub struct NewtypeInfo {
 pub struct EnumInfo {
     pub type_params: Vec<String>,
     pub variants: Vec<String>,
+    pub value_enum: Option<ValueEnumInfo>,
     /// Names from `@derive(...)` (same vocabulary as models/classes).
     pub derives: Vec<String>,
+}
+
+/// RFC 032 value enum metadata.
+#[derive(Debug, Clone)]
+pub struct ValueEnumInfo {
+    pub value_type: ValueEnumBacking,
+    pub values: HashMap<String, ValueEnumValue>,
+}
+
+/// Backing primitive kind for a value enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueEnumBacking {
+    Str,
+    Int,
+}
+
+impl ValueEnumBacking {
+    /// Return the ordinary Incan primitive type represented by this backing kind.
+    pub fn resolved_type(self) -> ResolvedType {
+        match self {
+            Self::Str => ResolvedType::Str,
+            Self::Int => ResolvedType::Int,
+        }
+    }
+
+    /// Return the surface spelling used in diagnostics for this backing kind.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Str => "str",
+            Self::Int => "int",
+        }
+    }
+}
+
+/// Literal value assigned to one value enum variant.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ValueEnumValue {
+    Str(String),
+    Int(i64),
+}
+
+impl ValueEnumValue {
+    /// Return the raw value in a diagnostic-friendly display form.
+    pub fn display_value(&self) -> String {
+        match self {
+            Self::Str(value) => format!("{value:?}"),
+            Self::Int(value) => value.to_string(),
+        }
+    }
 }
 
 /// Trait information

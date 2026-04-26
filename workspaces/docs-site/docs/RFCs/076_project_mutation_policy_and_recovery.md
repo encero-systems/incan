@@ -125,6 +125,16 @@ incan mutation propose --stale --security
 
 A valid implementation may choose a different command name, but the behavior should be review-first. Automation creates a patch-sized proposal containing source identity changes, integrity or advisory changes, rendered receiver-side diffs, and policy outcomes. It does not merge, approve, or apply the proposal by itself when policy requires review.
 
+For capability version updates, automation should follow the same shape a user would run manually:
+
+```text
+incan capability status cli
+incan capability diff cli --to 1.6.0
+incan capability update cli --to 1.6.0 --dry-run
+```
+
+Automation may package that dry-run output as a pull-request-sized patch or review artifact, but it must not turn a detected `1.3.0 -> 1.6.0` opportunity into an unattended write unless receiver policy explicitly allows that class of mutation. Even then, source identity changes, newly introduced scripts, CI/workflow edits, env changes, executable source changes, dependency upgrades, generated-file ownership changes, and agent guidance changes remain policy-visible events.
+
 ### Recovery after an unsafe source
 
 If a previously applied template or capability is later yanked, revoked, or marked unsafe, status should show a receiver-actionable state:
@@ -264,11 +274,11 @@ Audit metadata is tooling state. It must not affect compilation semantics.
 
 ### Relationship to RFC 074
 
-RFC 074 owns template rendering, generated-file ownership, template provenance, template update, and template reset. This RFC evaluates the update and reset plans that RFC 074 produces, including source identity changes, rendered receiver-side diffs, and risk categories.
+RFC 074 owns template rendering, generated-file ownership, template provenance, template update, and template reset. This RFC evaluates the update and reset plans that RFC 074 produces, including source identity changes, rendered receiver-side diffs, and risk categories. When a template update is part of an RFC 075 capability update, policy evaluates the complete capability mutation plan rather than only the individual file diff.
 
 ### Relationship to RFC 075
 
-RFC 075 owns starter and capability descriptors, applicability, back-off, mutation planning, and capability provenance. This RFC evaluates those mutation plans and defines how policy gates application, refresh, automation, and recovery.
+RFC 075 owns starter and capability descriptors, applicability, back-off, mutation planning, capability provenance, and the user-facing capability update flow. This RFC evaluates those mutation plans and defines how policy gates application, descriptor-version update, automation, and recovery.
 
 ### Relationship to RFC 034
 
@@ -332,7 +342,7 @@ The same policy result should power terminal diagnostics, machine-readable JSON,
 - How should organization-level policy be discovered without defining hosted product semantics in this RFC?
 - Should quarantined sources prevent only future mutation, or should they also make ordinary build/test commands warn?
 - What recovery actions should be required in v1: status-only, source replacement proposal, revert proposal, or quarantine marking?
-- Should automated proposal creation be a lifecycle CLI command in v1, or should this RFC only define the output contract for future automation?
+- Should automated proposal creation be a lifecycle CLI command in v1, or should this RFC only define the output contract for future automation on top of capability `status`, `diff`, and dry-run `update`?
 - What audit metadata is safe and useful enough to record without leaking private source or reviewer information?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.

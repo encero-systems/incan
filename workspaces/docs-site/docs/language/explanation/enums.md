@@ -3,12 +3,10 @@
 Enums in Incan are **algebraic data types** (ADTs): a type with a **closed set** of variants, where each variant can carry
 different data.
 
-You use enums when a value can be **one of a few well-defined shapes** and you want the compiler to enforce that you handle
-every case.
+You use enums when a value can be **one of a few well-defined shapes** and you want the compiler to enforce that you handle every case.
 
 ??? info "Coming from Python?"
-    Python’s `Enum` is mainly “named constants”. When Python code needs variants *with data* it often ends up using class
-    hierarchies and `isinstance(...)` checks, which are not exhaustive and are easy to break during refactors.
+    Python’s `Enum` is mainly “named constants”. When Python code needs variants *with data* it often ends up using class hierarchies and `isinstance(...)` checks, which are not exhaustive and are easy to break during refactors.
 
     Here’s one representative before/after:
 
@@ -123,6 +121,55 @@ match msg:
     Write(text) => println(f"Message: {text}")
     ChangeColor(r, g, b) => println(f"RGB({r}, {g}, {b})")
 ```
+
+---
+
+## Value enums
+
+Use a value enum when each variant needs one canonical external `str` or `int` representation:
+
+```incan
+enum Environment(str):
+    Development = "development"
+    Production = "production"
+
+enum HttpStatus(int):
+    Ok = 200
+    NotFound = 404
+```
+
+Value enum variants are still enum values, not primitive values. `Environment.Production` has type `Environment`, not `str`, and `HttpStatus.NotFound` has type `HttpStatus`, not `int`.
+
+Value enums gain two helper methods that cover both directions between typed enum variants and their external values, `value` and `from_value`; `value()` returns the backing primitive type. `from_value(...)` accepts the backing primitive type and returns `Option[Enum]` so unknown external values are explicit.
+
+For example:
+
+```incan
+def status_code(status: HttpStatus) -> int:
+    return status.value()
+
+def parse_status(code: int) -> Option[HttpStatus]:
+    return HttpStatus.from_value(code)
+```
+
+Value enums are for closed value tables, not for variants that carry additional data. Each variant is a single named case with one raw `str` or `int` value:
+
+```incan
+enum Environment(str):
+    Development = "development"
+    Production = "production"
+```
+
+If a variant needs payload fields, use a regular enum instead:
+
+```incan
+enum JobState:
+    Queued
+    Running(str)      # worker id
+    Failed(str, int)  # message, retry count
+```
+
+Value enums also cannot be generic. The backing value table is concrete, so every variant value must be explicit, must match the declared backing type, and must be unique within the enum.
 
 ---
 
@@ -257,19 +304,20 @@ For serialization details, see [Derives: Serialization](../reference/derives/ser
 
 ## Common pitfall: enums are not lookup tables
 
-Incan enums are **algebraic types** — each variant is a fixed tag, optionally carrying data.
-They are **not** key-value mappings or integer-valued constants.
+Incan enums are **algebraic types** — each variant is a fixed tag, optionally carrying data. Ordinary enums are **not** key-value mappings or integer-valued constants. If you need one canonical string or integer representation per variant, use a [value enum](#value-enums).
 
 The compiler will catch the mistake early with a targeted error message:
 
 ```incan
-# ✗ These are all rejected with clear diagnostics:
+# Rejected: ordinary enums cannot have mapped values.
 enum Categories:
     GROCERIES => Category("Groceries")   # "cannot have mapped values"
 
+# Rejected: variants cannot contain dotted names.
 enum FlowType:
     Cash.Inflow                           # "cannot contain dots"
 
+# Rejected: ordinary enums cannot assign raw values.
 enum Color:
     Red = 1                               # "cannot have assigned values"
 ```
@@ -373,13 +421,14 @@ enum Ordering:
 
 ## Summary
 
-| Concept       | Description                                |
-| ------------- | ------------------------------------------ |
-| `enum`        | Define a type with fixed variants          |
-| Variants      | Each case of an enum, optionally with data |
-| Generic enum  | Enum parameterized over types: `Option[T]` |
-| `match`       | Exhaustive pattern matching on enums       |
-| Destructuring | Extract data from variants: `Some(x) =>`   |
+| Concept       | Description                                  |
+| ------------- | -------------------------------------------- |
+| `enum`        | Define a type with fixed variants            |
+| Variants      | Each case of an enum, optionally with data   |
+| Value enum    | Enum with canonical `str` / `int` raw values |
+| Generic enum  | Enum parameterized over types: `Option[T]`   |
+| `match`       | Exhaustive pattern matching on enums         |
+| Destructuring | Extract data from variants: `Some(x) =>`     |
 
 Enums are one of Incan's most powerful features — use them for:
 

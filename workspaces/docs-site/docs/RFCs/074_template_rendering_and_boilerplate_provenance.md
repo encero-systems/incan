@@ -532,9 +532,9 @@ The exact command spelling may be adjusted if the lifecycle CLI uses a different
 
 `render` renders one template from supplied values and returns a dry-run or planned file output. It is primarily useful for debugging descriptors and provider validation. The rendered plan must include reason codes for included, skipped, blocked, unchanged, and unsafe files when those states apply.
 
-`diff` renders the current template source with the recorded values and shows what would change for one file or for all tracked files.
+`diff` renders the current template source with the recorded values and shows what would change for one file or for all tracked files. When the template is part of an applied RFC 075 capability, this file-level diff is a lower-level diagnostic; the normal user-facing upgrade review should happen through the capability-level diff and update plan.
 
-`update` applies an explicit receiver-approved update only when conflicts are absent or resolved through documented flags.
+`update` applies an explicit receiver-approved update only when conflicts are absent or resolved through documented flags. It must respect generated-file ownership: bootstrap files are not rewritten by normal updates, managed files may be updated when unchanged or cleanly merged, and advisory files are explained but not owned.
 
 `reset` recreates managed files from the selected template source using preserved or supplied values. It must be explicit, dry-runnable, conflict-aware, and subject to the same receiver-side rendered-diff review as update.
 
@@ -598,6 +598,8 @@ The RFC 015 default scaffold may continue to be implemented without this RFC. On
 RFC 075 depends on this RFC for file templates used by starters and capability packs. Starter and capability descriptors may reference templates, parameter values, and provenance modes, but the rendering semantics come from this RFC.
 
 This split keeps the layers clear: RFC 074 answers "how does a static template become a validated project file and how do we track it later?" RFC 075 answers "which project-level recipes and capability mutations should use those rendered files?"
+
+For versioned project concerns such as "move the `cli` capability from `1.3.0` to `1.6.0`", RFC 075 owns the user-facing capability update. This RFC owns the file-level mechanics used inside that plan: preserved values, rendered output, generated-file ownership, drift detection, managed-file replacement, edited-file conflicts, and reset behavior. A template update command is therefore an escape hatch or diagnostic tool, not the primary model for upgrading an applied capability.
 
 ### Relationship to `ctx`
 

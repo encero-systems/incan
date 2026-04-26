@@ -76,6 +76,153 @@ fn manifest_io_round_trip_preserves_trait_supertraits() -> Result<(), Box<dyn st
 }
 
 #[test]
+fn manifest_io_round_trip_preserves_value_enum_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.exports.enums.push(EnumExport {
+        name: "Status".to_string(),
+        type_params: Vec::new(),
+        value_type: Some(EnumValueTypeExport::Str),
+        variants: vec![
+            EnumVariantExport {
+                name: "Active".to_string(),
+                fields: Vec::new(),
+                value: Some(EnumValueExport::Str("active".to_string())),
+            },
+            EnumVariantExport {
+                name: "Disabled".to_string(),
+                fields: Vec::new(),
+                value: Some(EnumValueExport::Str("disabled".to_string())),
+            },
+        ],
+        derives: Vec::new(),
+    });
+    manifest.exports.enums.push(EnumExport {
+        name: "HttpStatus".to_string(),
+        type_params: Vec::new(),
+        value_type: Some(EnumValueTypeExport::Int),
+        variants: vec![
+            EnumVariantExport {
+                name: "Ok".to_string(),
+                fields: Vec::new(),
+                value: Some(EnumValueExport::Int(200)),
+            },
+            EnumVariantExport {
+                name: "NotFound".to_string(),
+                fields: Vec::new(),
+                value: Some(EnumValueExport::Int(404)),
+            },
+        ],
+        derives: Vec::new(),
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("value_enum.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
+fn manifest_reader_rejects_incomplete_value_enum_metadata() {
+    let content = format!(
+        r#"{{
+  "name": "mylib",
+  "version": "0.1.0",
+  "incan_version": "0.1.0",
+  "manifest_format": {},
+  "exports": {{
+    "enums": [
+      {{
+        "name": "Status",
+        "type_params": [],
+        "value_type": "str",
+        "variants": [
+          {{ "name": "Active", "fields": [], "value": "active" }},
+          {{ "name": "Disabled", "fields": [] }}
+        ],
+        "derives": []
+      }}
+    ]
+  }},
+  "soft_keywords": {{}}
+}}"#,
+        LIBRARY_MANIFEST_FORMAT
+    );
+    let err = LibraryManifest::from_json_str(&content);
+    assert!(
+        matches!(err, Err(LibraryManifestError::Invalid(ref msg)) if msg.contains("is missing a raw value")),
+        "expected missing value enum metadata diagnostic, got {err:?}"
+    );
+}
+
+#[test]
+fn manifest_reader_rejects_mismatched_value_enum_metadata() {
+    let content = format!(
+        r#"{{
+  "name": "mylib",
+  "version": "0.1.0",
+  "incan_version": "0.1.0",
+  "manifest_format": {},
+  "exports": {{
+    "enums": [
+      {{
+        "name": "Status",
+        "type_params": [],
+        "value_type": "int",
+        "variants": [
+          {{ "name": "Active", "fields": [], "value": "active" }}
+        ],
+        "derives": []
+      }}
+    ]
+  }},
+  "soft_keywords": {{}}
+}}"#,
+        LIBRARY_MANIFEST_FORMAT
+    );
+    let err = LibraryManifest::from_json_str(&content);
+    assert!(
+        matches!(err, Err(LibraryManifestError::Invalid(ref msg)) if msg.contains("does not match backing type `int`")),
+        "expected mismatched value enum metadata diagnostic, got {err:?}"
+    );
+}
+
+#[test]
+fn manifest_reader_rejects_duplicate_value_enum_metadata() {
+    let content = format!(
+        r#"{{
+  "name": "mylib",
+  "version": "0.1.0",
+  "incan_version": "0.1.0",
+  "manifest_format": {},
+  "exports": {{
+    "enums": [
+      {{
+        "name": "Status",
+        "type_params": [],
+        "value_type": "str",
+        "variants": [
+          {{ "name": "Active", "fields": [], "value": "active" }},
+          {{ "name": "Enabled", "fields": [], "value": "active" }}
+        ],
+        "derives": []
+      }}
+    ]
+  }},
+  "soft_keywords": {{}}
+}}"#,
+        LIBRARY_MANIFEST_FORMAT
+    );
+    let err = LibraryManifest::from_json_str(&content);
+    assert!(
+        matches!(err, Err(LibraryManifestError::Invalid(ref msg)) if msg.contains("duplicate raw value `active`")),
+        "expected duplicate value enum metadata diagnostic, got {err:?}"
+    );
+}
+
+#[test]
 fn manifest_io_round_trip_preserves_generic_method_type_params() -> Result<(), Box<dyn std::error::Error>> {
     let mut manifest = LibraryManifest::new("mylib", "0.1.0");
     manifest.exports.classes.push(ClassExport {

@@ -2418,6 +2418,7 @@ impl TypeChecker {
                     kind: SymbolKind::Type(TypeInfo::Enum(EnumInfo {
                         type_params: en.type_params.iter().map(|tp| tp.name.clone()).collect(),
                         variants: en.variants.iter().map(|v| v.node.name.clone()).collect(),
+                        value_enum: None,
                         derives: Vec::new(),
                     })),
                     span: decl.span,

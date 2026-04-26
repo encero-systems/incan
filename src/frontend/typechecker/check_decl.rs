@@ -1435,9 +1435,11 @@ impl TypeChecker {
         }
     }
 
+    /// Validate enum decorators, value-enum rules, and variant payload field types.
     fn check_enum(&mut self, en: &EnumDecl) {
         self.validate_decorators(&en.decorators);
         self.validate_derives(&en.decorators);
+        self.check_value_enum_decl(en);
         // Check variant field types exist
         for variant in &en.variants {
             for field_ty in &variant.node.fields {
@@ -1446,6 +1448,95 @@ impl TypeChecker {
                     self.errors
                         .push(errors::unknown_symbol(&format!("{:?}", field_ty.node), field_ty.span));
                 }
+            }
+        }
+    }
+
+    /// Validate the declaration-time invariants that make value enum helpers type safe.
+    fn check_value_enum_decl(&mut self, en: &EnumDecl) {
+        let Some(value_type) = &en.value_type else {
+            for variant in &en.variants {
+                if variant.node.value.is_some() {
+                    self.errors.push(errors::regular_enum_variant_value_not_allowed(
+                        &en.name,
+                        &variant.node.name,
+                        variant.span,
+                    ));
+                }
+            }
+            return;
+        };
+
+        if !en.type_params.is_empty() {
+            self.errors
+                .push(errors::value_enum_type_params_not_supported(&en.name, value_type.span));
+        }
+
+        let backing = match value_type.node {
+            ValueEnumType::Str => ValueEnumBacking::Str,
+            ValueEnumType::Int => ValueEnumBacking::Int,
+        };
+        let mut seen_values: HashMap<ValueEnumValue, (&str, Span)> = HashMap::new();
+
+        for variant in &en.variants {
+            if matches!(variant.node.name.as_str(), "value" | "from_value") {
+                self.errors.push(errors::value_enum_reserved_generated_name(
+                    &en.name,
+                    &variant.node.name,
+                    variant.span,
+                ));
+            }
+
+            if !variant.node.fields.is_empty() {
+                self.errors.push(errors::value_enum_variant_payload_not_allowed(
+                    &en.name,
+                    &variant.node.name,
+                    variant.span,
+                ));
+            }
+
+            let Some(raw_value) = &variant.node.value else {
+                self.errors.push(errors::value_enum_variant_missing_value(
+                    &en.name,
+                    &variant.node.name,
+                    variant.span,
+                ));
+                continue;
+            };
+
+            let value = match (backing, &raw_value.node) {
+                (ValueEnumBacking::Str, ValueEnumLiteral::Str(value)) => ValueEnumValue::Str(value.clone()),
+                (ValueEnumBacking::Int, ValueEnumLiteral::Int(value)) => ValueEnumValue::Int(value.value),
+                (ValueEnumBacking::Str, ValueEnumLiteral::Int(_)) => {
+                    self.errors.push(errors::value_enum_literal_type_mismatch(
+                        &en.name,
+                        backing.display_name(),
+                        "int",
+                        raw_value.span,
+                    ));
+                    continue;
+                }
+                (ValueEnumBacking::Int, ValueEnumLiteral::Str(_)) => {
+                    self.errors.push(errors::value_enum_literal_type_mismatch(
+                        &en.name,
+                        backing.display_name(),
+                        "str",
+                        raw_value.span,
+                    ));
+                    continue;
+                }
+            };
+
+            if let Some((first_variant, _first_span)) = seen_values.get(&value) {
+                self.errors.push(errors::value_enum_duplicate_value(
+                    &en.name,
+                    &value.display_value(),
+                    first_variant,
+                    &variant.node.name,
+                    raw_value.span,
+                ));
+            } else {
+                seen_values.insert(value, (variant.node.name.as_str(), raw_value.span));
             }
         }
     }

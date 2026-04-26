@@ -61,6 +61,7 @@ The missing layer is an explicit project mutation contract. Users need a command
 - Allow starters and capability packs to add manifest entries, dependencies, dev-dependencies, scripts, env definitions, file templates, tooling metadata, agent guidance metadata, and user-facing follow-up notes.
 - Keep generated projects ordinary: all persistent behavior must be represented in source files, `incan.toml`, `incan.lock`, or documented generated artifacts.
 - Provide inspection commands so users can list available starters, preview one starter, and see which capabilities are recorded in a project.
+- Define a review-first capability update path so a project can move an applied capability from one recorded descriptor version to another without treating the change as an automatic package upgrade or silent template rewrite.
 - Provide machine-readable inspection surfaces so LSP and IDE tooling can list starters, preview capability changes, show enabled capabilities, and surface project-specific actions without reimplementing descriptor resolution.
 - Allow starter and capability descriptors to be resolved from source-agnostic catalogs such as built-in descriptors, local paths, git sources, public package registries, or private catalogs.
 - Leave room for public and private catalog-backed starter discovery without requiring catalog support in the first implementation.
@@ -81,7 +82,7 @@ The missing layer is an explicit project mutation contract. Users need a command
 - Defining editor-specific plugin APIs for Visual Studio Code, JetBrains IDEs, Vim, or any other editor. This RFC defines the toolchain contract those integrations may consume.
 - Defining an agent runtime, agent marketplace, prompt format, or autonomous execution policy. This RFC may describe agent-relevant metadata, but it does not specify how agents run.
 - Replacing examples, tutorials, or documentation. Starters complement documentation by making the recommended shape executable.
-- Defining capability removal or full project migration. This RFC only defines creation, addition, inspection, and validation.
+- Defining capability removal or arbitrary project migration. This RFC defines descriptor-version updates for previously applied capabilities, but it does not promise that every user-authored project change can be merged automatically.
 
 ## Guide-level explanation
 
@@ -156,6 +157,60 @@ incan capability add std.http-client --dry-run
 ```
 
 Dry-run output must show planned file writes, manifest additions, dependency changes, env/script additions, skipped mutations, already-satisfied expectations, and any conflicts. The dry run should be detailed enough that a user can decide whether the command is safe before mutating the project.
+
+### Updating an applied capability
+
+Capability updates are review-first project migrations, not package upgrades and not automatic template rewrites.
+
+When a project records that it applied `cli` from descriptor version `1.3.0`, a later user should be able to ask what it would mean to move that project concern to `1.6.0`:
+
+```text
+incan capability status cli
+incan capability diff cli --to 1.6.0
+incan capability update cli --to 1.6.0 --dry-run
+incan capability update cli --to 1.6.0
+```
+
+The lifecycle CLI resolves the currently recorded descriptor source and target descriptor version, verifies that the source identity has not silently changed, expands descriptor dependencies, renders affected RFC 074 templates with preserved or supplied values, and produces one receiver-side mutation plan.
+
+For example, a dry run for `cli 1.3.0 -> 1.6.0` might report:
+
+```text
+Capability update: cli 1.3.0 -> 1.6.0
+Source: incan.pub:app-cli
+Publisher: encero
+Source identity changed: no
+Descriptor integrity: verified
+
+Would update dependencies:
+  app-cli 1.3.0 -> 1.6.0
+
+Would update incan.toml:
+  add [tool.incan.actions.run-cli]
+  rename script "run" -> "cli.run"
+
+Files:
+  src/main.incn
+    ownership: bootstrap
+    status: user-owned
+    action: no automatic update
+
+  tests/test_cli.incn
+    ownership: managed
+    status: unchanged
+    action: update
+
+  .github/workflows/ci.yml
+    ownership: managed
+    status: new high-risk file
+    action: requires policy approval
+```
+
+The user-facing update unit is the capability because that is how the project concern was applied. RFC 074 still owns the lower-level template behavior for individual files: managed files may be updated when unchanged, bootstrap files are not rewritten by normal capability updates, advisory files are explained but not owned, and edited managed files must stop with a conflict or use a documented merge strategy. RFC 076 evaluates the resulting mutation plan before anything is written.
+
+`incan capability diff` should show the receiver-side patch that would land in the project. Catalog or registry source diffs between descriptor versions are useful supporting evidence, but they are not a substitute for the rendered project diff.
+
+If the descriptor declares ordered migration steps between intermediate versions, the CLI may collapse them into one target update as long as the resulting plan remains explainable. If a required step cannot be represented declaratively, the update must stop and present manual instructions rather than running arbitrary provider code.
 
 ### IDE and editor support
 
@@ -446,7 +501,9 @@ This RFC adds the following lifecycle commands and flags:
 - `incan capability list`
 - `incan capability show <capability-id>`
 - `incan capability status`
+- `incan capability diff <capability-id> --to <version-or-ref>`
 - `incan capability add <capability-id>`
+- `incan capability update <capability-id> --to <version-or-ref>`
 - `incan new <name> --starter <starter-id>`
 - `incan init --starter <starter-id>`
 
@@ -456,7 +513,11 @@ This RFC adds the following lifecycle commands and flags:
 
 `incan add <pkg>` remains the RFC 034 package dependency command. If the added package advertises capabilities, the CLI should report those capabilities and show the corresponding `incan capability add <capability-id>` command, but it must not apply project setup as part of plain dependency addition.
 
-`incan capability status` requires a project root. It must report enabled capability provenance and should report whether the project still appears consistent with each enabled capability's declared expectations.
+`incan capability status` requires a project root. It must report enabled capability provenance and should report whether the project still appears consistent with each enabled capability's declared expectations. When catalog or registry metadata is available, status should also report the latest compatible descriptor version and whether the recorded source is yanked, revoked, superseded, or unknown.
+
+`incan capability diff` requires a project root and an enabled capability. It must resolve the current recorded descriptor and requested target descriptor, then show the receiver-side mutation plan without writing files. Source-level descriptor diffs may be shown as supporting information, but the rendered project diff is the review artifact.
+
+`incan capability update` requires a project root and an enabled capability. It applies an explicit receiver-approved mutation plan for moving from the recorded descriptor version to the requested target version or ref. It must support `--dry-run`, must preserve recorded source identity unless the user explicitly requests a source switch, and must not bypass RFC 076 policy.
 
 `incan new` without `--starter` must keep the RFC 015 default behavior. Implementations may model that default internally as a built-in starter, but users must not be required to know that.
 
@@ -580,6 +641,10 @@ If a capability pack is already recorded as enabled, `incan capability add <capa
 
 Capability provenance should preserve enough information to explain transitive additions. A project may record that a starter enabled `inql.project`, and that `inql.project` pulled in `inql.session` and `testing.basic`. Tooling should be able to show the user both the top-level request and the expanded capability graph.
 
+Capability provenance is also the anchor for future updates. A project that records `cli@1.3.0` can later ask for a reviewable update to `cli@1.6.0` only if tooling can identify the recorded descriptor source, selected version or content hash, parameter values or safe value fingerprints, transitive descriptor graph, generated-file ownership, and applied template provenance. If that information is missing, `incan capability update` must degrade to an explicit adoption or manual-migration flow rather than guessing.
+
+Descriptor-version updates may include declarative migration metadata. V1 migration metadata should stay non-executable: manifest key additions, manifest key renames, parameter renames, template id changes, file ownership changes, dependency version changes, action descriptor changes, and manual instruction blocks are acceptable shapes. Arbitrary shell, Python, plugin, or provider-defined migration hooks are out of scope for this RFC.
+
 ### Tooling metadata
 
 Starters and capability packs may declare tooling metadata that describes editor-visible project shape without changing language semantics.
@@ -654,9 +719,9 @@ Security-sensitive mutation categories must be explicit in dry-run and machine-r
 
 Project and organization policy may restrict which catalog sources, publishers, trust tiers, or descriptor pin forms are allowed for starters and capabilities. Policy may also require approval for high-risk mutation categories before `incan capability add` or a future capability refresh writes changes. This mirrors code review ownership for CI workflows: source files, scripts, CI config, env definitions, and agent guidance may need different reviewers.
 
-Automated capability refresh should follow a review-first model. It may detect stale descriptors, vulnerable sources, or newer compatible versions, but it should emit a reviewable mutation plan or pull-request-sized patch rather than applying changes unattended. The plan should show before/after descriptor source, version or content hash, provider identity, known advisory state, yanking state, and every security-sensitive mutation category.
+Automated capability update should follow a review-first model. It may detect stale descriptors, vulnerable sources, or newer compatible versions, but it should emit a reviewable mutation plan or pull-request-sized patch rather than applying changes unattended. The plan should show before/after descriptor source, version or content hash, provider identity, known advisory state, yanking state, and every security-sensitive mutation category.
 
-Automation that proposes a capability refresh must not also satisfy the receiver's approval requirement. If policy requires review for a mutation category, the approver must be independent from the tool, service, or agent that produced the proposed patch. Capability refresh should therefore integrate with normal code review instead of bypassing it.
+Automation that proposes a capability update must not also satisfy the receiver's approval requirement. If policy requires review for a mutation category, the approver must be independent from the tool, service, or agent that produced the proposed patch. Capability update should therefore integrate with normal code review instead of bypassing it.
 
 ### Diagnostics
 
@@ -789,12 +854,12 @@ The recommended implementation shape is to treat starter and capability applicat
 
 First, resolve the descriptor from a catalog. Then expand included capability packs and template dependencies into one ordered acyclic mutation plan. Then validate the plan against the target project, including manifest conflicts, file conflicts, generated-file ownership policy, toolchain constraints, env validity, and path safety. Finally, apply the plan atomically or report diagnostics without writing anything.
 
-The same mutation plan should power dry-run output, human diagnostics, and machine-readable inspection. This keeps `incan new --starter`, `incan init --starter`, and `incan capability add` aligned rather than implementing three independent generators.
+The same mutation plan should power dry-run output, human diagnostics, and machine-readable inspection. This keeps `incan new --starter`, `incan init --starter`, `incan capability add`, and `incan capability update` aligned rather than implementing separate generators and updaters.
 
 ## Layers affected
 
 - **Manifest schema / configuration validation:** `incan.toml` should allow capability provenance under `[tool.incan.capabilities]`; starter-applied env, script, dependency, and project metadata changes must validate under existing RFC 015, RFC 020, and RFC 073 rules.
-- **CLI / tooling:** `incan starter`, `incan capability`, `incan new --starter`, `incan init --starter`, and `incan capability add` are new lifecycle tooling surfaces. They must support inspection, dry-run planning, conflict diagnostics, and deterministic application.
+- **CLI / tooling:** `incan starter`, `incan capability`, `incan new --starter`, `incan init --starter`, `incan capability add`, `incan capability diff`, and `incan capability update` are new lifecycle tooling surfaces. They must support inspection, dry-run planning, conflict diagnostics, deterministic application, and review-first descriptor-version updates.
 - **LSP / IDE tooling:** editor-facing tools should consume machine-readable starter, capability, mutation-plan, file-role, and action metadata from the lifecycle layer. They may expose completions, code actions, project diagnostics, and run/debug affordances, but they must not fork descriptor semantics.
 - **Agentic tooling:** agent-facing tools may consume capability provenance, file roles, and agent guidance metadata to select relevant skills or workflows, but starter/capability descriptors remain descriptive and must not execute agents implicitly.
 - **Project scaffolding:** the project generator must support descriptor-backed file creation, manifest mutation, safe path normalization, and non-overwrite defaults.
@@ -813,7 +878,7 @@ The same mutation plan should power dry-run output, human diagnostics, and machi
 - Which `tooling.file_roles` and `tooling.actions` values should be standardized in v1 versus left as free-form extension strings?
 - Which `agent_guidance` fields should be standardized in v1, and which should remain extension metadata for agent runtimes to interpret?
 - Which applicability states and reason-code vocabulary should be standardized in v1?
-- Should v1 define an explicit capability refresh command, or should refresh remain a future operation while v1 only supports add, status, and dry-run inspection?
+- Which declarative migration operations should be standardized for v1 capability updates, and which should remain manual instructions?
 - Should the LSP call the lifecycle CLI as a subprocess for starter/capability inspection, or should the compiler expose the same descriptor-resolution API directly to tooling crates?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
