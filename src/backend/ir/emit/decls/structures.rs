@@ -46,6 +46,7 @@ impl<'a> IrEmitter<'a> {
         } else {
             quote! { #[derive(#(#derives),*)] }
         };
+        let lint_allows = self.emit_rust_lint_allows(&s.lint_allows);
 
         let has_serde = s.derives.iter().any(|d| {
             matches!(
@@ -74,6 +75,7 @@ impl<'a> IrEmitter<'a> {
 
             // Emit struct definition
             let struct_def = quote! {
+                #(#lint_allows)*
                 #derive_attr
                 #vis struct #name #generics (#(#tuple_fields),*);
             };
@@ -138,6 +140,7 @@ impl<'a> IrEmitter<'a> {
             };
 
             Ok(quote! {
+                #(#lint_allows)*
                 #derive_attr
                 #vis struct #name #generics {
                     #(#fields),*
@@ -210,6 +213,7 @@ impl<'a> IrEmitter<'a> {
         } else {
             quote! { #[derive(#(#derives),*)] }
         };
+        let lint_allows = self.emit_rust_lint_allows(&e.lint_allows);
 
         let variant_match_arms: Vec<TokenStream> = e
             .variants
@@ -237,6 +241,7 @@ impl<'a> IrEmitter<'a> {
         let generics_bare = self.emit_type_params_bare(&e.type_params);
 
         Ok(quote! {
+            #(#lint_allows)*
             #derive_attr
             #vis enum #name #generics {
                 #(#variants),*

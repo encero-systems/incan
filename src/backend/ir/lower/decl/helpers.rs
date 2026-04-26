@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::super::super::decl::{IrRustAttrArg, IrRustAttribute, IrTraitBound, IrTypeParam};
+use super::super::super::decl::{IrRustAttrArg, IrRustAttribute, IrRustLintAllow, IrTraitBound, IrTypeParam};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use crate::frontend::ast::{self, Spanned};
@@ -317,6 +317,32 @@ impl AstLowering {
             });
         }
         attrs
+    }
+
+    /// Extract targeted Rust lint suppressions from RFC 057 `@rust.allow(...)` decorators.
+    ///
+    /// Typechecking validates the decorator shape and lint names; lowering only preserves the already-validated
+    /// string literal payloads as explicit IR metadata for item-boundary emission.
+    pub(in crate::backend::ir::lower) fn extract_rust_lint_allows(
+        &self,
+        decorators: &[Spanned<ast::Decorator>],
+    ) -> Vec<IrRustLintAllow> {
+        decorators
+            .iter()
+            .filter(|decorator| {
+                let resolved = decorator_resolution::resolve_decorator_path(&decorator.node, &self.import_aliases);
+                decorators::from_segments(&resolved) == Some(DecoratorId::RustAllow)
+            })
+            .flat_map(|decorator| {
+                decorator.node.args.iter().filter_map(|arg| match arg {
+                    ast::DecoratorArg::Positional(expr) => match &expr.node {
+                        ast::Expr::Literal(ast::Literal::String(lint)) => Some(IrRustLintAllow { lint: lint.clone() }),
+                        _ => None,
+                    },
+                    ast::DecoratorArg::Named(_, _) => None,
+                })
+            })
+            .collect()
     }
 
     /// Check whether a `rust.module()` path qualifies for decorator passthrough.

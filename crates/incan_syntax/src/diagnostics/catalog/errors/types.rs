@@ -32,6 +32,42 @@ pub fn reserved_root_namespace(name: &str, span: Span) -> CompileError {
         .with_hint("Choose a different name (reserved: std, rust)")
 }
 
+pub fn rust_allow_requires_positional_string(span: Span) -> CompileError {
+    CompileError::type_error(
+        "@rust.allow requires one or more positional string literal arguments".to_string(),
+        span,
+    )
+    .with_hint("Example: @rust.allow(\"dead_code\", \"clippy::too_many_arguments\")")
+}
+
+pub fn rust_allow_rejects_named_args(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("@rust.allow does not accept named argument '{}'", name), span)
+        .with_hint("Pass lint names as positional string literals")
+}
+
+pub fn rust_allow_invalid_lint_name(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Invalid Rust lint name '{}'", name), span)
+        .with_hint("Use a Rust lint path like \"dead_code\" or \"clippy::too_many_arguments\"")
+}
+
+pub fn rust_allow_duplicate_lint(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Duplicate Rust lint '{}' in @rust.allow", name), span)
+        .with_hint("Each @rust.allow invocation may list a lint only once")
+}
+
+pub fn rust_allow_broad_lint_group(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Broad Rust lint group '{}' is not allowed in @rust.allow", name),
+        span,
+    )
+    .with_hint("Suppress only specific rustc or Clippy lints")
+}
+
+pub fn rust_allow_unsupported_attachment(kind: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("@rust.allow cannot be used on {kind} declarations"), span)
+        .with_hint("@rust.allow is supported on functions, methods, models, classes, enums, and newtypes")
+}
+
 // -- Type mismatches ---------------------------------------------------------
 
 pub fn type_mismatch(expected: &str, found: &str, span: Span) -> CompileError {

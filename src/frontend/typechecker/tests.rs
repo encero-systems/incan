@@ -2277,6 +2277,149 @@ def foo() -> None:
 }
 
 #[test]
+fn test_rust_allow_accepts_targeted_lints() {
+    let source = r#"
+@rust.allow("dead_code", "clippy::too_many_arguments")
+model RustAllowed:
+  value: int
+
+@rust.allow("non_snake_case")
+def MixedName() -> int:
+  return 1
+
+@rust.allow("non_camel_case_types")
+type rust_allowed_newtype = newtype int
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rust_allow_rejects_invalid_arguments() {
+    let cases = [
+        (
+            r#"
+@rust.allow()
+def missing() -> None:
+  pass
+"#,
+            "@rust.allow requires one or more positional string literal arguments",
+        ),
+        (
+            r#"
+@rust.allow(name = "dead_code")
+def named() -> None:
+  pass
+"#,
+            "@rust.allow does not accept named argument 'name'",
+        ),
+        (
+            r#"
+@rust.allow(dead_code)
+def non_string() -> None:
+  pass
+"#,
+            "@rust.allow requires one or more positional string literal arguments",
+        ),
+        (
+            r#"
+@rust.allow("")
+def empty() -> None:
+  pass
+"#,
+            "Invalid Rust lint name ''",
+        ),
+        (
+            r#"
+@rust.allow(" dead_code")
+def padded() -> None:
+  pass
+"#,
+            "Invalid Rust lint name ' dead_code'",
+        ),
+        (
+            r#"
+@rust.allow("dead_code", "dead_code")
+def duplicate() -> None:
+  pass
+"#,
+            "Duplicate Rust lint 'dead_code' in @rust.allow",
+        ),
+        (
+            r#"
+@rust.allow("warnings")
+def broad_warnings() -> None:
+  pass
+"#,
+            "Broad Rust lint group 'warnings' is not allowed in @rust.allow",
+        ),
+        (
+            r#"
+@rust.allow("unused")
+def broad_unused() -> None:
+  pass
+"#,
+            "Broad Rust lint group 'unused' is not allowed in @rust.allow",
+        ),
+        (
+            r#"
+@rust.allow("clippy::all")
+def broad_clippy_all() -> None:
+  pass
+"#,
+            "Broad Rust lint group 'clippy::all' is not allowed in @rust.allow",
+        ),
+        (
+            r#"
+@rust.allow("clippy::pedantic")
+def broad_clippy_pedantic() -> None:
+  pass
+"#,
+            "Broad Rust lint group 'clippy::pedantic' is not allowed in @rust.allow",
+        ),
+        (
+            r#"
+@rust.allow("clippy::nursery")
+def broad_clippy_nursery() -> None:
+  pass
+"#,
+            "Broad Rust lint group 'clippy::nursery' is not allowed in @rust.allow",
+        ),
+        (
+            r#"
+@rust.allow("clippy::restriction")
+def broad_clippy_restriction() -> None:
+  pass
+"#,
+            "Broad Rust lint group 'clippy::restriction' is not allowed in @rust.allow",
+        ),
+        (
+            r#"
+@rust.allow("clippy::cargo")
+def broad_clippy_cargo() -> None:
+  pass
+"#,
+            "Broad Rust lint group 'clippy::cargo' is not allowed in @rust.allow",
+        ),
+        (
+            r#"
+@rust.allow("dead_code")
+trait NotConcrete:
+  def value(self) -> int: ...
+"#,
+            "@rust.allow cannot be used on trait declarations",
+        ),
+    ];
+
+    for (source, expected) in cases {
+        let errors = check_str_err(source, "invalid @rust.allow should fail typechecking");
+        assert!(
+            errors.iter().any(|err| err.message.contains(expected)),
+            "expected diagnostic containing {expected:?}, got {errors:?}"
+        );
+    }
+}
+
+#[test]
 fn test_try_on_non_result() {
     let source = r#"
 def foo() -> Result[int, str]:

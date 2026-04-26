@@ -225,6 +225,30 @@ def run[T with Send, Sync](_value: T) -> None:
 
 These are Incan-syntax bounds that lower to Rust-native predicates in generated code.
 
+## Targeted generated-Rust lint suppression
+
+Use `@rust.allow(...)` when one Incan declaration is expected to generate Rust that triggers a specific rustc or Clippy lint that is legitimate but not avoidable from Incan source. This is narrow Rust-emission metadata: it emits a Rust `#[allow(...)]` on the generated item for that declaration. It is not a general Rust attribute escape hatch, and it is not a way to set project-wide lint policy.
+
+```incan
+@rust.allow("deprecated")
+def load_legacy_record(path: str) -> Record:
+    return legacy.load_record(path)
+```
+
+Multiple specific lint names can be listed when the same generated item needs more than one suppression:
+
+```incan
+@rust.allow("deprecated", "clippy::unwrap_used")
+def boot_runtime() -> Runtime:
+    return Runtime.from_env().unwrap()
+```
+
+In v1, `@rust.allow(...)` is item-only. It can be used on functions, methods, models, classes, enums, and newtypes, because those declarations lower to concrete Rust items. It cannot be used as a module-level directive, on imports, local bindings, expressions, or declarations that do not own a stable generated Rust item boundary.
+
+The decorator takes one or more string literal lint names. Bare rustc lints such as `"deprecated"` and tool-prefixed lints such as `"clippy::unwrap_used"` are accepted. Empty lists, non-string arguments, empty names, duplicate names, and obvious broad lint groups are rejected. The initial broad-group blocklist is `"warnings"`, `"unused"`, `"clippy::all"`, `"clippy::pedantic"`, `"clippy::nursery"`, `"clippy::restriction"`, and `"clippy::cargo"`.
+
+Prefer fixing the source or tightening the generated lowering when a warning is avoidable. Use `@rust.allow(...)` only when the Rust warning is real, local, and intentionally accepted for that declaration.
+
 ## Coercions at explicit Rust boundaries
 
 When calling Rust functions or methods, the compiler can apply a bounded, compiler-managed coercion model for built-in types:
@@ -460,6 +484,7 @@ If the scrutinee is typed as a bare imported Rust path (not a `rusttype` alias),
 
 - [Managing dependencies](../../tooling/how-to/dependencies.md) - Adding crates, locking, CI
 - [Project configuration reference](../../tooling/reference/project_configuration.md) - Full `incan.toml` format
+- [RFC 057] - `@rust.allow(...)` targeted generated-Rust lint suppression
 - [RFC 041] - `rusttype`, `interop`, capability bounds
 - [Error Handling](../explanation/error_handling.md) - Working with `Result` types
 - [Derives & Traits](../reference/derives_and_traits.md) - Drop trait for custom cleanup

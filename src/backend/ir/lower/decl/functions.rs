@@ -73,6 +73,7 @@ impl AstLowering {
         // RFC 023: detect @rust.extern decorator to mark this function as externally-backed.
         let is_extern = Self::has_rust_extern_decorator(&f.decorators);
         let rust_attributes = self.extract_passthrough_attributes(&f.decorators);
+        let lint_allows = self.extract_rust_lint_allows(&f.decorators);
 
         let mut all_type_params = Self::lower_type_params(&f.type_params);
         all_type_params.extend(hidden_type_params);
@@ -87,6 +88,7 @@ impl AstLowering {
             type_params: all_type_params,
             is_extern,
             rust_attributes,
+            lint_allows,
         })
     }
 }

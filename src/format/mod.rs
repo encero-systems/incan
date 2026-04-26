@@ -345,6 +345,21 @@ mod tests {
     }
 
     #[test]
+    fn test_format_source_rust_allow_decorator() -> Result<(), FormatError> {
+        let source = r#"@rust.allow("dead_code","clippy::too_many_arguments")
+def MixedName() -> int:
+  return 1
+"#;
+        let formatted = format_source(source)?;
+        let expected = r#"@rust.allow("dead_code", "clippy::too_many_arguments")
+def MixedName() -> int:
+    return 1
+"#;
+        assert_eq!(formatted, expected);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_invalid_syntax() {
         let source = "def foo(";
         let result = format_source(source);

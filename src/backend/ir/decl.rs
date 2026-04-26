@@ -206,6 +206,8 @@ pub struct IrFunction {
     /// Example: `@route("/users/{id}")` imported from a `rust.module("incan_web_macros")` stub becomes
     /// `#[incan_web_macros::route("/users/{id}")]`.
     pub rust_attributes: Vec<IrRustAttribute>,
+    /// Targeted Rust lint suppressions from RFC 057 `@rust.allow(...)`.
+    pub lint_allows: Vec<IrRustLintAllow>,
 }
 
 /// Function parameter
@@ -232,6 +234,8 @@ pub struct IrStruct {
     ///
     /// Key is the derive name, value is the module path from `rust.module(...)`.
     pub derive_rust_modules: std::collections::HashMap<String, String>,
+    /// Targeted Rust lint suppressions from RFC 057 `@rust.allow(...)`.
+    pub lint_allows: Vec<IrRustLintAllow>,
 }
 
 /// Struct field
@@ -259,6 +263,8 @@ pub struct IrEnum {
     ///
     /// Key is the derive name, value is the module path from `rust.module(...)`.
     pub derive_rust_modules: std::collections::HashMap<String, String>,
+    /// Targeted Rust lint suppressions from RFC 057 `@rust.allow(...)`.
+    pub lint_allows: Vec<IrRustLintAllow>,
 }
 
 /// A passthrough Rust attribute generated from an Incan decorator.
@@ -267,6 +273,13 @@ pub struct IrRustAttribute {
     pub module_path: String,
     pub name: String,
     pub args: Vec<IrRustAttrArg>,
+}
+
+/// A targeted Rust lint suppression emitted as `#[allow(...)]` on one generated item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IrRustLintAllow {
+    /// Rust lint path preserved from the source string literal, e.g. `dead_code` or `clippy::too_many_arguments`.
+    pub lint: String,
 }
 
 /// Rust attribute argument kinds.

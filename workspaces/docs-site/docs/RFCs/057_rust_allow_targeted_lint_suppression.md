@@ -1,6 +1,6 @@
 # RFC 057: `@rust.allow(...)` — targeted Rust lint suppression for generated code
 
-- **Status:** Draft
+- **Status:** In Progress
 - **Created:** 2026-04-13
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -56,7 +56,7 @@ Authors use `@rust.allow(...)` when generated Rust is expected to trigger a spec
 
 ```incan
 @rust.allow("deprecated")
-fn transform_write_order_lines_csvincn(session: Session, input_uri: str, output_uri: str) -> Result[None, SessionError]:
+def transform_write_order_lines_csv(session: Session, input_uri: str, output_uri: str) -> Result[None, SessionError]:
     lines = session.read_csv(OrderLine)(uri=input_uri)?
     transformed = lines.filter(rule_order_by_lineid)
     return session.write_csv(transformed, output_uri)
@@ -68,7 +68,7 @@ Multiple targeted suppressions may be attached to the same declaration:
 
 ```incan
 @rust.allow("deprecated", "clippy::unwrap_used")
-fn boot_runtime() -> Runtime:
+def boot_runtime() -> Runtime:
     return Runtime.from_env().unwrap()
 ```
 
@@ -96,13 +96,13 @@ Examples:
 
 ```incan
 @rust.allow("deprecated")
-fn f() -> None:
+def f() -> None:
     pass
 ```
 
 ```incan
 @rust.allow("clippy::unwrap_used", "clippy::expect_used")
-fn g() -> None:
+def g() -> None:
     pass
 ```
 
@@ -232,10 +232,76 @@ Some Incan declarations expand into more than one Rust item. If a helper exists 
 - **LSP / Tooling**: surface the decorator in hover, completion, and diagnostics for invalid use.
 - **Docs / examples**: document when targeted suppression is appropriate and when it is papering over a fixable problem.
 
-## Unresolved questions
+## Implementation Plan
 
-- Should this RFC include a module-level `rust.allow(...)` directive for the few cases where the narrowest valid Rust scope is genuinely not an item owned by one declaration, or should v1 stay item-only?
-- Should the compiler reject additional broad lint-group names such as `"unused"` or `"clippy::pedantic"` up front, or is rejecting only obvious catch-alls enough for v1?
-- Should `@rust.allow(...)` be accepted on every type-like declaration from day one, or should the first implementation be restricted to functions and methods until multi-item lowering behavior is better characterized?
+### Phase 1: Decorator vocabulary and validation
 
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Add `@rust.allow(...)` to the canonical decorator registry.
+- Validate that every invocation has at least one positional string literal lint name.
+- Reject non-string arguments, named arguments, empty or whitespace-padded lint names, duplicates within one invocation, and broad lint groups.
+- Reject `@rust.allow(...)` on declarations that do not lower to owned Rust items.
+
+### Phase 2: Lowering and IR metadata
+
+- Add explicit Rust lint-suppression metadata to IR declarations instead of overloading proc-macro passthrough attributes.
+- Thread lint suppressions through functions, methods, models, classes, enums, and newtypes.
+- Preserve exact lint spelling for emission while keeping validation centralized.
+
+### Phase 3: Rust emission
+
+- Emit `#[allow(...)]` on the smallest generated Rust item owned by each annotated declaration.
+- Support functions, methods, structs generated from models/classes/newtypes, and enums.
+- Keep generated constructors and helper items unsuppressed unless they are semantically owned by the annotated declaration and need the same suppression to preserve the contract.
+- Ensure the implementation never widens `@rust.allow(...)` into crate-level `#![allow(...)]`.
+
+### Phase 4: Tooling, docs, and release integration
+
+- Ensure formatter output preserves `@rust.allow(...)` with normal decorator formatting.
+- Ensure LSP hover/completion picks up the new decorator from the registry.
+- Add user-facing docs and release notes that explain when targeted Rust lint suppression is appropriate.
+- Bump the active development version for the implementation.
+
+## Progress Checklist
+
+### Spec / design
+
+- [x] Resolve v1 scope: item-only, no module-level `rust.allow(...)` directive.
+- [x] Resolve validation policy: reject obvious broad lint groups and otherwise preserve Rust-style lint names.
+- [x] Resolve declaration coverage: implement functions, methods, models, classes, enums, and newtypes from day one.
+
+### Decorator vocabulary / validation
+
+- [x] Register `rust.allow` in the canonical decorator registry.
+- [x] Validate argument shape and emit explicit diagnostics for empty, non-string, named, duplicate, whitespace-padded, or broad lint names.
+- [x] Reject unsupported attachment points before lowering.
+
+### Lowering / IR
+
+- [x] Add explicit IR metadata for Rust lint suppressions.
+- [x] Lower suppressions for functions and methods.
+- [x] Lower suppressions for models, classes, enums, and newtypes.
+
+### Emission
+
+- [x] Emit targeted `#[allow(...)]` attributes for functions and methods.
+- [x] Emit targeted `#[allow(...)]` attributes for generated structs and enums.
+- [x] Verify suppressions remain item-scoped and are never emitted as crate-level attributes.
+
+### Tests
+
+- [x] Add typechecker tests for valid and invalid `@rust.allow(...)` usage.
+- [x] Add codegen snapshot coverage for function/method suppression.
+- [x] Add codegen snapshot coverage for model/class/enum/newtype suppression.
+- [x] Add formatter coverage for `@rust.allow(...)`.
+
+### Docs / release
+
+- [x] Update authored docs for Rust interop and generated-code lint suppression.
+- [x] Add a release notes entry for RFC 057.
+- [x] Bump the active development version.
+
+## Design Decisions
+
+- RFC 057 v1 is item-only. It does not introduce a module-level `rust.allow(...)` directive, because that would widen the feature from local declaration metadata into module-level Rust warning policy.
+- The compiler rejects obvious broad lint groups up front, including `"warnings"`, `"unused"`, `"clippy::all"`, `"clippy::pedantic"`, `"clippy::nursery"`, `"clippy::restriction"`, and `"clippy::cargo"`. Other Rust-style lint paths are preserved as written and left to the Rust toolchain for final unknown-lint validation.
+- The first implementation covers functions, methods, and type-like declarations that lower to concrete Rust items: models, classes, enums, and newtypes. The implementation must extend IR metadata cleanly instead of restricting the feature to the declarations that already happen to carry Rust attribute fields.

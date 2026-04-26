@@ -64,6 +64,9 @@ pub const RFC_023: RfcId = "RFC 023";
 /// RFC 052 — module static storage.
 pub const RFC_052: RfcId = "RFC 052";
 
+/// RFC 057 — targeted Rust lint suppression.
+pub const RFC_057: RfcId = "RFC 057";
+
 /// Namespace-style access to RFC ids.
 ///
 /// This exists purely for ergonomics at call sites so individual registries don’t need to import
@@ -99,6 +102,8 @@ impl RFC {
     pub const _023: RfcId = RFC_023;
     /// RFC 052 — module static storage.
     pub const _052: RfcId = RFC_052;
+    /// RFC 057 — targeted Rust lint suppression.
+    pub const _057: RfcId = RFC_057;
 }
 
 /// Identify the language/compiler version a vocabulary item is available since.

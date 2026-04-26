@@ -78,7 +78,7 @@ impl TypeChecker {
                 }
             }
 
-            let Some(_id) = decorators::from_segments(&resolved) else {
+            let Some(id) = decorators::from_segments(&resolved) else {
                 let is_stdlib_decorator_function = feature
                     == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::StdlibDecoratorFunction))
                     && resolved.len() >= 3
@@ -114,7 +114,110 @@ impl TypeChecker {
                 }
                 continue;
             };
+
+            if id == DecoratorId::RustAllow {
+                self.validate_rust_allow_args(dec);
+            }
         }
+    }
+
+    /// Validate RFC 057 `@rust.allow(...)` arguments.
+    ///
+    /// The decorator is intentionally item-scoped and accepts only explicit lint paths so generated code can emit
+    /// targeted `#[allow(...)]` attributes without introducing broad crate- or module-level suppression.
+    pub(crate) fn validate_rust_allow_args(&mut self, dec: &Spanned<Decorator>) {
+        let mut seen = HashSet::new();
+        let mut positional_count = 0usize;
+
+        for arg in &dec.node.args {
+            match arg {
+                DecoratorArg::Positional(expr) => {
+                    positional_count += 1;
+                    let Expr::Literal(Literal::String(name)) = &expr.node else {
+                        self.errors
+                            .push(errors::rust_allow_requires_positional_string(expr.span));
+                        continue;
+                    };
+                    self.validate_single_rust_allow_lint(name, expr.span, &mut seen);
+                }
+                DecoratorArg::Named(name, _) => {
+                    self.errors.push(errors::rust_allow_rejects_named_args(name, dec.span));
+                }
+            }
+        }
+
+        if positional_count == 0 {
+            self.errors
+                .push(errors::rust_allow_requires_positional_string(dec.span));
+        }
+    }
+
+    /// Reject RFC 057 `@rust.allow(...)` on declarations that do not own a supported Rust item boundary.
+    ///
+    /// Parser syntax allows decorators on several declaration forms. This helper keeps the semantic support matrix
+    /// explicit so adding a new declaration kind does not silently inherit Rust lint suppression behavior.
+    pub(crate) fn reject_rust_allow_on_unsupported_declaration(
+        &mut self,
+        decorators: &[Spanned<Decorator>],
+        kind: &'static str,
+    ) {
+        for dec in decorators {
+            if self.decorator_id_with_import_aliases(&dec.node) == Some(DecoratorId::RustAllow) {
+                self.errors
+                    .push(errors::rust_allow_unsupported_attachment(kind, dec.span));
+            }
+        }
+    }
+
+    fn decorator_id_with_import_aliases(&self, dec: &Decorator) -> Option<DecoratorId> {
+        let resolved = resolve_decorator_path(dec, &self.symbols);
+        if let Some(id) = decorators::from_segments(&resolved) {
+            return Some(id);
+        }
+
+        let alias_resolved = decorator_resolution::resolve_decorator_path(dec, &self.import_aliases);
+        decorators::from_segments(&alias_resolved)
+    }
+
+    fn validate_single_rust_allow_lint(&mut self, name: &str, span: Span, seen: &mut HashSet<String>) {
+        if name.is_empty() || name.trim() != name || !Self::is_valid_rust_lint_path(name) {
+            self.errors.push(errors::rust_allow_invalid_lint_name(name, span));
+            return;
+        }
+
+        if Self::is_broad_rust_lint_group(name) {
+            self.errors.push(errors::rust_allow_broad_lint_group(name, span));
+            return;
+        }
+
+        if !seen.insert(name.to_string()) {
+            self.errors.push(errors::rust_allow_duplicate_lint(name, span));
+        }
+    }
+
+    fn is_valid_rust_lint_path(name: &str) -> bool {
+        name.split("::").all(Self::is_valid_rust_lint_segment)
+    }
+
+    fn is_valid_rust_lint_segment(segment: &str) -> bool {
+        let mut chars = segment.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first == '_' || first.is_ascii_alphabetic()) && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+    }
+
+    fn is_broad_rust_lint_group(name: &str) -> bool {
+        matches!(
+            name,
+            "warnings"
+                | "unused"
+                | "clippy::all"
+                | "clippy::pedantic"
+                | "clippy::nursery"
+                | "clippy::restriction"
+                | "clippy::cargo"
+        )
     }
 
     /// Validate @derive decorator arguments and report errors for unknown derives.

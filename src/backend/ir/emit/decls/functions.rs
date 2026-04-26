@@ -7,7 +7,7 @@ use quote::{format_ident, quote};
 
 use incan_core::lang::conventions;
 
-use super::super::super::decl::IrRustAttrArg;
+use super::super::super::decl::{IrRustAttrArg, IrRustLintAllow};
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 use super::{ZEN_TEXT, join_path_tokens};
@@ -118,6 +118,7 @@ impl<'a> IrEmitter<'a> {
             quote! {}
         };
 
+        let lint_allows = self.emit_rust_lint_allows(&func.lint_allows);
         let rust_attrs = self.emit_rust_attributes(&func.rust_attributes);
 
         // RFC 023: emit generic type parameters with inferred/explicit trait bounds.
@@ -125,6 +126,7 @@ impl<'a> IrEmitter<'a> {
 
         if is_main && func.is_async {
             return Ok(quote! {
+                #(#lint_allows)*
                 #(#rust_attrs)*
                 #vis fn #name #generics (#(#params),*) {
                     #static_init_stmt
@@ -143,6 +145,7 @@ impl<'a> IrEmitter<'a> {
         let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
         if is_main || ret_ty_is_unit {
             Ok(quote! {
+                #(#lint_allows)*
                 #(#rust_attrs)*
                 #vis #async_kw fn #name #generics (#(#params),*) {
                     #static_init_stmt
@@ -154,6 +157,7 @@ impl<'a> IrEmitter<'a> {
         } else {
             let ret_ty = self.emit_type(&func.return_type);
             Ok(quote! {
+                #(#lint_allows)*
                 #(#rust_attrs)*
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
                     #static_init_stmt
@@ -222,6 +226,7 @@ impl<'a> IrEmitter<'a> {
             quote! {}
         };
         let static_init_stmt = self.emit_module_static_init_call();
+        let lint_allows = self.emit_rust_lint_allows(&func.lint_allows);
 
         // Proc-macro crates expose macros, not callable Rust functions. Keep these decorator placeholders compilable,
         // but route runtime misuse through a named internal stdlib helper instead of emitting an open-coded `panic!`
@@ -235,6 +240,7 @@ impl<'a> IrEmitter<'a> {
             let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
             if ret_ty_is_unit {
                 return Ok(quote! {
+                    #(#lint_allows)*
                     #vis #async_kw fn #name #generics (#(#params),*) {
                         incan_stdlib::errors::__private::raise_runtime_misuse(#panic_message)
                     }
@@ -243,6 +249,7 @@ impl<'a> IrEmitter<'a> {
 
             let ret_ty = self.emit_type(&func.return_type);
             return Ok(quote! {
+                #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
                     incan_stdlib::errors::__private::raise_runtime_misuse(#panic_message)
                 }
@@ -276,6 +283,7 @@ impl<'a> IrEmitter<'a> {
         let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
         if ret_ty_is_unit {
             Ok(quote! {
+                #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#params),*) {
                     #static_init_stmt
                     #call_path #turbofish (#(#args),*) #await_kw
@@ -284,6 +292,7 @@ impl<'a> IrEmitter<'a> {
         } else {
             let ret_ty = self.emit_type(&func.return_type);
             Ok(quote! {
+                #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
                     #static_init_stmt
                     #call_path #turbofish (#(#args),*) #await_kw
@@ -351,9 +360,11 @@ impl<'a> IrEmitter<'a> {
         *self.current_function_return_type.borrow_mut() = Some(func.return_type.clone());
         let body_stmts = self.emit_stmts(&func.body)?;
         *self.current_function_return_type.borrow_mut() = None;
+        let lint_allows = self.emit_rust_lint_allows(&func.lint_allows);
         let rust_attrs = self.emit_rust_attributes(&func.rust_attributes);
 
         Ok(quote! {
+            #(#lint_allows)*
             #(#rust_attrs)*
             #vis #async_kw fn #name #generics (#(#params),*) #ret {
                 #static_init_stmt
@@ -441,6 +452,7 @@ impl<'a> IrEmitter<'a> {
         } else {
             quote! {}
         };
+        let lint_allows = self.emit_rust_lint_allows(&func.lint_allows);
 
         // RFC 023: emit generic type parameters with trait bounds.
         let generics = self.emit_type_params(&func.type_params);
@@ -461,6 +473,7 @@ impl<'a> IrEmitter<'a> {
         let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
         if ret_ty_is_unit {
             Ok(quote! {
+                #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#params),*) {
                     #static_init_stmt
                     #call_path #turbofish (#(#args),*) #await_kw
@@ -469,6 +482,7 @@ impl<'a> IrEmitter<'a> {
         } else {
             let ret_ty = self.emit_type(&func.return_type);
             Ok(quote! {
+                #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
                     #static_init_stmt
                     #call_path #turbofish (#(#args),*) #await_kw
@@ -553,7 +567,9 @@ impl<'a> IrEmitter<'a> {
         };
 
         if func.body.is_empty() {
+            let lint_allows = self.emit_rust_lint_allows(&func.lint_allows);
             Ok(quote! {
+                #(#lint_allows)*
                 fn #name #generics (#(#params),*) #ret #sized_where;
             })
         } else {
@@ -561,7 +577,9 @@ impl<'a> IrEmitter<'a> {
             let body_stmts = self.emit_stmts(&func.body)?;
             *self.current_function_return_type.borrow_mut() = None;
 
+            let lint_allows = self.emit_rust_lint_allows(&func.lint_allows);
             Ok(quote! {
+                #(#lint_allows)*
                 fn #name #generics (#(#params),*) #ret #sized_where {
                     #(#body_stmts)*
                 }
@@ -599,5 +617,26 @@ impl<'a> IrEmitter<'a> {
                 quote! { #[#full_path(#(#args),*)] }
             })
             .collect()
+    }
+
+    /// Emit RFC 057 lint suppressions as Rust item attributes.
+    ///
+    /// The typechecker has already rejected broad groups and malformed paths; emission parses each preserved lint path
+    /// into tokens so `clippy::lint_name` remains a Rust path rather than a string literal.
+    pub(in crate::backend::ir::emit) fn emit_rust_lint_allows(&self, allows: &[IrRustLintAllow]) -> Vec<TokenStream> {
+        if allows.is_empty() {
+            return Vec::new();
+        }
+
+        let lint_paths = allows.iter().map(|allow| {
+            let segments: Vec<TokenStream> = allow
+                .lint
+                .split("::")
+                .map(Self::rust_ident)
+                .map(|ident| quote! { #ident })
+                .collect();
+            join_path_tokens(&segments)
+        });
+        vec![quote! { #[allow(#(#lint_paths),*)] }]
     }
 }

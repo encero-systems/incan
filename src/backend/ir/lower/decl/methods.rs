@@ -285,6 +285,7 @@ impl AstLowering {
         // RFC 023: detect @rust.extern decorator to mark this method as externally-backed.
         let is_extern = Self::has_rust_extern_decorator(&m.decorators);
         let rust_attributes = self.extract_passthrough_attributes(&m.decorators);
+        let lint_allows = self.extract_rust_lint_allows(&m.decorators);
         let mut all_type_params = Self::lower_type_params(&m.type_params);
         all_type_params.extend(hidden_type_params);
 
@@ -300,6 +301,7 @@ impl AstLowering {
             type_params: std::mem::take(&mut all_type_params),
             is_extern,
             rust_attributes,
+            lint_allows,
         })
     }
 
@@ -422,6 +424,8 @@ impl AstLowering {
         // `lower_impl_method_for_trait`, so inherent methods can be emitted as public here.
         let visibility = Visibility::Public;
         let is_extern = Self::has_rust_extern_decorator(&m.decorators);
+        let rust_attributes = self.extract_passthrough_attributes(&m.decorators);
+        let lint_allows = self.extract_rust_lint_allows(&m.decorators);
         let mut all_type_params = Self::lower_type_params(&m.type_params);
         all_type_params.extend(hidden_type_params);
 
@@ -434,7 +438,8 @@ impl AstLowering {
             visibility,
             type_params: std::mem::take(&mut all_type_params),
             is_extern,
-            rust_attributes: self.extract_passthrough_attributes(&m.decorators),
+            rust_attributes,
+            lint_allows,
         })
     }
 }

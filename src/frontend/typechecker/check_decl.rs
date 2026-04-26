@@ -1302,6 +1302,7 @@ impl TypeChecker {
         self.symbols.enter_scope(ScopeKind::Trait);
 
         self.validate_decorators(&tr.decorators);
+        self.reject_rust_allow_on_unsupported_declaration(&tr.decorators, "trait");
         let requires_map: HashMap<String, ResolvedType> = self
             .symbols
             .lookup(&tr.name)
@@ -1342,6 +1343,8 @@ impl TypeChecker {
     }
 
     fn check_newtype(&mut self, nt: &NewtypeDecl) {
+        self.validate_decorators(&nt.decorators);
+
         // Check underlying type exists
         let underlying = self.resolve_type_checked(&nt.underlying);
         if matches!(underlying, ResolvedType::Unknown) {

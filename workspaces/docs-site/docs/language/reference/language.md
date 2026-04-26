@@ -260,6 +260,7 @@ def main() -> None:
 |---|---|---|---|---|---|---|
 | Derive | `@derive` |  | Derive common trait implementations. | RFC 000 | 0.1 | Stable |
 | RustExtern | `@rust.extern` |  | Mark functions whose body is provided by a Rust module. | RFC 022 | 0.2 | Stable |
+| RustAllow | `@rust.allow` |  | Suppress specific Rust or Clippy lints on the generated Rust item for one declaration. | RFC 057 | 0.3 | Experimental |
 | StaticMethod | `@staticmethod` |  | Mark a method as static (no self receiver). | RFC 000 | 0.1 | Stable |
 | ClassMethod | `@classmethod` |  | Mark a method as a class method (no implicit self receiver). | RFC 000 | 0.2 | Stable |
 | Requires | `@requires` |  | Declare required fields for trait default methods. | RFC 000 | 0.1 | Stable |

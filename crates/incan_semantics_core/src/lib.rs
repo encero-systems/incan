@@ -33,6 +33,7 @@ pub enum SurfaceFeatureKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DecoratorFeature {
     RustExtern,
+    RustAllow,
     TestingMarker,
     Route,
     Derive,
@@ -310,6 +311,7 @@ impl<'a> SurfaceSemanticsRegistry<'a> {
 pub fn decorator_feature_from_id(id: DecoratorId) -> DecoratorFeature {
     match id {
         DecoratorId::RustExtern => DecoratorFeature::RustExtern,
+        DecoratorId::RustAllow => DecoratorFeature::RustAllow,
         DecoratorId::Derive => DecoratorFeature::Derive,
         DecoratorId::StaticMethod => DecoratorFeature::StaticMethod,
         DecoratorId::ClassMethod => DecoratorFeature::ClassMethod,

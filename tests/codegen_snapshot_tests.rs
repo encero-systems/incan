@@ -1818,6 +1818,16 @@ fn test_assert_surface_codegen() {
 }
 
 // ============================================================================
+/// RFC 057: Targeted Rust lint suppression.
+// ============================================================================
+#[test]
+fn test_rust_allow_codegen() {
+    let source = load_test_file("rust_allow");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rust_allow", rust_code);
+}
+
+// ============================================================================
 // RFC 023: Trait Bound Inference and `with` Annotation
 // ============================================================================
 

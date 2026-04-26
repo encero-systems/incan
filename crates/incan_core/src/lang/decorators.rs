@@ -7,7 +7,7 @@
 //!
 //! Decorators are organized into namespaces separated by `.`:
 //!
-//! - `rust.*` — Rust interop decorators (`@rust.extern`, future `@rust.function`, etc.)
+//! - `rust.*` — Rust interop decorators (`@rust.extern`, `@rust.allow`, future `@rust.function`, etc.)
 //! - `std.*` — Standard library decorators
 //! - Top-level — `@derive`, `@requires`
 //!
@@ -20,6 +20,7 @@ use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
 pub enum DecoratorId {
     Derive,
     RustExtern,
+    RustAllow,
     StaticMethod,
     ClassMethod,
     Requires,
@@ -29,7 +30,7 @@ pub enum DecoratorId {
 
 /// The `rust` decorator namespace — covers all `@rust.*` decorators.
 ///
-/// Current members: `@rust.extern`. Future: `@rust.function`, etc.
+/// Current members: `@rust.extern`, `@rust.allow`. Future: `@rust.function`, etc.
 pub const RUST_NAMESPACE: &str = "rust";
 
 /// The `std` decorator namespace — covers all `@std.*` decorators.
@@ -80,6 +81,14 @@ pub const DECORATORS: &[DecoratorInfo] = &[
         "Mark functions whose body is provided by a Rust module.",
         RFC::_022,
         Since(0, 2),
+    ),
+    info(
+        DecoratorId::RustAllow,
+        "rust.allow",
+        &[],
+        "Emit targeted Rust #[allow(...)] lint suppressions on a generated item.",
+        RFC::_057,
+        Since(0, 3),
     ),
     info(
         DecoratorId::StaticMethod,

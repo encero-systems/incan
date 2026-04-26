@@ -157,7 +157,7 @@ Expected: “cannot derive a model/class” with a hint to use `with TraitName` 
 Incan has several built-in decorators with different roles.
 
 - `@derive(...)` is covered [above](#derive-catalog-quick-index).
-- `@rust.extern` belongs to Rust interop and is documented in the Rust interop reference.
+- `@rust.extern` and `@rust.allow(...)` belong to Rust interop and are documented in the Rust interop reference.
 - This section covers the method and trait decorators you will use when authoring ordinary Incan types and traits.
 
 ### `@staticmethod`
