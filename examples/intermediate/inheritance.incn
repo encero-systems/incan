@@ -26,8 +26,8 @@ class Dog(Animal):
 """
 
 class Animal:
-    name: str
-    age: int
+    pub name: str
+    pub age: int
 
     def speak(self) -> str:
         return "..."

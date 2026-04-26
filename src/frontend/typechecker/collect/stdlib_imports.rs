@@ -961,6 +961,7 @@ impl TypeChecker {
             .collect()
     }
 
+    /// Convert exported manifest fields into semantic field metadata for imported-library typechecking.
     fn fields_from_manifest(&self, fields: &[FieldExport]) -> std::collections::HashMap<String, FieldInfo> {
         fields
             .iter()
@@ -969,6 +970,8 @@ impl TypeChecker {
                     field.name.clone(),
                     FieldInfo {
                         ty: resolved_type_from_manifest_type_ref(&field.ty),
+                        visibility: crate::frontend::ast::Visibility::Public,
+                        owner: None,
                         has_default: field.has_default,
                         alias: field.alias.clone(),
                         description: field.description.clone(),

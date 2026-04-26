@@ -189,7 +189,11 @@ pub(super) fn collect_methods(
 }
 
 /// Collect fields from field declarations into a `HashMap`.
-pub(super) fn collect_fields(fields: &[Spanned<FieldDecl>], checker: &mut TypeChecker) -> HashMap<String, FieldInfo> {
+pub(super) fn collect_fields(
+    fields: &[Spanned<FieldDecl>],
+    checker: &mut TypeChecker,
+    owner: &str,
+) -> HashMap<String, FieldInfo> {
     fields
         .iter()
         .map(|f| {
@@ -197,6 +201,8 @@ pub(super) fn collect_fields(fields: &[Spanned<FieldDecl>], checker: &mut TypeCh
                 f.node.name.clone(),
                 FieldInfo {
                     ty: checker.resolve_type_checked(&f.node.ty),
+                    visibility: f.node.visibility,
+                    owner: Some(owner.to_string()),
                     has_default: f.node.default.is_some(),
                     alias: f.node.metadata.alias.clone(),
                     description: f.node.metadata.description.clone(),

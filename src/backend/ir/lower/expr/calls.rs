@@ -706,7 +706,7 @@ from rust::std::boxed import Box
 
 @derive(Clone)
 class Node[T]:
-  value: T
+  pub value: T
 
 def take[T](node: Node[T]) -> T:
   return node.value

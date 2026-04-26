@@ -2004,14 +2004,14 @@ def main() -> None:
                 r#"
 @derive(Clone)
 class Cursor[T]:
-    value: T
+    pub value: T
 
     def join(self, other: Self, on: bool) -> Self:
         return self
 
 @derive(Clone)
 class Wrapper[T]:
-    _cursor: Cursor[T]
+    pub _cursor: Cursor[T]
 
     def merge(self, other: Self) -> Self:
         return Wrapper(_cursor=self._cursor.join(other._cursor, true))
@@ -2046,11 +2046,11 @@ def main() -> None:
                 r#"
 @derive(Clone)
 class Pred:
-    name: str
+    pub name: str
 
 @derive(Clone)
 class Node:
-    filter_predicate: Pred
+    pub filter_predicate: Pred
 
 def pair(node: Node) -> tuple[Pred, Pred]:
     return (node.filter_predicate, node.filter_predicate)
@@ -2085,7 +2085,7 @@ def main() -> None:
                 r#"
 @derive(Clone)
 class Node[T]:
-    value: T
+    pub value: T
 
 def pair[T](node: Node[T]) -> tuple[T, T]:
     return (node.value, node.value)
@@ -2126,7 +2126,7 @@ from rust::std::boxed import Box
 
 @derive(Clone)
 class Node:
-    value: int
+    pub value: int
 
 def take(node: Node) -> int:
     return node.value
@@ -2164,7 +2164,7 @@ from rust::std::boxed import Box
 
 @derive(Clone)
 class Node[T]:
-    value: T
+    pub value: T
 
 def take[T](node: Node[T]) -> T:
     return node.value
@@ -2200,7 +2200,7 @@ def main() -> None:
                 r#"
 @derive(Clone)
 pub class Node:
-    value: int
+    pub value: int
 
 @derive(Clone)
 pub class Wrapper:
@@ -2246,7 +2246,7 @@ from rust::std::boxed import Box
 
 @derive(Clone)
 pub class Node:
-    value: int
+    pub value: int
 
 @derive(Clone)
 pub class Wrapper:
@@ -5731,7 +5731,7 @@ pub def display[T](data: DataSet[T]) -> None:
         )?;
         std::fs::write(
             project_root.join("src/session/types.incn"),
-            "pub class Session:\n  id: int\n",
+            "pub class Session:\n  pub id: int\n",
         )?;
         std::fs::write(
             project_root.join("src/session/mod.incn"),

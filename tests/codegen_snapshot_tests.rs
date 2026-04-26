@@ -974,6 +974,13 @@ fn test_classes_codegen() {
 }
 
 #[test]
+fn test_issue246_class_field_visibility_codegen() {
+    let source = load_test_file("issue246_class_field_visibility");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("issue246_class_field_visibility", rust_code);
+}
+
+#[test]
 fn test_generic_methods_codegen() {
     let source = load_test_file("generic_methods");
     let rust_code = generate_rust(&source);

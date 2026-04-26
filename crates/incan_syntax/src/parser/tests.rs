@@ -399,6 +399,21 @@ class Box:
     }
 
     #[test]
+    fn test_parse_pub_class_preserves_authored_field_visibility() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+pub class LazyFrame:
+  _cursor: int
+  pub schema: str
+"#;
+        let program = parse_str(source)?;
+        let class = require_class_decl(&program.declarations[0])?;
+        assert!(matches!(class.visibility, Visibility::Public));
+        assert!(matches!(class.fields[0].node.visibility, Visibility::Private));
+        assert!(matches!(class.fields[1].node.visibility, Visibility::Public));
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_method_multiline_receiver_allows_trailing_comma() -> Result<(), Vec<CompileError>> {
         let source = r#"
 class Box:

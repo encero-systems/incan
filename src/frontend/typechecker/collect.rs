@@ -149,7 +149,7 @@ impl TypeChecker {
 
     /// Register a model declaration with its fields, methods, and derived traits.
     fn collect_model(&mut self, model: &ModelDecl, span: Span) {
-        let fields = collect_fields(&model.fields, self);
+        let fields = collect_fields(&model.fields, self, &model.name);
         let mut methods = collect_methods(&model.methods, self, Some(&model.name), &model.type_params);
 
         // Inject JSON methods based on derives
@@ -177,7 +177,7 @@ impl TypeChecker {
         let (mut fields, mut methods) = self.inherit_from_parent(&class.extends);
 
         // Add own fields (can override inherited ones)
-        fields.extend(collect_fields(&class.fields, self));
+        fields.extend(collect_fields(&class.fields, self, &class.name));
 
         // Add own methods (can override inherited ones)
         methods.extend(collect_methods(

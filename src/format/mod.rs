@@ -1204,6 +1204,17 @@ const B: int = 2
         Ok(())
     }
 
+    #[test]
+    fn test_format_source_preserves_pub_class_field_visibility() -> Result<(), FormatError> {
+        let source = r#"pub class LazyFrame:
+    _cursor: int
+    pub schema: str
+"#;
+        let formatted = format_source(source)?;
+        assert_eq!(formatted, source);
+        Ok(())
+    }
+
     /// Regression (GitHub #247): class body docstrings must round-trip for several body shapes **and** stay attached
     /// on [`ClassDecl::docstring`] after lex+parse of the formatted source (tooling / API extraction path).
     ///

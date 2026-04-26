@@ -299,6 +299,8 @@ pub struct TypeChecker {
     pub(crate) current_trait_requires: Option<HashMap<String, ResolvedType>>,
     /// Active trait name for default method diagnostics.
     pub(crate) current_trait_name: Option<String>,
+    /// Active nominal owner while checking a method body.
+    pub(crate) current_method_owner: Option<String>,
     /// Deduplicate missing-`@requires` diagnostics within a single trait default method body.
     pub(crate) current_trait_missing_requires_emitted: Option<HashSet<String>>,
     /// Collected module-level const declarations (for rich const-eval + cycle detection).
@@ -378,6 +380,7 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
+    /// Create an empty typechecker with fresh symbol, diagnostic, import, and lowering-metadata state.
     pub fn new() -> Self {
         Self {
             symbols: SymbolTable::new(),
@@ -389,6 +392,7 @@ impl TypeChecker {
             loop_stack: Vec::new(),
             current_trait_requires: None,
             current_trait_name: None,
+            current_method_owner: None,
             current_trait_missing_requires_emitted: None,
             const_decls: HashMap::new(),
             static_decls: Vec::new(),

@@ -945,6 +945,7 @@ impl TypeChecker {
         let _ = span;
     }
 
+    /// Validate a model declaration after collection, including decorators, trait conformance, fields, and methods.
     fn check_model(&mut self, model: &ModelDecl) {
         self.symbols.enter_scope(ScopeKind::Model);
 
@@ -1005,6 +1006,8 @@ impl TypeChecker {
                 name: field.node.name.clone(),
                 kind: SymbolKind::Field(FieldInfo {
                     ty,
+                    visibility: field.node.visibility,
+                    owner: Some(model.name.clone()),
                     has_default: field.node.default.is_some(),
                     alias: field.node.metadata.alias.clone(),
                     description: field.node.metadata.description.clone(),
@@ -1158,6 +1161,7 @@ impl TypeChecker {
         }
     }
 
+    /// Validate a class declaration after collection, including inheritance, field metadata, traits, and methods.
     fn check_class(&mut self, class: &ClassDecl) {
         self.symbols.enter_scope(ScopeKind::Class);
 
@@ -1222,6 +1226,8 @@ impl TypeChecker {
                 name: field.node.name.clone(),
                 kind: SymbolKind::Field(FieldInfo {
                     ty,
+                    visibility: field.node.visibility,
+                    owner: Some(class.name.clone()),
                     has_default: field.node.default.is_some(),
                     alias: field.node.metadata.alias.clone(),
                     description: field.node.metadata.description.clone(),
@@ -1592,6 +1598,7 @@ impl TypeChecker {
         self.symbols.exit_scope();
     }
 
+    /// Validate a model, class, enum, or newtype method body using the concrete nominal owner as `self`.
     pub(crate) fn check_method(&mut self, method: &MethodDecl, owner: &str) {
         self.validate_decorators(&method.decorators);
         let owner_type_params = self
@@ -1604,7 +1611,9 @@ impl TypeChecker {
                 TypeInfo::Builtin | TypeInfo::TypeAlias => Vec::new(),
             })
             .unwrap_or_default();
+        let previous_owner = self.current_method_owner.replace(owner.to_string());
         self.check_method_with_self_ty(method, ResolvedType::Named(owner.to_string()), &owner_type_params);
+        self.current_method_owner = previous_owner;
     }
 
     fn check_method_with_self_ty(&mut self, method: &MethodDecl, self_ty: ResolvedType, owner_type_params: &[String]) {
