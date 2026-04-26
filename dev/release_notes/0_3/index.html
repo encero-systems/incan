@@ -4560,6 +4560,7 @@
 <h3 id="compiler-and-code-generation">Compiler and code generation<a class="headerlink" href="#compiler-and-code-generation" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Compiler/Codegen</strong>: Duckborrowing ownership planning is now centralized around typed value-use sites, covering Incan call arguments, Rust interop arguments, struct fields, collection and tuple elements, assignments, returns, match scrutinees, mutable aggregate parameters, collection lookup probes, loop/comprehension traversal, and backend-inserted generic <code>Clone</code> bounds. This removes several classes of generated-Rust borrow/move failures and reduces the need for user-authored <code>.clone()</code>, <code>.as_ref()</code>, <code>str(...)</code>, and <code>.into()</code> workarounds (#121).</li>
+<li><strong>Compiler/Runtime</strong>: Generated Rust now routes the in-scope panic-backed collection and JSON extraction paths, plus proc-macro decorator misuse stubs, through named stdlib helpers instead of open-coded fallback or <code>panic!</code> shims. The narrow checked-newtype construction panic remains tracked separately (#351).</li>
 </ul>
 <h3 id="tooling-and-formatter">Tooling and formatter<a class="headerlink" href="#tooling-and-formatter" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4574,7 +4575,7 @@
 <h3 id="versioning-and-release-track">Versioning and release track<a class="headerlink" href="#versioning-and-release-track" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Project lifecycle tooling</strong>: Added lifecycle commands for interactive <code>incan new</code> / <code>incan init</code>, <code>incan version</code>, and <code>incan env</code>, plus project lifecycle documentation and <code>incan.toml</code> environment metadata support (#73).</li>
-<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.4</code>.</li>
+<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.5</code>.</li>
 </ul>
 <h2 id="known-limitations-03">Known limitations (0.3)<a class="headerlink" href="#known-limitations-03" title="Permanent link">&para;</a></h2>
 <ul>
