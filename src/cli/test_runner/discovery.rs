@@ -1,15 +1,20 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use crate::frontend::ast::{DecoratorArg, DecoratorArgValue, Expr, Literal};
+use crate::frontend::ast::{CallArg, Declaration, DecoratorArg, DecoratorArgValue, Expr, Literal, Spanned};
 use crate::frontend::ast_walk::any_expr_in_body;
+use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::testing_markers::{
     TestingMarkerKind, TestingMarkerSemantics, load_testing_marker_semantics, resolve_testing_marker_kind,
 };
 use crate::frontend::{lexer, parser};
+use crate::manifest::ProjectManifest;
 
 use super::types::{DiscoveryResult, FixtureInfo, FixtureScope, ParametrizeCase, TestInfo, TestMarker};
+
+const BUILTIN_FIXTURES: &[&str] = &["tmp_path", "tmp_workdir", "env"];
 
 /// Discover test files in a directory.
 pub fn discover_test_files(path: &Path) -> Vec<PathBuf> {
@@ -45,12 +50,28 @@ pub fn discover_test_files(path: &Path) -> Vec<PathBuf> {
 
 /// Discover both tests and fixtures in a file.
 pub fn discover_tests_and_fixtures(file_path: &Path) -> Result<DiscoveryResult, String> {
+    discover_tests_and_fixtures_with_context(file_path, &[], &[], &[])
+}
+
+pub(crate) fn discover_tests_and_fixtures_with_context(
+    file_path: &Path,
+    visible_fixture_names: &[String],
+    inherited_marks: &[String],
+    inherited_known_markers: &[String],
+) -> Result<DiscoveryResult, String> {
     let source = fs::read_to_string(file_path).map_err(|e| format!("Failed to read file: {}", e))?;
 
     let tokens = lexer::lex(&source).map_err(|e| format!("Lexer error: {:?}", e))?;
 
     let path_display = file_path.to_string_lossy();
-    let ast = parser::parse_with_module_path(&tokens, Some(path_display.as_ref()))
+    let manifest = ProjectManifest::discover(file_path.parent().unwrap_or_else(|| Path::new(".")))
+        .map_err(|e| format!("Manifest error: {}", e))?;
+    let library_manifest_index = manifest
+        .as_ref()
+        .map(LibraryManifestIndex::from_project_manifest)
+        .unwrap_or_default();
+    let library_imported_vocab = library_manifest_index.library_imported_vocab();
+    let ast = parser::parse_with_context(&tokens, Some(path_display.as_ref()), Some(&library_imported_vocab))
         .map_err(|e| format!("Parser error: {:?}", e))?;
 
     let import_aliases = crate::frontend::decorator_resolution::collect_import_aliases(&ast);
@@ -59,10 +80,24 @@ pub fn discover_tests_and_fixtures(file_path: &Path) -> Result<DiscoveryResult, 
 
     let mut tests = Vec::new();
     let mut fixtures = Vec::new();
+    let mut default_marks = inherited_marks.to_vec();
+    let mut known_markers = inherited_known_markers.to_vec();
+
+    for decl in &ast.declarations {
+        if let Declaration::Const(konst) = &decl.node {
+            if konst.name == "TEST_MARKS" {
+                default_marks.extend(extract_string_list(&konst.value.node));
+            } else if konst.name == "TEST_MARKERS" {
+                known_markers.extend(extract_string_list(&konst.value.node));
+            }
+        }
+    }
 
     let mut fixture_names: Vec<String> = Vec::new();
+    fixture_names.extend(visible_fixture_names.iter().cloned());
+    fixture_names.extend(BUILTIN_FIXTURES.iter().map(|name| (*name).to_string()));
     for decl in &ast.declarations {
-        if let crate::frontend::ast::Declaration::Function(func) = &decl.node
+        if let Declaration::Function(func) = &decl.node
             && has_fixture_decorator(&func.decorators, &import_aliases, &semantics)
         {
             fixture_names.push(func.name.clone());
@@ -70,7 +105,7 @@ pub fn discover_tests_and_fixtures(file_path: &Path) -> Result<DiscoveryResult, 
     }
 
     for decl in &ast.declarations {
-        if let crate::frontend::ast::Declaration::Function(func) = &decl.node {
+        if let Declaration::Function(func) = &decl.node {
             if has_fixture_decorator(&func.decorators, &import_aliases, &semantics) {
                 let (scope, autouse) = extract_fixture_args(&func.decorators, &import_aliases, &semantics);
                 let dependencies = extract_fixture_dependencies(&func.params, &fixture_names);
@@ -85,8 +120,18 @@ pub fn discover_tests_and_fixtures(file_path: &Path) -> Result<DiscoveryResult, 
                     has_teardown,
                     is_async: func.is_async(),
                 });
-            } else if func.name.starts_with("test_") {
-                let markers = extract_test_markers(&func.decorators, &import_aliases, &semantics);
+            } else if func.name.starts_with("test_")
+                || has_test_decorator(&func.decorators, &import_aliases, &semantics)
+            {
+                let mut markers: Vec<TestMarker> = default_marks.iter().cloned().map(TestMarker::Mark).collect();
+                markers.extend(extract_test_markers(&func.decorators, &import_aliases, &semantics));
+                let timeout = markers.iter().rev().find_map(|marker| {
+                    if let TestMarker::Timeout(duration) = marker {
+                        Some(*duration)
+                    } else {
+                        None
+                    }
+                });
                 let required_fixtures = extract_fixture_dependencies(&func.params, &fixture_names);
 
                 tests.push(TestInfo {
@@ -94,13 +139,35 @@ pub fn discover_tests_and_fixtures(file_path: &Path) -> Result<DiscoveryResult, 
                     function_name: func.name.clone(),
                     markers,
                     required_fixtures,
+                    parameter_names: func.params.iter().map(|param| param.node.name.clone()).collect(),
+                    timeout,
                     parametrize_call: None,
                 });
             }
         }
     }
 
-    Ok(DiscoveryResult { tests, fixtures })
+    default_marks.sort();
+    default_marks.dedup();
+    known_markers.sort();
+    known_markers.dedup();
+    Ok(DiscoveryResult {
+        tests,
+        fixtures,
+        default_marks,
+        known_markers,
+    })
+}
+
+/// Check if a function has an explicit `@std.testing.test` decorator.
+fn has_test_decorator(
+    decorators: &[crate::frontend::ast::Spanned<crate::frontend::ast::Decorator>],
+    aliases: &HashMap<String, Vec<String>>,
+    semantics: &TestingMarkerSemantics,
+) -> bool {
+    decorators
+        .iter()
+        .any(|d| resolve_testing_marker_kind(&d.node, aliases, semantics) == Some(TestingMarkerKind::Test))
 }
 
 /// Check if a function has a fixture decorator.
@@ -199,10 +266,33 @@ fn extract_test_markers(
             Some(TestingMarkerKind::Slow) => {
                 markers.push(TestMarker::Slow);
             }
+            Some(TestingMarkerKind::Mark) => {
+                if let Some(name) = extract_string_arg(&dec.node.args) {
+                    markers.push(TestMarker::Mark(name));
+                }
+            }
+            Some(TestingMarkerKind::Resource) => {
+                if let Some(name) = extract_string_arg(&dec.node.args) {
+                    markers.push(TestMarker::Resource(name));
+                }
+            }
+            Some(TestingMarkerKind::Serial) => {
+                markers.push(TestMarker::Serial);
+            }
+            Some(TestingMarkerKind::Timeout) => {
+                if let Some(raw) = extract_string_arg(&dec.node.args)
+                    && let Some(duration) = parse_duration_literal(&raw)
+                {
+                    markers.push(TestMarker::Timeout(duration));
+                }
+            }
             Some(TestingMarkerKind::Parametrize) => {
                 let argnames = extract_string_arg(&dec.node.args).unwrap_or_default();
                 let argvalues = extract_parametrize_argvalues(&dec.node.args);
                 markers.push(TestMarker::Parametrize(argnames, argvalues));
+            }
+            Some(TestingMarkerKind::Test) => {
+                markers.push(TestMarker::Test);
             }
             Some(TestingMarkerKind::Fixture) | None => {}
         }
@@ -221,6 +311,45 @@ fn extract_string_arg(args: &[crate::frontend::ast::DecoratorArg]) -> Option<Str
     None
 }
 
+fn extract_string_list(expr: &Expr) -> Vec<String> {
+    let Expr::List(items) = expr else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            if let Expr::Literal(Literal::String(value)) = &item.node {
+                Some(value.clone())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn parse_duration_literal(raw: &str) -> Option<Duration> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let split_at = value
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(value.len());
+    let (number, unit) = value.split_at(split_at);
+    let amount = number.parse::<f64>().ok()?;
+    if amount.is_sign_negative() {
+        return None;
+    }
+    let seconds = match unit.trim() {
+        "ms" => amount / 1000.0,
+        "s" | "" => amount,
+        "m" => amount * 60.0,
+        "h" => amount * 60.0 * 60.0,
+        _ => return None,
+    };
+    Some(Duration::from_secs_f64(seconds))
+}
+
 /// Extract parametrize argvalues from the second positional decorator argument.
 ///
 /// The second argument is expected to be a list of tuples (or single values).  For each element the function produces a
@@ -234,32 +363,145 @@ fn extract_parametrize_argvalues(args: &[crate::frontend::ast::DecoratorArg]) ->
         return Vec::new();
     };
 
-    items.iter().map(build_parametrize_case).collect()
+    let ids = extract_parametrize_ids(args);
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| build_parametrize_case(item, ids.get(index).cloned()))
+        .collect()
+}
+
+fn extract_parametrize_ids(args: &[crate::frontend::ast::DecoratorArg]) -> Vec<String> {
+    args.iter()
+        .find_map(|arg| {
+            if let DecoratorArg::Named(name, DecoratorArgValue::Expr(expr)) = arg
+                && name == "ids"
+            {
+                Some(extract_string_list(&expr.node))
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
 }
 
 /// Build a [`ParametrizeCase`] from a single parameter-set expression.
 ///
 /// Tuples like `(1, 2, 3)` yield display ID `"1-2-3"` and Rust args `"1, 2, 3"`.
-fn build_parametrize_case(expr: &crate::frontend::ast::Spanned<Expr>) -> ParametrizeCase {
+fn build_parametrize_case(expr: &Spanned<Expr>, explicit_id: Option<String>) -> ParametrizeCase {
+    if let Some((value, markers, id)) = extract_case_call(expr) {
+        let mut case = build_parametrize_case(value, id.or(explicit_id));
+        case.markers = markers;
+        return case;
+    }
+
     match &expr.node {
         Expr::Tuple(elements) => {
-            let display_id = elements
+            let derived_display_id = elements
                 .iter()
                 .map(|e| render_display(&e.node))
                 .collect::<Vec<_>>()
                 .join("-");
+            let display_id = explicit_id.unwrap_or(derived_display_id);
             let rust_args = elements
                 .iter()
                 .map(|e| render_rust_arg(&e.node))
                 .collect::<Vec<_>>()
                 .join(", ");
-            ParametrizeCase { display_id, rust_args }
+            let rust_arguments = elements.iter().map(|e| render_rust_arg(&e.node)).collect();
+            let parameters = elements.iter().map(|e| render_display(&e.node)).collect();
+            ParametrizeCase {
+                display_id,
+                rust_args,
+                rust_arguments,
+                parameters,
+                markers: Vec::new(),
+            }
         }
         other => {
-            let display_id = render_display(other);
+            let rendered = render_display(other);
+            let display_id = explicit_id.unwrap_or_else(|| rendered.clone());
             let rust_args = render_rust_arg(other);
-            ParametrizeCase { display_id, rust_args }
+            ParametrizeCase {
+                display_id,
+                rust_args: rust_args.clone(),
+                rust_arguments: vec![rust_args],
+                parameters: vec![rendered],
+                markers: Vec::new(),
+            }
         }
+    }
+}
+
+fn extract_case_call(expr: &Spanned<Expr>) -> Option<(&Spanned<Expr>, Vec<TestMarker>, Option<String>)> {
+    let args = match &expr.node {
+        Expr::Call(callee, _, args) if matches!(&callee.node, Expr::Ident(name) if name == "param_case") => args,
+        Expr::Constructor(name, args) if name == "param_case" => args,
+        _ => return None,
+    };
+    let value = args.iter().find_map(|arg| {
+        if let CallArg::Positional(value) = arg {
+            Some(value)
+        } else {
+            None
+        }
+    })?;
+    let mut markers = Vec::new();
+    let mut id = None;
+    for arg in args {
+        if let CallArg::Named(name, value) = arg {
+            if name == "id" {
+                if let Expr::Literal(Literal::String(value)) = &value.node {
+                    id = Some(value.clone());
+                }
+            } else if name == "marks" {
+                markers.extend(extract_case_marks(&value.node));
+            }
+        }
+    }
+    Some((value, markers, id))
+}
+
+fn extract_case_marks(expr: &Expr) -> Vec<TestMarker> {
+    let Expr::List(items) = expr else {
+        return Vec::new();
+    };
+    items.iter().filter_map(|item| marker_from_expr(&item.node)).collect()
+}
+
+fn marker_from_expr(expr: &Expr) -> Option<TestMarker> {
+    match expr {
+        Expr::Literal(Literal::String(name)) => Some(TestMarker::Mark(name.clone())),
+        Expr::Call(callee, _, args) => {
+            let Expr::Ident(name) = &callee.node else {
+                return None;
+            };
+            marker_from_call(name, args)
+        }
+        Expr::Constructor(name, args) => marker_from_call(name, args),
+        Expr::Ident(name) if name == "slow" => Some(TestMarker::Slow),
+        Expr::Ident(name) if name == "serial" => Some(TestMarker::Serial),
+        _ => None,
+    }
+}
+
+fn marker_from_call(name: &str, args: &[CallArg]) -> Option<TestMarker> {
+    let string_arg = args.iter().find_map(|arg| {
+        if let CallArg::Positional(value) = arg
+            && let Expr::Literal(Literal::String(value)) = &value.node
+        {
+            Some(value.clone())
+        } else {
+            None
+        }
+    });
+    match name {
+        "skip" => Some(TestMarker::Skip(string_arg.unwrap_or_default())),
+        "xfail" => Some(TestMarker::XFail(string_arg.unwrap_or_default())),
+        "mark" => string_arg.map(TestMarker::Mark),
+        "resource" => string_arg.map(TestMarker::Resource),
+        "timeout" => string_arg.and_then(|raw| parse_duration_literal(&raw).map(TestMarker::Timeout)),
+        _ => None,
     }
 }
 
@@ -364,6 +606,28 @@ def test_only_this() -> None:
 
         assert_eq!(result.tests.len(), 1, "only test_ prefixed functions are tests");
         assert_eq!(result.tests[0].function_name, "test_only_this");
+        Ok(())
+    }
+
+    #[test]
+    fn discover_explicit_test_decorator() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+from std.testing import assert_eq, test
+
+@test
+def computes_sum() -> None:
+    assert_eq(1 + 1, 2)
+"#;
+        let file = write_test_file(source)?;
+        let result = discover_tests_and_fixtures(file.path())?;
+
+        assert_eq!(
+            result.tests.len(),
+            1,
+            "@test should discover functions without test_ prefix"
+        );
+        assert_eq!(result.tests[0].function_name, "computes_sum");
+        assert!(result.tests[0].markers.contains(&TestMarker::Test));
         Ok(())
     }
 

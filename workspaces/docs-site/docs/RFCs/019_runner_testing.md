@@ -1,6 +1,6 @@
 # RFC 019: test runner, CLI, and ecosystem
 
-- **Status:** Planned
+- **Status:** In Progress
 - **Created:** 2026-01-14
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 018 (language primitives for testing), RFC 007 (runner semantics; superseded), RFC 001 (runner portions; superseded), RFC 002 (runner portions; superseded)
@@ -1196,6 +1196,98 @@ Legend:
 - **Stdlib (`std.testing`)** — `@fixture`, `@parametrize`, `@skip`, `@xfail`, `@timeout`, `@serial`, `@resource`, and the `TEST_MARKS` registry must be defined and consumable by the runner as specified in this RFC.
 - **Build system** — `incan test` must compile test modules against the project source root, enabling `from mymodule import ...` in test files without duplication; it must strip `module tests:` bodies from production builds.
 - **Reporting layer** — the runner must support `--format json`, `--junit <path>`, `--list`, `--durations`, and `--shuffle` as specified; JSON reports must include a stable `schema_version` field.
+
+## Implementation Plan
+
+### Phase 1: Runner collection and stable identities
+
+- Add stable test identifiers for collected file-based tests and parametrized cases.
+- Add explicit `@test` discovery through `std.testing` marker metadata.
+- Update `-k` and `--list` to operate on stable test identifiers.
+
+### Phase 2: Runner reporting and xfail controls
+
+- Add JSON Lines result reporting with a stable `schema_version`.
+- Add JUnit XML report writing for CI consumers.
+- Add duration reporting, deterministic shuffle/seed support, and `--run-xfail`.
+
+### Phase 3: Shared fixture and marker model
+
+- Implement `tests/**/conftest.incn` fixture discovery and directory precedence.
+- Add marker expression selection (`-m`) and strict marker validation.
+- Add built-in fixtures (`tmp_path`, `tmp_workdir`, `env`) and collection-time feature probes.
+
+### Phase 4: Scheduling and timeouts
+
+- Add `--jobs` parallel execution with worker-process isolation.
+- Add resource locking and `@serial` execution constraints.
+- Add `--timeout` and per-test timeout markers with best-effort teardown.
+
+### Phase 5: RFC 018 integration boundary
+
+- Add inline `module tests:` discovery once RFC 018 parser/typechecker/lowering support exists or lands in the same implementation train.
+- Keep production build stripping and test-build inclusion semantics aligned with RFC 018.
+
+## Progress Checklist
+
+### Spec / design
+
+- [x] Move RFC 019 to In Progress for active implementation.
+- [x] Keep RFC 018 language-level inline test semantics tracked separately unless a contained bridge is required.
+
+### Runner collection
+
+- [x] Add stable test ids for file-based collected tests and parametrized cases.
+- [x] Discover explicit `@test` marker functions in test files.
+- [x] Make `-k` filter against stable test ids.
+- [x] Add `--list` collection output.
+- [ ] Discover inline `module tests:` blocks after the RFC 018 AST/parser boundary exists.
+
+### Stdlib / marker metadata
+
+- [x] Add `std.testing.test` marker metadata and runtime misuse guard.
+- [x] Add `std.testing.timeout`, `std.testing.serial`, `std.testing.resource`, and marker registry metadata.
+- [x] Add built-in runner fixtures (`tmp_path`, `tmp_workdir`, `env`).
+
+### Fixtures and conftest
+
+- [x] Discover `tests/**/conftest.incn` files.
+- [x] Resolve fixture precedence by test directory ancestry.
+- [ ] Validate fixture dependency errors as collection errors.
+- [ ] Support fixture teardown and broader scope lifetimes per RFC contract.
+
+### Selection and markers
+
+- [x] Add `-m <expr>` marker expression selection.
+- [x] Add `--strict-markers`.
+- [x] Add per-case parametrized marks and ids. Current parser reserves `case`, so the implemented helper is `param_case` until the parser surface is available.
+- [x] Add `--run-xfail`.
+
+### Scheduling and execution
+
+- [x] Add `--jobs/-j` CLI plumbing. Full worker-process scheduling remains pending.
+- [ ] Add `@resource` locking and `@serial` scheduling.
+- [x] Add `--timeout` and per-test timeout overrides.
+- [x] Add deterministic `--shuffle` / `--seed`.
+
+### Reporting
+
+- [x] Add JSON Lines reports with `schema_version: "incan.test.v1"`.
+- [x] Add JUnit XML report writing.
+- [x] Add `--durations`.
+- [x] Implement output capture as the default and keep `--nocapture` as the opt-out.
+
+### Tests
+
+- [x] Add E2E coverage for `@test`, `--list`, stable-id `-k`, JSON reports, JUnit reports, and `--run-xfail`.
+- [x] Add E2E coverage for conftest fixtures, built-in fixtures, marker expressions, strict markers, per-case marks/ids, timeouts, and output capture.
+- [ ] Add E2E coverage for full worker-process scheduling and resource locking.
+
+### Docs
+
+- [x] Update CLI reference for implemented RFC 019 runner flags.
+- [x] Update testing how-to/reference docs for implemented runner behavior.
+- [x] Add release notes entry.
 
 ## Implementation architecture
 

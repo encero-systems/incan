@@ -3373,14 +3373,18 @@ mod test_runner_e2e {
 
     /// Create a temp directory with a single test file and return the directory path.
     fn write_test_project(filename: &str, source: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
         use std::time::{SystemTime, UNIX_EPOCH};
+
+        static TEMP_PROJECT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
         let mut dir = std::env::temp_dir();
         let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
             panic!("system time before UNIX epoch");
         };
         let uniq = duration.as_nanos();
-        dir.push(format!("incan_e2e_test_{}", uniq));
+        let suffix = TEMP_PROJECT_COUNTER.fetch_add(1, Ordering::Relaxed);
+        dir.push(format!("incan_e2e_test_{}_{}", uniq, suffix));
         let Ok(()) = std::fs::create_dir_all(&dir) else {
             panic!("failed to create temp dir");
         };
@@ -3494,6 +3498,434 @@ def test_two() -> None:
             "expected two passing results (per-test PASSED lines).\nstdout:\n{}",
             stdout,
         );
+    }
+
+    #[test]
+    fn e2e_explicit_test_decorator_discovers_non_prefixed_function() {
+        let dir = write_test_project(
+            "test_decorator.incn",
+            r#"
+from std.testing import assert_eq, test
+
+@test
+def verifies_total() -> None:
+    assert_eq(40 + 2, 42)
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected @test-decorated function to run.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_decorator.incn::verifies_total"),
+            "expected decorated test id in output.\nstdout:\n{}",
+            stdout,
+        );
+    }
+
+    #[test]
+    fn e2e_list_and_keyword_filter_use_stable_test_ids() {
+        let dir = write_test_project(
+            "test_list_filter.incn",
+            r#"
+from std.testing import assert_eq
+
+def test_alpha() -> None:
+    assert_eq(1, 1)
+
+def test_beta() -> None:
+    assert_eq(2, 2)
+"#,
+        );
+
+        let output = run_incan_test_with_args(&dir, &["--list", "-k", "test_beta"]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected --list -k run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.lines().any(|line| line == "test_list_filter.incn::test_beta"),
+            "expected exact listed beta id rooted at the explicit test directory.\nstdout:\n{}",
+            stdout,
+        );
+        assert!(
+            !stdout.contains(dir.to_string_lossy().as_ref()),
+            "expected --list output to avoid machine-local absolute paths.\nstdout:\n{}",
+            stdout,
+        );
+        assert!(
+            !stdout.contains("test_list_filter.incn::test_alpha"),
+            "expected keyword filter to hide alpha.\nstdout:\n{}",
+            stdout,
+        );
+    }
+
+    #[test]
+    fn e2e_json_format_emits_result_records() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_json_report.incn",
+            r#"
+from std.testing import assert_eq
+
+def test_json_one() -> None:
+    assert_eq(1, 1)
+"#,
+        );
+
+        let output = run_incan_test_with_args(&dir, &["--format", "json", "--shuffle", "--seed", "7"]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected JSON-format run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+
+        let mut saw_result = false;
+        let mut saw_summary = false;
+        for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
+            let value: serde_json::Value = serde_json::from_str(line)?;
+            if value.get("test_id").is_some() {
+                saw_result = true;
+                assert_eq!(
+                    value.get("schema_version").and_then(|v| v.as_str()),
+                    Some("incan.test.v1")
+                );
+                assert_eq!(
+                    value.get("test_id").and_then(|v| v.as_str()),
+                    Some("test_json_report.incn::test_json_one")
+                );
+                assert_eq!(value.get("status").and_then(|v| v.as_str()), Some("passed"));
+            }
+            if value.get("summary").is_some() {
+                saw_summary = true;
+                assert_eq!(
+                    value
+                        .get("summary")
+                        .and_then(|summary| summary.get("shuffle_seed"))
+                        .and_then(|v| v.as_u64()),
+                    Some(7)
+                );
+            }
+        }
+
+        assert!(
+            saw_result,
+            "expected at least one JSON result record.\nstdout:\n{}",
+            stdout
+        );
+        assert!(saw_summary, "expected a JSON summary record.\nstdout:\n{}", stdout);
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_junit_report_writes_testcase_xml() {
+        let dir = write_test_project(
+            "test_junit_report.incn",
+            r#"
+from std.testing import assert_eq
+
+def test_junit_one() -> None:
+    assert_eq(1, 1)
+"#,
+        );
+        let report = dir.join("reports").join("junit.xml");
+        let report_arg = report.to_string_lossy().to_string();
+        let output = run_incan_test_with_args(&dir, &["--junit", report_arg.as_str()]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected JUnit report run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        let Ok(xml) = std::fs::read_to_string(&report) else {
+            panic!("failed to read {}", report.display());
+        };
+        assert!(
+            xml.contains("<testsuite") && xml.contains("test_junit_one"),
+            "expected JUnit XML with test case, got:\n{}",
+            xml,
+        );
+    }
+
+    #[test]
+    fn e2e_run_xfail_treats_xfail_as_ordinary_test() {
+        let dir = write_test_project(
+            "test_run_xfail.incn",
+            r#"
+from std.testing import assert_eq, xfail
+
+@xfail("currently passes")
+def test_xpass() -> None:
+    assert_eq(1, 1)
+"#,
+        );
+
+        let default = run_incan_test(&dir);
+        let default_stdout = String::from_utf8_lossy(&default.stdout);
+        let default_stderr = String::from_utf8_lossy(&default.stderr);
+        assert!(
+            !default.status.success(),
+            "expected default xpass to fail.\nstdout:\n{}\nstderr:\n{}",
+            default_stdout,
+            default_stderr,
+        );
+
+        let run_xfail = run_incan_test_with_args(&dir, &["--run-xfail"]);
+        let stdout = String::from_utf8_lossy(&run_xfail.stdout);
+        let stderr = String::from_utf8_lossy(&run_xfail.stderr);
+        assert!(
+            run_xfail.status.success(),
+            "expected --run-xfail to treat xfail marker as ordinary.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_run_xfail.incn::test_xpass") && stdout.contains("PASSED"),
+            "expected ordinary passing output.\nstdout:\n{}",
+            stdout,
+        );
+    }
+
+    #[test]
+    fn e2e_conftest_fixture_is_visible_to_nested_tests() {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "conftest_fixture"
+version = "0.1.0"
+"#,
+        );
+        let tests_dir = dir.join("tests").join("unit");
+        if let Err(err) = std::fs::create_dir_all(&tests_dir) {
+            panic!("failed to create tests dir: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            dir.join("tests").join("conftest.incn"),
+            r#"
+from std.testing import fixture
+
+@fixture
+def answer() -> int:
+    return 42
+"#,
+        ) {
+            panic!("failed to write conftest: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            tests_dir.join("test_answer.incn"),
+            r#"
+from std.testing import assert_eq
+
+def test_answer(answer: int) -> None:
+    assert_eq(answer, 42)
+"#,
+        ) {
+            panic!("failed to write nested test: {}", err);
+        }
+
+        let output = run_incan_test_relative(&dir, "tests");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected conftest fixture injection to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_answer.incn::test_answer"),
+            "expected nested stable id in output.\nstdout:\n{}",
+            stdout,
+        );
+    }
+
+    #[test]
+    fn e2e_builtin_tmp_path_fixture_is_injected() {
+        let dir = write_test_project(
+            "test_tmp_path.incn",
+            r#"
+from std.testing import assert_eq
+from rust::std::path import PathBuf
+
+def test_tmp_path_fixture(tmp_path: PathBuf) -> None:
+    assert_eq(tmp_path.exists(), true)
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected built-in tmp_path fixture to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+    }
+
+    #[test]
+    fn e2e_marker_expr_and_strict_markers_use_conftest_registry() {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "strict_markers"
+version = "0.1.0"
+"#,
+        );
+        let tests_dir = dir.join("tests");
+        if let Err(err) = std::fs::create_dir_all(&tests_dir) {
+            panic!("failed to create tests dir: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            tests_dir.join("conftest.incn"),
+            r#"
+const TEST_MARKERS: List[str] = ["smoke"]
+const TEST_MARKS: List[str] = ["smoke"]
+"#,
+        ) {
+            panic!("failed to write conftest: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            tests_dir.join("test_markers.incn"),
+            r#"
+from std.testing import assert_eq
+
+def test_inherited_smoke() -> None:
+    assert_eq(1, 1)
+
+def test_other() -> None:
+    assert_eq(1, 1)
+"#,
+        ) {
+            panic!("failed to write marker test: {}", err);
+        }
+
+        let listed = run_incan_test_with_args(&tests_dir, &["--list", "-m", "smoke", "--strict-markers"]);
+        let stdout = String::from_utf8_lossy(&listed.stdout);
+        let stderr = String::from_utf8_lossy(&listed.stderr);
+        assert!(
+            listed.status.success(),
+            "expected strict registered marker list to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(stdout.contains("test_markers.incn::test_inherited_smoke"));
+
+        let strict_error = run_incan_test_with_args(&tests_dir, &["--list", "-m", "missing", "--strict-markers"]);
+        let strict_stdout = String::from_utf8_lossy(&strict_error.stdout);
+        let strict_stderr = String::from_utf8_lossy(&strict_error.stderr);
+        assert!(
+            !strict_error.status.success(),
+            "expected unknown strict marker to fail.\nstdout:\n{}\nstderr:\n{}",
+            strict_stdout,
+            strict_stderr,
+        );
+        assert!(strict_stderr.contains("unknown marker `missing`"));
+    }
+
+    #[test]
+    fn e2e_parametrize_case_ids_and_marks_affect_collection() {
+        let dir = write_test_project(
+            "test_case_ids.incn",
+            r#"
+from std.testing import assert_eq, param_case, parametrize, xfail
+
+@parametrize("x, expected", [
+    param_case((1, 3), marks=[xfail("known")], id="one-three"),
+    (2, 4),
+], ids=["ignored", "two-four"])
+def test_double(x: int, expected: int) -> None:
+    assert_eq(x * 2, expected)
+"#,
+        );
+
+        let listed = run_incan_test_with_args(&dir, &["--list"]);
+        let stdout = String::from_utf8_lossy(&listed.stdout);
+        let stderr = String::from_utf8_lossy(&listed.stderr);
+        assert!(
+            listed.status.success(),
+            "expected parametrized list to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(stdout.contains("test_case_ids.incn::test_double[one-three]"));
+        assert!(stdout.contains("test_case_ids.incn::test_double[two-four]"));
+
+        let run = run_incan_test(&dir);
+        let run_stdout = String::from_utf8_lossy(&run.stdout);
+        let run_stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            run.status.success(),
+            "expected xfailed case and passing case to make the run succeed.\nstdout:\n{}\nstderr:\n{}",
+            run_stdout,
+            run_stderr,
+        );
+        assert!(run_stdout.contains("xfailed") || run_stdout.contains("XFAIL"));
+    }
+
+    #[test]
+    fn e2e_timeout_marks_slow_test_failed() {
+        let dir = write_test_project(
+            "test_timeout.incn",
+            r#"
+from rust::std::thread import sleep
+from rust::std::time import Duration
+
+def test_slow() -> None:
+    sleep(Duration.from_millis(100))
+"#,
+        );
+
+        let output = run_incan_test_with_args(&dir, &["--timeout", "1ms"]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "expected timeout run to fail.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(stdout.contains("timed out after"));
+    }
+
+    #[test]
+    fn e2e_nocapture_prints_passing_test_output() {
+        let dir = write_test_project(
+            "test_capture.incn",
+            r#"
+def test_prints() -> None:
+    print("VISIBLE_CAPTURE")
+"#,
+        );
+
+        let output = run_incan_test_with_args(&dir, &["--nocapture"]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected nocapture run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(stdout.contains("VISIBLE_CAPTURE"));
     }
 
     #[test]
