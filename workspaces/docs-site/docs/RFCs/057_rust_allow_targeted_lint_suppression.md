@@ -265,7 +265,7 @@ Some Incan declarations expand into more than one Rust item. If a helper exists 
 
 ### Spec / design
 
-- [x] Resolve v1 scope: item-only, no module-level `rust.allow(...)` directive.
+- [x] Resolve current scope: item-only, no module-level `rust.allow(...)` directive.
 - [x] Resolve validation policy: reject obvious broad lint groups and otherwise preserve Rust-style lint names.
 - [x] Resolve declaration coverage: implement functions, methods, models, classes, enums, and newtypes from day one.
 
@@ -302,6 +302,6 @@ Some Incan declarations expand into more than one Rust item. If a helper exists 
 
 ## Design Decisions
 
-- RFC 057 v1 is item-only. It does not introduce a module-level `rust.allow(...)` directive, because that would widen the feature from local declaration metadata into module-level Rust warning policy.
+- RFC 057's current scope is item-only. It does not introduce a module-level `rust.allow(...)` directive, because that would widen the feature from local declaration metadata into module-level Rust warning policy.
 - The compiler rejects obvious broad lint groups up front, including `"warnings"`, `"unused"`, `"clippy::all"`, `"clippy::pedantic"`, `"clippy::nursery"`, `"clippy::restriction"`, and `"clippy::cargo"`. Other Rust-style lint paths are preserved as written and left to the Rust toolchain for final unknown-lint validation.
-- The first implementation covers functions, methods, and type-like declarations that lower to concrete Rust items: models, classes, enums, and newtypes. The implementation must extend IR metadata cleanly instead of restricting the feature to the declarations that already happen to carry Rust attribute fields.
+- The accepted implementation scope covers functions, methods, and type-like declarations that lower to concrete Rust items: models, classes, enums, and newtypes. The implementation must extend IR metadata cleanly instead of restricting the feature to the declarations that already happen to carry Rust attribute fields.
