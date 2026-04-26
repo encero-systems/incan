@@ -138,6 +138,15 @@ fmt-check-ci:
 lint-fast-ci:
 	@cargo clippy --workspace --all-features -- -D warnings
 
+.PHONY: rustdoc-gate  ## quality - Require rustdoc on changed Rust functions/methods
+rustdoc-gate:
+	@echo "\033[1mChecking rustdoc coverage for changed Rust functions/methods...\033[0m"
+	@python3 scripts/check_changed_rustdocs.py
+
+.PHONY: rustdoc-gate-ci
+rustdoc-gate-ci:
+	@python3 scripts/check_changed_rustdocs.py
+
 .PHONY: cargo-deny  ## quality - Run cargo-deny policy checks
 cargo-deny:
 	@echo "\033[1mRunning cargo-deny...\033[0m"
@@ -168,12 +177,16 @@ pre-commit-fast:
 	$(MAKE) -s fmt-check-ci; \
 	echo "\033[32mDONE\033[0m"; \
 	t1=$$(date +%s); \
+	printf "\033[1mChecking rustdoc coverage...\033[0m "; \
+	$(MAKE) -s rustdoc-gate-ci; \
+	echo "\033[32mDONE\033[0m"; \
+	t2=$$(date +%s); \
 	echo "\033[1mRunning cargo check (fast gate)...\033[0m"; \
 	$(MAKE) -s check-fast-ci; \
 	echo "\033[32mDONE\033[0m"; \
-	t2=$$(date +%s); \
+	t3=$$(date +%s); \
 	echo "\033[32m✓ Pre-commit checks passed (fast)\033[0m"; \
-	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, check=$$((t2-t1))s, total=$$((t2-start))s"
+	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, rustdoc=$$((t2-t1))s, check=$$((t3-t2))s, total=$$((t3-start))s"
 
 .PHONY: pre-commit-full-gate  ## quality - Full local gate core: fmt-check + tests + clippy + cargo-deny with phase timing
 pre-commit-full-gate:
@@ -183,20 +196,24 @@ pre-commit-full-gate:
 	$(MAKE) -s fmt-check-ci; \
 	echo "\033[32mDONE\033[0m"; \
 	t1=$$(date +%s); \
+	printf "\033[1mChecking rustdoc coverage...\033[0m "; \
+	$(MAKE) -s rustdoc-gate-ci; \
+	echo "\033[32mDONE\033[0m"; \
+	t2=$$(date +%s); \
 	echo "\033[1mRunning tests...\033[0m"; \
 	$(TEST_CMD); \
 	echo "\033[32mDONE\033[0m"; \
-	t2=$$(date +%s); \
+	t3=$$(date +%s); \
 	echo "\033[1mRunning clippy...\033[0m"; \
 	$(MAKE) -s lint-fast-ci; \
 	echo "\033[32mDONE\033[0m"; \
-	t3=$$(date +%s); \
+	t4=$$(date +%s); \
 	echo "\033[1mRunning cargo-deny...\033[0m"; \
 	$(MAKE) -s cargo-deny-ci; \
 	echo "\033[32mDONE\033[0m"; \
-	t4=$$(date +%s); \
+	t5=$$(date +%s); \
 	echo "\033[32m✓ Pre-commit checks passed (full)\033[0m"; \
-	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, tests=$$((t2-t1))s, lint=$$((t3-t2))s, deny=$$((t4-t3))s, total=$$((t4-start))s"
+	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, rustdoc=$$((t2-t1))s, tests=$$((t3-t2))s, lint=$$((t4-t3))s, deny=$$((t5-t4))s, total=$$((t5-start))s"
 
 .PHONY: pre-commit  ## quality - Full local gate: pre-commit-full-gate + smoke-test-fast
 pre-commit:

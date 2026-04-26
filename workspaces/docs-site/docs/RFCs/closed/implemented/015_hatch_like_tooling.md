@@ -1,6 +1,6 @@
 # RFC 015: hatch-like tooling (project lifecycle CLI)
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2025-12-23
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -9,7 +9,7 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/73
 - **RFC PR:** —
 - **Written against:** v0.1
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -163,9 +163,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 - Values are `str` paths to `.incn` files.
 - A script name should be a simple identifier (recommended snake_case).
-- `incan new --bin` must create a `main` script by default: `main = "src/main.incn"`.
+- `incan new` must create a `main` script by default: `main = "src/main.incn"`.
 
-This RFC does not define project-aware `incan run` behavior for scripts yet. It only defines the configuration shape so it can be used by follow-up tooling RFCs without changing `incan.toml`.
+This RFC now defines project-aware `incan run` behavior for the default `main` script. Bare `incan run` may resolve `[project.scripts].main` when no file path is provided.
 
 Note: `[project.scripts]` maps script names to `.incn` entrypoint paths. This is distinct from
 `[tool.incan.envs.<name>.scripts]` (defined below), which maps script names to shell command argv lists for env execution.
@@ -235,11 +235,15 @@ Behavior:
 
 - By default, `incan new` is **interactive**: it prompts for project metadata (description, author, license, etc.).
 - Use `-y` / `--yes` to skip prompts and use defaults (non-interactive mode for scripting/CI).
+- In non-interactive mode, `incan new` requires either `NAME` or `--dir <path>`.
 
 Flags:
 
-- `--bin` (default; creates `src/main.incn`)
+- binary scaffolding is the default; there is no explicit `--bin` flag today
 - `--dir <path>` (default: `./<name>`)
+- `--description <text>`
+- `--author <author>` (recommended format: `"Name <email@example.com>"`)
+- `--license <license>` (SPDX identifier or expression)
 - `--force` (overwrite existing directory)
 - `-y` / `--yes` (non-interactive; use defaults without prompting)
 
@@ -256,8 +260,13 @@ Behavior:
 
 Flags:
 
+- `--name <name>`
+- `--version <version>` (default: `0.1.0`)
+- `--description <text>`
+- `--author <author>` (recommended format: `"Name <email@example.com>"`)
+- `--license <license>` (SPDX identifier or expression)
 - `--force` (overwrite existing metadata)
-- `--detect` (attempt to infer: scripts/entrypoints, existing version strings, etc.)
+- `--detect` (preserve an existing `src/main.incn` and reuse directory-derived defaults where possible)
 - `-y` / `--yes` (non-interactive; use defaults without prompting)
 
 ### `incan version <bump>`
@@ -460,6 +469,75 @@ if `incan <cmd>` is not built-in, the CLI may attempt to execute `incan-<cmd>` f
 - **Project root discovery** — commands must walk upward from the current directory to locate `incan.toml`, with a `--project <path>` override, and all project-aware commands must agree on the resolved root.
 - **Project generation** — generated project files such as `Cargo.toml` and entrypoint wiring must derive from `incan.toml` metadata rather than hardcoded defaults.
 - **Documentation** — a project configuration reference and a "your first Incan project" guide are expected deliverables of this RFC.
+
+## Implementation Plan
+
+### Phase 1: Manifest model and project scaffolding
+
+- Extend `incan.toml` parsing and writing so `[project]`, `[project.scripts]`, and `[tool.incan.envs.*]` are accepted and validated as project lifecycle metadata.
+- Keep project root discovery deterministic and reuse it from lifecycle commands instead of adding command-local search behavior.
+- Implement interactive and non-interactive `incan init` / `incan new` paths that create explicit, readable starter files.
+
+### Phase 2: Version management
+
+- Add SemVer-aware project version bumping for `major`, `minor`, `patch`, `alpha`, `beta`, `rc`, and `dev`.
+- Support explicit version setting, dry-run output, and release-bump prerelease handling.
+- Ensure version updates modify `incan.toml` as the project metadata source of truth.
+
+### Phase 3: Environment runner
+
+- Parse and resolve `[tool.incan.envs.*]` with deterministic default-env inclusion, ordered extension, duplicate detection, cycle diagnostics, and overlay merging.
+- Implement `incan env list`, `incan env show`, and `incan env run`, including dry-run output and argument passthrough.
+- Prevent accidental recursive env invocations with a clear diagnostic.
+
+### Phase 4: Tests and documentation
+
+- Add targeted unit and integration coverage for scaffolding, manifest validation, version bumping, env resolution, and env command execution.
+- Update authored user-facing docs for first-project setup, project configuration, and lifecycle workflows.
+- Add release notes for the RFC 015 user-facing CLI surface.
+
+## Implementation log
+
+### Spec / design
+
+- [x] Review RFC lifecycle state and confirm implementation is actively being picked up.
+- [x] Keep lifecycle command semantics aligned with RFC 013 dependency metadata and RFC 020 lock policy boundaries.
+
+### Manifest / project model
+
+- [x] Accept and validate RFC 015 `[project]` fields and `[project.scripts]`.
+- [x] Accept and validate `[tool.incan.envs.*]` configuration without rejecting unrelated future `[tool.incan]` keys unnecessarily.
+- [x] Reuse project root discovery for lifecycle commands and project-aware diagnostics.
+
+### CLI / scaffolding
+
+- [x] Implement `incan new [name]` with interactive metadata prompts and explicit starter files.
+- [x] Update `incan init` flags and behavior for non-interactive lifecycle setup.
+- [x] Add CLI parsing and command wiring for lifecycle subcommands.
+
+### Version management
+
+- [x] Implement SemVer bump rules for release and prerelease bumps.
+- [x] Implement `--set`, `--dry-run`, and `--keep-prerelease`.
+- [x] Persist project version updates to `incan.toml` and report modified files.
+
+### Environment runner
+
+- [x] Implement env listing and resolved env display.
+- [x] Implement env inheritance, merging, duplicate inclusion, and cycle diagnostics.
+- [x] Implement env script execution, dry-run output, argument passthrough, and recursion protection.
+
+### Tests
+
+- [x] Add unit coverage for manifest/schema validation and version/env resolution.
+- [x] Add integration coverage for `incan new`, `incan version`, and `incan env`.
+- [x] Run the repository-level pre-commit gate.
+
+### Docs
+
+- [x] Update first-project and lifecycle docs.
+- [x] Add project configuration reference coverage.
+- [x] Add release notes entry for RFC 015 / issue 73.
 
 ## Implementation architecture
 

@@ -1,18 +1,22 @@
 //! Project manifest (`incan.toml`) discovery and parsing.
 //!
 //! Implements the `incan.toml` schema from RFC 013 (Rust crate dependencies), RFC 015 (project discovery), and
-//! RFC 031 Phase 1 (Incan library dependency table split).
-//! This module is responsible for locating the manifest and parsing dependency tables into structured specs that the
-//! dependency resolver and future library resolver can validate.
+//! RFC 031 Phase 1 (Incan library dependency table split). This module is responsible for locating the manifest and
+//! parsing dependency tables into structured specs that the dependency resolver and future library resolver can
+//! validate.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use toml_edit::{Document, Item};
+use toml_edit::{Array as EditArray, Document, DocumentMut, Item, Table, Value as EditValue};
 
 /// The canonical manifest filename that the compiler searches for.
 pub const MANIFEST_FILENAME: &str = "incan.toml";
+/// Internal manifest-path override used for nested `incan` subprocesses launched via `incan env run`.
+pub const INTERNAL_MANIFEST_OVERRIDE_ENV: &str = "INCAN_INTERNAL_MANIFEST_OVERRIDE";
+/// Internal project-root override used for nested `incan` subprocesses launched via `incan env run`.
+pub const INTERNAL_PROJECT_ROOT_OVERRIDE_ENV: &str = "INCAN_INTERNAL_PROJECT_ROOT";
 
 // ============================================================================
 // Error types
@@ -54,16 +58,19 @@ pub struct ManifestLocation {
 pub struct ManifestLocationDisplay(Option<ManifestLocation>);
 
 impl ManifestLocationDisplay {
+    /// Construct a display wrapper with no concrete line/column location.
     fn none() -> Self {
         Self(None)
     }
 
+    /// Construct a display wrapper for one concrete manifest location.
     fn some(location: ManifestLocation) -> Self {
         Self(Some(location))
     }
 }
 
 impl std::fmt::Display for ManifestLocationDisplay {
+    /// Render the optional `:line:column` suffix used in manifest diagnostics.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(location) = self.0 {
             write!(f, ":{}:{}", location.line, location.column)
@@ -103,6 +110,7 @@ pub struct DependencySpec {
 }
 
 impl DependencySpec {
+    /// Return a dependency spec with deterministically ordered and deduplicated features.
     pub fn normalized(mut self) -> Self {
         self.features.sort();
         self.features.dedup();
@@ -120,25 +128,66 @@ pub struct LibraryDependencySpec {
 // Project manifest
 // ============================================================================
 
+/// `[project]` metadata from `incan.toml`.
+///
+/// RFC 015 makes this table the canonical project identity and lifecycle metadata source. Fields are optional in the
+/// Rust representation because the compiler supports legacy manifests and commands validate only the fields they
+/// require.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectSection {
+    /// Project distribution name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Project version as a complete SemVer string.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// Short human-readable project summary.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Project authors, usually formatted as `Name <email>`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authors: Option<Vec<String>>,
+    /// Current project maintainers, usually formatted as `Name <email>`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maintainers: Option<Vec<String>>,
+    /// SPDX license identifier or expression.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub license: Option<String>,
+    /// License file paths relative to the project root.
+    #[serde(rename = "license-files", skip_serializing_if = "Option::is_none")]
+    pub license_files: Option<Vec<String>>,
+    /// README path relative to the project root.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub readme: Option<String>,
+    /// Project homepage URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<String>,
+    /// Source repository URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    /// Published documentation URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub documentation: Option<String>,
+    /// Issue tracker URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issues: Option<String>,
+    /// Search/discovery keywords for future package tooling.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keywords: Option<Vec<String>>,
+    /// Trove-like classifiers for future package tooling.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub classifiers: Option<Vec<String>>,
+    /// Required Incan toolchain version requirement.
     #[serde(rename = "requires-incan", skip_serializing_if = "Option::is_none")]
     pub requires_incan: Option<String>,
+    /// Whether future publish tooling must refuse to publish this project.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private: Option<bool>,
+    /// Named Incan entry points such as `main = "src/main.incn"`.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub scripts: HashMap<String, String>,
+    /// Named project feature groups.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub features: HashMap<String, Vec<String>>,
 }
@@ -154,8 +203,8 @@ pub struct BuildSection {
     pub target: Option<String>,
     /// Explicit source root directory (relative to project root).
     ///
-    /// When set, the compiler and test runner resolve user module imports against this directory.
-    /// If omitted, `src/` is used by convention when it exists, otherwise the project root itself.
+    /// When set, the compiler and test runner resolve user module imports against this directory. If omitted, `src/`
+    /// is used by convention when it exists; otherwise the project root itself is used.
     #[serde(rename = "source-root", skip_serializing_if = "Option::is_none")]
     pub source_root: Option<String>,
 }
@@ -165,6 +214,76 @@ pub struct BuildSection {
 pub struct VocabSection {
     #[serde(rename = "crate")]
     pub crate_path: Option<String>,
+}
+
+/// Tool-owned configuration namespace from `[tool]`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ToolSection {
+    /// Incan-specific tool configuration from `[tool.incan]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incan: Option<IncanToolSection>,
+}
+
+/// Incan-owned tool configuration from `[tool.incan]`.
+///
+/// Unknown future keys are intentionally tolerated at this layer so older compilers can still load manifests that
+/// include newer tool sections. Concrete feature parsers, such as the env parser, remain free to reject typos inside
+/// the subsection they own.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct IncanToolSection {
+    /// Named RFC 015 environment definitions.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub envs: HashMap<String, EnvSection>,
+}
+
+/// Serializable shape for `[tool.incan.envs.<name>]`.
+///
+/// This canonical manifest-side type owns the RFC 015 env schema. Unknown keys inside an env definition are rejected
+/// here through `deny_unknown_fields`, and downstream lifecycle helpers resolve overlays from this parsed shape instead
+/// of maintaining a second env-schema model.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct EnvSection {
+    /// Env names to apply before this env.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extends: Vec<String>,
+    /// Skip implicit `default` inclusion when resolving this env.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub detached: bool,
+    /// Script working directory, relative to the project root unless absolute.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// Environment variables injected into scripts.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub env_vars: HashMap<String, String>,
+    /// Script commands represented as argv arrays.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub scripts: HashMap<String, Vec<String>>,
+    /// Rust dependency overlays for this env.
+    ///
+    /// Current manifests spell this table `rust-dependencies`; the older RFC 015 text used `dependencies`.
+    #[serde(
+        rename = "rust-dependencies",
+        alias = "dependencies",
+        default,
+        skip_serializing_if = "HashMap::is_empty"
+    )]
+    pub dependencies: HashMap<String, toml::Value>,
+    /// Rust dev-dependency overlays for this env.
+    ///
+    /// Current manifests spell this table `rust-dev-dependencies`; the older RFC 015 text used `dev-dependencies`.
+    #[serde(
+        rename = "rust-dev-dependencies",
+        alias = "dev-dependencies",
+        default,
+        skip_serializing_if = "HashMap::is_empty"
+    )]
+    pub dev_dependencies: HashMap<String, toml::Value>,
+}
+
+/// Helper for serde `skip_serializing_if` on boolean flags.
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// A manifest that can be serialized to TOML.
@@ -179,6 +298,8 @@ pub struct WritableManifest {
     pub build: Option<BuildSection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vocab: Option<VocabSection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<ToolSection>,
 }
 
 impl WritableManifest {
@@ -199,6 +320,8 @@ pub struct ProjectManifest {
     pub build: Option<BuildSection>,
     /// `[vocab]` configuration (optional).
     pub vocab: Option<VocabSection>,
+    /// `[tool]` configuration (optional).
+    pub tool: Option<ToolSection>,
     /// `[dependencies]` (Incan library dependencies).
     library_dependencies: HashMap<String, LibraryDependencySpec>,
     /// `[rust-dependencies]` (Rust crate dependencies).
@@ -213,13 +336,17 @@ impl ProjectManifest {
     /// Returns `Ok(None)` if no `incan.toml` is found (e.g., single-file mode).
     /// Returns `Err` if a manifest is found but cannot be read or parsed.
     pub fn discover(start_dir: &Path) -> Result<Option<Self>, ManifestError> {
-        let manifest_path = match find_manifest(start_dir) {
+        let manifest_path = match internal_project_root_override()
+            .map(|root| root.join(MANIFEST_FILENAME))
+            .or_else(|| find_manifest(start_dir))
+        {
             Some(path) => path,
             None => return Ok(None),
         };
 
-        let content = std::fs::read_to_string(&manifest_path).map_err(|e| ManifestError::Read {
-            path: manifest_path.clone(),
+        let content_path = internal_manifest_override_path().unwrap_or_else(|| manifest_path.clone());
+        let content = std::fs::read_to_string(&content_path).map_err(|e| ManifestError::Read {
+            path: content_path.clone(),
             source: e,
         })?;
 
@@ -278,6 +405,79 @@ impl ProjectManifest {
     pub fn vocab(&self) -> Option<&VocabSection> {
         self.vocab.as_ref()
     }
+
+    /// Optional Incan-owned tool configuration.
+    pub fn incan_tool(&self) -> Option<&IncanToolSection> {
+        self.tool.as_ref().and_then(|tool| tool.incan.as_ref())
+    }
+
+    /// Canonical env definitions as parsed from `[tool.incan.envs]`.
+    pub fn env_sections(&self) -> BTreeMap<String, EnvSection> {
+        self.incan_tool()
+            .map(|tool| {
+                tool.envs
+                    .iter()
+                    .map(|(name, env)| (name.clone(), env.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Canonical project-level Rust dependency overlay used as the base for env resolution.
+    pub fn env_base_dependency_overlay(&self) -> BTreeMap<String, toml::Value> {
+        self.rust_dependencies
+            .iter()
+            .map(|(name, spec)| (name.clone(), dependency_spec_to_toml_value(spec)))
+            .collect()
+    }
+
+    /// Canonical project-level Rust dev-dependency overlay used as the base for env resolution.
+    pub fn env_base_dev_dependency_overlay(&self) -> BTreeMap<String, toml::Value> {
+        self.rust_dev_dependencies
+            .iter()
+            .map(|(name, spec)| (name.clone(), dependency_spec_to_toml_value(spec)))
+            .collect()
+    }
+}
+
+/// Walk upward from `start_dir` to find an `incan.toml` file.
+pub fn find_manifest(start_dir: &Path) -> Option<PathBuf> {
+    let mut current = start_dir.to_path_buf();
+    loop {
+        let candidate = current.join(MANIFEST_FILENAME);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
+/// Return the active internal manifest override path, if nested execution provided one.
+fn internal_manifest_override_path() -> Option<PathBuf> {
+    std::env::var_os(INTERNAL_MANIFEST_OVERRIDE_ENV).map(PathBuf::from)
+}
+
+/// Return the active internal project-root override, if nested execution provided one.
+fn internal_project_root_override() -> Option<PathBuf> {
+    std::env::var_os(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV).map(PathBuf::from)
+}
+
+/// Render a temporary manifest view whose top-level Rust dependency tables match the provided resolved overlay.
+pub fn render_dependency_overlay_manifest(
+    content: &str,
+    manifest_path: &Path,
+    dependencies: &BTreeMap<String, toml::Value>,
+    dev_dependencies: &BTreeMap<String, toml::Value>,
+) -> Result<String, ManifestError> {
+    let mut document = content
+        .parse::<DocumentMut>()
+        .map_err(|error| manifest_parse_error(manifest_path, content, error))?;
+    remove_dependency_alias_tables(&mut document);
+    replace_dependency_table(&mut document, "rust-dependencies", dependencies, manifest_path)?;
+    replace_dependency_table(&mut document, "rust-dev-dependencies", dev_dependencies, manifest_path)?;
+    Ok(document.to_string())
 }
 
 /// Build a lookup set for **Rust crate names** as written in `incan.toml` and common spellings used in source.
@@ -309,6 +509,8 @@ struct RawManifest {
     build: Option<BuildSection>,
     #[serde(default)]
     vocab: Option<VocabSection>,
+    #[serde(default)]
+    tool: Option<ToolSection>,
     #[serde(default)]
     dependencies: Option<DependencyTable>,
     #[serde(rename = "rust-dependencies", default)]
@@ -367,41 +569,50 @@ struct ManifestSpans<'a> {
 }
 
 trait TomlSpanError {
+    /// Return the parse/deserialize error message.
     fn message(&self) -> &str;
+    /// Return the byte-span location associated with the error, if available.
     fn span(&self) -> Option<std::ops::Range<usize>>;
 }
 
 impl TomlSpanError for toml_edit::TomlError {
+    /// Return the parse error message.
     fn message(&self) -> &str {
         self.message()
     }
 
+    /// Return the parse error span.
     fn span(&self) -> Option<std::ops::Range<usize>> {
         self.span()
     }
 }
 
 impl TomlSpanError for toml_edit::de::Error {
+    /// Return the deserialize error message.
     fn message(&self) -> &str {
         self.message()
     }
 
+    /// Return the deserialize error span.
     fn span(&self) -> Option<std::ops::Range<usize>> {
         self.span()
     }
 }
 
 impl<'a> ManifestSpans<'a> {
+    /// Create span lookup helpers for one parsed manifest document.
     fn new(content: &'a str, document: &'a Document<String>) -> Self {
         Self { content, document }
     }
 
+    /// Locate one table header in the source manifest.
     fn table_location(&self, table_path: &[&str]) -> Option<ManifestLocation> {
         self.item_at_path(table_path)
             .and_then(|item| item.span())
             .and_then(|span| manifest_location_from_span(self.content, span))
     }
 
+    /// Locate one table entry in the source manifest.
     fn entry_location(&self, table_path: &[&str], entry: &str) -> Option<ManifestLocation> {
         self.item_at_path(table_path)
             .and_then(|item| item.get(entry))
@@ -409,6 +620,7 @@ impl<'a> ManifestSpans<'a> {
             .and_then(|span| manifest_location_from_span(self.content, span))
     }
 
+    /// Resolve one nested TOML item by path.
     fn item_at_path(&self, path: &[&str]) -> Option<&Item> {
         let mut item = self.document.as_item();
         for segment in path {
@@ -417,12 +629,14 @@ impl<'a> ManifestSpans<'a> {
         Some(item)
     }
 
+    /// Locate one already-resolved TOML item in the source manifest.
     fn item_location(&self, item: &Item) -> Option<ManifestLocation> {
         item.span()
             .and_then(|span| manifest_location_from_span(self.content, span))
     }
 }
 
+/// Convert a TOML parser/deserializer error into the manifest error type with source location.
 fn manifest_parse_error<E: TomlSpanError>(path: &Path, content: &str, error: E) -> ManifestError {
     ManifestError::Parse {
         path: path.to_path_buf(),
@@ -431,6 +645,7 @@ fn manifest_parse_error<E: TomlSpanError>(path: &Path, content: &str, error: E) 
     }
 }
 
+/// Construct one semantic manifest error with an optional source location.
 fn manifest_invalid(path: &Path, location: Option<ManifestLocation>, message: impl Into<String>) -> ManifestError {
     ManifestError::Invalid {
         path: path.to_path_buf(),
@@ -443,12 +658,14 @@ fn manifest_invalid(path: &Path, location: Option<ManifestLocation>, message: im
 }
 
 impl ManifestLocationDisplay {
+    /// Convert an optional parser byte span into a display-ready location wrapper.
     fn from_span(content: &str, span: Option<std::ops::Range<usize>>) -> Self {
         span.and_then(|span| manifest_location_from_span(content, span))
             .map_or_else(Self::none, Self::some)
     }
 }
 
+/// Convert one byte span in TOML source into a 1-based line/column location.
 fn manifest_location_from_span(content: &str, span: std::ops::Range<usize>) -> Option<ManifestLocation> {
     let (line, column) = byte_offset_to_line_col(content, span.start);
     Some(ManifestLocation {
@@ -457,6 +674,7 @@ fn manifest_location_from_span(content: &str, span: std::ops::Range<usize>) -> O
     })
 }
 
+/// Convert one byte offset into zero-based line and column indices.
 fn byte_offset_to_line_col(content: &str, index: usize) -> (usize, usize) {
     if content.is_empty() {
         return (0, index);
@@ -484,6 +702,7 @@ fn byte_offset_to_line_col(content: &str, index: usize) -> (usize, usize) {
     (line, column + column_offset)
 }
 
+/// Parse and validate one complete `incan.toml` document.
 fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest, ManifestError> {
     let document: Document<String> = content
         .parse()
@@ -543,10 +762,156 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         project: raw.project,
         build: raw.build,
         vocab: raw.vocab,
+        tool: raw.tool,
         library_dependencies,
         rust_dependencies: rust_dependencies.specs,
         rust_dev_dependencies: rust_dev_dependencies.specs,
     })
+}
+
+/// Serialize one resolved Rust dependency spec back into the canonical TOML table shape.
+///
+/// This is used when lifecycle tooling materializes a temporary manifest view after env overlays have been resolved.
+/// The output intentionally uses the current canonical field names rather than preserving legacy alias spellings.
+fn dependency_spec_to_toml_value(spec: &DependencySpec) -> toml::Value {
+    let mut table = toml::map::Map::new();
+
+    if let Some(version) = &spec.version {
+        table.insert("version".to_string(), toml::Value::String(version.clone()));
+    }
+    if !spec.features.is_empty() {
+        table.insert(
+            "features".to_string(),
+            toml::Value::Array(spec.features.iter().cloned().map(toml::Value::String).collect()),
+        );
+    }
+    if !spec.default_features {
+        table.insert("default-features".to_string(), toml::Value::Boolean(false));
+    }
+    if spec.optional {
+        table.insert("optional".to_string(), toml::Value::Boolean(true));
+    }
+    if let Some(package) = &spec.package {
+        table.insert("package".to_string(), toml::Value::String(package.clone()));
+    }
+
+    match &spec.source {
+        DependencySource::Registry => {}
+        DependencySource::Git { url, reference } => {
+            table.insert("git".to_string(), toml::Value::String(url.clone()));
+            match reference {
+                GitReference::Branch(branch) => {
+                    table.insert("branch".to_string(), toml::Value::String(branch.clone()));
+                }
+                GitReference::Tag(tag) => {
+                    table.insert("tag".to_string(), toml::Value::String(tag.clone()));
+                }
+                GitReference::Rev(rev) => {
+                    table.insert("rev".to_string(), toml::Value::String(rev.clone()));
+                }
+            }
+        }
+        DependencySource::Path { path } => {
+            table.insert(
+                "path".to_string(),
+                toml::Value::String(path.to_string_lossy().into_owned()),
+            );
+        }
+    }
+
+    toml::Value::Table(table)
+}
+
+/// Remove legacy dependency-table aliases before writing canonical dependency tables back into the manifest view.
+///
+/// RFC 013 and RFC 031 standardized top-level `rust-dependencies` / `rust-dev-dependencies`. Older manifests may still
+/// carry top-level `dev-dependencies` or nested `[rust.dependencies]` / `[rust.dev-dependencies]` aliases. Once a
+/// temporary manifest view is rewritten, those aliases should disappear so one logical dependency set is not expressed
+/// twice. If the nested `[rust]` table becomes empty after alias removal, it is dropped entirely.
+fn remove_dependency_alias_tables(document: &mut DocumentMut) {
+    document.remove("dev-dependencies");
+    if let Some(rust) = document.get_mut("rust").and_then(Item::as_table_like_mut) {
+        rust.remove("dependencies");
+        rust.remove("dev-dependencies");
+        if rust.is_empty() {
+            document.remove("rust");
+        }
+    }
+}
+
+/// Replace one canonical dependency table in the editable manifest view.
+///
+/// An empty map removes the table entirely. Non-empty values are converted through the same TOML-edit bridge used for
+/// env overlays so lifecycle-generated manifests keep one canonical shape for dependency entries.
+fn replace_dependency_table(
+    document: &mut DocumentMut,
+    table_name: &str,
+    values: &BTreeMap<String, toml::Value>,
+    manifest_path: &Path,
+) -> Result<(), ManifestError> {
+    if values.is_empty() {
+        document.remove(table_name);
+        return Ok(());
+    }
+
+    let mut table = Table::new();
+    for (name, value) in values {
+        table.insert(
+            name,
+            toml_value_to_edit_item(value, manifest_path)
+                .map_err(|message| manifest_invalid(manifest_path, None, message))?,
+        );
+    }
+    document.insert(table_name, Item::Table(table));
+    Ok(())
+}
+
+/// Convert a serde-style TOML value into a `toml_edit` item for manifest rewriting.
+///
+/// Tables recurse into nested editable tables, while scalar and array values are delegated to
+/// [`toml_value_to_edit_value`]. The conversion stays intentionally small because dependency overlays do not support
+/// arbitrary TOML constructs.
+fn toml_value_to_edit_item(value: &toml::Value, manifest_path: &Path) -> Result<Item, String> {
+    match value {
+        toml::Value::Table(table) => {
+            let mut edit_table = Table::new();
+            for (key, value) in table {
+                edit_table.insert(key, toml_value_to_edit_item(value, manifest_path)?);
+            }
+            Ok(Item::Table(edit_table))
+        }
+        _ => toml_value_to_edit_value(value, manifest_path).map(Item::Value),
+    }
+}
+
+/// Convert a serde-style TOML scalar or array into a `toml_edit` value for dependency overlay rewrites.
+///
+/// Nested table values are rejected here because dependency overlay entries only support the canonical dependency-spec
+/// shape; they are not a general-purpose TOML merge surface.
+fn toml_value_to_edit_value(value: &toml::Value, manifest_path: &Path) -> Result<EditValue, String> {
+    match value {
+        toml::Value::String(value) => Ok(EditValue::from(value.clone())),
+        toml::Value::Integer(value) => Ok(EditValue::from(*value)),
+        toml::Value::Float(value) => Ok(EditValue::from(*value)),
+        toml::Value::Boolean(value) => Ok(EditValue::from(*value)),
+        toml::Value::Datetime(value) => value.to_string().parse::<EditValue>().map_err(|error| {
+            format!(
+                "invalid datetime in dependency overlay for '{}': {error}",
+                manifest_path.display()
+            )
+        }),
+        toml::Value::Array(values) => {
+            let mut array = EditArray::new();
+            for value in values {
+                array.push(toml_value_to_edit_value(value, manifest_path)?);
+            }
+            Ok(EditValue::Array(array))
+        }
+        toml::Value::Table(_) => Err(format!(
+            "nested inline table values are not supported in dependency overlay for '{}'",
+            manifest_path.display()
+        )),
+    }
 }
 
 const DEPENDENCY_ENTRY_KEYS: &[&str] = &[
@@ -562,6 +927,7 @@ const DEPENDENCY_ENTRY_KEYS: &[&str] = &[
     "default-features",
 ];
 
+/// Validate the raw TOML shapes of all dependency tables before serde decoding proceeds.
 fn validate_dependency_entry_shapes(spans: &ManifestSpans<'_>, path: &Path) -> Result<(), ManifestError> {
     for table_path in [
         &["dependencies"][..],
@@ -575,6 +941,7 @@ fn validate_dependency_entry_shapes(spans: &ManifestSpans<'_>, path: &Path) -> R
     Ok(())
 }
 
+/// Validate the item shapes inside one dependency table.
 fn validate_dependency_table_items(
     spans: &ManifestSpans<'_>,
     path: &Path,
@@ -602,6 +969,7 @@ fn validate_dependency_table_items(
     Ok(())
 }
 
+/// Validate one dependency entry item against the supported dependency-entry schema.
 fn validate_dependency_entry_item(
     spans: &ManifestSpans<'_>,
     path: &Path,
@@ -674,6 +1042,7 @@ fn validate_dependency_entry_item(
     Ok(())
 }
 
+/// Resolve canonical and legacy Rust dependency table spellings into one pair of parsed tables.
 fn resolve_rust_dependency_tables(
     raw: &RawManifest,
     spans: &ManifestSpans<'_>,
@@ -720,6 +1089,7 @@ fn resolve_rust_dependency_tables(
     ))
 }
 
+/// Parse the Incan library dependency table from `[dependencies]`.
 fn parse_library_dependency_table(
     table: &DependencyTable,
     spans: &ManifestSpans<'_>,
@@ -742,6 +1112,7 @@ fn parse_library_dependency_table(
     Ok(result)
 }
 
+/// Parse one library dependency entry from `[dependencies]`.
 fn library_dependency_from_entry(
     name: &str,
     entry: &DependencyEntry,
@@ -801,6 +1172,7 @@ fn library_dependency_from_entry(
     })
 }
 
+/// Return whether an entry in `[dependencies]` looks like legacy Rust dependency syntax.
 fn looks_like_legacy_rust_dependency(entry: &DependencyEntry) -> bool {
     match entry {
         DependencyEntry::Version(_) => true,
@@ -818,6 +1190,7 @@ fn looks_like_legacy_rust_dependency(entry: &DependencyEntry) -> bool {
     }
 }
 
+/// Parse one Rust dependency table, including the optional-subtable overlay form.
 fn parse_dependency_table(
     table: &DependencyTable,
     spans: &ManifestSpans<'_>,
@@ -855,6 +1228,7 @@ fn parse_dependency_table(
     Ok(result)
 }
 
+/// Parse one Rust dependency entry into the canonical dependency model.
 fn dependency_from_entry(
     name: &str,
     entry: &DependencyEntry,
@@ -926,6 +1300,7 @@ fn dependency_from_entry(
     })
 }
 
+/// Parse the source selector for one Rust dependency entry.
 fn parse_dependency_source(
     table: &DependencyEntryTable,
     path: &Path,
@@ -984,6 +1359,7 @@ fn parse_dependency_source(
     Ok((DependencySource::Registry, table.version.clone()))
 }
 
+/// Reject duplicate package identities across normal and dev Rust dependency tables.
 fn validate_package_collisions(
     deps: &ParsedDependencyTable,
     dev_deps: &ParsedDependencyTable,
@@ -1035,25 +1411,12 @@ struct ParsedDependencyTable {
     locations: HashMap<String, ManifestLocation>,
 }
 
+/// Return a stable identity key for one dependency source.
 fn dependency_source_key(source: &DependencySource) -> String {
     match source {
         DependencySource::Registry => "registry".to_string(),
         DependencySource::Git { url, reference } => format!("git:{url}:{:?}", reference),
         DependencySource::Path { path } => format!("path:{}", path.display()),
-    }
-}
-
-/// Walk upward from `start_dir` to find an `incan.toml` file.
-fn find_manifest(start_dir: &Path) -> Option<PathBuf> {
-    let mut current = start_dir.to_path_buf();
-    loop {
-        let candidate = current.join(MANIFEST_FILENAME);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        if !current.pop() {
-            return None;
-        }
     }
 }
 
@@ -1106,6 +1469,79 @@ pretty_assertions = "1.4"
         assert!(manifest.rust_dependencies().contains_key("tokio"));
         assert!(manifest.rust_dependencies().contains_key("serde"));
         assert!(manifest.rust_dev_dependencies().contains_key("pretty_assertions"));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_env_rust_dependency_overlay_tables() -> TestResult {
+        let content = r#"
+[tool.incan.envs.unit.rust-dependencies.serde]
+version = "1.0"
+
+[tool.incan.envs.unit.rust-dev-dependencies.proptest]
+version = "1"
+"#;
+        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let tool = manifest.incan_tool().ok_or("missing [tool.incan]")?;
+        let unit = tool.envs.get("unit").ok_or("missing unit env")?;
+
+        assert!(unit.dependencies.contains_key("serde"));
+        assert!(unit.dev_dependencies.contains_key("proptest"));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_env_legacy_dependency_overlay_aliases() -> TestResult {
+        let content = r#"
+[tool.incan.envs.unit.dependencies.serde]
+version = "1.0"
+
+[tool.incan.envs.unit.dev-dependencies.proptest]
+version = "1"
+"#;
+        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let tool = manifest.incan_tool().ok_or("missing [tool.incan]")?;
+        let unit = tool.envs.get("unit").ok_or("missing unit env")?;
+
+        assert!(unit.dependencies.contains_key("serde"));
+        assert!(unit.dev_dependencies.contains_key("proptest"));
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_owns_env_schema_and_base_overlay_translation() -> TestResult {
+        let content = r#"
+[rust-dependencies.serde]
+version = "1.0"
+features = ["derive"]
+
+[rust-dev-dependencies.proptest]
+version = "1"
+
+[tool.incan.envs.unit]
+extends = ["default"]
+env-vars = { INCAN_NO_BANNER = "1" }
+"#;
+        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let envs = manifest.env_sections();
+        let unit = envs.get("unit").ok_or("missing unit env")?;
+
+        assert_eq!(unit.extends, vec!["default".to_string()]);
+        assert_eq!(unit.env_vars.get("INCAN_NO_BANNER").map(String::as_str), Some("1"));
+        assert_eq!(
+            manifest
+                .env_base_dependency_overlay()
+                .get("serde")
+                .and_then(toml::Value::as_table),
+            Some(&toml::map::Map::from_iter([
+                ("version".to_string(), toml::Value::String("1.0".to_string())),
+                (
+                    "features".to_string(),
+                    toml::Value::Array(vec![toml::Value::String("derive".to_string())]),
+                ),
+            ]))
+        );
+        assert!(manifest.env_base_dev_dependency_overlay().contains_key("proptest"));
         Ok(())
     }
 

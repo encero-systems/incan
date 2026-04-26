@@ -20,13 +20,21 @@ Commands:
 - `run` - Compile and run a program
 - `fmt` - Format Incan source files
 - `test` - Run tests (pytest-style)
-- `init` - Create a starter `incan.toml` and project skeleton (entry point, test file)
+- `new` - Create a new Incan project directory
+- `init` - Add a starter `incan.toml` and project skeleton to an existing directory
+- `version` - Update the project version in `incan.toml`
+- `env` - List, inspect, or run configured project environments
 - `lock` - Generate or update `incan.lock`
 
 ## Global options
 
-- `--no-banner`: suppress the ASCII logo banner (also via `INCAN_NO_BANNER=1`).
+- `--no-banner`: suppress the ASCII logo banner when a command would otherwise show it (also via `INCAN_NO_BANNER=1`).
 - `--color=auto|always|never`: control ANSI color output (respects `NO_COLOR`).
+
+Banner policy:
+
+- The banner is shown only for interactive `incan build` and `incan run` commands.
+- Utility commands such as `new`, `init`, `version`, `env`, `lock`, `fmt`, and `test` stay quiet by default.
 
 ## Global options (debug)
 
@@ -96,11 +104,19 @@ Run a file:
 incan run path/to/file.incn
 ```
 
+Run the project's configured main script:
+
+```bash
+incan run
+```
+
 Run inline code:
 
 ```bash
 incan run -c "import this"
 ```
+
+If `FILE` is omitted, `incan run` uses `[project.scripts].main` from the nearest `incan.toml`. Outside a project, you must pass `FILE` or `-c`.
 
 Dependency flags (same as `build`):
 
@@ -175,6 +191,39 @@ incan test --fail-on-empty
 incan test --locked
 ```
 
+### `incan new`
+
+Usage:
+
+```text
+incan new [OPTIONS] [NAME]
+```
+
+Creates a new project directory with `incan.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. When run in an interactive terminal without `--yes`, it prompts for project metadata. In non-interactive contexts, pass `NAME` or `--dir`.
+
+Options:
+
+- `NAME`: Project name. If omitted in an interactive terminal, `incan new` prompts for it.
+- `--dir <PATH>`: Directory to create or reuse. Defaults to `./<name>`.
+- `--description <TEXT>`: Project description written to `[project].description` and `README.md`.
+- `--author <AUTHOR>`: Author string, usually `Name <email>`, written to `[project].authors`.
+- `--license <LICENSE>`: License identifier or expression written to `[project].license`.
+- `--force`: Reuse a non-empty directory and overwrite existing manifest/source/test scaffold files.
+- `-y`, `--yes`: Use defaults and provided flags without interactive prompts.
+
+Examples:
+
+```bash
+# Interactive metadata prompts
+incan new
+
+# Script-friendly project creation
+incan new greeter --description "A small greeting command" --license MIT --yes
+
+# Create the project in a different directory from its name
+incan new greeter --dir examples/greeter --yes
+```
+
 ### `incan init`
 
 Usage:
@@ -183,21 +232,93 @@ Usage:
 incan init [OPTIONS] [PATH]
 ```
 
-Creates a starter `incan.toml` in the specified directory (default: current directory).
+Adds Incan project files to an existing directory. Use this when you already have a directory and want to add `incan.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. New projects usually start with `incan new` instead.
 
 Options:
 
 - `--name <NAME>`: Project name (default: directory name).
 - `--version <VERSION>`: Project version (default: `"0.1.0"`).
+- `--description <TEXT>`: Project description written to `[project].description` and `README.md`.
+- `--author <AUTHOR>`: Author string, usually `Name <email>`, written to `[project].authors`.
+- `--license <LICENSE>`: License identifier or expression written to `[project].license`.
+- `--force`: Overwrite existing manifest/source/test scaffold files.
+- `--detect`: Preserve an existing `src/main.incn` and, when the placeholder project name is still in use, derive the project name from the directory.
+- `-y`, `--yes`: Use defaults and provided flags without interactive prompts.
 
-Example:
+Examples:
 
 ```bash
 incan init
-incan init --name my_app my_project/
+incan init --name my_app --description "My app" --license MIT my_project/
+incan init --detect --yes
 ```
 
 See: [Project configuration reference](project_configuration.md) for the full manifest format.
+
+### `incan version`
+
+Usage:
+
+```text
+incan version [OPTIONS] [BUMP]
+```
+
+Updates `[project].version` in `incan.toml`. `BUMP` is one of `major`, `minor`, `patch`, `alpha`, `beta`, `rc`, or `dev`. Use `--set` when you need an exact SemVer value instead of a bump.
+
+Options:
+
+- `BUMP`: Version bump to apply.
+- `--set <VERSION>`: Explicit SemVer version to write.
+- `--dry-run`: Print the planned change without writing `incan.toml`.
+- `--keep-prerelease`: Keep prerelease metadata when applying `major`, `minor`, or `patch`.
+- `--project <PATH>`: Project root containing `incan.toml`.
+
+Examples:
+
+```bash
+incan version patch
+incan version rc --dry-run
+incan version --set 1.2.3
+incan version minor --project examples/greeter
+```
+
+### `incan env`
+
+Project environments are declared in `[tool.incan.envs]` in `incan.toml`. The ambient `default` environment is always available, and the `env` command lists available environments, shows a Hatch-style overview table, prints a compact resolved summary for one environment, or runs a named script from an environment.
+
+Treat envs as named command contexts for repeatable workflows such as local testing, CI, docs, or release checks. They are not shell sessions or virtual environments.
+
+Usage:
+
+```text
+incan env list [OPTIONS]
+incan env show [OPTIONS] [ENV]
+incan env run [OPTIONS] <ENV> <SCRIPT> [-- <ARGS>...]
+```
+
+Shared options:
+
+- `--format text|json`: Output format for `list` and `show` (default: `text`).
+- `--project <PATH>`: Project root containing `incan.toml`.
+
+Run options:
+
+- `--dry-run`: Print the resolved command without executing it.
+- `-- <ARGS>...`: Extra arguments appended to the configured script.
+
+Examples:
+
+```bash
+incan env list
+incan env show
+incan env show default
+incan env show dev --format json
+incan env run dev test
+incan env run dev test -- --fail-on-empty
+incan env run release build --dry-run
+```
+
+For a fuller explanation of the mental model and a realistic `default` / `unit` / `ci` / `docs` configuration, see: [Project lifecycle](../../language/how-to/project_lifecycle.md).
 
 ### `incan lock`
 

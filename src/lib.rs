@@ -26,6 +26,7 @@ pub mod lsp;
 pub mod manifest;
 pub mod numeric;
 pub mod numeric_adapters;
+pub mod project_lifecycle;
 #[cfg(feature = "rust_inspect")]
 pub mod rust_inspect;
 pub(crate) mod semantics_registry;

@@ -6,10 +6,13 @@
 //!
 //! - `build <file>` - Compile to Rust and build executable
 //! - `build --lib` - Validate library-mode preconditions
-//! - `run <file>` - Compile and run the program
-//! - `init [path]` - Create a starter incan.toml
+//! - `run [file]` - Compile and run the program, defaulting to `[project.scripts].main`
+//! - `init [path]` - Create a starter project scaffold in an existing directory
+//! - `new [name]` - Create a new Incan project directory, prompting when no name is provided
 //! - `fmt <file|dir>` - Format Incan source files
 //! - `test [path]` - Run tests (pytest-style)
+//! - `version <bump>|--set <version>` - Update `[project].version` in `incan.toml`
+//! - `env <subcommand>` - Inspect and run named project environments
 //!
 //! ## Modules
 //!
@@ -38,7 +41,9 @@ use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::process;
 
+use crate::manifest::ProjectManifest;
 use clap::{Parser, Subcommand, ValueEnum};
+use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
 
 // ============================================================================
 // CLI Error handling
@@ -86,6 +91,7 @@ impl CliError {
 }
 
 impl fmt::Display for CliError {
+    /// Render the user-facing CLI error message.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.message)
     }
@@ -225,6 +231,31 @@ pub enum Command {
         diff: bool,
     },
 
+    /// Update the project version in incan.toml
+    Version {
+        /// Version bump to apply
+        #[arg(value_enum)]
+        bump: Option<VersionBumpArg>,
+        /// Explicit SemVer version to set
+        #[arg(long = "set", value_name = "VERSION")]
+        set: Option<String>,
+        /// Print the planned change without writing incan.toml
+        #[arg(long)]
+        dry_run: bool,
+        /// Keep prerelease metadata when applying major/minor/patch bumps
+        #[arg(long)]
+        keep_prerelease: bool,
+        /// Project root containing incan.toml
+        #[arg(long = "project", value_name = "PATH")]
+        project: Option<PathBuf>,
+    },
+
+    /// Run named project environment scripts
+    Env {
+        #[command(subcommand)]
+        command: EnvCommand,
+    },
+
     /// Run tests (pytest-style)
     Test {
         /// Path to test file or directory
@@ -262,6 +293,31 @@ pub enum Command {
         cargo_all_features: bool,
     },
 
+    /// Create a new Incan project directory
+    New {
+        /// Project name; prompted for interactively when omitted on a terminal
+        #[arg(value_name = "NAME")]
+        name: Option<String>,
+        /// Directory to create (default: `./<name>`)
+        #[arg(long = "dir", value_name = "PATH")]
+        dir: Option<PathBuf>,
+        /// Project description
+        #[arg(long, value_name = "TEXT")]
+        description: Option<String>,
+        /// Project author, usually `Name <email>`
+        #[arg(long, value_name = "AUTHOR")]
+        author: Option<String>,
+        /// Project license identifier or expression
+        #[arg(long, value_name = "LICENSE")]
+        license: Option<String>,
+        /// Reuse an existing directory and overwrite generated files
+        #[arg(long)]
+        force: bool,
+        /// Use defaults without interactive prompts
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
+    },
+
     /// Initialize a new incan.toml manifest
     Init {
         /// Directory to create incan.toml in
@@ -273,6 +329,24 @@ pub enum Command {
         /// Project version
         #[arg(long, value_name = "VERSION", default_value = "0.1.0")]
         version: String,
+        /// Project description
+        #[arg(long, value_name = "TEXT")]
+        description: Option<String>,
+        /// Project author, usually `Name <email>`
+        #[arg(long, value_name = "AUTHOR")]
+        author: Option<String>,
+        /// Project license identifier or expression
+        #[arg(long, value_name = "LICENSE")]
+        license: Option<String>,
+        /// Overwrite existing generated files
+        #[arg(long)]
+        force: bool,
+        /// Preserve an existing `src/main.incn` and reuse source-derived defaults where possible
+        #[arg(long)]
+        detect: bool,
+        /// Use defaults without interactive prompts
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
     },
 
     /// Generate or update incan.lock for a project
@@ -292,14 +366,54 @@ pub enum Command {
     },
 }
 
+#[derive(Subcommand, Debug)]
+pub enum EnvCommand {
+    /// List configured environments
+    List {
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: EnvOutputFormat,
+        /// Project root containing incan.toml
+        #[arg(long = "project", value_name = "PATH")]
+        project: Option<PathBuf>,
+    },
+    /// Show the fully resolved environment
+    Show {
+        /// Environment name (defaults to an overview of available environments)
+        env: Option<String>,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: EnvOutputFormat,
+        /// Project root containing incan.toml
+        #[arg(long = "project", value_name = "PATH")]
+        project: Option<PathBuf>,
+    },
+    /// Run a configured script in an environment
+    Run {
+        /// Environment name
+        env: String,
+        /// Script name
+        script: String,
+        /// Print the resolved command without executing it
+        #[arg(long)]
+        dry_run: bool,
+        /// Extra arguments passed to the configured script
+        #[arg(last = true)]
+        args: Vec<String>,
+        /// Project root containing incan.toml
+        #[arg(long = "project", value_name = "PATH")]
+        project: Option<PathBuf>,
+    },
+}
+
 // ============================================================================
 // CLI entry point
 // ============================================================================
 
 /// Main CLI entry point.
 ///
-/// This is the only place where `process::exit` is called. All command
-/// implementations return `CliResult` and errors are handled here.
+/// This is the only place where `process::exit` is called. All command implementations return `CliResult` and errors
+/// are handled here. Parse CLI arguments, execute the selected command, and exit the process.
 pub fn run() {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -335,6 +449,7 @@ pub fn run() {
 }
 
 /// Execute the CLI command and return result.
+/// Execute one already-parsed CLI request without terminating the process.
 fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
     // Handle debug flags first
     if let Some(file) = cli.lex_file {
@@ -434,7 +549,70 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             cargo_no_default_features,
             cargo_all_features,
         }),
-        Some(Command::Init { path, name, version }) => commands::init_project(&path, name.as_deref(), &version),
+        Some(Command::Version {
+            bump,
+            set,
+            dry_run,
+            keep_prerelease,
+            project,
+        }) => commands::version_project(commands::lifecycle::VersionCommandOptions {
+            bump,
+            set,
+            dry_run,
+            keep_prerelease,
+            project,
+        }),
+        Some(Command::Env { command }) => match command {
+            EnvCommand::List { format, project } => commands::env_list(format, project.as_deref()),
+            EnvCommand::Show { env, format, project } => commands::env_show(env.as_deref(), format, project.as_deref()),
+            EnvCommand::Run {
+                env,
+                script,
+                dry_run,
+                args,
+                project,
+            } => commands::env_run(&env, &script, dry_run, &args, project.as_deref()),
+        },
+        Some(Command::New {
+            name,
+            dir,
+            description,
+            author,
+            license,
+            force,
+            yes,
+        }) => commands::init::new_project(commands::init::NewOptions {
+            name: name.as_deref(),
+            dir: dir.as_deref(),
+            description: description.as_deref(),
+            author: author.as_deref(),
+            license: license.as_deref(),
+            force,
+            yes,
+        }),
+        Some(Command::Init {
+            path,
+            name,
+            version,
+            description,
+            author,
+            license,
+            force,
+            detect,
+            yes,
+        }) => commands::init_project(
+            &path,
+            commands::init::InitOptions {
+                name: name.as_deref(),
+                version: &version,
+                description: description.as_deref(),
+                author: author.as_deref(),
+                license: license.as_deref(),
+                force,
+                yes,
+                detect,
+            },
+        ),
         Some(Command::Lock {
             file,
             cargo_features,
@@ -472,7 +650,30 @@ struct RunOptions {
     release: bool,
 }
 
+/// Resolve the run target for `incan run`, falling back to project metadata when available.
+fn resolve_run_entry_file(file: Option<PathBuf>) -> CliResult<PathBuf> {
+    if let Some(file) = file {
+        return Ok(file);
+    }
+
+    let cwd =
+        env::current_dir().map_err(|e| CliError::failure(format!("Error: failed to read current directory: {e}")))?;
+    let manifest = ProjectManifest::discover(&cwd).map_err(|e| CliError::failure(e.to_string()))?;
+
+    if let Some(manifest) = manifest
+        && let Some(project) = &manifest.project
+        && let Some(main) = project.scripts.get("main")
+    {
+        return Ok(manifest.project_root().join(main));
+    }
+
+    Err(CliError::failure(
+        "Error: run requires a file path, -c/--command, or [project.scripts].main",
+    ))
+}
+
 /// Handle the `run` subcommand with its various forms.
+/// Compile and execute one run request.
 fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
     // ---- Context: inline source execution (`incan run -c ...`) ----
     if let Some(code) = input.code {
@@ -510,7 +711,8 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
         let _ = fs::remove_file(&tmp_path);
         result
     // ---- Context: file execution (`incan run path/to/file.incn`) ----
-    } else if let Some(file) = input.file {
+    } else {
+        let file = resolve_run_entry_file(input.file)?;
         commands::run_file(
             &file.to_string_lossy(),
             opts.locked,
@@ -520,12 +722,10 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
             opts.cargo_all_features,
             opts.release,
         )
-    } else {
-        Err(CliError::failure("Error: run requires a file path or -c \"code\""))
     }
 }
 
-/// Print logo to stderr (colored or not)
+/// Print the ASCII logo banner to stderr (colored or not)
 fn print_logo(use_color: bool) {
     // Color scheme inspired by the wordmark:
     // - Solid blocks (█) = Gold
@@ -580,12 +780,22 @@ fn should_use_color(color: ColorMode) -> bool {
     }
 }
 
+/// Decide whether this command should show the banner when running interactively.
+fn command_prefers_banner(cli: &Cli) -> bool {
+    matches!(cli.command, Some(Command::Build { .. }) | Some(Command::Run { .. }))
+}
+
 /// Decide whether to print the ASCII logo banner.
 ///
 /// Banner suppression (`--no-banner` / `INCAN_NO_BANNER`) always wins.
 /// Banners are also suppressed when output is not a TTY (script-friendly).
+/// By default, branding is shown only for interactive `build` and `run` flows.
 fn should_print_banner(cli: &Cli, _use_color: bool) -> bool {
     if cli.no_banner || env::var_os("INCAN_NO_BANNER").is_some() {
+        return false;
+    }
+
+    if !command_prefers_banner(cli) {
         return false;
     }
 
@@ -603,108 +813,255 @@ fn should_print_banner(cli: &Cli, _use_color: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::error::ErrorKind;
 
-    fn must_cli(args: impl IntoIterator<Item = &'static str>) -> Cli {
-        match Cli::try_parse_from(args) {
-            Ok(cli) => cli,
-            Err(err) => panic!("cli parse failed: {err}"),
-        }
+    fn parse_cli(args: impl IntoIterator<Item = &'static str>) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(args)
+    }
+
+    fn expected_command(name: &str) -> clap::Error {
+        clap::Error::raw(ErrorKind::InvalidSubcommand, format!("expected {name} command"))
     }
 
     #[test]
-    fn test_cli_parse_build() {
-        let cli = must_cli(["incan", "build", "test.incn"]);
-        match cli.command {
-            Some(Command::Build { file, lib_mode, .. }) => {
-                assert_eq!(file, Some(PathBuf::from("test.incn")));
-                assert!(!lib_mode);
-            }
-            _ => panic!("Expected Build command"),
-        }
+    fn test_cli_parse_build() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "build", "test.incn"])?;
+        let Some(Command::Build { file, lib_mode, .. }) = cli.command else {
+            return Err(expected_command("build"));
+        };
+        assert_eq!(file, Some(PathBuf::from("test.incn")));
+        assert!(!lib_mode);
+        Ok(())
     }
 
     #[test]
-    fn test_cli_parse_build_lib() {
-        let cli = must_cli(["incan", "build", "--lib"]);
-        match cli.command {
-            Some(Command::Build { file, lib_mode, .. }) => {
-                assert!(file.is_none());
-                assert!(lib_mode);
-            }
-            _ => panic!("Expected Build command"),
-        }
+    fn test_cli_parse_build_lib() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "build", "--lib"])?;
+        let Some(Command::Build { file, lib_mode, .. }) = cli.command else {
+            return Err(expected_command("build"));
+        };
+        assert!(file.is_none());
+        assert!(lib_mode);
+        Ok(())
     }
 
     #[test]
-    fn test_cli_parse_run() {
-        let cli = must_cli(["incan", "run", "test.incn"]);
-        if let Some(Command::Run { release, .. }) = cli.command {
-            assert!(!release, "run should default to debug profile");
-        } else {
-            panic!("Expected Run command");
-        }
+    fn test_cli_parse_run() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "run", "test.incn"])?;
+        let Some(Command::Run { release, .. }) = cli.command else {
+            return Err(expected_command("run"));
+        };
+        assert!(!release, "run should default to debug profile");
+        Ok(())
     }
 
     #[test]
-    fn test_cli_parse_run_release() {
-        let cli = must_cli(["incan", "run", "--release", "test.incn"]);
-        if let Some(Command::Run { release, .. }) = cli.command {
-            assert!(release, "run --release should enable release profile");
-        } else {
-            panic!("Expected Run command");
-        }
+    fn test_cli_parse_new() -> Result<(), clap::Error> {
+        let cli = parse_cli([
+            "incan",
+            "new",
+            "demo",
+            "--dir",
+            "apps/demo",
+            "--description",
+            "Demo app",
+            "--author",
+            "Danny <danny@example.com>",
+            "--license",
+            "MIT",
+            "-y",
+        ])?;
+        let Some(Command::New {
+            name,
+            dir,
+            description,
+            author,
+            license,
+            yes,
+            ..
+        }) = cli.command
+        else {
+            return Err(expected_command("new"));
+        };
+        assert_eq!(name.as_deref(), Some("demo"));
+        assert_eq!(dir, Some(PathBuf::from("apps/demo")));
+        assert_eq!(description.as_deref(), Some("Demo app"));
+        assert_eq!(author.as_deref(), Some("Danny <danny@example.com>"));
+        assert_eq!(license.as_deref(), Some("MIT"));
+        assert!(yes);
+        Ok(())
     }
 
     #[test]
-    fn test_cli_parse_run_with_code() {
-        let cli = must_cli(["incan", "run", "-c", "print(1)"]);
-        if let Some(Command::Run { command, .. }) = cli.command {
-            assert_eq!(command.as_deref(), Some("print(1)"));
-        } else {
-            panic!("Expected Run command");
-        }
+    fn test_cli_parse_new_without_name_for_interactive_mode() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "new"])?;
+        let Some(Command::New { name, dir, .. }) = cli.command else {
+            return Err(expected_command("new"));
+        };
+        assert!(name.is_none());
+        assert!(dir.is_none());
+        Ok(())
     }
 
     #[test]
-    fn test_cli_parse_fmt() {
-        let cli = must_cli(["incan", "fmt", "src/", "--check"]);
-        if let Some(Command::Fmt { check, .. }) = cli.command {
-            assert!(check);
-        } else {
-            panic!("Expected Fmt command");
-        }
+    fn test_cli_parse_new_rejects_unsupported_project_kind_flags() {
+        assert!(parse_cli(["incan", "new", "--bin"]).is_err());
+        assert!(parse_cli(["incan", "new", "--lib"]).is_err());
     }
 
     #[test]
-    fn test_cli_parse_test() {
-        let cli = must_cli(["incan", "test", "-v", "-x", "-k", "unit"]);
-        if let Some(Command::Test {
+    fn test_cli_parse_run_release() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "run", "--release", "test.incn"])?;
+        let Some(Command::Run { release, .. }) = cli.command else {
+            return Err(expected_command("run"));
+        };
+        assert!(release, "run --release should enable release profile");
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_run_with_code() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "run", "-c", "print(1)"])?;
+        let Some(Command::Run { command, .. }) = cli.command else {
+            return Err(expected_command("run"));
+        };
+        assert_eq!(command.as_deref(), Some("print(1)"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_fmt() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "fmt", "src/", "--check"])?;
+        let Some(Command::Fmt { check, .. }) = cli.command else {
+            return Err(expected_command("fmt"));
+        };
+        assert!(check);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_test() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "test", "-v", "-x", "-k", "unit"])?;
+        let Some(Command::Test {
             verbose,
             stop_on_fail,
             filter,
             ..
         }) = cli.command
-        {
-            assert!(verbose);
-            assert!(stop_on_fail);
-            assert_eq!(filter.as_deref(), Some("unit"));
-        } else {
-            panic!("Expected Test command");
-        }
+        else {
+            return Err(expected_command("test"));
+        };
+        assert!(verbose);
+        assert!(stop_on_fail);
+        assert_eq!(filter.as_deref(), Some("unit"));
+        Ok(())
     }
 
     #[test]
-    fn test_cli_parse_debug_flags() {
-        let cli = must_cli(["incan", "--lex", "test.incn"]);
+    fn test_cli_parse_version() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "version", "patch", "--dry-run"])?;
+        let Some(Command::Version { bump, dry_run, .. }) = cli.command else {
+            return Err(expected_command("version"));
+        };
+        assert_eq!(bump, Some(VersionBumpArg::Patch));
+        assert!(dry_run);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_version_project_override() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "version", "--set", "1.2.3", "--project", "examples/greeter"])?;
+        let Some(Command::Version { set, project, .. }) = cli.command else {
+            return Err(expected_command("version"));
+        };
+        assert_eq!(set.as_deref(), Some("1.2.3"));
+        assert_eq!(project.as_deref(), Some(std::path::Path::new("examples/greeter")));
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_env_run_passthrough_args() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "env", "run", "unit", "test", "--dry-run", "--", "-k", "greet"])?;
+        let Some(Command::Env {
+            command:
+                EnvCommand::Run {
+                    env,
+                    script,
+                    dry_run,
+                    args,
+                    ..
+                },
+        }) = cli.command
+        else {
+            return Err(expected_command("env run"));
+        };
+        assert_eq!(env, "unit");
+        assert_eq!(script, "test");
+        assert!(dry_run);
+        assert_eq!(args, vec!["-k".to_string(), "greet".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_env_show_without_name() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "env", "show"])?;
+        let Some(Command::Env {
+            command: EnvCommand::Show { env, .. },
+        }) = cli.command
+        else {
+            return Err(expected_command("env show"));
+        };
+        assert!(env.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_env_list_json_with_project_override() -> Result<(), clap::Error> {
+        let cli = parse_cli([
+            "incan",
+            "env",
+            "list",
+            "--format",
+            "json",
+            "--project",
+            "examples/greeter",
+        ])?;
+        let Some(Command::Env {
+            command: EnvCommand::List { format, project },
+        }) = cli.command
+        else {
+            return Err(expected_command("env list"));
+        };
+        assert_eq!(format, EnvOutputFormat::Json);
+        assert_eq!(project.as_deref(), Some(std::path::Path::new("examples/greeter")));
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_debug_flags() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "--lex", "test.incn"])?;
         assert!(cli.lex_file.is_some());
 
-        let cli = must_cli(["incan", "--parse", "test.incn"]);
+        let cli = parse_cli(["incan", "--parse", "test.incn"])?;
         assert!(cli.parse_file.is_some());
 
-        let cli = must_cli(["incan", "--check", "test.incn"]);
+        let cli = parse_cli(["incan", "--check", "test.incn"])?;
         assert!(cli.check_file.is_some());
 
-        let cli = must_cli(["incan", "--emit-rust", "test.incn"]);
+        let cli = parse_cli(["incan", "--emit-rust", "test.incn"])?;
         assert!(cli.emit_rust_file.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_banner_policy_prefers_run_and_build_only() -> Result<(), clap::Error> {
+        assert!(command_prefers_banner(&parse_cli(["incan", "run", "main.incn"])?));
+        assert!(command_prefers_banner(&parse_cli(["incan", "build", "main.incn"])?));
+        assert!(!command_prefers_banner(&parse_cli(["incan", "test"])?));
+        assert!(!command_prefers_banner(&parse_cli(["incan", "env", "list"])?));
+        assert!(!command_prefers_banner(&parse_cli(["incan", "version", "patch"])?));
+        assert!(!command_prefers_banner(&parse_cli(["incan", "new", "demo"])?));
+        assert!(!command_prefers_banner(&parse_cli(["incan", "--check", "main.incn"])?));
+        Ok(())
     }
 }

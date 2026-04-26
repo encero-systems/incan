@@ -43,7 +43,7 @@ Skills, learnings, and agent notes live under **this repository’s** `.agents/`
 3. **Run tests**: `make test` must pass before considering work complete. Run targeted tests during development; run the full suite when you finish.
 4. **Update snapshots**: `INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests` to update changed snapshots.
 5. **Boy Scout Rule**: Leave every file you touch in better shape than you found it — fix stale TODOs, missing doc comments, unused imports, misleading names.
-6. **Documentation gate (mandatory)**: Before finalizing any change, audit every touched Rust module and ensure rustdocs are present and accurate for all new/changed public APIs and non-obvious internal helpers.
+6. **Documentation gate (mandatory)**: Before finalizing any change, audit every touched Rust module and ensure rustdocs are present and accurate for all new/changed functions and methods in changed Rust source files. This is enforced mechanically by `scripts/check_changed_rustdocs.py` through `make pre-commit-fast` and `make pre-commit`.
 
 ### Common commands
 
@@ -97,7 +97,10 @@ Guidelines:
 
 ### Formatting
 
-- Wrap rustdoc prose naturally — don't worry about line length.
+- **Do not manually optimize Rust comment or rustdoc line length.** Agents do not need to worry about rustdoc line length at all; `make fmt` takes care of formatting.
+- **Do not introduce staircase-wrapped prose** in `///`, `//!`, or prose `//` comments. Avoid mechanically chopping one paragraph into many short lines.
+- **Keep Rust prose comments paragraph-shaped.** Break lines only when structure requires it: bullets, tables, code blocks, deliberate emphasis, or a clean sentence/ clause boundary that genuinely improves readability.
+- **Prefer fewer fuller lines over many short lines** in Rust prose comments. If a rustdoc paragraph reads like a narrow column, it is probably wrong.
 - Use `make fmt` to format the codebase after making changes, and before running tests.
 
 ### Documentation requirements (mandatory)
@@ -111,6 +114,8 @@ Agents must treat documentation updates as part of implementation, not optional 
 - **Tiny obvious helpers are the only exception**: A very small private helper may skip rustdoc only when its name and body make the intent completely obvious and there are no invariants, fallback paths, ownership assumptions, or feature-gated behaviors to explain.
 - **Behavioral boundaries must be explicit**: For pipeline boundaries (parser -> desugar -> typecheck -> lowering), docs should state what must and must not cross the boundary.
 - **Docs should explain why, not narrate syntax**: Explain purpose, contracts, fallbacks, ownership/borrowing assumptions, and misuse risks. Avoid comments that merely restate the code line-by-line.
+- **Rust prose comments should not be manually hard-wrapped for width**: when editing `///`, `//!`, or prose `//` comments, keep the prose natural and let formatting tools do their job. Short, choppy comment wrapping is considered a documentation defect.
+- **Changed Rust source functions and methods must have rustdoc**: the mechanical gate checks changed Rust source files and fails if a function or method definition lacks a preceding rustdoc block.
 - **Done criterion**: Do not mark work complete until this rustdoc audit is done for all touched files.
 
 ## Rust Anti-Patterns to Avoid
