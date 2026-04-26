@@ -1,29 +1,36 @@
-//! Centralized type conversion and borrow checking for code generation
+//! Centralized ownership conversion policy for IR code generation.
 //!
-//! Incan doesn't have manual borrowing like Rust, but when generating Rust code, we need to ensure that
-//! values are correctly converted between owned and borrowed forms as needed.
+//! Incan does not expose Rust's ownership model directly, but generated Rust still needs the right
+//! move/borrow/clone/materialization shape at each sink. This module is the low-level policy engine
+//! behind duckborrowing: it decides which conversion strategy to apply once the emitter identifies a
+//! typed use site.
 //!
-//! This module provides a **single source of truth** for determining when and how to convert values between different
-//! ownership/borrowing states during code generation.
+//! This module provides the **single source of truth** for deciding when code generation should:
+//! - materialize owned `String` storage,
+//! - borrow or mutably borrow a value for Rust interop,
+//! - preserve last-use moves,
+//! - clone non-`Copy` values when the source must remain usable, or
+//! - keep values as-is.
 //!
-//! ## Why Focus on Strings?
+//! ## Main responsibilities
 //!
-//! This module **primarily handles string conversions** because strings are the main source of borrow/ownership
-//! mismatches when compiling to Rust:
+//! Strings remain the most common ownership mismatch in generated Rust, but this module now also
+//! covers:
+//! - borrowed method-chain results such as `box.as_ref()`,
+//! - field reads that must materialize owned values at storage/return sinks,
+//! - backend-inserted clones for owned tuples/collections/assignments,
+//! - Rust interop argument shaping, and
+//! - numeric coercion planning for binary operators.
+//!
+//! ## Why strings still matter
+//!
+//! Strings are still the most common source of borrow/ownership mismatches when compiling to Rust:
 //!
 //! - **Primitives** (`int`, `float`, `bool`) implement `Copy` in Rust, so they pass by value automatically—no
 //!   conversion needed
 //! - **Strings** have a fundamental split in Rust: `&str` (borrowed, stack) vs `String` (owned, heap)
 //! - Incan's `str` type abstracts this away (like Python), but codegen must handle it
 //! - String literals like `"hello"` are `&'static str` in Rust, requiring `.to_string()` for owned contexts
-//!
-//! **Other types currently supported:**
-//! - `List[T] + List[T]` concatenation via `incan_stdlib::collections::list_concat`
-//!
-//! **Future extensions may include:**
-//! - Collections with non-Copy elements (may need `.clone()`)
-//! - Custom types passed to external functions (may need `&` or `&mut`)
-//! - `Option<T>` / `Result<T, E>` with mismatched inner types
 //!
 //! ## Architecture
 //!
@@ -492,6 +499,12 @@ fn determine_owned_storage_conversion(expr: &IrExpr, target_ty: Option<&IrType>)
     }
 }
 
+/// Whether a borrowed expression must be materialized before entering an owned sink.
+///
+/// This covers true IR borrows (`&T`, `&mut T`) and borrowed method-chain results such as
+/// `box.as_ref()`. The helper is intentionally conservative when target metadata is missing:
+/// generated Rust should prefer owned Incan semantics over leaking a raw borrow that would force
+/// users to add `.clone()` manually.
 fn borrowed_expr_needs_owned_materialization(expr: &IrExpr, target_ty: Option<&IrType>) -> bool {
     if let IrExprKind::InteropCoerce { expr, kind, .. } = &expr.kind {
         if matches!(kind, super::expr::IrInteropCoercionKind::RustTypeUnwrap) {
@@ -526,6 +539,12 @@ fn borrowed_expr_needs_owned_materialization(expr: &IrExpr, target_ty: Option<&I
     }
 }
 
+/// Whether a field projection must clone instead of moving directly from its parent object.
+///
+/// Tuple-unpack temporaries are the notable exemption: lowering marks the temporary tuple binding
+/// as `VarAccess::Move`, so moving `tmp.0`, then `tmp.1`, is legitimate and should not introduce
+/// a backend clone. Ordinary field reads from borrowed/shared parents still need owned
+/// materialization at storage and return sinks.
 fn field_read_needs_owned_materialization(expr: &IrExpr) -> bool {
     match &expr.kind {
         IrExprKind::Field { object, .. } => !matches!(
