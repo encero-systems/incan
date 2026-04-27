@@ -14,9 +14,13 @@ use incan_stdlib::prelude::*;
 use incan_derive::{FieldInfo, IncanClass};
 pub use crate::__incan_std::r#async;
 pub use crate::__incan_std::traits::error::Error;
+pub use incan_stdlib::r#async::task::JoinHandle;
 pub use incan_stdlib::r#async::task::RuntimeFuture;
+pub use incan_stdlib::r#async::time::TimeoutJoinOutcome as RustTimeoutJoinOutcome;
 pub use incan_stdlib::r#async::time::clamp_seconds;
 pub use incan_stdlib::r#async::time::clamp_millis;
+pub use incan_stdlib::r#async::time::timeout_join as rust_timeout_join;
+pub use incan_stdlib::r#async::time::timeout_join_ms as rust_timeout_join_ms;
 pub use tokio::time::sleep as tokio_sleep;
 pub use tokio::time::timeout as tokio_timeout;
 #[derive(Debug, Clone, FieldInfo, IncanClass)]
@@ -107,6 +111,7 @@ impl Duration {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+pub type TimeoutJoinOutcome<T> = RustTimeoutJoinOutcome<T>;
 pub async fn sleep(seconds: f64) {
     "\n    Sleep for a floating-point second duration.\n\n    Example:\n        await sleep(0.1)\n    ";
     tokio_sleep(clamp_seconds(seconds)).await;
@@ -142,4 +147,18 @@ pub async fn timeout_ms<T: Send + 'static, TaskFuture: RuntimeFuture<T>>(
             return Err::<T, TimeoutError>(TimeoutError {});
         }
     };
+}
+pub async fn timeout_join<T: Send + 'static>(
+    seconds: f64,
+    handle: JoinHandle<T>,
+) -> TimeoutJoinOutcome<T> {
+    "\n    Wait up to `seconds` for a spawned task without cancelling it when the deadline expires.\n\n    Returns `TimeoutJoinOutcome.Completed(value)` when the task completes successfully,\n    `TimeoutJoinOutcome.JoinFailed(err)` when the task finishes with a join error, and\n    `TimeoutJoinOutcome.TimedOut(handle)` when the deadline wins. In the timeout case, `handle` remains live and can be\n    awaited, stored, or aborted explicitly. For blocking work created with `spawn_blocking()`, `abort()` can only prevent\n    work that has not started yet.\n    ";
+    return rust_timeout_join(seconds, handle).await;
+}
+pub async fn timeout_join_ms<T: Send + 'static>(
+    milliseconds: i64,
+    handle: JoinHandle<T>,
+) -> TimeoutJoinOutcome<T> {
+    "\n    Wait up to `milliseconds` for a spawned task without cancelling it when the deadline expires.\n\n    This is the millisecond-duration form of `timeout_join()`.\n    ";
+    return rust_timeout_join_ms(milliseconds, handle).await;
 }

@@ -68,7 +68,7 @@ use crate::frontend::surface_semantics::SurfaceContext;
 use crate::frontend::symbols::*;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::RustMetadataCache;
-use helpers::{collection_type_id, stringlike_type_id};
+use helpers::{collection_type_id, render_resolved_type_as_rust_arg, stringlike_type_id};
 use incan_core::interop::{CoercionPolicy, RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeShape};
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::SurfaceTypeKind;
@@ -674,6 +674,25 @@ impl TypeChecker {
             }
             _ => None,
         }
+    }
+
+    /// Resolve a source-level rusttype backing type to its canonical Rust path spelling.
+    pub(crate) fn rust_path_for_rusttype_underlying(&self, ty: &ResolvedType) -> Option<String> {
+        if let ResolvedType::RustPath(path) = ty {
+            return Some(path.clone());
+        }
+
+        let (base, _definition, args) = self.rust_identity_for_type(ty)?;
+        if args.is_empty() {
+            return Some(base);
+        }
+
+        let rendered_args = args
+            .iter()
+            .map(render_resolved_type_as_rust_arg)
+            .collect::<Vec<_>>()
+            .join(", ");
+        Some(format!("{base}<{rendered_args}>"))
     }
 
     fn rust_type_identities_compatible(&self, actual: &ResolvedType, expected: &ResolvedType) -> Option<bool> {

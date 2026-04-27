@@ -216,6 +216,20 @@ impl TypeChecker {
                             continue;
                         }
 
+                        // Top-level stdlib type declarations (models/classes/enums/type aliases/newtypes).
+                        let type_info = self.stdlib_cache.lookup_type(&module.segments, &item.name);
+                        if let Some(info) = type_info {
+                            let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
+                            self.validate_root_namespace(&local_name, span);
+                            self.symbols.define(Symbol {
+                                name: local_name,
+                                kind: SymbolKind::Type(info),
+                                span,
+                                scope: 0,
+                            });
+                            continue;
+                        }
+
                         // Top-level stdlib const bindings (e.g. `from std.math import PI`).
                         let const_info = self.stdlib_cache.lookup_constant(&module.segments, &item.name);
                         if let Some(info) = const_info {
@@ -935,10 +949,11 @@ impl TypeChecker {
         }
     }
 
+    /// Convert a manifest newtype export into local typechecker metadata.
     fn newtype_info_from_manifest(&self, export: &NewtypeExport) -> NewtypeInfo {
         NewtypeInfo {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
-            is_rusttype: false,
+            is_rusttype: export.is_rusttype,
             has_interop: false,
             underlying: resolved_type_from_manifest_type_ref(&export.underlying),
             method_rebindings: std::collections::HashMap::new(),
